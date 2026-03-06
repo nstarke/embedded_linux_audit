@@ -12,6 +12,7 @@
  */
 
 #include <errno.h>
+#include <dirent.h>
 #include <fcntl.h>
 #include <getopt.h>
 #include <glob.h>
@@ -22,6 +23,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/sysmacros.h>
 #include <sys/types.h>
 #include <unistd.h>
 
@@ -237,6 +239,55 @@ static uint64_t guess_erasesize_from_proc_mtd(const char *dev)
 	return 0;
 }
 
+static void create_node_if_missing(const char *path, mode_t mode, dev_t devno)
+{
+	struct stat st;
+
+	if (!stat(path, &st))
+		return;
+	if (errno != ENOENT)
+		return;
+
+	if (mknod(path, mode, devno) < 0) {
+		fprintf(stderr, "Warning: cannot create %s: %s\n",
+			path, strerror(errno));
+		return;
+	}
+
+	printf("Created missing node: %s\n", path);
+}
+
+static void ensure_mtd_nodes(void)
+{
+	DIR *dir;
+	struct dirent *de;
+
+	dir = opendir("/sys/class/mtd");
+	if (!dir)
+		return;
+
+	while ((de = readdir(dir))) {
+		unsigned int idx;
+		char extra;
+		char devpath[64];
+		char devpath_ro[64];
+		char blockpath[64];
+
+		if (sscanf(de->d_name, "mtd%u%c", &idx, &extra) != 1)
+			continue;
+
+		snprintf(devpath, sizeof(devpath), "/dev/mtd%u", idx);
+		snprintf(devpath_ro, sizeof(devpath_ro), "/dev/mtd%uro", idx);
+		snprintf(blockpath, sizeof(blockpath), "/dev/mtdblock%u", idx);
+
+		create_node_if_missing(devpath, S_IFCHR | 0600, makedev(90, idx * 2));
+		create_node_if_missing(devpath_ro, S_IFCHR | 0400, makedev(90, idx * 2 + 1));
+		create_node_if_missing(blockpath, S_IFBLK | 0600, makedev(31, idx));
+	}
+
+	closedir(dir);
+}
+
 static bool has_hint_var(const uint8_t *data, size_t len, const char *hint_override)
 {
 	static const char *hints[] = {
@@ -318,8 +369,8 @@ static int scan_dev(const char *dev, uint64_t step, uint64_t env_size,
 		return -1;
 	}
 
-	printf("\nScanning %s (size=0x%jx, step=0x%jx, env_size=0x%jx)\n",
-	       dev, (uintmax_t)st.st_size, (uintmax_t)step, (uintmax_t)env_size);
+	printf("\nScanning %s (size=0x%jx, step=0x%jx, env_size=0x%jx, erase_size=0x%jx)\n",
+	       dev, (uintmax_t)st.st_size, (uintmax_t)step, (uintmax_t)env_size, (uintmax_t)erase_size);
 
 	for (off = 0; (uint64_t)off + env_size <= (uint64_t)st.st_size; off += (off_t)step) {
 		ssize_t n = pread(fd, buf, (size_t)env_size, off);
@@ -366,16 +417,18 @@ static int scan_dev(const char *dev, uint64_t step, uint64_t env_size,
 static void usage(const char *prog)
 {
 	fprintf(stderr,
-		"Usage: %s [-s <env_size>] [-H <hint>] [<dev:step> ...]\n"
+		"Usage: %s [-s <env_size>] [-H <hint>] [-d <dev>|--dev <dev>] [<dev:step> ...]\n"
 		"  no args: auto-devices + common env sizes\n"
 		"  -s: fixed env size\n"
 		"  -H: override default env hint string (example: bootcmd=)\n"
+		"  -d, --dev: scan only the specified MTD device path (step from sysfs/proc)\n"
 		"Examples:\n"
 		"  %s\n"
 		"  %s -s 0x10000\n"
 		"  %s -H bootcmd=\n"
+		"  %s --dev /dev/mtd3 -s 0x10000\n"
 		"  %s -s 0x10000 /dev/mtd0:0x10000\n",
-		prog, prog, prog, prog, prog);
+		prog, prog, prog, prog, prog, prog);
 }
 
 int main(int argc, char **argv)
@@ -387,12 +440,17 @@ int main(int argc, char **argv)
 	bool fixed_size = false;
 	uint64_t env_size = 0;
 	const char *hint_override = NULL;
+	const char *dev_override = NULL;
 	int argi;
 	int opt;
 	int i;
+	static const struct option long_opts[] = {
+		{ "dev", required_argument, NULL, 'd' },
+		{ 0, 0, 0, 0 }
+	};
 
 	opterr = 0;
-	while ((opt = getopt(argc, argv, "hs:H:")) != -1) {
+	while ((opt = getopt_long(argc, argv, "hs:H:d:", long_opts, NULL)) != -1) {
 		switch (opt) {
 		case 'h':
 			usage(argv[0]);
@@ -403,6 +461,9 @@ int main(int argc, char **argv)
 			break;
 		case 'H':
 			hint_override = optarg;
+			break;
+		case 'd':
+			dev_override = optarg;
 			break;
 		default:
 			usage(argv[0]);
@@ -417,6 +478,40 @@ int main(int argc, char **argv)
 	}
 
 	crc32_init();
+	ensure_mtd_nodes();
+
+	if (dev_override) {
+		uint64_t step = guess_erasesize_from_sysfs(dev_override);
+
+		if (argi < argc) {
+			fprintf(stderr, "Do not combine --dev with <dev:step> positional args\n");
+			return 2;
+		}
+
+		if (!step)
+			step = guess_erasesize_from_proc_mtd(dev_override);
+		if (!step) {
+			fprintf(stderr, "Cannot determine erasesize for %s\n", dev_override);
+			return 1;
+		}
+
+		if (step > AUTO_SCAN_MAX_STEP)
+			step = AUTO_SCAN_MAX_STEP;
+
+		if (fixed_size) {
+			if (scan_dev(dev_override, step, env_size, hint_override) < 0)
+				return 1;
+		} else {
+			for (i = 0; i < (int)ARRAY_SIZE(common_sizes); i++) {
+				printf("\n== trying env_size=0x%jx on %s ==\n",
+				       (uintmax_t)common_sizes[i], dev_override);
+				if (scan_dev(dev_override, step, common_sizes[i], hint_override) < 0)
+					return 1;
+			}
+		}
+
+		return 0;
+	}
 
 	if (argi >= argc) {
 		glob_t g;
