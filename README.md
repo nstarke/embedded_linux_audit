@@ -13,6 +13,8 @@ When it finds a CRC-valid candidate, it prints a ready-to-copy line in the exact
 fw_env.config line: <device> <offset> <env_size> <erase_size>
 ```
 
+Written in C for use in embedded environments that may have limited scripting interpreters.
+
 ---
 
 ## Why this is useful
@@ -44,6 +46,12 @@ Clean:
 
 ```bash
 make clean
+```
+
+Cross compile:
+
+```
+make CC=arm-linux-gnueabi-gcc
 ```
 
 ---
