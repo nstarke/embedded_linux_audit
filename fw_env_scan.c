@@ -456,6 +456,35 @@ static void create_node_if_missing(const char *path, mode_t mode, dev_t devno)
 		out_printf("Created missing node: %s\n", path);
 }
 
+static int read_major_minor_from_sysfs(const char *dev_attr_path,
+				       unsigned int *major_out,
+				       unsigned int *minor_out)
+{
+	char buf[64];
+	int fd;
+	ssize_t n;
+	unsigned int major, minor;
+
+	if (!major_out || !minor_out)
+		return -1;
+
+	fd = open(dev_attr_path, O_RDONLY | O_CLOEXEC);
+	if (fd < 0)
+		return -1;
+	n = read(fd, buf, sizeof(buf) - 1);
+	close(fd);
+	if (n <= 0)
+		return -1;
+
+	buf[n] = '\0';
+	if (sscanf(buf, "%u:%u", &major, &minor) != 2)
+		return -1;
+
+	*major_out = major;
+	*minor_out = minor;
+	return 0;
+}
+
 static void ensure_mtd_nodes(void)
 {
 	DIR *dir;
@@ -469,19 +498,105 @@ static void ensure_mtd_nodes(void)
 		unsigned int idx;
 		char extra;
 		char devpath[64];
-		char devpath_ro[64];
 		char blockpath[64];
 
 		if (sscanf(de->d_name, "mtd%u%c", &idx, &extra) != 1)
 			continue;
 
 		snprintf(devpath, sizeof(devpath), "/dev/mtd%u", idx);
-		snprintf(devpath_ro, sizeof(devpath_ro), "/dev/mtd%uro", idx);
 		snprintf(blockpath, sizeof(blockpath), "/dev/mtdblock%u", idx);
 
 		create_node_if_missing(devpath, S_IFCHR | 0600, makedev(90, idx * 2));
-		create_node_if_missing(devpath_ro, S_IFCHR | 0400, makedev(90, idx * 2 + 1));
 		create_node_if_missing(blockpath, S_IFBLK | 0600, makedev(31, idx));
+	}
+
+	closedir(dir);
+}
+
+static void ensure_ubi_nodes(void)
+{
+	DIR *dir;
+	struct dirent *de;
+	const char *ubi_prefix = "/sys/class/ubi/";
+	const char *blk_prefix = "/sys/class/block/";
+	const char *dev_suffix = "/dev";
+
+	dir = opendir("/sys/class/ubi");
+	if (dir) {
+		while ((de = readdir(dir))) {
+			unsigned int ubi, vol;
+			char extra;
+			char dev_attr[256];
+			char devnode[64];
+			unsigned int major, minor;
+			size_t name_len;
+			size_t prefix_len;
+			size_t suffix_len;
+
+			if (sscanf(de->d_name, "ubi%u_%u%c", &ubi, &vol, &extra) == 2) {
+				snprintf(devnode, sizeof(devnode), "/dev/ubi%u_%u", ubi, vol);
+			} else if (sscanf(de->d_name, "ubi%u%c", &ubi, &extra) == 1) {
+				snprintf(devnode, sizeof(devnode), "/dev/ubi%u", ubi);
+			} else {
+				continue;
+			}
+
+			name_len = strnlen(de->d_name, sizeof(dev_attr));
+			prefix_len = strlen(ubi_prefix);
+			suffix_len = strlen(dev_suffix);
+			if (name_len >= sizeof(dev_attr))
+				continue;
+			if (prefix_len + name_len + suffix_len + 1 > sizeof(dev_attr))
+				continue;
+
+			memcpy(dev_attr, ubi_prefix, prefix_len);
+			memcpy(dev_attr + prefix_len, de->d_name, name_len);
+			memcpy(dev_attr + prefix_len + name_len, dev_suffix, suffix_len + 1);
+
+			if (read_major_minor_from_sysfs(dev_attr, &major, &minor))
+				continue;
+
+			create_node_if_missing(devnode, S_IFCHR | 0600, makedev(major, minor));
+		}
+
+		closedir(dir);
+	}
+
+	dir = opendir("/sys/class/block");
+	if (!dir)
+		return;
+
+	while ((de = readdir(dir))) {
+		unsigned int ubi, vol;
+		char extra;
+		char dev_attr[256];
+		char devnode[64];
+		unsigned int major, minor;
+		size_t name_len;
+		size_t prefix_len;
+		size_t suffix_len;
+
+		if (sscanf(de->d_name, "ubiblock%u_%u%c", &ubi, &vol, &extra) != 2)
+			continue;
+
+		snprintf(devnode, sizeof(devnode), "/dev/ubiblock%u_%u", ubi, vol);
+
+		name_len = strnlen(de->d_name, sizeof(dev_attr));
+		prefix_len = strlen(blk_prefix);
+		suffix_len = strlen(dev_suffix);
+		if (name_len >= sizeof(dev_attr))
+			continue;
+		if (prefix_len + name_len + suffix_len + 1 > sizeof(dev_attr))
+			continue;
+
+		memcpy(dev_attr, blk_prefix, prefix_len);
+		memcpy(dev_attr + prefix_len, de->d_name, name_len);
+		memcpy(dev_attr + prefix_len + name_len, dev_suffix, suffix_len + 1);
+
+		if (read_major_minor_from_sysfs(dev_attr, &major, &minor))
+			continue;
+
+		create_node_if_missing(devnode, S_IFBLK | 0600, makedev(major, minor));
 	}
 
 	closedir(dir);
@@ -535,6 +650,11 @@ static int scan_dev(const char *dev, uint64_t step, uint64_t env_size,
 
 	fd = open(dev, O_RDONLY | O_CLOEXEC);
 	if (fd < 0) {
+		if (errno == EBUSY) {
+			if (g_verbose)
+				err_printf("Skipping busy device %s: %s\n", dev, strerror(errno));
+			return 0;
+		}
 		err_printf("Cannot open %s: %s\n", dev, strerror(errno));
 		return -1;
 	}
@@ -716,6 +836,7 @@ int main(int argc, char **argv)
 
 	crc32_init();
 	ensure_mtd_nodes();
+	ensure_ubi_nodes();
 
 	if (dev_override) {
 		uint64_t step = guess_erasesize_from_sysfs(dev_override);
