@@ -45,10 +45,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Zig
-        uses: mlugg/setup-zig@v1
-        with:
-          version: 0.14.1
+      - name: Install Zig
+        run: |
+          set -euo pipefail
+          ZIG_VERSION=0.14.0
+          curl -fsSL -o zig.tar.xz "https://ziglang.org/download/${ZIG_VERSION}/zig-linux-x86_64-${ZIG_VERSION}.tar.xz"
+          tar -xf zig.tar.xz
+          echo "$PWD/zig-linux-x86_64-${ZIG_VERSION}" >> "$GITHUB_PATH"
+          "$PWD/zig-linux-x86_64-${ZIG_VERSION}/zig" version
 
       - name: Build static binaries
         run: |
