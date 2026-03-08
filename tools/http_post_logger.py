@@ -1,22 +1,132 @@
 #!/usr/bin/env python3
-"""Simple HTTP POST receiver that appends request details and body to a log file."""
+"""HTTP(S) POST logger that also serves latest GitHub release binaries over GET."""
 
 from __future__ import annotations
 
 import argparse
 import datetime as dt
+import json
+import mimetypes
+import os
 import shutil
 import ssl
 import subprocess
+import urllib.error
+import urllib.parse
+import urllib.request
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 
-def build_handler(log_path: Path):
+def github_json_get(url: str, token: str | None = None) -> dict:
+    req = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": "fw_env_scan-http_post_logger",
+            "Accept": "application/vnd.github+json",
+            **({"Authorization": f"Bearer {token}"} if token else {}),
+        },
+    )
+    with urllib.request.urlopen(req) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def download_latest_release_assets(repo: str, out_dir: Path, token: str | None = None) -> list[Path]:
+    out_dir.mkdir(parents=True, exist_ok=True)
+    release_url = f"https://api.github.com/repos/{repo}/releases/latest"
+    release = github_json_get(release_url, token=token)
+    assets = release.get("assets", [])
+
+    downloaded: list[Path] = []
+    for asset in assets:
+        name = asset.get("name")
+        download_url = asset.get("browser_download_url")
+        if not name or not download_url:
+            continue
+
+        dest = out_dir / name
+        req = urllib.request.Request(
+            download_url,
+            headers={
+                "User-Agent": "fw_env_scan-http_post_logger",
+                **({"Authorization": f"Bearer {token}"} if token else {}),
+            },
+        )
+        with urllib.request.urlopen(req) as resp, dest.open("wb") as fp:
+            shutil.copyfileobj(resp, fp)
+        downloaded.append(dest)
+
+    return downloaded
+
+
+def build_handler(log_path: Path, assets_dir: Path):
     class PostLoggerHandler(BaseHTTPRequestHandler):
         def log_message(self, fmt: str, *args):
             # Keep server console quiet; requests are written to log_path.
             return
+
+        def _send_bytes(self, status: int, body: bytes, content_type: str = "text/plain; charset=utf-8"):
+            self.send_response(status)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            if self.command != "HEAD":
+                self.wfile.write(body)
+
+        def _safe_asset_path(self) -> Path | None:
+            parsed = urllib.parse.urlparse(self.path)
+            rel = urllib.parse.unquote(parsed.path).lstrip("/")
+            if not rel:
+                return None
+
+            candidate = (assets_dir / rel).resolve()
+            root = assets_dir.resolve()
+            if root == candidate or root in candidate.parents:
+                return candidate
+            return None
+
+        def _build_index(self) -> bytes:
+            entries = sorted(p.name for p in assets_dir.iterdir() if p.is_file())
+            items = "\n".join(
+                f'<li><a href="/{urllib.parse.quote(name)}">{name}</a></li>' for name in entries
+            )
+            html = f"""<!doctype html>
+<html lang=\"en\">
+  <head>
+    <meta charset=\"utf-8\" />
+    <title>Release Binaries</title>
+  </head>
+  <body>
+    <h1>Release Binaries</h1>
+    <p>Serving files from: {assets_dir}</p>
+    <ul>
+      {items if items else '<li><em>No binaries downloaded.</em></li>'}
+    </ul>
+  </body>
+</html>
+"""
+            return html.encode("utf-8")
+
+        def do_HEAD(self):
+            self.do_GET()
+
+        def do_GET(self):
+            parsed = urllib.parse.urlparse(self.path)
+            if parsed.path == "/":
+                self._send_bytes(200, self._build_index(), "text/html; charset=utf-8")
+                return
+
+            asset_path = self._safe_asset_path()
+            if asset_path is None or not asset_path.is_file():
+                self._send_bytes(404, b"not found\n")
+                return
+
+            content_type, _ = mimetypes.guess_type(asset_path.name)
+            if content_type is None:
+                content_type = "application/octet-stream"
+
+            data = asset_path.read_bytes()
+            self._send_bytes(200, data, content_type)
 
         def do_POST(self):
             content_len = int(self.headers.get("Content-Length", "0"))
@@ -80,13 +190,42 @@ def main() -> int:
     parser.add_argument("--host", default="0.0.0.0", help="Bind host (default: 0.0.0.0)")
     parser.add_argument("--port", type=int, default=5000, help="Bind port (default: 5000)")
     parser.add_argument("--log", default="post_requests.log", help="Log file path")
+    parser.add_argument(
+        "--repo",
+        default="nstarke/U-Boot-fw_env_scan",
+        help="GitHub repo in owner/name form (default: nstarke/U-Boot-fw_env_scan)",
+    )
+    parser.add_argument(
+        "--assets-dir",
+        default="tools/release_binaries",
+        help="Directory to store latest release binaries (default: tools/release_binaries)",
+    )
+    parser.add_argument(
+        "--github-token",
+        default=os.environ.get("GITHUB_TOKEN", ""),
+        help="Optional GitHub token (defaults to GITHUB_TOKEN env var)",
+    )
     parser.add_argument("--https", action="store_true", help="Enable HTTPS with TLS")
     parser.add_argument("--cert", default="tools/certs/localhost.crt", help="TLS cert path")
     parser.add_argument("--key", default="tools/certs/localhost.key", help="TLS private key path")
     args = parser.parse_args()
 
     log_path = Path(args.log)
-    handler = build_handler(log_path)
+    assets_dir = Path(args.assets_dir)
+    token = args.github_token or None
+
+    try:
+        downloaded = download_latest_release_assets(args.repo, assets_dir, token=token)
+    except urllib.error.HTTPError as exc:
+        print(f"Failed to fetch/download release assets from {args.repo}: HTTP {exc.code}")
+        return 1
+    except urllib.error.URLError as exc:
+        print(f"Failed to fetch/download release assets from {args.repo}: {exc.reason}")
+        return 1
+
+    print(f"Downloaded {len(downloaded)} release asset(s) from {args.repo} into {assets_dir}")
+
+    handler = build_handler(log_path, assets_dir)
     server = HTTPServer((args.host, args.port), handler)
 
     scheme = "http"
@@ -102,6 +241,7 @@ def main() -> int:
 
     print(f"Listening on {scheme}://{args.host}:{args.port}/")
     print(f"Logging POST requests to: {log_path}")
+    print("GET / shows index of downloaded release binaries")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

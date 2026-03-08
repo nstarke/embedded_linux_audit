@@ -1,3 +1,5 @@
 certs
 uboot_audit
 generated/
+__pycache__
+release_binaries
