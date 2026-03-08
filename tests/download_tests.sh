@@ -26,12 +26,19 @@ usage() {
 list_valid_isas_from_index_file() {
     index_file="$1"
 
-    sed 's/[^A-Za-z0-9_./-]/\
-/g' "$index_file" | \
+    tr -d '\r' <"$index_file" | \
+        sed 's/[^A-Za-z0-9_./-]/\
+/g' | \
         grep '^/*uboot_audit-[A-Za-z0-9._-]\+$' | \
         sed 's#^/*##' | \
         sed 's#^uboot_audit-##' | \
         sort -u
+}
+
+normalize_isa_value() {
+    value="$1"
+    # Strip carriage returns/newlines that may be introduced by copy/paste or CRLF sources.
+    printf '%s' "$value" | tr -d '\r\n'
 }
 
 print_valid_isas() {
@@ -154,7 +161,9 @@ if [ -z "$ISA" ]; then
     exit 2
 fi
 
-if ! list_valid_isas | grep -Fx "$ISA" >/dev/null 2>&1; then
+ISA="$(normalize_isa_value "$ISA")"
+
+if ! list_valid_isas | tr -d '\r' | grep -Fx -- "$ISA" >/dev/null 2>&1; then
     echo "error: invalid --isa '$ISA'"
     echo "valid values:"
     print_valid_isas
