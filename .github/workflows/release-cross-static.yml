@@ -1,0 +1,85 @@
+name: Release Cross Static Builds
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: build-${{ matrix.name }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: arm32-le
+            zig_target: arm-linux-musleabi
+          - name: arm32-be
+            zig_target: armeb-linux-musleabi
+          - name: aarch64-le
+            zig_target: aarch64-linux-musl
+          - name: aarch64-be
+            zig_target: aarch64_be-linux-musl
+          - name: mips-le
+            zig_target: mipsel-linux-musl
+          - name: mips-be
+            zig_target: mips-linux-musl
+          - name: mips64-le
+            zig_target: mips64el-linux-muslabi64
+          - name: mips64-be
+            zig_target: mips64-linux-muslabi64
+          - name: powerpc-le
+            zig_target: powerpcle-linux-musl
+          - name: powerpc-be
+            zig_target: powerpc-linux-musl
+          - name: x86
+            zig_target: x86-linux-musl
+          - name: x86_64
+            zig_target: x86_64-linux-musl
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Zig
+        uses: mlugg/setup-zig@v1
+        with:
+          version: 0.13.0
+
+      - name: Build static binaries
+        run: |
+          set -euo pipefail
+          mkdir -p dist/${{ matrix.name }}
+
+          zig cc -O2 -static -target ${{ matrix.zig_target }} -o dist/${{ matrix.name }}/fw_env_scan-${{ matrix.name }} fw_env_scan.c fw_scan.c
+          zig cc -O2 -static -target ${{ matrix.zig_target }} -o dist/${{ matrix.name }}/fw_image_scan-${{ matrix.name }} fw_image_scan.c fw_scan.c
+
+      - name: Upload matrix artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: fw-tools-${{ matrix.name }}
+          path: |
+            dist/${{ matrix.name }}/fw_env_scan-${{ matrix.name }}
+            dist/${{ matrix.name }}/fw_image_scan-${{ matrix.name }}
+
+  publish-release-assets:
+    name: Publish release assets
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.event_name == 'release'
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+
+      - name: Upload assets to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release-assets/**/fw_env_scan-*
+            release-assets/**/fw_image_scan-*
