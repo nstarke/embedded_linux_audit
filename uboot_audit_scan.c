@@ -276,19 +276,49 @@ static int find_pubkey_pem_in_device(const char *dev, char **pem_out)
 	return -1;
 }
 
+static char *create_auto_signature_dir(void)
+{
+	char root_template[] = "/tmp/uboot_audit.XXXXXX";
+	char *root;
+	char *subdir;
+	int n;
+
+	root = mkdtemp(root_template);
+	if (!root)
+		return NULL;
+
+	n = snprintf(NULL, 0, "%s/uboot_audit", root);
+	if (n <= 0)
+		return NULL;
+
+	subdir = malloc((size_t)n + 1);
+	if (!subdir)
+		return NULL;
+
+	snprintf(subdir, (size_t)n + 1, "%s/uboot_audit", root);
+	if (mkdir(subdir, 0700) != 0 && errno != EEXIST) {
+		free(subdir);
+		return NULL;
+	}
+
+	return subdir;
+}
+
 static int auto_scan_signature_artifacts(char **blob_path_out, char **pubkey_path_out)
 {
 	glob_t g;
 	unsigned int scan_flags = FW_SCAN_GLOB_MTDBLOCK | FW_SCAN_GLOB_UBI |
 		FW_SCAN_GLOB_UBIBLOCK | FW_SCAN_GLOB_MMCBLK | FW_SCAN_GLOB_SDBLK;
 	char *pem = NULL;
+	char *auto_dir = NULL;
 	char *blob_path = NULL;
 	char *pubkey_path = NULL;
 
 	if (!blob_path_out || !pubkey_path_out)
 		return -1;
 
-	if (mkdir("generated", 0755) != 0 && errno != EEXIST)
+	auto_dir = create_auto_signature_dir();
+	if (!auto_dir)
 		return -1;
 
 	if (uboot_glob_scan_devices(&g, scan_flags) < 0)
@@ -301,7 +331,12 @@ static int auto_scan_signature_artifacts(char **blob_path_out, char **pubkey_pat
 			uint64_t fit_off;
 			uint32_t fit_size;
 			if (find_fit_blob_in_device(dev, &fit_off, &fit_size) == 0) {
-				blob_path = strdup("generated/auto_signature_blob.fit");
+				int n = snprintf(NULL, 0, "%s/auto_signature_blob.fit", auto_dir);
+				if (n > 0) {
+					blob_path = malloc((size_t)n + 1);
+					if (blob_path)
+						snprintf(blob_path, (size_t)n + 1, "%s/auto_signature_blob.fit", auto_dir);
+				}
 				if (blob_path && extract_region_to_file(dev, fit_off, fit_size, blob_path) != 0) {
 					free(blob_path);
 					blob_path = NULL;
@@ -312,7 +347,12 @@ static int auto_scan_signature_artifacts(char **blob_path_out, char **pubkey_pat
 		if (!pubkey_path) {
 			if (find_pubkey_pem_in_device(dev, &pem) == 0) {
 				int fd;
-				pubkey_path = strdup("generated/auto_signature_pubkey.pem");
+				int n = snprintf(NULL, 0, "%s/auto_signature_pubkey.pem", auto_dir);
+				if (n > 0) {
+					pubkey_path = malloc((size_t)n + 1);
+					if (pubkey_path)
+						snprintf(pubkey_path, (size_t)n + 1, "%s/auto_signature_pubkey.pem", auto_dir);
+				}
 				if (!pubkey_path)
 					continue;
 				fd = open(pubkey_path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
@@ -331,6 +371,7 @@ static int auto_scan_signature_artifacts(char **blob_path_out, char **pubkey_pat
 	}
 
 	globfree(&g);
+	free(auto_dir);
 
 	*blob_path_out = blob_path;
 	*pubkey_path_out = pubkey_path;
@@ -352,9 +393,81 @@ static void usage(const char *prog)
 		"  --scan-signature-devices  Force device scan for FIT blob and PEM pubkey (default if paths missing)\n"
 		"  --scan-signature-blob <glob>   Auto-select first readable blob path matching glob\n"
 		"  --scan-signature-pubkey <glob> Auto-select first readable pubkey path matching glob\n"
+		"  --output-tcp <IPv4:port>       Send discovered signature artifact records to TCP\n"
+		"  --output-http <http://...>     Send discovered signature artifact records via HTTP POST\n"
+		"  --output-https <https://...>   Send discovered signature artifact records via HTTPS POST\n"
+		"  --insecure                     Disable TLS certificate/hostname verification for HTTPS\n"
 		"  --signature-alg <name>    Digest algorithm (if omitted: tries sha256, sha384, sha512, sha1, sha224)\n"
 		"  --verbose       Enable verbose audit output\n",
 		prog);
+}
+
+static const char *audit_http_content_type(enum uboot_output_format fmt)
+{
+	switch (fmt) {
+	case FW_OUTPUT_JSON:
+		return "application/x-ndjson; charset=utf-8";
+	case FW_OUTPUT_CSV:
+		return "text/csv; charset=utf-8";
+	case FW_OUTPUT_TXT:
+	default:
+		return "text/plain; charset=utf-8";
+	}
+}
+
+static int send_artifact_network_record(enum uboot_output_format fmt,
+					const char *output_tcp_target,
+					const char *output_http_uri,
+					bool insecure,
+					const char *artifact_name,
+					const char *artifact_value)
+{
+	char payload[2048];
+	int plen;
+
+	if ((!output_tcp_target || !*output_tcp_target) && (!output_http_uri || !*output_http_uri))
+		return 0;
+
+	if (!artifact_name || !artifact_value)
+		return 0;
+
+	if (fmt == FW_OUTPUT_JSON) {
+		plen = snprintf(payload, sizeof(payload),
+			"{\"record\":\"audit_artifact\",\"artifact\":\"%s\",\"value\":\"%s\"}\n",
+			artifact_name, artifact_value);
+	} else if (fmt == FW_OUTPUT_CSV) {
+		plen = snprintf(payload, sizeof(payload), "audit_artifact,%s,%s\n", artifact_name, artifact_value);
+	} else {
+		plen = snprintf(payload, sizeof(payload), "audit artifact %s=%s\n", artifact_name, artifact_value);
+	}
+
+	if (plen <= 0 || (size_t)plen >= sizeof(payload))
+		return -1;
+
+	if (output_tcp_target && *output_tcp_target) {
+		int sock = uboot_connect_tcp_ipv4(output_tcp_target);
+		if (sock < 0)
+			return -1;
+		if (uboot_send_all(sock, (const uint8_t *)payload, (size_t)plen) < 0) {
+			close(sock);
+			return -1;
+		}
+		close(sock);
+	}
+
+	if (output_http_uri && *output_http_uri) {
+		char errbuf[256];
+		if (uboot_http_post(output_http_uri,
+				   (const uint8_t *)payload,
+				   (size_t)plen,
+				   audit_http_content_type(fmt),
+				   insecure,
+				   errbuf,
+				   sizeof(errbuf)) < 0)
+			return -1;
+	}
+
+	return 0;
 }
 
 static bool rule_name_selected(const char *filter, const struct uboot_audit_rule *rule)
@@ -441,7 +554,12 @@ int uboot_audit_scan_main(int argc, char **argv)
 	const char *signature_blob_scan = NULL;
 	const char *signature_pubkey_scan = NULL;
 	const char *signature_algorithm = NULL;
+	const char *output_tcp_target = NULL;
+	const char *output_http_target = NULL;
+	const char *output_https_target = NULL;
+	const char *output_http_uri = NULL;
 	bool scan_signature_devices = false;
+	bool insecure = false;
 	uint64_t offset = 0;
 	uint64_t size = 0;
 	bool verbose = false;
@@ -471,6 +589,10 @@ int uboot_audit_scan_main(int argc, char **argv)
 		{ "scan-signature-blob", required_argument, NULL, 'X' },
 		{ "scan-signature-pubkey", required_argument, NULL, 'Y' },
 		{ "scan-signature-devices", no_argument, NULL, 'Z' },
+		{ "output-tcp", required_argument, NULL, 'p' },
+		{ "output-http", required_argument, NULL, 'O' },
+		{ "output-https", required_argument, NULL, 'T' },
+		{ "insecure", no_argument, NULL, 'k' },
 		{ "signature-alg", required_argument, NULL, 'A' },
 		{ "verbose", no_argument, NULL, 'v' },
 		{ "rule", required_argument, NULL, 'r' },
@@ -481,7 +603,7 @@ int uboot_audit_scan_main(int argc, char **argv)
 	optind = 1;
 	fmt = detect_output_format();
 
-	while ((opt = getopt_long(argc, argv, "hd:o:s:B:K:X:Y:ZA:vr:l", long_opts, NULL)) != -1) {
+	while ((opt = getopt_long(argc, argv, "hd:o:s:B:K:X:Y:Zp:O:T:kA:vr:l", long_opts, NULL)) != -1) {
 		switch (opt) {
 		case 'h':
 			usage(argv[0]);
@@ -509,6 +631,18 @@ int uboot_audit_scan_main(int argc, char **argv)
 			break;
 		case 'Z':
 			scan_signature_devices = true;
+			break;
+		case 'p':
+			output_tcp_target = optarg;
+			break;
+		case 'O':
+			output_http_target = optarg;
+			break;
+		case 'T':
+			output_https_target = optarg;
+			break;
+		case 'k':
+			insecure = true;
 			break;
 		case 'A':
 			signature_algorithm = optarg;
@@ -547,6 +681,26 @@ int uboot_audit_scan_main(int argc, char **argv)
 		return 2;
 	}
 
+	if (output_http_target && strncmp(output_http_target, "http://", 7)) {
+		fprintf(stderr, "Invalid --output-http URI (expected http://host:port/...): %s\n", output_http_target);
+		return 2;
+	}
+
+	if (output_https_target && strncmp(output_https_target, "https://", 8)) {
+		fprintf(stderr, "Invalid --output-https URI (expected https://host:port/...): %s\n", output_https_target);
+		return 2;
+	}
+
+	if (output_http_target && output_https_target) {
+		fprintf(stderr, "Use only one of --output-http or --output-https\n");
+		return 2;
+	}
+
+	if (output_http_target)
+		output_http_uri = output_http_target;
+	if (output_https_target)
+		output_http_uri = output_https_target;
+
 	if (!signature_blob_path && signature_blob_scan) {
 		signature_blob_path = resolve_first_readable_glob(signature_blob_scan, &scanned_blob_path);
 		if (!signature_blob_path) {
@@ -576,6 +730,24 @@ int uboot_audit_scan_main(int argc, char **argv)
 			signature_blob_path = scanned_blob_path;
 		if (!signature_pubkey_path)
 			signature_pubkey_path = scanned_pubkey_path;
+
+		if (scanned_blob_path) {
+			send_artifact_network_record(fmt,
+						 output_tcp_target,
+						 output_http_uri,
+						 insecure,
+						 "signature_blob",
+						 scanned_blob_path);
+		}
+
+		if (scanned_pubkey_path) {
+			send_artifact_network_record(fmt,
+						 output_tcp_target,
+						 output_http_uri,
+						 insecure,
+						 "signature_pubkey",
+						 scanned_pubkey_path);
+		}
 	}
 
 	if (signature_blob_path && access(signature_blob_path, R_OK) != 0) {
