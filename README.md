@@ -51,7 +51,7 @@ make CC=arm-linux-gnueabi-gcc
 
 ## `uboot_audit env`
 
-Scans MTD/UBI devices for blocks that resemble a valid U-Boot environment (CRC-verified by default), then prints candidate `fw_env.config` lines.
+Scans MTD/UBI plus block devices (SD/eMMC such as `/dev/sd*` and `/dev/mmcblk*`) for blocks that resemble a valid U-Boot environment (CRC-verified by default), then prints candidate `fw_env.config` lines.
 
 ### `env` arguments
 
@@ -63,6 +63,8 @@ Scans MTD/UBI devices for blocks that resemble a valid U-Boot environment (CRC-v
 - `--skip-remove` — keep any created helper `/dev/mtdblock*`/UBI device nodes after run
 - `--skip-mtd` — skip MTD/mtdblock scan targets and helper node handling
 - `--skip-ubi` — skip UBI/ubiblock scan targets and helper node handling
+- `--skip-sd` — skip `/dev/sd*` scan targets
+- `--skip-emmc` — skip `/dev/mmcblk*` scan targets
 - `--parse-vars` — print parsed key/value variables from candidate environments
 - `--output-config[=<path>]` — write discovered `fw_env.config` lines to file (default `fw_env.config`)
 - `--output-tcp <IPv4:port>` — duplicate output to TCP destination
@@ -110,7 +112,7 @@ fw_env.config line: /dev/mtd0 0x40000 0x10000 0x10000 0x1
 
 ## `uboot_audit image`
 
-Scans MTD block/char devices for likely U-Boot image signatures. FIT/uImage checks are validated structurally to reduce false positives.
+Scans MTD/UBI and block devices (SD/eMMC such as `/dev/sd*` and `/dev/mmcblk*`) for likely U-Boot image signatures. FIT/uImage checks are validated structurally to reduce false positives.
 
 ### `image` arguments
 
@@ -118,8 +120,11 @@ Scans MTD block/char devices for likely U-Boot image signatures. FIT/uImage chec
 - `--dev <device>` — restrict scan or action to one device
 - `--step <bytes>` — scan stride (default `0x1000`)
 - `--allow-text` — also match plain `U-Boot` text (higher false-positive risk)
+- `--skip-remove` — keep any helper `/dev` nodes created during scan
 - `--skip-mtd` — skip MTD/mtdblock scan targets
 - `--skip-ubi` — skip UBI/ubiblock scan targets
+- `--skip-sd` — skip `/dev/sd*` scan targets
+- `--skip-emmc` — skip `/dev/mmcblk*` scan targets
 - `--send-logs` — send tool logs over TCP using `--output-tcp <IPv4:port>`
 - `--pull` — pull image bytes from `--dev` at `--offset` and send over TCP to `--output-tcp`
 - `--offset <bytes>` — image offset used by `--pull` or `--find-address`

@@ -388,14 +388,17 @@ static void usage(const char *prog)
 		"Usage: %s [--verbose] [--dev <device>] [--step <bytes>] [--allow-text]\n"
 		"       %s --pull --dev <device> --offset <bytes> --output-tcp <IPv4:port>\n"
 		"       %s --find-address --dev <device> --offset <bytes>\n"
-		"       %s [--skip-mtd] [--skip-ubi]\n"
-		"  no args: scan /dev/mtdblock*, /dev/mtd*, /dev/ubi*_* and /dev/ubiblock*_* for U-Boot image signatures\n"
+		"       %s [--skip-remove] [--skip-mtd] [--skip-ubi] [--skip-sd] [--skip-emmc]\n"
+		"  no args: scan /dev/mtdblock*, /dev/mtd*, /dev/ubi*_*, /dev/ubiblock*_*, /dev/mmcblk* and /dev/sd* for U-Boot image signatures\n"
 		"  --verbose: print scan progress\n"
 		"  --dev: scan only a specific device\n"
 		"  --step: step size when scanning (default: 0x1000)\n"
 		"  --allow-text: also match plain 'U-Boot' string (higher false-positive risk)\n"
+		"  --skip-remove: keep any helper /dev nodes created during scan\n"
 		"  --skip-mtd: skip MTD and mtdblock scan targets\n"
 		"  --skip-ubi: skip UBI and ubiblock scan targets\n"
+		"  --skip-sd: skip /dev/sd* scan targets\n"
+		"  --skip-emmc: skip /dev/mmcblk* scan targets\n"
 		"  --send-logs: send tool log output to --output-tcp IPv4:port\n"
 		"  --pull: read image from --dev at --offset and stream bytes to --output-tcp\n"
 		"  --find-address: print image load address from header/FIT data\n"
@@ -649,6 +652,15 @@ int fw_image_scan_main(int argc, char **argv)
 	bool offset_set = false;
 	bool skip_mtd = false;
 	bool skip_ubi = false;
+	bool skip_sd = false;
+	bool skip_emmc = false;
+	bool skip_remove = false;
+	char **created_mtdblock_nodes = NULL;
+	size_t created_mtdblock_count = 0;
+	char **created_ubi_nodes = NULL;
+	size_t created_ubi_count = 0;
+	char **created_block_nodes = NULL;
+	size_t created_block_count = 0;
 	int opt;
 	int total_hits = 0;
 
@@ -671,13 +683,16 @@ int fw_image_scan_main(int argc, char **argv)
 		{ "find-address", no_argument, NULL, 'a' },
 		{ "send-logs", no_argument, NULL, 'L' },
 		{ "allow-text", no_argument, NULL, 't' },
+		{ "skip-remove", no_argument, NULL, 'R' },
 		{ "skip-mtd", no_argument, NULL, 'M' },
 		{ "skip-ubi", no_argument, NULL, 'U' },
+		{ "skip-sd", no_argument, NULL, 'S' },
+		{ "skip-emmc", no_argument, NULL, 'E' },
 		{ "help", no_argument, NULL, 'h' },
 		{ 0, 0, 0, 0 }
 	};
 
-	while ((opt = getopt_long(argc, argv, "hvd:s:o:p:PtaLMU", long_opts, NULL)) != -1) {
+	while ((opt = getopt_long(argc, argv, "hvd:s:o:p:PtaLRMUSE", long_opts, NULL)) != -1) {
 		switch (opt) {
 		case 'h':
 			usage(argv[0]);
@@ -712,11 +727,20 @@ int fw_image_scan_main(int argc, char **argv)
 		case 't':
 			g_allow_text = true;
 			break;
+		case 'R':
+			skip_remove = true;
+			break;
 		case 'M':
 			skip_mtd = true;
 			break;
 		case 'U':
 			skip_ubi = true;
+			break;
+		case 'S':
+			skip_sd = true;
+			break;
+		case 'E':
+			skip_emmc = true;
 			break;
 		default:
 			usage(argv[0]);
@@ -774,13 +798,18 @@ int fw_image_scan_main(int argc, char **argv)
 	}
 
 	if (!skip_mtd)
-		fw_ensure_mtd_nodes(g_verbose);
+		fw_ensure_mtd_nodes_collect(g_verbose, &created_mtdblock_nodes, &created_mtdblock_count);
 	if (!skip_ubi)
-		fw_ensure_ubi_nodes(g_verbose);
+		fw_ensure_ubi_nodes_collect(g_verbose, &created_ubi_nodes, &created_ubi_count);
+	fw_ensure_block_nodes_collect(g_verbose, !skip_sd, !skip_emmc,
+		&created_block_nodes, &created_block_count);
 
 	if (dev_override) {
 		int hits = scan_dev_for_image(dev_override, step);
-		return (hits < 0) ? 1 : 0;
+		total_hits = (hits > 0) ? hits : 0;
+		if (hits < 0)
+			total_hits = -1;
+		goto out;
 	}
 
 	glob_t g;
@@ -790,24 +819,56 @@ int fw_image_scan_main(int argc, char **argv)
 		scan_flags |= (FW_SCAN_GLOB_MTDBLOCK | FW_SCAN_GLOB_MTDCHAR);
 	if (!skip_ubi)
 		scan_flags |= (FW_SCAN_GLOB_UBI | FW_SCAN_GLOB_UBIBLOCK);
+	if (!skip_emmc)
+		scan_flags |= FW_SCAN_GLOB_MMCBLK;
+	if (!skip_sd)
+		scan_flags |= FW_SCAN_GLOB_SDBLK;
 
-	if (fw_glob_scan_devices(&g,
-			scan_flags) < 0)
-		return 1;
+	if (fw_glob_scan_devices(&g, scan_flags) < 0) {
+		total_hits = -1;
+		goto out;
+	}
 
 	for (size_t i = 0; i < g.gl_pathc; i++) {
 		int hits = scan_dev_for_image(g.gl_pathv[i], step);
+		if (hits < 0) {
+			total_hits = -1;
+			break;
+		}
 		if (hits > 0)
 			total_hits += hits;
 	}
 
 	globfree(&g);
 
-	if (!total_hits && g_verbose)
+out:
+	if (total_hits == 0 && g_verbose)
 		out_printf("No image signatures found.\n");
+
+	if (!skip_remove) {
+		for (size_t i = 0; i < created_mtdblock_count; i++) {
+			if (unlink(created_mtdblock_nodes[i]) < 0 && errno != ENOENT)
+				err_printf("Warning: failed to remove created node %s: %s\n",
+					created_mtdblock_nodes[i], strerror(errno));
+		}
+		for (size_t i = 0; i < created_ubi_count; i++) {
+			if (unlink(created_ubi_nodes[i]) < 0 && errno != ENOENT)
+				err_printf("Warning: failed to remove created node %s: %s\n",
+					created_ubi_nodes[i], strerror(errno));
+		}
+		for (size_t i = 0; i < created_block_count; i++) {
+			if (unlink(created_block_nodes[i]) < 0 && errno != ENOENT)
+				err_printf("Warning: failed to remove created node %s: %s\n",
+					created_block_nodes[i], strerror(errno));
+		}
+	}
+
+	fw_free_created_nodes(created_mtdblock_nodes, created_mtdblock_count);
+	fw_free_created_nodes(created_ubi_nodes, created_ubi_count);
+	fw_free_created_nodes(created_block_nodes, created_block_count);
 
 	if (g_log_sock >= 0)
 		close(g_log_sock);
 
-	return 0;
+	return (total_hits < 0) ? 1 : 0;
 }

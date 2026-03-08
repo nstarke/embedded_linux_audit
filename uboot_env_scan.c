@@ -935,7 +935,7 @@ static int scan_dev(const char *dev, uint64_t step, uint64_t env_size, const cha
 
 static void usage(const char *prog)
 {
-	err_printf("Usage: %s [--verbose] [--size <env_size>] [--hint <hint>] [--dev <dev>] [--brutefoce] [--skip-remove] [--skip-mtd] [--skip-ubi] [--output-config[=<path>]] [--write <path>] [<dev:step> ...]\n"
+	err_printf("Usage: %s [--verbose] [--size <env_size>] [--hint <hint>] [--dev <dev>] [--brutefoce] [--skip-remove] [--skip-mtd] [--skip-ubi] [--skip-sd] [--skip-emmc] [--output-config[=<path>]] [--write <path>] [<dev:step> ...]\n"
 		"             [--parse-vars]\n"
 		"             [--output-tcp <ip:port>]\n", prog);
 }
@@ -955,10 +955,14 @@ int fw_env_scan_main(int argc, char **argv)
 	bool skip_remove = false;
 	bool skip_mtd = false;
 	bool skip_ubi = false;
+	bool skip_sd = false;
+	bool skip_emmc = false;
 	char **created_mtdblock_nodes = NULL;
 	size_t created_mtdblock_count = 0;
 	char **created_ubi_nodes = NULL;
 	size_t created_ubi_count = 0;
+	char **created_block_nodes = NULL;
+	size_t created_block_count = 0;
 	int ret = 0;
 	int argi;
 	int opt;
@@ -981,6 +985,8 @@ int fw_env_scan_main(int argc, char **argv)
 		{ "skip-remove", no_argument, NULL, 'R' },
 		{ "skip-mtd", no_argument, NULL, 'M' },
 		{ "skip-ubi", no_argument, NULL, 'U' },
+		{ "skip-sd", no_argument, NULL, 'S' },
+		{ "skip-emmc", no_argument, NULL, 'E' },
 		{ "parse-vars", no_argument, NULL, 'P' },
 		{ "output-config", optional_argument, NULL, 'c' },
 		{ "output-tcp", required_argument, NULL, 'o' },
@@ -988,7 +994,7 @@ int fw_env_scan_main(int argc, char **argv)
 		{ 0, 0, 0, 0 }
 	};
 
-	while ((opt = getopt_long(argc, argv, "hvs:H:d:bo:RMUPc::w:", long_opts, NULL)) != -1) {
+	while ((opt = getopt_long(argc, argv, "hvs:H:d:bo:RMUSEPc::w:", long_opts, NULL)) != -1) {
 		switch (opt) {
 		case 'h': usage(argv[0]); return 0;
 		case 'v': g_verbose = true; break;
@@ -999,6 +1005,8 @@ int fw_env_scan_main(int argc, char **argv)
 		case 'R': skip_remove = true; break;
 		case 'M': skip_mtd = true; break;
 		case 'U': skip_ubi = true; break;
+		case 'S': skip_sd = true; break;
+		case 'E': skip_emmc = true; break;
 		case 'P': g_parse_vars = true; break;
 		case 'c': output_config_path = optarg ? optarg : "fw_env.config"; break;
 		case 'o': output_tcp_target = optarg; break;
@@ -1040,6 +1048,8 @@ int fw_env_scan_main(int argc, char **argv)
 			fw_ensure_mtd_nodes_collect(g_verbose, &created_mtdblock_nodes, &created_mtdblock_count);
 		if (!skip_ubi)
 			fw_ensure_ubi_nodes_collect(g_verbose, &created_ubi_nodes, &created_ubi_count);
+		fw_ensure_block_nodes_collect(g_verbose, !skip_sd, !skip_emmc,
+			&created_block_nodes, &created_block_count);
 		ret = perform_write_operation("fw_env.config", write_script_path);
 		goto out;
 	}
@@ -1067,6 +1077,8 @@ int fw_env_scan_main(int argc, char **argv)
 		fw_ensure_mtd_nodes_collect(g_verbose, &created_mtdblock_nodes, &created_mtdblock_count);
 	if (!skip_ubi)
 		fw_ensure_ubi_nodes_collect(g_verbose, &created_ubi_nodes, &created_ubi_count);
+	fw_ensure_block_nodes_collect(g_verbose, !skip_sd, !skip_emmc,
+		&created_block_nodes, &created_block_count);
 
 	if (dev_override) {
 		if (!strncmp(dev_override, "/dev/mtd", 8) && strncmp(dev_override, "/dev/mtdblock", 13)) {
@@ -1103,6 +1115,10 @@ one_scan_done:
 			scan_flags |= FW_SCAN_GLOB_MTDBLOCK;
 		if (!skip_ubi)
 			scan_flags |= (FW_SCAN_GLOB_UBI | FW_SCAN_GLOB_UBIBLOCK);
+		if (!skip_emmc)
+			scan_flags |= FW_SCAN_GLOB_MMCBLK;
+		if (!skip_sd)
+			scan_flags |= FW_SCAN_GLOB_SDBLK;
 
 		if (fw_glob_scan_devices(&g, scan_flags) < 0)
 			goto scan_fail;
@@ -1178,9 +1194,15 @@ out:
 				err_printf("Warning: failed to remove created node %s: %s\n",
 					created_ubi_nodes[i], strerror(errno));
 		}
+		for (size_t i = 0; i < created_block_count; i++) {
+			if (unlink(created_block_nodes[i]) < 0 && errno != ENOENT)
+				err_printf("Warning: failed to remove created node %s: %s\n",
+					created_block_nodes[i], strerror(errno));
+		}
 	}
 	fw_free_created_nodes(created_mtdblock_nodes, created_mtdblock_count);
 	fw_free_created_nodes(created_ubi_nodes, created_ubi_count);
+	fw_free_created_nodes(created_block_nodes, created_block_count);
 	if (g_output_config_fp) {
 		fclose(g_output_config_fp);
 		g_output_config_fp = NULL;

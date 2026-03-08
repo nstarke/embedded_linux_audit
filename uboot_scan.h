@@ -10,6 +10,8 @@
 #define FW_SCAN_GLOB_MTDCHAR   (1U << 1)
 #define FW_SCAN_GLOB_UBI       (1U << 2)
 #define FW_SCAN_GLOB_UBIBLOCK  (1U << 3)
+#define FW_SCAN_GLOB_MMCBLK    (1U << 4)
+#define FW_SCAN_GLOB_SDBLK     (1U << 5)
 
 int fw_get_mtd_index(const char *dev, char *idx, size_t idx_sz);
 
@@ -19,6 +21,8 @@ uint64_t fw_guess_size_from_proc_mtd(const char *dev);
 uint64_t fw_guess_erasesize_from_proc_mtd(const char *dev);
 uint64_t fw_guess_size_from_ubi_sysfs(const char *dev);
 uint64_t fw_guess_step_from_ubi_sysfs(const char *dev);
+uint64_t fw_guess_size_from_block_sysfs(const char *dev);
+uint64_t fw_guess_step_from_block_sysfs(const char *dev);
 uint64_t fw_guess_size_any(const char *dev);
 uint64_t fw_guess_step_any(const char *dev);
 int fw_glob_scan_devices(glob_t *out, unsigned int flags);
@@ -28,6 +32,9 @@ int fw_ensure_mtd_nodes_collect(bool verbose, char ***created_nodes, size_t *cre
 void fw_free_created_nodes(char **nodes, size_t count);
 void fw_ensure_ubi_nodes(bool verbose);
 int fw_ensure_ubi_nodes_collect(bool verbose, char ***created_nodes, size_t *created_count);
+int fw_ensure_block_nodes_collect(bool verbose, bool include_sd, bool include_emmc,
+				  char ***created_nodes, size_t *created_count);
+void fw_ensure_block_nodes(bool verbose, bool include_sd, bool include_emmc);
 
 int fw_parse_u64(const char *s, uint64_t *out);
 uint32_t fw_read_be32(const uint8_t *p);

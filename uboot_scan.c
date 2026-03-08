@@ -25,6 +25,10 @@
 #define S_IFBLK 0060000
 #endif
 
+#ifndef PATH_MAX
+#define PATH_MAX 4096
+#endif
+
 static uint64_t read_u64_from_file(const char *path)
 {
 	char buf[64];
@@ -356,6 +360,62 @@ uint64_t fw_guess_step_from_ubi_sysfs(const char *dev)
 	return read_u64_from_file(path);
 }
 
+static const char *dev_basename(const char *dev)
+{
+	const char *base;
+
+	if (!dev)
+		return NULL;
+
+	base = strrchr(dev, '/');
+	return base ? base + 1 : dev;
+}
+
+uint64_t fw_guess_size_from_block_sysfs(const char *dev)
+{
+	const char *base = dev_basename(dev);
+	char path[PATH_MAX];
+	uint64_t sectors;
+	uint64_t logical_block_size;
+
+	if (!base || !*base)
+		return 0;
+
+	snprintf(path, sizeof(path), "/sys/class/block/%s/size", base);
+	sectors = read_u64_from_file(path);
+	if (!sectors)
+		return 0;
+
+	snprintf(path, sizeof(path), "/sys/class/block/%s/queue/logical_block_size", base);
+	logical_block_size = read_u64_from_file(path);
+	if (!logical_block_size)
+		logical_block_size = 512;
+
+	return sectors * logical_block_size;
+}
+
+uint64_t fw_guess_step_from_block_sysfs(const char *dev)
+{
+	const char *base = dev_basename(dev);
+	char path[PATH_MAX];
+	uint64_t step;
+
+	if (!base || !*base)
+		return 0;
+
+	snprintf(path, sizeof(path), "/sys/class/block/%s/queue/minimum_io_size", base);
+	step = read_u64_from_file(path);
+	if (step)
+		return step;
+
+	snprintf(path, sizeof(path), "/sys/class/block/%s/queue/logical_block_size", base);
+	step = read_u64_from_file(path);
+	if (step)
+		return step;
+
+	return 512;
+}
+
 uint64_t fw_guess_size_any(const char *dev)
 {
 	uint64_t sz = fw_guess_size_from_sysfs(dev);
@@ -364,6 +424,8 @@ uint64_t fw_guess_size_any(const char *dev)
 		sz = fw_guess_size_from_proc_mtd(dev);
 	if (!sz)
 		sz = fw_guess_size_from_ubi_sysfs(dev);
+	if (!sz)
+		sz = fw_guess_size_from_block_sysfs(dev);
 
 	return sz;
 }
@@ -376,13 +438,15 @@ uint64_t fw_guess_step_any(const char *dev)
 		step = fw_guess_erasesize_from_proc_mtd(dev);
 	if (!step)
 		step = fw_guess_step_from_ubi_sysfs(dev);
+	if (!step)
+		step = fw_guess_step_from_block_sysfs(dev);
 
 	return step;
 }
 
 int fw_glob_scan_devices(glob_t *out, unsigned int flags)
 {
-	const char *patterns[4];
+	const char *patterns[8];
 	size_t n = 0;
 	bool did_call = false;
 
@@ -399,6 +463,14 @@ int fw_glob_scan_devices(glob_t *out, unsigned int flags)
 		patterns[n++] = "/dev/ubi[0-9]*_[0-9]*";
 	if (flags & FW_SCAN_GLOB_UBIBLOCK)
 		patterns[n++] = "/dev/ubiblock[0-9]*_[0-9]*";
+	if (flags & FW_SCAN_GLOB_MMCBLK) {
+		patterns[n++] = "/dev/mmcblk[0-9]*";
+		patterns[n++] = "/dev/mmcblk[0-9]*p[0-9]*";
+	}
+	if (flags & FW_SCAN_GLOB_SDBLK) {
+		patterns[n++] = "/dev/sd[a-z]";
+		patterns[n++] = "/dev/sd[a-z][0-9]*";
+	}
 
 	for (size_t i = 0; i < n; i++) {
 		int rc = glob(patterns[i], did_call ? GLOB_APPEND : 0, NULL, out);
@@ -502,6 +574,93 @@ static int read_major_minor_from_sysfs(const char *dev_attr_path,
 	*major_out = major;
 	*minor_out = minor;
 	return 0;
+}
+
+static bool str_all_digits(const char *s)
+{
+	if (!s || !*s)
+		return false;
+
+	for (const char *p = s; *p; p++) {
+		if (*p < '0' || *p > '9')
+			return false;
+	}
+
+	return true;
+}
+
+static bool is_sd_block_name(const char *name)
+{
+	if (!name || strncmp(name, "sd", 2))
+		return false;
+	if (name[2] < 'a' || name[2] > 'z')
+		return false;
+	if (name[3] == '\0')
+		return true;
+
+	return str_all_digits(name + 3);
+}
+
+static bool is_emmc_block_name(const char *name)
+{
+	const char *p;
+
+	if (!name || strncmp(name, "mmcblk", 6))
+		return false;
+
+	p = name + 6;
+	while (*p >= '0' && *p <= '9')
+		p++;
+	if (p == name + 6)
+		return false;
+	if (*p == '\0')
+		return true;
+	if (*p != 'p')
+		return false;
+
+	return str_all_digits(p + 1);
+}
+
+int fw_ensure_block_nodes_collect(bool verbose, bool include_sd, bool include_emmc,
+				  char ***created_nodes, size_t *created_count)
+{
+	DIR *dir;
+	struct dirent *de;
+
+	dir = opendir("/sys/class/block");
+	if (!dir)
+		return -1;
+
+	while ((de = readdir(dir))) {
+		char dev_attr[PATH_MAX];
+		char devnode[PATH_MAX];
+		unsigned int major;
+		unsigned int minor;
+
+		if (!include_sd && is_sd_block_name(de->d_name))
+			continue;
+		if (!include_emmc && is_emmc_block_name(de->d_name))
+			continue;
+		if ((include_sd && is_sd_block_name(de->d_name)) ||
+		    (include_emmc && is_emmc_block_name(de->d_name))) {
+			snprintf(dev_attr, sizeof(dev_attr), "/sys/class/block/%s/dev", de->d_name);
+			snprintf(devnode, sizeof(devnode), "/dev/%s", de->d_name);
+
+			if (read_major_minor_from_sysfs(dev_attr, &major, &minor))
+				continue;
+
+			create_node_if_missing(devnode, S_IFBLK | 0600, makedev(major, minor), verbose,
+				created_nodes, created_count);
+		}
+	}
+
+	closedir(dir);
+	return 0;
+}
+
+void fw_ensure_block_nodes(bool verbose, bool include_sd, bool include_emmc)
+{
+	fw_ensure_block_nodes_collect(verbose, include_sd, include_emmc, NULL, NULL);
 }
 
 int fw_ensure_mtd_nodes_collect(bool verbose, char ***created_nodes, size_t *created_count)
