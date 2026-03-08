@@ -50,9 +50,12 @@ make
 Notes:
 
 - `libcsv` is built from source directly from `third_party/libcsv/libcsv.c`.
+- `zlib` is built from source from the `third_party/zlib` submodule and linked statically.
+- `libubootenv` is built from source from the `third_party/libubootenv` submodule and linked statically.
 - `json-c` is built from source from the `third_party/json-c` submodule via CMake, and linked statically (`third_party/json-c/build/libjson-c.a`).
 - `libcurl` is built from source from the `third_party/curl` submodule via CMake, and linked statically (`third_party/curl/build/lib/libcurl.a`).
 - `OpenSSL` is built from source from the `third_party/openssl` submodule (`libcrypto` static) and used for audit signature verification.
+- Official U-Boot source is tracked as submodule at `third_party/u-boot`.
 - The default CA bundle is fetched from `https://curl.se/ca/cacert.pem` at build time and embedded into the binary.
 - Override bundle source with:
   - `CA_BUNDLE_URL=<url>` to change download URL
@@ -138,7 +141,7 @@ Scans MTD/UBI plus block devices (SD/eMMC such as `/dev/sd*` and `/dev/mmcblk*`)
 - `--skip-ubi` — skip UBI/ubiblock scan targets and helper node handling
 - `--skip-sd` — skip `/dev/sd*` scan targets
 - `--skip-emmc` — skip `/dev/mmcblk*` scan targets
-- `--parse-vars` — print parsed key/value variables from candidate environments
+- `--parse-vars` — print parsed key/value variables from candidate environments (parsed via `libubootenv`)
 - `--output-config[=<path>]` — write discovered `fw_env.config` lines to file (default `fw_env.config`)
 - `--output-tcp <IPv4:port>` — duplicate output to TCP destination
 - `--output-http <http://host:port/path>` — duplicate output to HTTP endpoint via POST
@@ -148,7 +151,7 @@ Scans MTD/UBI plus block devices (SD/eMMC such as `/dev/sd*` and `/dev/mmcblk*`)
 
 ### `--write` behavior
 
-- Uses `./fw_env.config` for write settings.
+- Uses `./fw_env.config` for write settings and applies updates through `libubootenv` (built from source in `third_party/libubootenv`).
   - If `./fw_env.config` exists, it is used directly.
   - If it does not exist, the tool first runs scan logic to generate it, then writes.
 - Input file format (similar to `fw_setenv -s`):
@@ -164,7 +167,7 @@ Scans MTD/UBI plus block devices (SD/eMMC such as `/dev/sd*` and `/dev/mmcblk*`)
     - only `Y`/`y` proceeds; any other response skips that variable write/delete
   - existing environment CRC must be valid before writing
   - updated environment must fit configured environment size
-- CRC is recalculated and written back (standard or redundant layout detected from existing env data).
+- Environment persistence (including CRC/redundant handling) is performed by `libubootenv`.
 
 ### `env` examples
 

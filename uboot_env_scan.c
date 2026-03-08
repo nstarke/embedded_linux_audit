@@ -20,6 +20,7 @@
 #include <unistd.h>
 #include <json.h>
 #include <csv.h>
+#include <libuboot.h>
 
 #ifndef O_CLOEXEC
 #define O_CLOEXEC 0
@@ -27,6 +28,25 @@
 
 #define ARRAY_SIZE(x) (sizeof(x) / sizeof((x)[0]))
 #define AUTO_SCAN_MAX_STEP 0x10000ULL
+
+#if defined(__GNUC__) || defined(__clang__)
+#define MAYBE_UNUSED __attribute__((unused))
+#else
+#define MAYBE_UNUSED
+#endif
+
+struct env_kv {
+	char *name;
+	char *value;
+};
+
+struct uboot_cfg_entry {
+	char dev[256];
+	uint64_t off;
+	uint64_t env_size;
+	uint64_t erase_size;
+	uint64_t sectors;
+};
 
 static uint32_t crc32_table[256];
 static bool g_verbose;
@@ -291,19 +311,6 @@ struct env_candidate {
 	bool crc_redundant;
 };
 
-struct uboot_cfg_entry {
-	char dev[256];
-	uint64_t off;
-	uint64_t env_size;
-	uint64_t erase_size;
-	uint64_t sectors;
-};
-
-struct env_kv {
-	char *name;
-	char *value;
-};
-
 static int add_or_merge_candidate(struct env_candidate **cands, size_t *count,
 					  uint64_t cfg_off, bool crc_standard, bool crc_redundant)
 {
@@ -468,22 +475,6 @@ static uint32_t read_le32(const uint8_t *p)
 		((uint32_t)p[3] << 24);
 }
 
-static void write_le32(uint8_t *p, uint32_t v)
-{
-	p[0] = (uint8_t)(v & 0xFFU);
-	p[1] = (uint8_t)((v >> 8) & 0xFFU);
-	p[2] = (uint8_t)((v >> 16) & 0xFFU);
-	p[3] = (uint8_t)((v >> 24) & 0xFFU);
-}
-
-static void write_be32(uint8_t *p, uint32_t v)
-{
-	p[0] = (uint8_t)((v >> 24) & 0xFFU);
-	p[1] = (uint8_t)((v >> 16) & 0xFFU);
-	p[2] = (uint8_t)((v >> 8) & 0xFFU);
-	p[3] = (uint8_t)(v & 0xFFU);
-}
-
 static bool file_exists(const char *path)
 {
 	struct stat st;
@@ -567,7 +558,7 @@ static char *uboot_trim(char *s)
 	return s;
 }
 
-static void free_env_kvs(struct env_kv *kvs, size_t count)
+static MAYBE_UNUSED void free_env_kvs(struct env_kv *kvs, size_t count)
 {
 	if (!kvs)
 		return;
@@ -578,7 +569,7 @@ static void free_env_kvs(struct env_kv *kvs, size_t count)
 	free(kvs);
 }
 
-static int env_set_kv(struct env_kv **kvs, size_t *count, const char *name, const char *value)
+static MAYBE_UNUSED int env_set_kv(struct env_kv **kvs, size_t *count, const char *name, const char *value)
 {
 	struct env_kv *tmp;
 	char *name_dup;
@@ -617,7 +608,7 @@ static int env_set_kv(struct env_kv **kvs, size_t *count, const char *name, cons
 	return 0;
 }
 
-static int env_unset_kv(struct env_kv *kvs, size_t *count, const char *name)
+static MAYBE_UNUSED int env_unset_kv(struct env_kv *kvs, size_t *count, const char *name)
 {
 	if (!kvs || !count || !name)
 		return -1;
@@ -636,7 +627,7 @@ static int env_unset_kv(struct env_kv *kvs, size_t *count, const char *name)
 	return 0;
 }
 
-static int parse_fw_config(const char *path, struct uboot_cfg_entry out[2], size_t *out_count)
+static MAYBE_UNUSED int parse_fw_config(const char *path, struct uboot_cfg_entry out[2], size_t *out_count)
 {
 	FILE *fp;
 	char line[1024];
@@ -709,7 +700,7 @@ static int parse_fw_config(const char *path, struct uboot_cfg_entry out[2], size
 	return 0;
 }
 
-static int parse_existing_env_data(const uint8_t *buf, size_t buf_len, size_t data_off,
+static MAYBE_UNUSED int parse_existing_env_data(const uint8_t *buf, size_t buf_len, size_t data_off,
 					   struct env_kv **kvs, size_t *count)
 {
 	size_t off = data_off;
@@ -757,7 +748,7 @@ static int parse_existing_env_data(const uint8_t *buf, size_t buf_len, size_t da
 	return 0;
 }
 
-static int apply_write_script(const char *script_path, struct env_kv **kvs, size_t *count)
+static MAYBE_UNUSED int apply_write_script(const char *script_path, struct env_kv **kvs, size_t *count)
 {
 	FILE *fp;
 	char line[4096];
@@ -836,7 +827,144 @@ static int apply_write_script(const char *script_path, struct env_kv **kvs, size
 	return 0;
 }
 
-static int build_env_region(const struct env_kv *kvs, size_t count, uint8_t *out, size_t out_len)
+static int apply_write_script_libuboot(const char *script_path, struct uboot_ctx *ctx)
+{
+	FILE *fp;
+	char line[4096];
+	unsigned long lineno = 0;
+
+	if (!script_path || !ctx)
+		return -1;
+
+	fp = fopen(script_path, "r");
+	if (!fp) {
+		err_printf("Cannot open write script %s: %s\n", script_path, strerror(errno));
+		return -1;
+	}
+
+	while (fgets(line, sizeof(line), fp)) {
+		char *s;
+		char *name;
+		char *value = NULL;
+		char *eq;
+		char *space;
+		bool delete_var = false;
+
+		lineno++;
+		s = uboot_trim(line);
+		if (!*s || *s == '#')
+			continue;
+
+		eq = strchr(s, '=');
+		space = strpbrk(s, " \t");
+		if (eq && (!space || eq < space)) {
+			*eq = '\0';
+			name = uboot_trim(s);
+			value = eq + 1;
+		} else {
+			if (space) {
+				*space = '\0';
+				name = uboot_trim(s);
+				value = uboot_trim(space + 1);
+				if (!*value)
+					delete_var = true;
+			} else {
+				name = uboot_trim(s);
+				delete_var = true;
+			}
+		}
+
+		if (!uboot_valid_var_name(name)) {
+			err_printf("Invalid variable name at %s:%lu\n", script_path, lineno);
+			fclose(fp);
+			return -1;
+		}
+
+		if (uboot_is_sensitive_env_var(name) && !uboot_confirm_sensitive_write(name)) {
+			out_printf("Skipping update for %s\n", name);
+			continue;
+		}
+
+		if (delete_var) {
+			if (libuboot_set_env(ctx, name, NULL) < 0) {
+				err_printf("Failed to delete variable '%s' via libubootenv\n", name);
+				fclose(fp);
+				return -1;
+			}
+			continue;
+		}
+
+		if (!value)
+			value = "";
+
+		if (libuboot_set_env(ctx, name, value) < 0) {
+			err_printf("Failed to set variable '%s' via libubootenv\n", name);
+			fclose(fp);
+			return -1;
+		}
+	}
+
+	fclose(fp);
+	return 0;
+}
+
+static void dump_env_vars_libuboot(const char *dev, uint64_t off, uint64_t env_size,
+				   uint64_t erase_size, uint64_t sector_count)
+{
+	struct uboot_ctx *ctx = NULL;
+	struct uboot_env_device envdevs[2];
+	void *entry = NULL;
+	size_t count = 0;
+
+	if (!dev || !env_size)
+		return;
+
+	memset(envdevs, 0, sizeof(envdevs));
+	envdevs[0].devname = (char *)dev;
+	envdevs[0].offset = (long long)off;
+	envdevs[0].envsize = (size_t)env_size;
+	envdevs[0].sectorsize = (size_t)(erase_size ? erase_size : env_size);
+	envdevs[0].envsectors = (unsigned long)(sector_count ? sector_count : 1);
+
+	if (libuboot_initialize(&ctx, envdevs) < 0 || !ctx) {
+		emit_env_verbosef(dev, off,
+			"libubootenv: initialize failed while parsing variables at 0x%jx",
+			(uintmax_t)off);
+		return;
+	}
+
+	if (libuboot_open(ctx) < 0) {
+		emit_env_verbosef(dev, off,
+			"libubootenv: open failed while parsing variables at 0x%jx",
+			(uintmax_t)off);
+		libuboot_exit(ctx);
+		return;
+	}
+
+	out_printf("    parsed env vars:\n");
+	while ((entry = libuboot_iterator(ctx, entry)) != NULL) {
+		const char *name = libuboot_getname(entry);
+		const char *value = libuboot_getvalue(entry);
+
+		if (!name)
+			continue;
+
+		out_printf("      %s=%s\n", name, value ? value : "");
+		count++;
+		if (count >= 256) {
+			out_printf("      ... truncated after 256 vars ...\n");
+			break;
+		}
+	}
+
+	if (!count)
+		out_printf("      (no parseable variables found)\n");
+
+	libuboot_close(ctx);
+	libuboot_exit(ctx);
+}
+
+static MAYBE_UNUSED int build_env_region(const struct env_kv *kvs, size_t count, uint8_t *out, size_t out_len)
 {
 	size_t pos = 0;
 
@@ -866,7 +994,7 @@ static int build_env_region(const struct env_kv *kvs, size_t count, uint8_t *out
 	return 0;
 }
 
-static int read_env_copy(const struct uboot_cfg_entry *cfg, uint8_t **out)
+static MAYBE_UNUSED int read_env_copy(const struct uboot_cfg_entry *cfg, uint8_t **out)
 {
 	int fd;
 	uint8_t *buf;
@@ -897,7 +1025,7 @@ static int read_env_copy(const struct uboot_cfg_entry *cfg, uint8_t **out)
 	return 0;
 }
 
-static bool env_crc_matches(const uint8_t *buf, size_t env_size, size_t data_off, bool *is_le)
+static MAYBE_UNUSED bool env_crc_matches(const uint8_t *buf, size_t env_size, size_t data_off, bool *is_le)
 {
 	uint32_t stored_le;
 	uint32_t stored_be;
@@ -921,7 +1049,7 @@ static bool env_crc_matches(const uint8_t *buf, size_t env_size, size_t data_off
 	return false;
 }
 
-static int write_env_copy(const struct uboot_cfg_entry *cfg, const uint8_t *buf)
+static MAYBE_UNUSED int write_env_copy(const struct uboot_cfg_entry *cfg, const uint8_t *buf)
 {
 	int fd;
 
@@ -950,97 +1078,43 @@ static int write_env_copy(const struct uboot_cfg_entry *cfg, const uint8_t *buf)
 
 static int perform_write_operation(const char *config_path, const char *script_path)
 {
-	struct uboot_cfg_entry cfg[2];
-	size_t cfg_count = 0;
-	bool redundant;
-	size_t data_off;
-	uint8_t *old0 = NULL;
-	uint8_t *old1 = NULL;
-	bool crc_le = true;
-	bool valid0_std = false, valid0_red = false, valid1_std = false, valid1_red = false;
-	struct env_kv *kvs = NULL;
-	size_t kv_count = 0;
-	uint8_t *new0 = NULL;
-	uint8_t *new1 = NULL;
+	struct uboot_ctx *ctx = NULL;
 	int ret = 1;
 
-	if (parse_fw_config(config_path, cfg, &cfg_count))
+	if (!config_path || !script_path)
 		return 1;
 
-	redundant = (cfg_count == 2);
-
-	if (read_env_copy(&cfg[0], &old0))
-		goto out;
-	if (redundant && read_env_copy(&cfg[1], &old1))
-		goto out;
-
-	valid0_std = env_crc_matches(old0, (size_t)cfg[0].env_size, 4, &crc_le);
-	valid0_red = env_crc_matches(old0, (size_t)cfg[0].env_size, 5, &crc_le);
-	if (redundant) {
-		valid1_std = env_crc_matches(old1, (size_t)cfg[1].env_size, 4, &crc_le);
-		valid1_red = env_crc_matches(old1, (size_t)cfg[1].env_size, 5, &crc_le);
-	}
-
-	if (redundant)
-		data_off = (valid0_red || valid1_red) ? 5 : 4;
-	else
-		data_off = valid0_red ? 5 : 4;
-
-	if ((redundant && !(valid0_std || valid0_red || valid1_std || valid1_red)) ||
-	    (!redundant && !(valid0_std || valid0_red))) {
-		err_printf("Existing environment CRC is invalid; refusing to write\n");
+	if (libuboot_initialize(&ctx, NULL) < 0 || !ctx) {
+		err_printf("libubootenv initialization failed\n");
 		goto out;
 	}
 
-	if ((data_off == 4 && parse_existing_env_data(old0, (size_t)cfg[0].env_size, 4, &kvs, &kv_count)) ||
-	    (data_off == 5 && parse_existing_env_data(old0, (size_t)cfg[0].env_size, 5, &kvs, &kv_count)))
-		goto out;
-
-	if (apply_write_script(script_path, &kvs, &kv_count))
-		goto out;
-
-	new0 = calloc(1, (size_t)cfg[0].env_size);
-	if (!new0)
-		goto out;
-	if (build_env_region(kvs, kv_count, new0 + data_off, (size_t)cfg[0].env_size - data_off)) {
-		err_printf("Updated environment does not fit in configured env size (0x%jx)\n", (uintmax_t)cfg[0].env_size);
+	if (libuboot_read_config(ctx, config_path) < 0) {
+		err_printf("libubootenv failed reading config %s\n", config_path);
 		goto out;
 	}
-	if (data_off == 5)
-		new0[4] = 0;
-	if (crc_le)
-		write_le32(new0, uboot_crc32_calc(crc32_table, new0 + data_off, (size_t)cfg[0].env_size - data_off));
-	else
-		write_be32(new0, uboot_crc32_calc(crc32_table, new0 + data_off, (size_t)cfg[0].env_size - data_off));
 
-	if (redundant) {
-		new1 = calloc(1, (size_t)cfg[1].env_size);
-		if (!new1)
-			goto out;
-		if (build_env_region(kvs, kv_count, new1 + data_off, (size_t)cfg[1].env_size - data_off))
-			goto out;
-		if (data_off == 5)
-			new1[4] = 1;
-		if (crc_le)
-			write_le32(new1, uboot_crc32_calc(crc32_table, new1 + data_off, (size_t)cfg[1].env_size - data_off));
-		else
-			write_be32(new1, uboot_crc32_calc(crc32_table, new1 + data_off, (size_t)cfg[1].env_size - data_off));
+	if (libuboot_open(ctx) < 0) {
+		err_printf("libubootenv failed opening current environment from %s\n", config_path);
+		goto out;
 	}
 
-	if (write_env_copy(&cfg[0], new0))
+	if (apply_write_script_libuboot(script_path, ctx))
 		goto out;
-	if (redundant && write_env_copy(&cfg[1], new1))
+
+	if (libuboot_env_store(ctx) < 0) {
+		err_printf("libubootenv failed storing updated environment\n");
 		goto out;
+	}
 
 	out_printf("Environment write complete using %s\n", config_path);
 	ret = 0;
 
 out:
-	free(old0);
-	free(old1);
-	free(new0);
-	free(new1);
-	free_env_kvs(kvs, kv_count);
+	if (ctx) {
+		libuboot_close(ctx);
+		libuboot_exit(ctx);
+	}
 	return ret;
 }
 
@@ -1068,7 +1142,7 @@ static bool has_hint_var(const uint8_t *data, size_t len, const char *hint_overr
 	return false;
 }
 
-static void dump_env_vars(const uint8_t *data, size_t len)
+static MAYBE_UNUSED void dump_env_vars(const uint8_t *data, size_t len)
 {
 	size_t off = 0;
 	size_t count = 0;
@@ -1208,10 +1282,7 @@ static int scan_dev(const char *dev, uint64_t step, uint64_t env_size, const cha
 				(uintmax_t)erase_size, (uintmax_t)sector_count);
 		}
 		if (g_parse_vars) {
-			if (crc_ok_redund && !crc_ok_std)
-				dump_env_vars(buf + 5, (size_t)env_size - 5);
-			else
-				dump_env_vars(buf + 4, (size_t)env_size - 4);
+			dump_env_vars_libuboot(dev, (uint64_t)off, env_size, erase_size, sector_count);
 		}
 		hits++;
 	}

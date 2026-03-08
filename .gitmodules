@@ -10,3 +10,12 @@
 [submodule "third_party/openssl"]
 	path = third_party/openssl
 	url = https://github.com/openssl/openssl.git
+[submodule "third_party/u-boot"]
+	path = third_party/u-boot
+	url = https://source.denx.de/u-boot/u-boot.git
+[submodule "third_party/libubootenv"]
+	path = third_party/libubootenv
+	url = https://github.com/sbabic/libubootenv.git
+[submodule "third_party/zlib"]
+	path = third_party/zlib
+	url = https://github.com/madler/zlib.git
