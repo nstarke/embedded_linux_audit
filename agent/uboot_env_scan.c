@@ -274,6 +274,49 @@ static void emit_env_verbose(const char *dev, uint64_t off, const char *msg)
 		(void)flush_output_http_buffer();
 }
 
+static void emit_env_scan_start_verbose(const char *dev,
+					uint64_t step,
+					uint64_t env_size,
+					uint64_t device_size)
+{
+	if (!g_verbose)
+		return;
+
+	if (g_output_format == FW_OUTPUT_JSON) {
+		json_object *obj = json_object_new_object();
+		if (!obj)
+			return;
+		json_object_object_add(obj, "record", json_object_new_string("verbose"));
+		if (dev)
+			json_object_object_add(obj, "device", json_object_new_string(dev));
+		json_object_object_add(obj, "offset", json_object_new_uint64(0));
+		json_object_object_add(obj,
+			"message",
+			json_object_new_string_fmt("Scanning %s (step=0x%jx, env_size=0x%jx, device_size=0x%jx)",
+				dev ? dev : "",
+				(uintmax_t)step,
+				(uintmax_t)env_size,
+				(uintmax_t)device_size));
+		json_object_object_add(obj, "step", json_object_new_uint64(step));
+		json_object_object_add(obj, "env_size", json_object_new_uint64(env_size));
+		json_object_object_add(obj, "device_size", json_object_new_uint64(device_size));
+		out_printf("%s\n", json_object_to_json_string_ext(obj, JSON_C_TO_STRING_PLAIN));
+		json_object_put(obj);
+
+		if (g_output_http_uri && g_output_http_len > 0)
+			(void)flush_output_http_buffer();
+		return;
+	}
+
+	emit_env_verbosef(dev,
+		0,
+		"Scanning %s (step=0x%jx, env_size=0x%jx, device_size=0x%jx)",
+		dev,
+		(uintmax_t)step,
+		(uintmax_t)env_size,
+		(uintmax_t)device_size);
+}
+
 static void emit_env_verbosef(const char *dev, uint64_t off, const char *fmt, ...)
 {
 	va_list ap;
@@ -1258,13 +1301,7 @@ static int scan_dev(const char *dev, uint64_t step, uint64_t env_size, const cha
 	}
 
 	if (g_verbose) {
-		emit_env_verbosef(dev,
-			0,
-			"Scanning %s (step=0x%jx, env_size=0x%jx, device_size=0x%jx)",
-			dev,
-			(uintmax_t)step,
-			(uintmax_t)env_size,
-			(uintmax_t)st.st_size);
+		emit_env_scan_start_verbose(dev, step, env_size, (uint64_t)st.st_size);
 	}
 
 	for (off = 0; (uint64_t)off + env_size <= (uint64_t)st.st_size; off += (off_t)step) {
