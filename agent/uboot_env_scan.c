@@ -61,6 +61,7 @@ static size_t g_output_http_cap;
 static FILE *g_output_config_fp = NULL;
 static void out_printf(const char *fmt, ...);
 static void err_printf(const char *fmt, ...);
+static int flush_output_http_buffer(void);
 enum uboot_output_format {
 	FW_OUTPUT_TXT = 0,
 	FW_OUTPUT_CSV,
@@ -226,15 +227,15 @@ static void emit_redundant_pair_record(const char *dev, uint64_t a, uint64_t b)
 
 static void emit_env_verbose(const char *dev, uint64_t off, const char *msg)
 {
+	bool emitted = false;
+
 	if (!g_verbose || !msg)
 		return;
 
 	if (g_output_format == FW_OUTPUT_TXT) {
 		out_printf("%s\n", msg);
-		return;
-	}
-
-	if (g_output_format == FW_OUTPUT_CSV) {
+		emitted = true;
+	} else if (g_output_format == FW_OUTPUT_CSV) {
 		char off_s[32];
 
 		snprintf(off_s, sizeof(off_s), "0x%jx", (uintmax_t)off);
@@ -249,10 +250,8 @@ static void emit_env_verbose(const char *dev, uint64_t off, const char *msg)
 		csv_out_field(""); out_printf(",");
 		csv_out_field(""); out_printf(",");
 		csv_out_field(""); out_printf("\n");
-		return;
-	}
-
-	{
+		emitted = true;
+	} else {
 		json_object *obj = json_object_new_object();
 		if (!obj)
 			return;
@@ -263,7 +262,16 @@ static void emit_env_verbose(const char *dev, uint64_t off, const char *msg)
 		json_object_object_add(obj, "message", json_object_new_string(msg));
 		out_printf("%s\n", json_object_to_json_string_ext(obj, JSON_C_TO_STRING_PLAIN));
 		json_object_put(obj);
+		emitted = true;
 	}
+
+	/*
+	 * Best-effort immediate delivery for verbose records so long-running scans
+	 * can surface debug output to HTTP(S) listeners without waiting for process
+	 * exit/final flush.
+	 */
+	if (emitted && g_output_http_uri && g_output_http_len > 0)
+		(void)flush_output_http_buffer();
 }
 
 static void emit_env_verbosef(const char *dev, uint64_t off, const char *fmt, ...)
@@ -373,6 +381,9 @@ static int flush_output_http_buffer(void)
 	if (!g_output_http_uri)
 		return 0;
 
+	if (g_output_http_len == 0)
+		return 0;
+
 	if (uboot_http_post(g_output_http_uri,
 			 (const uint8_t *)(g_output_http_buf ? g_output_http_buf : ""),
 			 g_output_http_len,
@@ -385,6 +396,10 @@ static int flush_output_http_buffer(void)
 			   errbuf[0] ? errbuf : "unknown error");
 		return -1;
 	}
+
+	g_output_http_len = 0;
+	if (g_output_http_buf)
+		g_output_http_buf[0] = '\0';
 
 	return 0;
 }

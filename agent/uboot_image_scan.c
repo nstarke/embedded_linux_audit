@@ -50,6 +50,38 @@ enum uboot_output_format {
 };
 static enum uboot_output_format g_output_format = FW_OUTPUT_TXT;
 static bool g_csv_header_emitted;
+static const char *image_http_content_type(void);
+static void err_printf(const char *fmt, ...);
+
+static int flush_output_http_buffer(void)
+{
+	char errbuf[256];
+
+	if (!g_output_http_uri)
+		return 0;
+
+	if (g_output_http_len == 0)
+		return 0;
+
+	if (uboot_http_post(g_output_http_uri,
+			 (const uint8_t *)(g_output_http_buf ? g_output_http_buf : ""),
+			 g_output_http_len,
+			 image_http_content_type(),
+			 g_insecure,
+			 g_verbose,
+			 errbuf,
+			 sizeof(errbuf)) < 0) {
+		err_printf("Failed to POST output to %s: %s\n", g_output_http_uri,
+			errbuf[0] ? errbuf : "unknown error");
+		return -1;
+	}
+
+	g_output_http_len = 0;
+	if (g_output_http_buf)
+		g_output_http_buf[0] = '\0';
+
+	return 0;
+}
 
 static const char *image_http_content_type(void)
 {
@@ -229,15 +261,21 @@ static void emit_image_record(const char *record, const char *dev, uint64_t off,
 
 static void emit_image_verbose(const char *dev, uint64_t off, const char *msg)
 {
+	bool emitted = false;
+
 	if (!g_verbose || !msg)
 		return;
 
 	if (g_output_format == FW_OUTPUT_TXT) {
 		out_printf("%s\n", msg);
-		return;
+		emitted = true;
+	} else {
+		emit_image_record("verbose", dev ? dev : "", off, "log", msg);
+		emitted = true;
 	}
 
-	emit_image_record("verbose", dev ? dev : "", off, "log", msg);
+	if (emitted && g_output_http_uri && g_output_http_len > 0)
+		(void)flush_output_http_buffer();
 }
 
 static size_t align_up_4(size_t v)
@@ -1648,21 +1686,8 @@ out:
 	if (g_log_sock >= 0)
 		close(g_log_sock);
 
-	if (g_output_http_uri && g_output_http_len > 0) {
-		char errbuf[256];
-		if (uboot_http_post(g_output_http_uri,
-				 (const uint8_t *)(g_output_http_buf ? g_output_http_buf : ""),
-				 g_output_http_len,
-				 image_http_content_type(),
-				 g_insecure,
-				 g_verbose,
-				 errbuf,
-				 sizeof(errbuf)) < 0) {
-			err_printf("Failed to POST output to %s: %s\n", g_output_http_uri,
-				errbuf[0] ? errbuf : "unknown error");
-			total_hits = -1;
-		}
-	}
+	if (flush_output_http_buffer() < 0)
+		total_hits = -1;
 
 	free(g_output_http_buf);
 	g_output_http_buf = NULL;

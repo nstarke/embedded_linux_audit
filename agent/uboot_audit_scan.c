@@ -49,6 +49,7 @@ static bool g_http_insecure;
 static bool g_http_verbose;
 
 static const char *audit_http_content_type(enum uboot_output_format fmt);
+static int flush_output_http_buffer(void);
 
 static enum uboot_output_format detect_output_format(void)
 {
@@ -125,6 +126,8 @@ static void emit_v(FILE *stream, const char *fmt, va_list ap)
 	if ((size_t)needed < sizeof(stack)) {
 		send_to_output_socket(stack, (size_t)needed);
 		append_output_http_buffer(stack, (size_t)needed);
+		if (g_http_verbose && g_output_http_uri && g_output_http_len > 0)
+			(void)flush_output_http_buffer();
 		return;
 	}
 
@@ -137,6 +140,8 @@ static void emit_v(FILE *stream, const char *fmt, va_list ap)
 	va_end(aq);
 	send_to_output_socket(dyn, (size_t)needed);
 	append_output_http_buffer(dyn, (size_t)needed);
+	if (g_http_verbose && g_output_http_uri && g_output_http_len > 0)
+		(void)flush_output_http_buffer();
 	free(dyn);
 }
 
@@ -177,6 +182,9 @@ static int flush_output_http_buffer(void)
 	if (!g_output_http_uri)
 		return 0;
 
+	if (g_output_http_len == 0)
+		return 0;
+
 	if (uboot_http_post(g_output_http_uri,
 			 (const uint8_t *)(g_output_http_buf ? g_output_http_buf : ""),
 			 g_output_http_len,
@@ -189,6 +197,10 @@ static int flush_output_http_buffer(void)
 			errbuf[0] ? errbuf : "unknown error");
 		return -1;
 	}
+
+	g_output_http_len = 0;
+	if (g_output_http_buf)
+		g_output_http_buf[0] = '\0';
 
 	return 0;
 }
