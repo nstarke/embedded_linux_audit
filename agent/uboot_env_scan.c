@@ -62,6 +62,7 @@ static FILE *g_output_config_fp = NULL;
 static void out_printf(const char *fmt, ...);
 static void err_printf(const char *fmt, ...);
 static int flush_output_http_buffer(void);
+static void emit_env_verbosef(const char *dev, uint64_t off, const char *fmt, ...);
 enum uboot_output_format {
 	FW_OUTPUT_TXT = 0,
 	FW_OUTPUT_CSV,
@@ -279,7 +280,20 @@ static void emit_env_scan_start_verbose(const char *dev,
 					uint64_t env_size,
 					uint64_t device_size)
 {
+	char msg[256];
+	int n;
+
 	if (!g_verbose)
+		return;
+
+	n = snprintf(msg,
+		     sizeof(msg),
+		     "Scanning %s (step=0x%jx, env_size=0x%jx, device_size=0x%jx)",
+		     dev ? dev : "",
+		     (uintmax_t)step,
+		     (uintmax_t)env_size,
+		     (uintmax_t)device_size);
+	if (n < 0)
 		return;
 
 	if (g_output_format == FW_OUTPUT_JSON) {
@@ -290,13 +304,7 @@ static void emit_env_scan_start_verbose(const char *dev,
 		if (dev)
 			json_object_object_add(obj, "device", json_object_new_string(dev));
 		json_object_object_add(obj, "offset", json_object_new_uint64(0));
-		json_object_object_add(obj,
-			"message",
-			json_object_new_string_fmt("Scanning %s (step=0x%jx, env_size=0x%jx, device_size=0x%jx)",
-				dev ? dev : "",
-				(uintmax_t)step,
-				(uintmax_t)env_size,
-				(uintmax_t)device_size));
+		json_object_object_add(obj, "message", json_object_new_string(msg));
 		json_object_object_add(obj, "step", json_object_new_uint64(step));
 		json_object_object_add(obj, "env_size", json_object_new_uint64(env_size));
 		json_object_object_add(obj, "device_size", json_object_new_uint64(device_size));
@@ -310,11 +318,8 @@ static void emit_env_scan_start_verbose(const char *dev,
 
 	emit_env_verbosef(dev,
 		0,
-		"Scanning %s (step=0x%jx, env_size=0x%jx, device_size=0x%jx)",
-		dev,
-		(uintmax_t)step,
-		(uintmax_t)env_size,
-		(uintmax_t)device_size);
+		"%s",
+		msg);
 }
 
 static void emit_env_verbosef(const char *dev, uint64_t off, const char *fmt, ...)
