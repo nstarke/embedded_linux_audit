@@ -8,6 +8,7 @@ SCRIPT_NAME="$(basename "$0")"
 WEB_SERVER=""
 OUTPUT_DIRECTORY=""
 TEMP_OUTPUT_DIRECTORY=""
+ISA=""
 
 # Remove stale temporary download directories from previous runs.
 for stale_dir in /tmp/download_tests_output.*; do
@@ -16,8 +17,8 @@ for stale_dir in /tmp/download_tests_output.*; do
 done
 
 usage() {
-    echo "usage: $0 --webserver <url> [--output-directory <path>]"
-    echo "   or: $0 --webserver=<url> [--output-directory=<path>]"
+    echo "usage: $0 --webserver <url> --isa <arch> [--output-directory <path>]"
+    echo "   or: $0 --webserver=<url> --isa=<arch> [--output-directory=<path>]"
 }
 
 while [ "$#" -gt 0 ]; do
@@ -48,6 +49,19 @@ while [ "$#" -gt 0 ]; do
             OUTPUT_DIRECTORY="${1#*=}"
             shift
             ;;
+        --isa)
+            if [ "$#" -lt 2 ]; then
+                echo "error: --isa requires a value"
+                usage
+                exit 2
+            fi
+            ISA="$2"
+            shift 2
+            ;;
+        --isa=*)
+            ISA="${1#*=}"
+            shift
+            ;;
         --help|-h)
             usage
             exit 0
@@ -62,6 +76,12 @@ done
 
 if [ -z "$WEB_SERVER" ]; then
     echo "error: --webserver is required"
+    usage
+    exit 2
+fi
+
+if [ -z "$ISA" ]; then
+    echo "error: --isa is required"
     usage
     exit 2
 fi
@@ -133,6 +153,16 @@ while IFS= read -r rel_path; do
 
     fetch_to_file "$url" "$dest"
 done <"$SCRIPT_LIST_FILE"
+
+AUDIT_BINARY_NAME="uboot_audit-$ISA"
+AUDIT_BINARY_URL="$BASE_URL/$AUDIT_BINARY_NAME"
+AUDIT_BINARY_TMP="$(mktemp /tmp/uboot_audit.XXXXXX)"
+AUDIT_BINARY_DEST="/tmp/uboot_audit"
+
+echo "downloading $AUDIT_BINARY_URL -> $AUDIT_BINARY_DEST"
+fetch_to_file "$AUDIT_BINARY_URL" "$AUDIT_BINARY_TMP"
+chmod +x "$AUDIT_BINARY_TMP"
+mv -f "$AUDIT_BINARY_TMP" "$AUDIT_BINARY_DEST"
 
 echo "done"
 if [ -n "$TEMP_OUTPUT_DIRECTORY" ]; then
