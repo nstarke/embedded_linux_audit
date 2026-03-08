@@ -81,6 +81,15 @@ def build_handler(log_path: Path, assets_dir: Path, tests_dir: Path, verbose: bo
             timestamp = dt.datetime.now(dt.timezone.utc).isoformat()
             print(f"[{timestamp}] {self.client_address[0]} {self.command} {self.path}", flush=True)
 
+        def _verbose_response_log(self, status: int, size: int) -> None:
+            if not verbose:
+                return
+            timestamp = dt.datetime.now(dt.timezone.utc).isoformat()
+            print(
+                f"[{timestamp}] {self.client_address[0]} {self.command} {self.path} -> {status} ({size} bytes)",
+                flush=True,
+            )
+
         def _send_bytes(self, status: int, body: bytes, content_type: str = "text/plain; charset=utf-8"):
             self.send_response(status)
             self.send_header("Content-Type", content_type)
@@ -88,6 +97,7 @@ def build_handler(log_path: Path, assets_dir: Path, tests_dir: Path, verbose: bo
             self.end_headers()
             if self.command != "HEAD":
                 self.wfile.write(body)
+            self._verbose_response_log(status, len(body))
 
         def _safe_asset_path(self) -> Path | None:
             parsed = urllib.parse.urlparse(self.path)
@@ -186,6 +196,7 @@ def build_handler(log_path: Path, assets_dir: Path, tests_dir: Path, verbose: bo
             self.send_header("Content-Type", "text/plain; charset=utf-8")
             self.end_headers()
             self.wfile.write(b"ok\n")
+            self._verbose_response_log(200, 3)
 
     return PostLoggerHandler
 
