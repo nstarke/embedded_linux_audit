@@ -85,11 +85,11 @@ run_exact_case() {
 
     if [ "$rc" -eq "$expected_rc" ]; then
         echo "[PASS] $name (rc=$rc)"
-        PASS_COUNT=$((PASS_COUNT + 1))
+        PASS_COUNT="$(expr "$PASS_COUNT" + 1)"
     else
         echo "[FAIL] $name (rc=$rc, expected=$expected_rc)"
         sed -n '1,80p' "$log"
-        FAIL_COUNT=$((FAIL_COUNT + 1))
+        FAIL_COUNT="$(expr "$FAIL_COUNT" + 1)"
     fi
 
     rm -f "$log"
@@ -105,11 +105,11 @@ run_accept_case() {
 
     if [ "$rc" -ne 2 ]; then
         echo "[PASS] $name (rc=$rc)"
-        PASS_COUNT=$((PASS_COUNT + 1))
+        PASS_COUNT="$(expr "$PASS_COUNT" + 1)"
     else
         echo "[FAIL] $name (rc=$rc, parser/usage failure)"
         sed -n '1,80p' "$log"
-        FAIL_COUNT=$((FAIL_COUNT + 1))
+        FAIL_COUNT="$(expr "$FAIL_COUNT" + 1)"
     fi
 
     rm -f "$log"
