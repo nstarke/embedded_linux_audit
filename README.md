@@ -60,7 +60,27 @@ Scans MTD/UBI devices for blocks that resemble a valid U-Boot environment (CRC-v
 - `--hint <hint>` — override hint string used for positive labeling
 - `--dev <device>` — scan only one device (step inferred from sysfs/proc)
 - `--brutefoce` / `--bruteforce` — skip CRC checks and match by hint strings only
+- `--parse-vars` — print parsed key/value variables from candidate environments
+- `--output-config[=<path>]` — write discovered `fw_env.config` lines to file (default `fw_env.config`)
 - `--output <IPv4:port>` — duplicate output to TCP destination
+- `--write <path>` — apply env updates from text file (native `fw_setenv`-style behavior)
+
+### `--write` behavior
+
+- Uses `./fw_env.config` for write settings.
+  - If `./fw_env.config` exists, it is used directly.
+  - If it does not exist, the tool first runs scan logic to generate it, then writes.
+- Input file format (similar to `fw_setenv -s`):
+  - `name=value` or `name value` → set variable
+  - `name` (no value) → delete variable
+  - blank lines and `#` comments are ignored
+- Validations performed:
+  - variable name must be non-empty
+  - variable name must not contain `=`
+  - variable name must not contain whitespace or control characters
+  - existing environment CRC must be valid before writing
+  - updated environment must fit configured environment size
+- CRC is recalculated and written back (standard or redundant layout detected from existing env data).
 
 ### `env` examples
 
@@ -71,6 +91,7 @@ Scans MTD/UBI devices for blocks that resemble a valid U-Boot environment (CRC-v
 ./uboot_audit env --dev /dev/mtd3 --size 0x10000
 ./uboot_audit env --size 0x10000 /dev/mtd0:0x10000 /dev/mtd1:0x20000
 ./uboot_audit env --output 192.168.1.50:5000 --verbose
+./uboot_audit env --write ./new_env.txt
 ```
 
 Example candidate line:

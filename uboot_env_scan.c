@@ -39,6 +39,19 @@ struct env_candidate {
 	bool crc_redundant;
 };
 
+struct fw_cfg_entry {
+	char dev[256];
+	uint64_t off;
+	uint64_t env_size;
+	uint64_t erase_size;
+	uint64_t sectors;
+};
+
+struct env_kv {
+	char *name;
+	char *value;
+};
+
 static int add_or_merge_candidate(struct env_candidate **cands, size_t *count,
 					  uint64_t cfg_off, bool crc_standard, bool crc_redundant)
 {
@@ -149,6 +162,539 @@ static uint32_t read_le32(const uint8_t *p)
 		((uint32_t)p[1] << 8) |
 		((uint32_t)p[2] << 16) |
 		((uint32_t)p[3] << 24);
+}
+
+static void write_le32(uint8_t *p, uint32_t v)
+{
+	p[0] = (uint8_t)(v & 0xFFU);
+	p[1] = (uint8_t)((v >> 8) & 0xFFU);
+	p[2] = (uint8_t)((v >> 16) & 0xFFU);
+	p[3] = (uint8_t)((v >> 24) & 0xFFU);
+}
+
+static void write_be32(uint8_t *p, uint32_t v)
+{
+	p[0] = (uint8_t)((v >> 24) & 0xFFU);
+	p[1] = (uint8_t)((v >> 16) & 0xFFU);
+	p[2] = (uint8_t)((v >> 8) & 0xFFU);
+	p[3] = (uint8_t)(v & 0xFFU);
+}
+
+static bool file_exists(const char *path)
+{
+	struct stat st;
+
+	if (!path || !*path)
+		return false;
+	return stat(path, &st) == 0;
+}
+
+static bool fw_valid_var_name(const char *name)
+{
+	if (!name || !*name)
+		return false;
+
+	for (const unsigned char *p = (const unsigned char *)name; *p; p++) {
+		if (*p == '=')
+			return false;
+		if (isspace(*p) || iscntrl(*p))
+			return false;
+	}
+
+	return true;
+}
+
+static char *fw_trim(char *s)
+{
+	char *end;
+
+	if (!s)
+		return s;
+
+	while (*s && isspace((unsigned char)*s))
+		s++;
+
+	if (!*s)
+		return s;
+
+	end = s + strlen(s) - 1;
+	while (end >= s && isspace((unsigned char)*end)) {
+		*end = '\0';
+		end--;
+	}
+
+	return s;
+}
+
+static void free_env_kvs(struct env_kv *kvs, size_t count)
+{
+	if (!kvs)
+		return;
+	for (size_t i = 0; i < count; i++) {
+		free(kvs[i].name);
+		free(kvs[i].value);
+	}
+	free(kvs);
+}
+
+static int env_set_kv(struct env_kv **kvs, size_t *count, const char *name, const char *value)
+{
+	struct env_kv *tmp;
+	char *name_dup;
+	char *value_dup;
+
+	if (!kvs || !count || !name || !value)
+		return -1;
+
+	for (size_t i = 0; i < *count; i++) {
+		if (strcmp((*kvs)[i].name, name))
+			continue;
+		value_dup = strdup(value);
+		if (!value_dup)
+			return -1;
+		free((*kvs)[i].value);
+		(*kvs)[i].value = value_dup;
+		return 0;
+	}
+
+	tmp = realloc(*kvs, (*count + 1) * sizeof(**kvs));
+	if (!tmp)
+		return -1;
+	*kvs = tmp;
+
+	name_dup = strdup(name);
+	value_dup = strdup(value);
+	if (!name_dup || !value_dup) {
+		free(name_dup);
+		free(value_dup);
+		return -1;
+	}
+
+	(*kvs)[*count].name = name_dup;
+	(*kvs)[*count].value = value_dup;
+	(*count)++;
+	return 0;
+}
+
+static int env_unset_kv(struct env_kv *kvs, size_t *count, const char *name)
+{
+	if (!kvs || !count || !name)
+		return -1;
+
+	for (size_t i = 0; i < *count; i++) {
+		if (strcmp(kvs[i].name, name))
+			continue;
+		free(kvs[i].name);
+		free(kvs[i].value);
+		for (size_t j = i + 1; j < *count; j++)
+			kvs[j - 1] = kvs[j];
+		(*count)--;
+		return 0;
+	}
+
+	return 0;
+}
+
+static int parse_fw_config(const char *path, struct fw_cfg_entry out[2], size_t *out_count)
+{
+	FILE *fp;
+	char line[1024];
+	size_t count = 0;
+
+	if (!path || !out || !out_count)
+		return -1;
+
+	fp = fopen(path, "r");
+	if (!fp) {
+		err_printf("Cannot open %s: %s\n", path, strerror(errno));
+		return -1;
+	}
+
+	while (fgets(line, sizeof(line), fp)) {
+		char *s = fw_trim(line);
+		char dev[256], off_s[64], size_s[64], erase_s[64], sec_s[64];
+		uint64_t off, env_size, erase, sec;
+
+		if (!*s || *s == '#')
+			continue;
+
+		if (sscanf(s, "%255s %63s %63s %63s %63s", dev, off_s, size_s, erase_s, sec_s) != 5) {
+			err_printf("Invalid fw_env.config line: %s\n", s);
+			fclose(fp);
+			return -1;
+		}
+
+		if (fw_parse_u64(off_s, &off) || fw_parse_u64(size_s, &env_size) ||
+		    fw_parse_u64(erase_s, &erase) || fw_parse_u64(sec_s, &sec)) {
+			err_printf("Invalid numeric values in fw_env.config line: %s\n", s);
+			fclose(fp);
+			return -1;
+		}
+
+		if (!env_size || env_size < 8) {
+			err_printf("Invalid env size in fw_env.config line: %s\n", s);
+			fclose(fp);
+			return -1;
+		}
+
+		if (count >= 2) {
+			err_printf("fw_env.config must contain one or two usable entries for --write\n");
+			fclose(fp);
+			return -1;
+		}
+
+		strncpy(out[count].dev, dev, sizeof(out[count].dev) - 1);
+		out[count].dev[sizeof(out[count].dev) - 1] = '\0';
+		out[count].off = off;
+		out[count].env_size = env_size;
+		out[count].erase_size = erase;
+		out[count].sectors = sec;
+		count++;
+	}
+
+	fclose(fp);
+
+	if (!count) {
+		err_printf("No usable entries in %s\n", path);
+		return -1;
+	}
+
+	if (count == 2 && out[0].env_size != out[1].env_size) {
+		err_printf("Redundant entries in fw_env.config must use same env size\n");
+		return -1;
+	}
+
+	*out_count = count;
+	return 0;
+}
+
+static int parse_existing_env_data(const uint8_t *buf, size_t buf_len, size_t data_off,
+					   struct env_kv **kvs, size_t *count)
+{
+	size_t off = data_off;
+
+	if (!buf || !kvs || !count || data_off >= buf_len)
+		return -1;
+
+	while (off < buf_len) {
+		const char *entry;
+		size_t slen;
+		const char *eq;
+		char *name, *value;
+
+		if (buf[off] == '\0') {
+			if (off + 1 >= buf_len || buf[off + 1] == '\0')
+				break;
+			off++;
+			continue;
+		}
+
+		entry = (const char *)(buf + off);
+		slen = strnlen(entry, buf_len - off);
+		if (slen >= buf_len - off)
+			break;
+
+		eq = memchr(entry, '=', slen);
+		if (!eq) {
+			off += slen + 1;
+			continue;
+		}
+
+		name = strndup(entry, (size_t)(eq - entry));
+		value = strndup(eq + 1, slen - (size_t)(eq - entry) - 1);
+		if (!name || !value || env_set_kv(kvs, count, name, value)) {
+			free(name);
+			free(value);
+			return -1;
+		}
+		free(name);
+		free(value);
+
+		off += slen + 1;
+	}
+
+	return 0;
+}
+
+static int apply_write_script(const char *script_path, struct env_kv **kvs, size_t *count)
+{
+	FILE *fp;
+	char line[4096];
+	unsigned long lineno = 0;
+
+	if (!script_path || !kvs || !count)
+		return -1;
+
+	fp = fopen(script_path, "r");
+	if (!fp) {
+		err_printf("Cannot open write script %s: %s\n", script_path, strerror(errno));
+		return -1;
+	}
+
+	while (fgets(line, sizeof(line), fp)) {
+		char *s;
+		char *name;
+		char *value = NULL;
+		char *eq;
+		char *space;
+		bool delete_var = false;
+
+		lineno++;
+		s = fw_trim(line);
+		if (!*s || *s == '#')
+			continue;
+
+		eq = strchr(s, '=');
+		space = strpbrk(s, " \t");
+		if (eq && (!space || eq < space)) {
+			*eq = '\0';
+			name = fw_trim(s);
+			value = eq + 1;
+		} else {
+			if (space) {
+				*space = '\0';
+				name = fw_trim(s);
+				value = fw_trim(space + 1);
+				if (!*value)
+					delete_var = true;
+			} else {
+				name = fw_trim(s);
+				delete_var = true;
+			}
+		}
+
+		if (!fw_valid_var_name(name)) {
+			err_printf("Invalid variable name at %s:%lu\n", script_path, lineno);
+			fclose(fp);
+			return -1;
+		}
+
+		if (delete_var) {
+			if (env_unset_kv(*kvs, count, name)) {
+				fclose(fp);
+				return -1;
+			}
+			continue;
+		}
+
+		if (!value)
+			value = "";
+
+		if (env_set_kv(kvs, count, name, value)) {
+			fclose(fp);
+			return -1;
+		}
+	}
+
+	fclose(fp);
+	return 0;
+}
+
+static int build_env_region(const struct env_kv *kvs, size_t count, uint8_t *out, size_t out_len)
+{
+	size_t pos = 0;
+
+	if (!out || out_len < 2)
+		return -1;
+
+	memset(out, 0, out_len);
+	for (size_t i = 0; i < count; i++) {
+		size_t nlen = strlen(kvs[i].name);
+		size_t vlen = strlen(kvs[i].value);
+		size_t need = nlen + 1 + vlen + 1;
+
+		if (pos + need + 1 > out_len)
+			return -1;
+
+		memcpy(out + pos, kvs[i].name, nlen);
+		pos += nlen;
+		out[pos++] = '=';
+		memcpy(out + pos, kvs[i].value, vlen);
+		pos += vlen;
+		out[pos++] = '\0';
+	}
+
+	if (pos + 1 > out_len)
+		return -1;
+	out[pos++] = '\0';
+	return 0;
+}
+
+static int read_env_copy(const struct fw_cfg_entry *cfg, uint8_t **out)
+{
+	int fd;
+	uint8_t *buf;
+
+	if (!cfg || !out)
+		return -1;
+
+	buf = malloc((size_t)cfg->env_size);
+	if (!buf)
+		return -1;
+
+	fd = open(cfg->dev, O_RDONLY | O_CLOEXEC);
+	if (fd < 0) {
+		err_printf("Cannot open %s for read: %s\n", cfg->dev, strerror(errno));
+		free(buf);
+		return -1;
+	}
+
+	if ((uint64_t)pread(fd, buf, (size_t)cfg->env_size, (off_t)cfg->off) != cfg->env_size) {
+		err_printf("Failed reading env from %s at 0x%jx\n", cfg->dev, (uintmax_t)cfg->off);
+		close(fd);
+		free(buf);
+		return -1;
+	}
+
+	close(fd);
+	*out = buf;
+	return 0;
+}
+
+static bool env_crc_matches(const uint8_t *buf, size_t env_size, size_t data_off, bool *is_le)
+{
+	uint32_t stored_le;
+	uint32_t stored_be;
+	uint32_t calc;
+
+	if (!buf || env_size <= data_off || !is_le)
+		return false;
+
+	stored_le = read_le32(buf);
+	stored_be = fw_read_be32(buf);
+	calc = fw_crc32_calc(crc32_table, buf + data_off, env_size - data_off);
+	if (calc == stored_le) {
+		*is_le = true;
+		return true;
+	}
+	if (calc == stored_be) {
+		*is_le = false;
+		return true;
+	}
+
+	return false;
+}
+
+static int write_env_copy(const struct fw_cfg_entry *cfg, const uint8_t *buf)
+{
+	int fd;
+
+	if (!cfg || !buf)
+		return -1;
+
+	fd = open(cfg->dev, O_RDWR | O_CLOEXEC);
+	if (fd < 0) {
+		err_printf("Cannot open %s for write: %s\n", cfg->dev, strerror(errno));
+		return -1;
+	}
+
+	if ((uint64_t)pwrite(fd, buf, (size_t)cfg->env_size, (off_t)cfg->off) != cfg->env_size) {
+		err_printf("Failed writing env to %s at 0x%jx: %s\n", cfg->dev, (uintmax_t)cfg->off, strerror(errno));
+		close(fd);
+		return -1;
+	}
+
+	if (fsync(fd) < 0 && g_verbose)
+		err_printf("Warning: fsync failed on %s: %s\n", cfg->dev, strerror(errno));
+
+	close(fd);
+	return 0;
+}
+
+static int perform_write_operation(const char *config_path, const char *script_path)
+{
+	struct fw_cfg_entry cfg[2];
+	size_t cfg_count = 0;
+	bool redundant;
+	size_t data_off;
+	uint8_t *old0 = NULL;
+	uint8_t *old1 = NULL;
+	bool crc_le = true;
+	bool valid0_std = false, valid0_red = false, valid1_std = false, valid1_red = false;
+	struct env_kv *kvs = NULL;
+	size_t kv_count = 0;
+	uint8_t *new0 = NULL;
+	uint8_t *new1 = NULL;
+	int ret = 1;
+
+	if (parse_fw_config(config_path, cfg, &cfg_count))
+		return 1;
+
+	redundant = (cfg_count == 2);
+
+	if (read_env_copy(&cfg[0], &old0))
+		goto out;
+	if (redundant && read_env_copy(&cfg[1], &old1))
+		goto out;
+
+	valid0_std = env_crc_matches(old0, (size_t)cfg[0].env_size, 4, &crc_le);
+	valid0_red = env_crc_matches(old0, (size_t)cfg[0].env_size, 5, &crc_le);
+	if (redundant) {
+		valid1_std = env_crc_matches(old1, (size_t)cfg[1].env_size, 4, &crc_le);
+		valid1_red = env_crc_matches(old1, (size_t)cfg[1].env_size, 5, &crc_le);
+	}
+
+	if (redundant)
+		data_off = (valid0_red || valid1_red) ? 5 : 4;
+	else
+		data_off = valid0_red ? 5 : 4;
+
+	if ((redundant && !(valid0_std || valid0_red || valid1_std || valid1_red)) ||
+	    (!redundant && !(valid0_std || valid0_red))) {
+		err_printf("Existing environment CRC is invalid; refusing to write\n");
+		goto out;
+	}
+
+	if ((data_off == 4 && parse_existing_env_data(old0, (size_t)cfg[0].env_size, 4, &kvs, &kv_count)) ||
+	    (data_off == 5 && parse_existing_env_data(old0, (size_t)cfg[0].env_size, 5, &kvs, &kv_count)))
+		goto out;
+
+	if (apply_write_script(script_path, &kvs, &kv_count))
+		goto out;
+
+	new0 = calloc(1, (size_t)cfg[0].env_size);
+	if (!new0)
+		goto out;
+	if (build_env_region(kvs, kv_count, new0 + data_off, (size_t)cfg[0].env_size - data_off)) {
+		err_printf("Updated environment does not fit in configured env size (0x%jx)\n", (uintmax_t)cfg[0].env_size);
+		goto out;
+	}
+	if (data_off == 5)
+		new0[4] = 0;
+	if (crc_le)
+		write_le32(new0, fw_crc32_calc(crc32_table, new0 + data_off, (size_t)cfg[0].env_size - data_off));
+	else
+		write_be32(new0, fw_crc32_calc(crc32_table, new0 + data_off, (size_t)cfg[0].env_size - data_off));
+
+	if (redundant) {
+		new1 = calloc(1, (size_t)cfg[1].env_size);
+		if (!new1)
+			goto out;
+		if (build_env_region(kvs, kv_count, new1 + data_off, (size_t)cfg[1].env_size - data_off))
+			goto out;
+		if (data_off == 5)
+			new1[4] = 1;
+		if (crc_le)
+			write_le32(new1, fw_crc32_calc(crc32_table, new1 + data_off, (size_t)cfg[1].env_size - data_off));
+		else
+			write_be32(new1, fw_crc32_calc(crc32_table, new1 + data_off, (size_t)cfg[1].env_size - data_off));
+	}
+
+	if (write_env_copy(&cfg[0], new0))
+		goto out;
+	if (redundant && write_env_copy(&cfg[1], new1))
+		goto out;
+
+	out_printf("Environment write complete using %s\n", config_path);
+	ret = 0;
+
+out:
+	free(old0);
+	free(old1);
+	free(new0);
+	free(new1);
+	free_env_kvs(kvs, kv_count);
+	return ret;
 }
 
 static bool has_hint_var(const uint8_t *data, size_t len, const char *hint_override)
@@ -347,7 +893,7 @@ static int scan_dev(const char *dev, uint64_t step, uint64_t env_size, const cha
 
 static void usage(const char *prog)
 {
-	err_printf("Usage: %s [--verbose] [--size <env_size>] [--hint <hint>] [--dev <dev>] [--brutefoce] [--skip-remove] [--skip-mtd] [--skip-ubi] [--output-config[=<path>]] [<dev:step> ...]\n"
+	err_printf("Usage: %s [--verbose] [--size <env_size>] [--hint <hint>] [--dev <dev>] [--brutefoce] [--skip-remove] [--skip-mtd] [--skip-ubi] [--output-config[=<path>]] [--write <path>] [<dev:step> ...]\n"
 		"             [--parse-vars]\n"
 		"             [--output <ip:port>]\n", prog);
 }
@@ -361,6 +907,9 @@ int fw_env_scan_main(int argc, char **argv)
 	const char *dev_override = NULL;
 	const char *output_target = NULL;
 	const char *output_config_path = NULL;
+	const char *write_script_path = NULL;
+	bool write_mode = false;
+	bool need_generate_config = false;
 	bool skip_remove = false;
 	bool skip_mtd = false;
 	bool skip_ubi = false;
@@ -393,10 +942,11 @@ int fw_env_scan_main(int argc, char **argv)
 		{ "parse-vars", no_argument, NULL, 'P' },
 		{ "output-config", optional_argument, NULL, 'c' },
 		{ "output", required_argument, NULL, 'o' },
+		{ "write", required_argument, NULL, 'w' },
 		{ 0, 0, 0, 0 }
 	};
 
-	while ((opt = getopt_long(argc, argv, "hvs:H:d:bo:RMUPc::", long_opts, NULL)) != -1) {
+	while ((opt = getopt_long(argc, argv, "hvs:H:d:bo:RMUPc::w:", long_opts, NULL)) != -1) {
 		switch (opt) {
 		case 'h': usage(argv[0]); return 0;
 		case 'v': g_verbose = true; break;
@@ -410,6 +960,7 @@ int fw_env_scan_main(int argc, char **argv)
 		case 'P': g_parse_vars = true; break;
 		case 'c': output_config_path = optarg ? optarg : "fw_env.config"; break;
 		case 'o': output_target = optarg; break;
+		case 'w': write_script_path = optarg; break;
 		default: usage(argv[0]); return 2;
 		}
 	}
@@ -418,6 +969,36 @@ int fw_env_scan_main(int argc, char **argv)
 	if (geteuid() != 0) {
 		err_printf("This program must be run as root.\n");
 		ret = 1;
+		goto out;
+	}
+
+	if (write_script_path) {
+		write_mode = true;
+		if (access(write_script_path, R_OK) < 0) {
+			err_printf("Cannot read --write file %s: %s\n", write_script_path, strerror(errno));
+			ret = 2;
+			goto out;
+		}
+		if (output_config_path && strcmp(output_config_path, "fw_env.config")) {
+			err_printf("--write uses ./fw_env.config only\n");
+			ret = 2;
+			goto out;
+		}
+		if (file_exists("fw_env.config")) {
+			need_generate_config = false;
+		} else {
+			need_generate_config = true;
+			output_config_path = "fw_env.config";
+		}
+	}
+
+	if (write_mode && !need_generate_config) {
+		fw_crc32_init(crc32_table);
+		if (!skip_mtd)
+			fw_ensure_mtd_nodes_collect(g_verbose, &created_mtdblock_nodes, &created_mtdblock_count);
+		if (!skip_ubi)
+			fw_ensure_ubi_nodes_collect(g_verbose, &created_ubi_nodes, &created_ubi_count);
+		ret = perform_write_operation("fw_env.config", write_script_path);
 		goto out;
 	}
 
@@ -465,11 +1046,11 @@ int fw_env_scan_main(int argc, char **argv)
 			if (scan_dev(dev_override, step, common_sizes[i], hint_override) < 0)
 				goto scan_fail;
 		ret = 0;
-		goto out;
+		goto post_scan;
 
 one_scan_done:
 		ret = (scan_dev(dev_override, step, env_size, hint_override) < 0) ? 1 : 0;
-		goto out;
+		goto post_scan;
 	}
 
 	if (argi >= argc) {
@@ -502,7 +1083,7 @@ one_scan_done:
 		}
 		globfree(&g);
 		ret = 0;
-		goto out;
+		goto post_scan;
 	}
 
 	for (int i = argi; i < argc; i++) {
@@ -528,10 +1109,20 @@ one_scan_done:
 		*colon = ':';
 	}
 	ret = 0;
-	goto out;
+	goto post_scan;
 
 scan_fail:
 	ret = 1;
+	goto out;
+
+post_scan:
+	if (write_mode && ret == 0) {
+		if (g_output_config_fp) {
+			fclose(g_output_config_fp);
+			g_output_config_fp = NULL;
+		}
+		ret = perform_write_operation("fw_env.config", write_script_path);
+	}
 
 out:
 	if (!skip_remove) {
