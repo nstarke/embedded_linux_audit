@@ -23,6 +23,25 @@ usage() {
     echo "   or: $0 --webserver <url> --list-isa"
 }
 
+has_printf() {
+    cmd_exists printf
+}
+
+cmd_exists() {
+    cmd_name="$1"
+
+    # Prefer `command -v`, but fall back when `command` is unavailable.
+    if command -v "$cmd_name" >/dev/null 2>&1; then
+        return 0
+    elif which "$cmd_name" >/dev/null 2>&1; then
+        return 0
+    elif type "$cmd_name" >/dev/null 2>&1; then
+        return 0
+    else
+        return 1
+    fi
+}
+
 list_valid_isas_from_index_file() {
     index_file="$1"
 
@@ -38,7 +57,14 @@ list_valid_isas_from_index_file() {
 normalize_isa_value() {
     value="$1"
     # Strip carriage returns/newlines that may be introduced by copy/paste or CRLF sources.
-    printf '%s' "$value" | tr -d '\r\n'
+    if has_printf; then
+        printf '%s' "$value" | tr -d '\r\n'
+    else
+        # shell fallback when printf is unavailable
+        cat <<EOF_NORMALIZE_ISA | tr -d '\r\n'
+$value
+EOF_NORMALIZE_ISA
+    fi
 }
 
 print_valid_isas() {
@@ -110,9 +136,9 @@ fi
 
 BASE_URL="${WEB_SERVER%/}"
 
-if command -v curl >/dev/null 2>&1 || which curl >/dev/null 2>&1; then
+if cmd_exists curl; then
     downloader="curl"
-elif command -v wget >/dev/null 2>&1 || which wget >/dev/null 2>&1; then
+elif cmd_exists wget; then
     downloader="wget"
 else
     echo "error: neither curl nor wget is installed"
