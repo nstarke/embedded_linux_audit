@@ -60,6 +60,9 @@ Scans MTD/UBI devices for blocks that resemble a valid U-Boot environment (CRC-v
 - `--hint <hint>` — override hint string used for positive labeling
 - `--dev <device>` — scan only one device (step inferred from sysfs/proc)
 - `--brutefoce` / `--bruteforce` — skip CRC checks and match by hint strings only
+- `--skip-remove` — keep any created helper `/dev/mtdblock*`/UBI device nodes after run
+- `--skip-mtd` — skip MTD/mtdblock scan targets and helper node handling
+- `--skip-ubi` — skip UBI/ubiblock scan targets and helper node handling
 - `--parse-vars` — print parsed key/value variables from candidate environments
 - `--output-config[=<path>]` — write discovered `fw_env.config` lines to file (default `fw_env.config`)
 - `--output-tcp <IPv4:port>` — duplicate output to TCP destination
@@ -78,6 +81,9 @@ Scans MTD/UBI devices for blocks that resemble a valid U-Boot environment (CRC-v
   - variable name must be non-empty
   - variable name must not contain `=`
   - variable name must not contain whitespace or control characters
+  - sensitive variable updates/deletes require interactive confirmation:
+    - prompt: `Modifying $ENVIRONMENT_VARIABLE_NAME might render the host unbootable.  Do you wish to proceed?`
+    - only `Y`/`y` proceeds; any other response skips that variable write/delete
   - existing environment CRC must be valid before writing
   - updated environment must fit configured environment size
 - CRC is recalculated and written back (standard or redundant layout detected from existing env data).
@@ -112,6 +118,8 @@ Scans MTD block/char devices for likely U-Boot image signatures. FIT/uImage chec
 - `--dev <device>` — restrict scan or action to one device
 - `--step <bytes>` — scan stride (default `0x1000`)
 - `--allow-text` — also match plain `U-Boot` text (higher false-positive risk)
+- `--skip-mtd` — skip MTD/mtdblock scan targets
+- `--skip-ubi` — skip UBI/ubiblock scan targets
 - `--send-logs` — send tool logs over TCP using `--output-tcp <IPv4:port>`
 - `--pull` — pull image bytes from `--dev` at `--offset` and send over TCP to `--output-tcp`
 - `--offset <bytes>` — image offset used by `--pull` or `--find-address`
@@ -129,7 +137,7 @@ Scans MTD block/char devices for likely U-Boot image signatures. FIT/uImage chec
   - `--offset`
 - `--find-address` **cannot** be combined with:
   - `--pull`
-  - `--output-tcp`
+  - `--output-tcp` (unless `--send-logs` is also set)
 - `--send-logs` **requires**:
   - `--output-tcp`
 - `--send-logs` **cannot** be combined with:
