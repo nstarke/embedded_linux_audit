@@ -15,7 +15,7 @@ print_section "audit subcommand argument coverage"
 TMP_DIR="$(mktemp -d /tmp/test_audit_args.XXXXXX)"
 TMP_BLOB="$TMP_DIR/sample.fit"
 TMP_PEM="$TMP_DIR/sample.pem"
-printf 'fit-placeholder' >"$TMP_BLOB"
+echo 'fit-placeholder' >"$TMP_BLOB"
 cat >"$TMP_PEM" <<'PEM'
 -----BEGIN PUBLIC KEY-----
 MFwwDQYJKoZIhvcNAQEBBQADSwAwSAJBAK6y8l6P0w8Q3Xj2sI8hXk7wQ+9QmVqX

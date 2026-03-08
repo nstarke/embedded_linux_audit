@@ -5,6 +5,21 @@ set -u
 PASS_COUNT=0
 FAIL_COUNT=0
 
+has_printf() {
+    command -v printf >/dev/null 2>&1
+}
+
+append_line() {
+    line="$1"
+    if has_printf; then
+        printf '%s\n' "$line"
+    else
+        cat <<EOF_APPEND_LINE
+$line
+EOF_APPEND_LINE
+    fi
+}
+
 run_with_output_override() {
     override_flag=""
     override_value=""
@@ -29,7 +44,7 @@ run_with_output_override() {
 
     original_args_file="$(mktemp /tmp/test_args.XXXXXX)"
     for arg in "$@"; do
-        printf '%s\n' "$arg" >>"$original_args_file"
+        append_line "$arg" >>"$original_args_file"
     done
 
     replaced=0
@@ -62,7 +77,12 @@ run_with_output_override() {
 
 print_section() {
     title="$1"
-    printf '\n==== %s ====\n' "$title"
+    if has_printf; then
+        printf '\n==== %s ====\n' "$title"
+    else
+        echo
+        echo "==== $title ===="
+    fi
 }
 
 require_binary() {
