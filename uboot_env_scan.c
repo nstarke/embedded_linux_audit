@@ -7,6 +7,7 @@
 #include <getopt.h>
 #include <glob.h>
 #include <inttypes.h>
+#include <ctype.h>
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -28,6 +29,7 @@
 static uint32_t crc32_table[256];
 static bool g_verbose;
 static bool g_bruteforce;
+static bool g_parse_vars;
 static int g_output_sock = -1;
 static FILE *g_output_config_fp = NULL;
 
@@ -173,6 +175,56 @@ static bool has_hint_var(const uint8_t *data, size_t len, const char *hint_overr
 	return false;
 }
 
+static void dump_env_vars(const uint8_t *data, size_t len)
+{
+	size_t off = 0;
+	size_t count = 0;
+
+	out_printf("    parsed env vars:\n");
+	while (off < len) {
+		const char *s;
+		size_t slen;
+		const char *eq;
+		bool printable = true;
+
+		if (data[off] == '\0') {
+			if ((off + 1 < len && data[off + 1] == '\0') || off + 1 >= len)
+				break;
+			off++;
+			continue;
+		}
+
+		s = (const char *)(data + off);
+		slen = strnlen(s, len - off);
+		if (slen == len - off)
+			break;
+
+		eq = memchr(s, '=', slen);
+		if (eq) {
+			for (size_t i = 0; i < slen; i++) {
+				if (!isprint((unsigned char)s[i]) && s[i] != '\t') {
+					printable = false;
+					break;
+				}
+			}
+
+			if (printable) {
+				out_printf("      %.*s\n", (int)slen, s);
+				count++;
+			}
+		}
+
+		off += slen + 1;
+		if (count >= 256) {
+			out_printf("      ... truncated after 256 vars ...\n");
+			break;
+		}
+	}
+
+	if (!count)
+		out_printf("      (no parseable variables found)\n");
+}
+
 static int scan_dev(const char *dev, uint64_t step, uint64_t env_size, const char *hint_override)
 {
 	int fd;
@@ -263,6 +315,12 @@ static int scan_dev(const char *dev, uint64_t step, uint64_t env_size, const cha
 				dev, (uintmax_t)cfg_off, (uintmax_t)env_size,
 				(uintmax_t)erase_size, (uintmax_t)sector_count);
 		}
+		if (g_parse_vars) {
+			if (crc_ok_redund && !crc_ok_std)
+				dump_env_vars(buf + 5, (size_t)env_size - 5);
+			else
+				dump_env_vars(buf + 4, (size_t)env_size - 4);
+		}
 		hits++;
 	}
 
@@ -290,6 +348,7 @@ static int scan_dev(const char *dev, uint64_t step, uint64_t env_size, const cha
 static void usage(const char *prog)
 {
 	err_printf("Usage: %s [--verbose] [--size <env_size>] [--hint <hint>] [--dev <dev>] [--brutefoce] [--skip-remove] [--skip-mtd] [--skip-ubi] [--output-config[=<path>]] [<dev:step> ...]\n"
+		"             [--parse-vars]\n"
 		"             [--output <ip:port>]\n", prog);
 }
 
@@ -331,12 +390,13 @@ int fw_env_scan_main(int argc, char **argv)
 		{ "skip-remove", no_argument, NULL, 'R' },
 		{ "skip-mtd", no_argument, NULL, 'M' },
 		{ "skip-ubi", no_argument, NULL, 'U' },
+		{ "parse-vars", no_argument, NULL, 'P' },
 		{ "output-config", optional_argument, NULL, 'c' },
 		{ "output", required_argument, NULL, 'o' },
 		{ 0, 0, 0, 0 }
 	};
 
-	while ((opt = getopt_long(argc, argv, "hvs:H:d:bo:RMUc::", long_opts, NULL)) != -1) {
+	while ((opt = getopt_long(argc, argv, "hvs:H:d:bo:RMUPc::", long_opts, NULL)) != -1) {
 		switch (opt) {
 		case 'h': usage(argv[0]); return 0;
 		case 'v': g_verbose = true; break;
@@ -347,6 +407,7 @@ int fw_env_scan_main(int argc, char **argv)
 		case 'R': skip_remove = true; break;
 		case 'M': skip_mtd = true; break;
 		case 'U': skip_ubi = true; break;
+		case 'P': g_parse_vars = true; break;
 		case 'c': output_config_path = optarg ? optarg : "fw_env.config"; break;
 		case 'o': output_target = optarg; break;
 		default: usage(argv[0]); return 2;
