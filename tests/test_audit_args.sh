@@ -38,6 +38,9 @@ run_accept_case "audit --rule uboot_validate_env_writeability" \
 run_accept_case "audit --rule uboot_validate_env_security" \
     "$BIN" audit --rule uboot_validate_env_security --dev /dev/null --size "$TEST_SIZE"
 
+run_accept_case "audit --rule uboot_validate_cmdline_init_writeability" \
+    "$BIN" audit --rule uboot_validate_cmdline_init_writeability --dev /dev/null --size "$TEST_SIZE"
+
 run_accept_case "audit --rule uboot_validate_secureboot" \
     "$BIN" audit --rule uboot_validate_secureboot --dev /dev/null --size "$TEST_SIZE"
 

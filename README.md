@@ -317,6 +317,7 @@ Before running rules, `audit` ensures `./fw_env.config` exists for follow-on env
 ./uboot_audit audit --dev /dev/mtdblock4 --offset 0x0 --size 0x10000
 ./uboot_audit audit --rule uboot_validate_crc32 --dev /dev/mtdblock4 --offset 0x0 --size 0x10000
 ./uboot_audit audit --rule uboot_validate_env_security --dev /dev/mtdblock4 --offset 0x0 --size 0x10000
+./uboot_audit audit --rule uboot_validate_cmdline_init_writeability --dev /dev/mtdblock4 --offset 0x0 --size 0x10000
 ./uboot_audit audit --rule uboot_validate_secureboot --dev /dev/mtdblock4 --offset 0x0 --size 0x10000 --signature-blob ./fit-image.bin --signature-pubkey ./pubkey.pem --signature-alg sha256
 ./uboot_audit audit --rule uboot_validate_secureboot --dev /dev/mtdblock4 --offset 0x0 --size 0x10000 --scan-signature-devices --signature-alg sha256
 ```
@@ -325,6 +326,7 @@ Initial rules included:
 
 - `uboot_validate_crc32` — validates U-Boot environment CRC32 using standard and redundant layouts.
 - `uboot_validate_env_security` — validates security-sensitive environment policy, network-boot indicators, and factory-reset indicators (`bootdelay <= 0`, `preboot` unset, checks for network-boot hints, and checks for factory-reset hints such as `factory_reset`, `reset_to_defaults`, `resetenv`, `eraseenv`, or reset-like commands in `bootcmd`/`altbootcmd`/`preboot`).
+- `uboot_validate_cmdline_init_writeability` — parses Linux kernel command-line parameters from `bootargs`; if `init=` is present and syntactically valid and the environment device is writable, it emits a warning result.
 - `uboot_validate_secureboot` — validates secure boot related env variables (`secureboot`, `verify`, `bootm_verify_sig`), parses one signature variable (`signature`, `boot_signature`, or `fit_signature`), and cryptographically verifies that signature against `--signature-blob` using `--signature-pubkey` (OpenSSL libcrypto).
 
 ---
