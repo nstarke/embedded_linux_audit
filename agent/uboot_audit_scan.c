@@ -950,7 +950,27 @@ int uboot_audit_scan_main(int argc, char **argv)
 		goto out;
 	}
 
-	if (!dev || !size) {
+	if (!dev) {
+		ret = ensure_fw_env_config_exists();
+		if (ret != 0) {
+			err_printf("fw_env.config not found and env scan failed (rc=%d)\n", ret);
+			ret = 1;
+			goto out;
+		}
+
+		if (!size) {
+			if (fmt == FW_OUTPUT_TXT)
+				out_printf("Prepared fw_env.config via env scan for subsequent auditing\n");
+			ret = 0;
+			goto out;
+		}
+
+		err_printf("--dev is required when running audit rules\n");
+		ret = 2;
+		goto out;
+	}
+
+	if (!size) {
 		usage(argv[0]);
 		return 2;
 	}

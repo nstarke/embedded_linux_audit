@@ -35,6 +35,9 @@ done
 run_accept_case "audit required args: --dev --size" \
     "$BIN" audit --dev /dev/null --size "$TEST_SIZE"
 
+run_accept_case "audit without --dev prepares fw_env.config" \
+    "$BIN" audit
+
 for output_format in txt csv json
 do
     run_accept_case "audit (no --rule) with --output-format ${output_format}" \

@@ -22,6 +22,8 @@ Before running rules, `audit` ensures `./fw_env.config` exists for follow-on env
 - `--signature-alg <name>` — digest algorithm for signature verification; if omitted, tries likely digests in order: `sha256`, `sha384`, `sha512`, `sha1`, `sha224`
 - `--verbose` — enable verbose rule behavior where supported
 
+When `audit` is run without `--dev`, it performs config preparation only: it ensures `./fw_env.config` exists (using the same fallback logic above, including env scan generation) and then exits without running rules.
+
 ## `audit` examples
 
 ```bash
