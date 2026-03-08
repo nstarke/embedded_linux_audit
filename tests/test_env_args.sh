@@ -13,6 +13,9 @@ require_binary "$BIN"
 print_section "env subcommand argument coverage"
 
 run_exact_case "env --help" 2 "$BIN" env --help
+run_accept_case "env --output-format txt" "$BIN" --output-format txt env --verbose
+run_accept_case "env --output-format csv" "$BIN" --output-format csv env --verbose
+run_accept_case "env --output-format json" "$BIN" --output-format json env --verbose
 run_accept_case "env --verbose" "$BIN" env --verbose
 run_accept_case "env --size" "$BIN" env --size "$TEST_SIZE"
 run_accept_case "env --hint" "$BIN" env --hint bootcmd=

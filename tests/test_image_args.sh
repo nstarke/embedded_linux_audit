@@ -13,6 +13,9 @@ require_binary "$BIN"
 print_section "image subcommand argument coverage"
 
 run_exact_case "image --help" 0 "$BIN" image --help
+run_accept_case "image --output-format txt" "$BIN" --output-format txt image --verbose
+run_accept_case "image --output-format csv" "$BIN" --output-format csv image --verbose
+run_accept_case "image --output-format json" "$BIN" --output-format json image --verbose
 run_accept_case "image --verbose" "$BIN" image --verbose
 run_accept_case "image --dev" "$BIN" image --dev /dev/null
 run_accept_case "image --step" "$BIN" image --step 0x1000
