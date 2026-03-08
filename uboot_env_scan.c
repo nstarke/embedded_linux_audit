@@ -204,6 +204,43 @@ static bool fw_valid_var_name(const char *name)
 	return true;
 }
 
+static bool fw_is_sensitive_env_var(const char *name)
+{
+	static const char *sensitive_vars[] = {
+		"bootcmd",
+		"altbootcmd",
+		"bootargs",
+		"boot_targets",
+		"bootdelay",
+		"preboot",
+		"stdin",
+		"stdout",
+		"stderr",
+	};
+
+	if (!name || !*name)
+		return false;
+
+	for (size_t i = 0; i < ARRAY_SIZE(sensitive_vars); i++)
+		if (!strcmp(name, sensitive_vars[i]))
+			return true;
+
+	return false;
+}
+
+static bool fw_confirm_sensitive_write(const char *name)
+{
+	char answer[32];
+
+	out_printf("Modifying %s might render the host unbootable.  Do you wish to proceed? ", name);
+	fflush(stdout);
+
+	if (!fgets(answer, sizeof(answer), stdin))
+		return false;
+
+	return answer[0] == 'Y' || answer[0] == 'y';
+}
+
 static char *fw_trim(char *s)
 {
 	char *end;
@@ -467,6 +504,11 @@ static int apply_write_script(const char *script_path, struct env_kv **kvs, size
 			err_printf("Invalid variable name at %s:%lu\n", script_path, lineno);
 			fclose(fp);
 			return -1;
+		}
+
+		if (fw_is_sensitive_env_var(name) && !fw_confirm_sensitive_write(name)) {
+			out_printf("Skipping update for %s\n", name);
+			continue;
 		}
 
 		if (delete_var) {
