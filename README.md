@@ -7,6 +7,16 @@ This repo provides a Linux host-side C utility for U-Boot-related flash analysis
 
 Both tools are intended for embedded/Linux recovery and diagnostics workflows.
 
+Global option:
+
+- `--output-format <csv|json|txt>` — select requested output format at the `uboot_audit` wrapper level (default: `txt`)
+  - `txt`: existing human-readable output
+  - `csv`: comma-separated records (header + rows)
+  - `json`: newline-delimited JSON objects (one JSON object per line)
+  - when `--verbose` is enabled with `csv`/`json`, verbose messages are emitted as structured `verbose` records (instead of plain text lines)
+- `env --output-tcp <ip:port>` sends the same formatted stream selected by `--output-format` over TCP.
+- `image --output-tcp` is used for `--pull` binary streaming; for formatted scan/find-address output over TCP, use `image --send-logs --output-tcp ...`.
+
 ---
 
 ## Build
@@ -26,8 +36,14 @@ make image
 Build both:
 
 ```bash
+git submodule update --init --recursive
 make
 ```
+
+Notes:
+
+- `libcsv` is built from source directly from `third_party/libcsv/libcsv.c`.
+- `json-c` is built from source from the `third_party/json-c` submodule via CMake, and linked statically (`third_party/json-c/build/libjson-c.a`).
 
 Static build:
 
@@ -94,12 +110,20 @@ Scans MTD/UBI plus block devices (SD/eMMC such as `/dev/sd*` and `/dev/mmcblk*`)
 
 ```bash
 ./uboot_audit env
+./uboot_audit --output-format json env
 ./uboot_audit env --verbose
 ./uboot_audit env --size 0x10000
 ./uboot_audit env --dev /dev/mtd3 --size 0x10000
 ./uboot_audit env --size 0x10000 /dev/mtd0:0x10000 /dev/mtd1:0x20000
 ./uboot_audit env --output-tcp 192.168.1.50:5000 --verbose
 ./uboot_audit env --write ./new_env.txt
+```
+
+For machine-readable output:
+
+```bash
+./uboot_audit --output-format csv env
+./uboot_audit --output-format json env
 ```
 
 Example candidate line:
@@ -154,6 +178,14 @@ Scan all MTD devices:
 
 ```bash
 ./uboot_audit image --verbose
+./uboot_audit --output-format csv image --verbose
+```
+
+For machine-readable output:
+
+```bash
+./uboot_audit --output-format json image --verbose
+./uboot_audit --output-format csv image --find-address --dev /dev/mtdblock4 --offset 0x200
 ```
 
 Scan one device:

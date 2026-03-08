@@ -19,6 +19,8 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
+#include <json-c/json.h>
+#include <csv.h>
 
 #ifndef O_CLOEXEC
 #define O_CLOEXEC 0
@@ -35,6 +37,13 @@ static bool g_allow_text;
 static bool g_send_logs;
 static uint32_t g_crc32_table[256];
 static int g_log_sock = -1;
+enum fw_output_format {
+	FW_OUTPUT_TXT = 0,
+	FW_OUTPUT_CSV,
+	FW_OUTPUT_JSON,
+};
+static enum fw_output_format g_output_format = FW_OUTPUT_TXT;
+static bool g_csv_header_emitted;
 
 static void emit_v(FILE *stream, const char *fmt, va_list ap)
 {
@@ -83,6 +92,89 @@ static void err_printf(const char *fmt, ...)
 	va_start(ap, fmt);
 	emit_v(stderr, fmt, ap);
 	va_end(ap);
+}
+
+static void detect_output_format(void)
+{
+	const char *fmt = getenv("FW_AUDIT_OUTPUT_FORMAT");
+
+	g_output_format = FW_OUTPUT_TXT;
+	if (!fmt || !*fmt)
+		return;
+
+	if (!strcmp(fmt, "csv"))
+		g_output_format = FW_OUTPUT_CSV;
+	else if (!strcmp(fmt, "json"))
+		g_output_format = FW_OUTPUT_JSON;
+}
+
+static void emit_image_csv_header(void)
+{
+	if (g_csv_header_emitted)
+		return;
+	out_printf("record,device,offset,type,value\n");
+	g_csv_header_emitted = true;
+}
+
+static void csv_out_field(const char *s)
+{
+	const char *in = s ? s : "";
+	size_t in_len = strlen(in);
+	size_t buf_len = (in_len * 2U) + 3U;
+	char *buf = malloc(buf_len);
+	size_t written;
+
+	if (!buf)
+		return;
+
+	written = csv_write(buf, buf_len, in, in_len);
+	out_printf("%.*s", (int)written, buf);
+	free(buf);
+}
+
+static void emit_image_record(const char *record, const char *dev, uint64_t off,
+			      const char *type, const char *value)
+{
+	if (g_output_format == FW_OUTPUT_CSV) {
+		char off_s[32];
+
+		snprintf(off_s, sizeof(off_s), "0x%jx", (uintmax_t)off);
+		emit_image_csv_header();
+		csv_out_field(record ? record : ""); out_printf(",");
+		csv_out_field(dev ? dev : ""); out_printf(",");
+		csv_out_field(off_s); out_printf(",");
+		csv_out_field(type ? type : ""); out_printf(",");
+		csv_out_field(value ? value : ""); out_printf("\n");
+		return;
+	}
+
+	if (g_output_format == FW_OUTPUT_JSON) {
+		json_object *obj = json_object_new_object();
+		if (!obj)
+			return;
+		json_object_object_add(obj, "record", json_object_new_string(record ? record : ""));
+		if (dev)
+			json_object_object_add(obj, "device", json_object_new_string(dev));
+		json_object_object_add(obj, "offset", json_object_new_uint64(off));
+		json_object_object_add(obj, "type", json_object_new_string(type ? type : ""));
+		if (value)
+			json_object_object_add(obj, "value", json_object_new_string(value));
+		out_printf("%s\n", json_object_to_json_string_ext(obj, JSON_C_TO_STRING_PLAIN));
+		json_object_put(obj);
+	}
+}
+
+static void emit_image_verbose(const char *dev, uint64_t off, const char *msg)
+{
+	if (!g_verbose || !msg)
+		return;
+
+	if (g_output_format == FW_OUTPUT_TXT) {
+		out_printf("%s\n", msg);
+		return;
+	}
+
+	emit_image_record("verbose", dev ? dev : "", off, "log", msg);
 }
 
 static size_t align_up_4(size_t v)
@@ -431,7 +523,13 @@ static int find_image_load_address(const char *dev, uint64_t offset)
 			close(fd);
 			return 1;
 		}
-		out_printf("uImage load address: 0x%08x\n", fw_read_be32(hdr + 16));
+		if (g_output_format == FW_OUTPUT_TXT) {
+			out_printf("uImage load address: 0x%08x\n", fw_read_be32(hdr + 16));
+		} else {
+			char value[32];
+			snprintf(value, sizeof(value), "0x%08x", fw_read_be32(hdr + 16));
+			emit_image_record("image_load_address", dev, offset, "uImage", value);
+		}
 		close(fd);
 		return 0;
 	}
@@ -468,13 +566,27 @@ static int find_image_load_address(const char *dev, uint64_t offset)
 					  (size_t)total_size,
 					  &load_addr,
 					  &uboot_off,
-					  &uboot_off_found))
-			out_printf("FIT load address: 0x%08x\n", load_addr);
+					  &uboot_off_found)) {
+			if (g_output_format == FW_OUTPUT_TXT) {
+				out_printf("FIT load address: 0x%08x\n", load_addr);
+			} else {
+				char value[32];
+				snprintf(value, sizeof(value), "0x%08x", load_addr);
+				emit_image_record("image_load_address", dev, offset, "FIT", value);
+			}
+		}
 		else
 			err_printf("FIT load address not found\n");
 
-		if (uboot_off_found)
-			out_printf("FIT U-Boot code offset: 0x%jx\n", (uintmax_t)uboot_off);
+		if (uboot_off_found) {
+			if (g_output_format == FW_OUTPUT_TXT) {
+				out_printf("FIT U-Boot code offset: 0x%jx\n", (uintmax_t)uboot_off);
+			} else {
+				char value[32];
+				snprintf(value, sizeof(value), "0x%jx", (uintmax_t)uboot_off);
+				emit_image_record("fit_uboot_offset", dev, offset, "FIT", value);
+			}
+		}
 		else
 			err_printf("FIT U-Boot code offset not found\n");
 
@@ -548,8 +660,12 @@ static int pull_image_to_output_tcp(const char *dev, uint64_t offset, const char
 			}
 			sent += (uint64_t)n;
 		}
-		if (g_verbose)
-			out_printf("Pulled %ju bytes from %s @ 0x%jx to %s\n", (uintmax_t)total_size, dev, (uintmax_t)offset, output_tcp_target);
+		if (g_verbose) {
+			char msg[256];
+			snprintf(msg, sizeof(msg), "Pulled %ju bytes from %s @ 0x%jx to %s",
+				(uintmax_t)total_size, dev, (uintmax_t)offset, output_tcp_target);
+			emit_image_verbose(dev, offset, msg);
+		}
 	}
 
 	close(sock);
@@ -559,8 +675,12 @@ static int pull_image_to_output_tcp(const char *dev, uint64_t offset, const char
 
 static void report_signature(const char *dev, uint64_t off, const char *kind)
 {
-	out_printf("candidate image signature: %s offset=0x%jx type=%s\n",
-	       dev, (uintmax_t)off, kind);
+	if (g_output_format == FW_OUTPUT_TXT) {
+		out_printf("candidate image signature: %s offset=0x%jx type=%s\n",
+		       dev, (uintmax_t)off, kind);
+		return;
+	}
+	emit_image_record("image_signature", dev, off, kind, NULL);
 }
 
 static int scan_dev_for_image(const char *dev, uint64_t step)
@@ -578,8 +698,11 @@ static int scan_dev_for_image(const char *dev, uint64_t step)
 	fd = open(dev, O_RDONLY | O_CLOEXEC);
 	if (fd < 0) {
 		if (errno == EBUSY) {
-			if (g_verbose)
-				err_printf("Skipping busy device %s: %s\n", dev, strerror(errno));
+			if (g_verbose) {
+				char msg[256];
+				snprintf(msg, sizeof(msg), "Skipping busy device %s: %s", dev, strerror(errno));
+				emit_image_verbose(dev, 0, msg);
+			}
 			return 0;
 		}
 		err_printf("Cannot open %s: %s\n", dev, strerror(errno));
@@ -602,8 +725,12 @@ static int scan_dev_for_image(const char *dev, uint64_t step)
 		return -1;
 	}
 
-	if (g_verbose)
-		out_printf("Scanning %s size=0x%jx step=0x%jx\n", dev, (uintmax_t)size, (uintmax_t)step);
+	if (g_verbose) {
+		char msg[256];
+		snprintf(msg, sizeof(msg), "Scanning %s size=0x%jx step=0x%jx",
+			dev, (uintmax_t)size, (uintmax_t)step);
+		emit_image_verbose(dev, 0, msg);
+	}
 
 	for (off = 0; off < size; off += step) {
 		size_t to_read = (size - off > step) ? (size_t)step : (size_t)(size - off);
@@ -655,6 +782,7 @@ int fw_image_scan_main(int argc, char **argv)
 	bool skip_sd = false;
 	bool skip_emmc = false;
 	bool skip_remove = false;
+	bool helper_verbose = false;
 	char **created_mtdblock_nodes = NULL;
 	size_t created_mtdblock_count = 0;
 	char **created_ubi_nodes = NULL;
@@ -665,9 +793,11 @@ int fw_image_scan_main(int argc, char **argv)
 	int total_hits = 0;
 
 	optind = 1;
+	detect_output_format();
 	g_verbose = false;
 	g_allow_text = false;
 	g_send_logs = false;
+	g_csv_header_emitted = false;
 	if (g_log_sock >= 0) {
 		close(g_log_sock);
 		g_log_sock = -1;
@@ -748,6 +878,8 @@ int fw_image_scan_main(int argc, char **argv)
 		}
 	}
 
+	helper_verbose = (g_output_format == FW_OUTPUT_TXT) && g_verbose;
+
 	crc32_init();
 
 	if (geteuid() != 0) {
@@ -798,10 +930,10 @@ int fw_image_scan_main(int argc, char **argv)
 	}
 
 	if (!skip_mtd)
-		fw_ensure_mtd_nodes_collect(g_verbose, &created_mtdblock_nodes, &created_mtdblock_count);
+		fw_ensure_mtd_nodes_collect(helper_verbose, &created_mtdblock_nodes, &created_mtdblock_count);
 	if (!skip_ubi)
-		fw_ensure_ubi_nodes_collect(g_verbose, &created_ubi_nodes, &created_ubi_count);
-	fw_ensure_block_nodes_collect(g_verbose, !skip_sd, !skip_emmc,
+		fw_ensure_ubi_nodes_collect(helper_verbose, &created_ubi_nodes, &created_ubi_count);
+	fw_ensure_block_nodes_collect(helper_verbose, !skip_sd, !skip_emmc,
 		&created_block_nodes, &created_block_count);
 
 	if (dev_override) {
@@ -843,7 +975,7 @@ int fw_image_scan_main(int argc, char **argv)
 
 out:
 	if (total_hits == 0 && g_verbose)
-		out_printf("No image signatures found.\n");
+		emit_image_verbose(NULL, 0, "No image signatures found.");
 
 	if (!skip_remove) {
 		for (size_t i = 0; i < created_mtdblock_count; i++) {

@@ -18,6 +18,8 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
+#include <json-c/json.h>
+#include <csv.h>
 
 #ifndef O_CLOEXEC
 #define O_CLOEXEC 0
@@ -32,6 +34,237 @@ static bool g_bruteforce;
 static bool g_parse_vars;
 static int g_output_sock = -1;
 static FILE *g_output_config_fp = NULL;
+static void out_printf(const char *fmt, ...);
+enum fw_output_format {
+	FW_OUTPUT_TXT = 0,
+	FW_OUTPUT_CSV,
+	FW_OUTPUT_JSON,
+};
+static enum fw_output_format g_output_format = FW_OUTPUT_TXT;
+static bool g_csv_header_emitted;
+
+static void detect_output_format(void)
+{
+	const char *fmt = getenv("FW_AUDIT_OUTPUT_FORMAT");
+
+	g_output_format = FW_OUTPUT_TXT;
+	if (!fmt || !*fmt)
+		return;
+
+	if (!strcmp(fmt, "csv"))
+		g_output_format = FW_OUTPUT_CSV;
+	else if (!strcmp(fmt, "json"))
+		g_output_format = FW_OUTPUT_JSON;
+}
+
+static void emit_env_csv_header(void)
+{
+	if (g_csv_header_emitted)
+		return;
+	out_printf("record,device,offset,crc_endian,mode,has_known_vars,cfg_offset,env_size,erase_size,sector_count\n");
+	g_csv_header_emitted = true;
+}
+
+static void csv_out_field(const char *s)
+{
+	const char *in = s ? s : "";
+	size_t in_len = strlen(in);
+	size_t buf_len = (in_len * 2U) + 3U;
+	char *buf = malloc(buf_len);
+	size_t written;
+
+	if (!buf)
+		return;
+
+	written = csv_write(buf, buf_len, in, in_len);
+	out_printf("%.*s", (int)written, buf);
+	free(buf);
+}
+
+static void emit_env_candidate_record(const char *dev, uint64_t off,
+				      const char *crc_endian,
+				      const char *mode,
+				      bool has_known_vars,
+				      uint64_t cfg_off,
+				      uint64_t env_size,
+				      uint64_t erase_size,
+				      uint64_t sector_count)
+{
+	if (g_output_format == FW_OUTPUT_CSV) {
+		char off_s[32], cfg_s[32], env_s[32], erase_s[32], sec_s[32];
+
+		snprintf(off_s, sizeof(off_s), "0x%jx", (uintmax_t)off);
+		snprintf(cfg_s, sizeof(cfg_s), "0x%jx", (uintmax_t)cfg_off);
+		snprintf(env_s, sizeof(env_s), "0x%jx", (uintmax_t)env_size);
+		snprintf(erase_s, sizeof(erase_s), "0x%jx", (uintmax_t)erase_size);
+		snprintf(sec_s, sizeof(sec_s), "0x%jx", (uintmax_t)sector_count);
+
+		emit_env_csv_header();
+		csv_out_field("env_candidate"); out_printf(",");
+		csv_out_field(dev); out_printf(",");
+		csv_out_field(off_s); out_printf(",");
+		csv_out_field(crc_endian ? crc_endian : ""); out_printf(",");
+		csv_out_field(mode ? mode : ""); out_printf(",");
+		csv_out_field(has_known_vars ? "true" : "false"); out_printf(",");
+		csv_out_field(cfg_s); out_printf(",");
+		csv_out_field(env_s); out_printf(",");
+		csv_out_field(erase_s); out_printf(",");
+		csv_out_field(sec_s); out_printf("\n");
+		return;
+	}
+
+	if (g_output_format == FW_OUTPUT_JSON) {
+		json_object *obj = json_object_new_object();
+		if (!obj)
+			return;
+		json_object_object_add(obj, "record", json_object_new_string("env_candidate"));
+		json_object_object_add(obj, "device", json_object_new_string(dev));
+		json_object_object_add(obj, "offset", json_object_new_uint64(off));
+		json_object_object_add(obj, "crc_endian", json_object_new_string(crc_endian ? crc_endian : ""));
+		json_object_object_add(obj, "mode", json_object_new_string(mode ? mode : ""));
+		json_object_object_add(obj, "has_known_vars", json_object_new_boolean(has_known_vars));
+		json_object_object_add(obj, "cfg_offset", json_object_new_uint64(cfg_off));
+		json_object_object_add(obj, "env_size", json_object_new_uint64(env_size));
+		json_object_object_add(obj, "erase_size", json_object_new_uint64(erase_size));
+		json_object_object_add(obj, "sector_count", json_object_new_uint64(sector_count));
+		out_printf("%s\n", json_object_to_json_string_ext(obj, JSON_C_TO_STRING_PLAIN));
+		json_object_put(obj);
+		return;
+	}
+
+	if (!strcmp(mode, "hint-only"))
+		out_printf("  candidate offset=0x%jx  mode=hint-only  (has known vars)\n", (uintmax_t)off);
+	else if (!strcmp(mode, "redundant"))
+		out_printf("  candidate offset=0x%jx  crc=%s-endian  %s (redundant-env layout)\n", (uintmax_t)off,
+			crc_endian, has_known_vars ? "(has known vars)" : "(crc ok)");
+	else
+		out_printf("  candidate offset=0x%jx  crc=%s-endian  %s\n", (uintmax_t)off,
+			crc_endian, has_known_vars ? "(has known vars)" : "(crc ok)");
+
+	out_printf("    fw_env.config line: %s 0x%jx 0x%jx 0x%jx 0x%jx\n",
+		dev, (uintmax_t)cfg_off, (uintmax_t)env_size,
+		(uintmax_t)erase_size, (uintmax_t)sector_count);
+}
+
+static void emit_redundant_pair_record(const char *dev, uint64_t a, uint64_t b)
+{
+	if (g_output_format == FW_OUTPUT_CSV) {
+		char a_s[32], b_s[32];
+
+		snprintf(a_s, sizeof(a_s), "0x%jx", (uintmax_t)a);
+		snprintf(b_s, sizeof(b_s), "0x%jx", (uintmax_t)b);
+
+		emit_env_csv_header();
+		csv_out_field("redundant_pair"); out_printf(",");
+		csv_out_field(dev); out_printf(",");
+		csv_out_field(a_s); out_printf(",");
+		csv_out_field(""); out_printf(",");
+		csv_out_field(""); out_printf(",");
+		csv_out_field("false"); out_printf(",");
+		csv_out_field(b_s); out_printf(",");
+		csv_out_field(""); out_printf(",");
+		csv_out_field(""); out_printf(",");
+		csv_out_field(""); out_printf("\n");
+		return;
+	}
+
+	if (g_output_format == FW_OUTPUT_JSON) {
+		json_object *obj = json_object_new_object();
+		if (!obj)
+			return;
+		json_object_object_add(obj, "record", json_object_new_string("redundant_pair"));
+		json_object_object_add(obj, "device", json_object_new_string(dev));
+		json_object_object_add(obj, "offset_a", json_object_new_uint64(a));
+		json_object_object_add(obj, "offset_b", json_object_new_uint64(b));
+		out_printf("%s\n", json_object_to_json_string_ext(obj, JSON_C_TO_STRING_PLAIN));
+		json_object_put(obj);
+		return;
+	}
+
+	out_printf("    redundant env candidate pair: %s 0x%jx <-> 0x%jx\n",
+		dev, (uintmax_t)a, (uintmax_t)b);
+}
+
+static void emit_env_verbose(const char *dev, uint64_t off, const char *msg)
+{
+	if (!g_verbose || !msg)
+		return;
+
+	if (g_output_format == FW_OUTPUT_TXT) {
+		out_printf("%s\n", msg);
+		return;
+	}
+
+	if (g_output_format == FW_OUTPUT_CSV) {
+		char off_s[32];
+
+		snprintf(off_s, sizeof(off_s), "0x%jx", (uintmax_t)off);
+		emit_env_csv_header();
+		csv_out_field("verbose"); out_printf(",");
+		csv_out_field(dev ? dev : ""); out_printf(",");
+		csv_out_field(off_s); out_printf(",");
+		csv_out_field(""); out_printf(",");
+		csv_out_field(msg); out_printf(",");
+		csv_out_field("false"); out_printf(",");
+		csv_out_field(""); out_printf(",");
+		csv_out_field(""); out_printf(",");
+		csv_out_field(""); out_printf(",");
+		csv_out_field(""); out_printf("\n");
+		return;
+	}
+
+	{
+		json_object *obj = json_object_new_object();
+		if (!obj)
+			return;
+		json_object_object_add(obj, "record", json_object_new_string("verbose"));
+		if (dev)
+			json_object_object_add(obj, "device", json_object_new_string(dev));
+		json_object_object_add(obj, "offset", json_object_new_uint64(off));
+		json_object_object_add(obj, "message", json_object_new_string(msg));
+		out_printf("%s\n", json_object_to_json_string_ext(obj, JSON_C_TO_STRING_PLAIN));
+		json_object_put(obj);
+	}
+}
+
+static void emit_env_verbosef(const char *dev, uint64_t off, const char *fmt, ...)
+{
+	va_list ap;
+	va_list aq;
+	char stack[256];
+	char *dyn = NULL;
+	int needed;
+
+	if (!fmt)
+		return;
+
+	va_start(ap, fmt);
+	va_copy(aq, ap);
+	needed = vsnprintf(stack, sizeof(stack), fmt, aq);
+	va_end(aq);
+
+	if (needed < 0) {
+		va_end(ap);
+		return;
+	}
+
+	if ((size_t)needed < sizeof(stack)) {
+		emit_env_verbose(dev, off, stack);
+		va_end(ap);
+		return;
+	}
+
+	dyn = malloc((size_t)needed + 1U);
+	if (!dyn) {
+		va_end(ap);
+		return;
+	}
+
+	vsnprintf(dyn, (size_t)needed + 1U, fmt, ap);
+	va_end(ap);
+	emit_env_verbose(dev, off, dyn);
+	free(dyn);
+}
 
 struct env_candidate {
 	uint64_t cfg_off;
@@ -637,7 +870,8 @@ static int write_env_copy(const struct fw_cfg_entry *cfg, const uint8_t *buf)
 	}
 
 	if (fsync(fd) < 0 && g_verbose)
-		err_printf("Warning: fsync failed on %s: %s\n", cfg->dev, strerror(errno));
+		emit_env_verbosef(cfg->dev, cfg->off,
+			"Warning: fsync failed on %s: %s", cfg->dev, strerror(errno));
 
 	close(fd);
 	return 0;
@@ -831,7 +1065,7 @@ static int scan_dev(const char *dev, uint64_t step, uint64_t env_size, const cha
 	if (fd < 0) {
 		if (errno == EBUSY) {
 			if (g_verbose)
-				err_printf("Skipping busy device %s: %s\n", dev, strerror(errno));
+				emit_env_verbosef(dev, 0, "Skipping busy device %s: %s", dev, strerror(errno));
 			return 0;
 		}
 		err_printf("Cannot open %s: %s\n", dev, strerror(errno));
@@ -887,17 +1121,16 @@ static int scan_dev(const char *dev, uint64_t step, uint64_t env_size, const cha
 		(void)add_or_merge_candidate(&cands, &cand_count, cfg_off, crc_ok_std, crc_ok_redund);
 
 		if (g_bruteforce)
-			out_printf("  candidate offset=0x%jx  mode=hint-only  (has known vars)\n", (uintmax_t)off);
+			emit_env_candidate_record(dev, (uint64_t)off, "", "hint-only", true,
+				cfg_off, env_size, erase_size, sector_count);
 		else if (crc_ok_redund && !crc_ok_std)
-			out_printf("  candidate offset=0x%jx  crc=%s-endian  %s (redundant-env layout)\n", (uintmax_t)off,
-				(calc_redund == stored_le) ? "LE" : "BE", hint_ok_redund ? "(has known vars)" : "(crc ok)");
+			emit_env_candidate_record(dev, (uint64_t)off,
+				(calc_redund == stored_le) ? "LE" : "BE", "redundant", hint_ok_redund,
+				cfg_off, env_size, erase_size, sector_count);
 		else
-			out_printf("  candidate offset=0x%jx  crc=%s-endian  %s\n", (uintmax_t)off,
-				(calc == stored_le) ? "LE" : "BE", hint_ok ? "(has known vars)" : "(crc ok)");
-
-		out_printf("    fw_env.config line: %s 0x%jx 0x%jx 0x%jx 0x%jx\n",
-			dev, (uintmax_t)cfg_off, (uintmax_t)env_size,
-			(uintmax_t)erase_size, (uintmax_t)sector_count);
+			emit_env_candidate_record(dev, (uint64_t)off,
+				(calc == stored_le) ? "LE" : "BE", "standard", hint_ok,
+				cfg_off, env_size, erase_size, sector_count);
 		if (g_output_config_fp) {
 			fprintf(g_output_config_fp, "%s 0x%jx 0x%jx 0x%jx 0x%jx\n",
 				dev, (uintmax_t)cfg_off, (uintmax_t)env_size,
@@ -922,8 +1155,7 @@ static int scan_dev(const char *dev, uint64_t step, uint64_t env_size, const cha
 			if (diff != erase_size && diff != expected)
 				continue;
 
-			out_printf("    redundant env candidate pair: %s 0x%jx <-> 0x%jx\n",
-				dev, (uintmax_t)prev, (uintmax_t)curr);
+			emit_redundant_pair_record(dev, prev, curr);
 		}
 	}
 
@@ -957,6 +1189,7 @@ int fw_env_scan_main(int argc, char **argv)
 	bool skip_ubi = false;
 	bool skip_sd = false;
 	bool skip_emmc = false;
+	bool helper_verbose = false;
 	char **created_mtdblock_nodes = NULL;
 	size_t created_mtdblock_count = 0;
 	char **created_ubi_nodes = NULL;
@@ -968,8 +1201,11 @@ int fw_env_scan_main(int argc, char **argv)
 	int opt;
 
 	optind = 1;
+	detect_output_format();
 	g_verbose = false;
 	g_bruteforce = false;
+	g_csv_header_emitted = false;
+	g_parse_vars = false;
 	if (g_output_sock >= 0) {
 		close(g_output_sock);
 		g_output_sock = -1;
@@ -1015,6 +1251,8 @@ int fw_env_scan_main(int argc, char **argv)
 		}
 	}
 
+	helper_verbose = (g_output_format == FW_OUTPUT_TXT) && g_verbose;
+
 	argi = optind;
 	if (geteuid() != 0) {
 		err_printf("This program must be run as root.\n");
@@ -1045,10 +1283,10 @@ int fw_env_scan_main(int argc, char **argv)
 	if (write_mode && !need_generate_config) {
 		fw_crc32_init(crc32_table);
 		if (!skip_mtd)
-			fw_ensure_mtd_nodes_collect(g_verbose, &created_mtdblock_nodes, &created_mtdblock_count);
+			fw_ensure_mtd_nodes_collect(helper_verbose, &created_mtdblock_nodes, &created_mtdblock_count);
 		if (!skip_ubi)
-			fw_ensure_ubi_nodes_collect(g_verbose, &created_ubi_nodes, &created_ubi_count);
-		fw_ensure_block_nodes_collect(g_verbose, !skip_sd, !skip_emmc,
+			fw_ensure_ubi_nodes_collect(helper_verbose, &created_ubi_nodes, &created_ubi_count);
+		fw_ensure_block_nodes_collect(helper_verbose, !skip_sd, !skip_emmc,
 			&created_block_nodes, &created_block_count);
 		ret = perform_write_operation("fw_env.config", write_script_path);
 		goto out;
@@ -1074,10 +1312,10 @@ int fw_env_scan_main(int argc, char **argv)
 
 	fw_crc32_init(crc32_table);
 	if (!skip_mtd)
-		fw_ensure_mtd_nodes_collect(g_verbose, &created_mtdblock_nodes, &created_mtdblock_count);
+		fw_ensure_mtd_nodes_collect(helper_verbose, &created_mtdblock_nodes, &created_mtdblock_count);
 	if (!skip_ubi)
-		fw_ensure_ubi_nodes_collect(g_verbose, &created_ubi_nodes, &created_ubi_count);
-	fw_ensure_block_nodes_collect(g_verbose, !skip_sd, !skip_emmc,
+		fw_ensure_ubi_nodes_collect(helper_verbose, &created_ubi_nodes, &created_ubi_count);
+	fw_ensure_block_nodes_collect(helper_verbose, !skip_sd, !skip_emmc,
 		&created_block_nodes, &created_block_count);
 
 	if (dev_override) {

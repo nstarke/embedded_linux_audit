@@ -1,0 +1,6 @@
+[submodule "third_party/libcsv"]
+	path = third_party/libcsv
+	url = https://github.com/rgamble/libcsv.git
+[submodule "third_party/json-c"]
+	path = third_party/json-c
+	url = https://github.com/json-c/json-c.git
