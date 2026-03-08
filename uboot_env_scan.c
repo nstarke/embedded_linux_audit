@@ -18,7 +18,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
-#include <json-c/json.h>
+#include <json.h>
 #include <csv.h>
 
 #ifndef O_CLOEXEC
@@ -33,8 +33,13 @@ static bool g_verbose;
 static bool g_bruteforce;
 static bool g_parse_vars;
 static int g_output_sock = -1;
+static const char *g_output_http_uri = NULL;
+static char *g_output_http_buf = NULL;
+static size_t g_output_http_len;
+static size_t g_output_http_cap;
 static FILE *g_output_config_fp = NULL;
 static void out_printf(const char *fmt, ...);
+static void err_printf(const char *fmt, ...);
 enum fw_output_format {
 	FW_OUTPUT_TXT = 0,
 	FW_OUTPUT_CSV,
@@ -42,6 +47,19 @@ enum fw_output_format {
 };
 static enum fw_output_format g_output_format = FW_OUTPUT_TXT;
 static bool g_csv_header_emitted;
+
+static const char *env_http_content_type(void)
+{
+	switch (g_output_format) {
+	case FW_OUTPUT_JSON:
+		return "application/x-ndjson; charset=utf-8";
+	case FW_OUTPUT_CSV:
+		return "text/csv; charset=utf-8";
+	case FW_OUTPUT_TXT:
+	default:
+		return "text/plain; charset=utf-8";
+	}
+}
 
 static void detect_output_format(void)
 {
@@ -313,6 +331,54 @@ static int add_or_merge_candidate(struct env_candidate **cands, size_t *count,
 	return 0;
 }
 
+static void append_output_http_buffer(const char *buf, size_t len)
+{
+	char *tmp;
+	size_t need;
+	size_t new_cap;
+
+	if (!g_output_http_uri || !buf || !len)
+		return;
+
+	need = g_output_http_len + len + 1;
+	if (need > g_output_http_cap) {
+		new_cap = g_output_http_cap ? g_output_http_cap : 1024;
+		while (new_cap < need)
+			new_cap *= 2;
+
+		tmp = realloc(g_output_http_buf, new_cap);
+		if (!tmp)
+			return;
+		g_output_http_buf = tmp;
+		g_output_http_cap = new_cap;
+	}
+
+	memcpy(g_output_http_buf + g_output_http_len, buf, len);
+	g_output_http_len += len;
+	g_output_http_buf[g_output_http_len] = '\0';
+}
+
+static int flush_output_http_buffer(void)
+{
+	char errbuf[256];
+
+	if (!g_output_http_uri)
+		return 0;
+
+	if (fw_http_post(g_output_http_uri,
+			 (const uint8_t *)(g_output_http_buf ? g_output_http_buf : ""),
+			 g_output_http_len,
+			 env_http_content_type(),
+			 errbuf,
+			 sizeof(errbuf)) < 0) {
+		err_printf("Failed to POST output to %s: %s\n", g_output_http_uri,
+			   errbuf[0] ? errbuf : "unknown error");
+		return -1;
+	}
+
+	return 0;
+}
+
 static void send_to_output_socket(const char *buf, size_t len)
 {
 	while (g_output_sock >= 0 && len) {
@@ -346,6 +412,7 @@ static void emit_v(FILE *stream, const char *fmt, va_list ap)
 
 	if ((size_t)needed < sizeof(stack)) {
 		send_to_output_socket(stack, (size_t)needed);
+		append_output_http_buffer(stack, (size_t)needed);
 		return;
 	}
 
@@ -357,6 +424,7 @@ static void emit_v(FILE *stream, const char *fmt, va_list ap)
 	vsnprintf(dyn, (size_t)needed + 1, fmt, aq);
 	va_end(aq);
 	send_to_output_socket(dyn, (size_t)needed);
+	append_output_http_buffer(dyn, (size_t)needed);
 	free(dyn);
 }
 
@@ -1169,7 +1237,8 @@ static void usage(const char *prog)
 {
 	err_printf("Usage: %s [--verbose] [--size <env_size>] [--hint <hint>] [--dev <dev>] [--brutefoce] [--skip-remove] [--skip-mtd] [--skip-ubi] [--skip-sd] [--skip-emmc] [--output-config[=<path>]] [--write <path>] [<dev:step> ...]\n"
 		"             [--parse-vars]\n"
-		"             [--output-tcp <ip:port>]\n", prog);
+		"             [--output-tcp <ip:port>]\n"
+		"             [--output-http <http://host:port/>]\n", prog);
 }
 
 int fw_env_scan_main(int argc, char **argv)
@@ -1180,6 +1249,7 @@ int fw_env_scan_main(int argc, char **argv)
 	const char *hint_override = NULL;
 	const char *dev_override = NULL;
 	const char *output_tcp_target = NULL;
+	const char *output_http_target = NULL;
 	const char *output_config_path = NULL;
 	const char *write_script_path = NULL;
 	bool write_mode = false;
@@ -1226,11 +1296,12 @@ int fw_env_scan_main(int argc, char **argv)
 		{ "parse-vars", no_argument, NULL, 'P' },
 		{ "output-config", optional_argument, NULL, 'c' },
 		{ "output-tcp", required_argument, NULL, 'o' },
+		{ "output-http", required_argument, NULL, 'O' },
 		{ "write", required_argument, NULL, 'w' },
 		{ 0, 0, 0, 0 }
 	};
 
-	while ((opt = getopt_long(argc, argv, "hvs:H:d:bo:RMUSEPc::w:", long_opts, NULL)) != -1) {
+	while ((opt = getopt_long(argc, argv, "hvs:H:d:bo:O:RMUSEPc::w:", long_opts, NULL)) != -1) {
 		switch (opt) {
 		case 'h': usage(argv[0]); return 0;
 		case 'v': g_verbose = true; break;
@@ -1246,6 +1317,7 @@ int fw_env_scan_main(int argc, char **argv)
 		case 'P': g_parse_vars = true; break;
 		case 'c': output_config_path = optarg ? optarg : "fw_env.config"; break;
 		case 'o': output_tcp_target = optarg; break;
+		case 'O': output_http_target = optarg; break;
 		case 'w': write_script_path = optarg; break;
 		default: usage(argv[0]); return 2;
 		}
@@ -1299,6 +1371,15 @@ int fw_env_scan_main(int argc, char **argv)
 			ret = 2;
 			goto out;
 		}
+	}
+
+	if (output_http_target && *output_http_target) {
+		if (strncmp(output_http_target, "http://", 7)) {
+			err_printf("Invalid --output-http URI (expected http://host:port/...): %s\n", output_http_target);
+			ret = 2;
+			goto out;
+		}
+		g_output_http_uri = output_http_target;
 	}
 
 	if (output_config_path && *output_config_path) {
@@ -1447,5 +1528,12 @@ out:
 	}
 	if (g_output_sock >= 0)
 		close(g_output_sock);
+	if (flush_output_http_buffer() < 0 && ret == 0)
+		ret = 1;
+	free(g_output_http_buf);
+	g_output_http_buf = NULL;
+	g_output_http_len = 0;
+	g_output_http_cap = 0;
+	g_output_http_uri = NULL;
 	return ret;
 }

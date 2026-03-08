@@ -15,7 +15,9 @@ Global option:
   - `json`: newline-delimited JSON objects (one JSON object per line)
   - when `--verbose` is enabled with `csv`/`json`, verbose messages are emitted as structured `verbose` records (instead of plain text lines)
 - `env --output-tcp <ip:port>` sends the same formatted stream selected by `--output-format` over TCP.
+- `env --output-http <http://host:port/path>` sends the same formatted stream selected by `--output-format` in a single HTTP POST request.
 - `image --output-tcp` is used for `--pull` binary streaming; for formatted scan/find-address output over TCP, use `image --send-logs --output-tcp ...`.
+- `image --output-http <http://host:port/path>` can be used to POST formatted scan/find-address output, or to POST pulled image bytes when used with `--pull`.
 
 ---
 
@@ -44,6 +46,7 @@ Notes:
 
 - `libcsv` is built from source directly from `third_party/libcsv/libcsv.c`.
 - `json-c` is built from source from the `third_party/json-c` submodule via CMake, and linked statically (`third_party/json-c/build/libjson-c.a`).
+- `libcurl` is built from source from the `third_party/curl` submodule via CMake, and linked statically (`third_party/curl/build/lib/libcurl.a`).
 
 Static build:
 
@@ -61,6 +64,44 @@ Cross compile example:
 
 ```bash
 make CC=arm-linux-gnueabi-gcc
+```
+
+Cross compile with Zig + musl (recommended for fully static output):
+
+```bash
+make clean && make static \
+  CMAKE_C_COMPILER=$(command -v zig) \
+  CMAKE_C_COMPILER_ARG1=cc \
+  CMAKE_C_COMPILER_TARGET=arm-linux-musleabi \
+  CC='zig cc -target arm-linux-musleabi'
+```
+
+Generic Zig target form:
+
+```bash
+make clean && make static \
+  CMAKE_C_COMPILER=$(command -v zig) \
+  CMAKE_C_COMPILER_ARG1=cc \
+  CMAKE_C_COMPILER_TARGET=<zig-target-triple> \
+  CC='zig cc -target <zig-target-triple>'
+```
+
+Examples:
+
+```bash
+# x86_64 static musl
+make clean && make static \
+  CMAKE_C_COMPILER=$(command -v zig) \
+  CMAKE_C_COMPILER_ARG1=cc \
+  CMAKE_C_COMPILER_TARGET=x86_64-linux-musl \
+  CC='zig cc -target x86_64-linux-musl'
+
+# aarch64 static musl
+make clean && make static \
+  CMAKE_C_COMPILER=$(command -v zig) \
+  CMAKE_C_COMPILER_ARG1=cc \
+  CMAKE_C_COMPILER_TARGET=aarch64-linux-musl \
+  CC='zig cc -target aarch64-linux-musl'
 ```
 
 ---
@@ -84,6 +125,7 @@ Scans MTD/UBI plus block devices (SD/eMMC such as `/dev/sd*` and `/dev/mmcblk*`)
 - `--parse-vars` — print parsed key/value variables from candidate environments
 - `--output-config[=<path>]` — write discovered `fw_env.config` lines to file (default `fw_env.config`)
 - `--output-tcp <IPv4:port>` — duplicate output to TCP destination
+- `--output-http <http://host:port/path>` — duplicate output to HTTP endpoint via POST
 - `--write <path>` — apply env updates from text file (native `fw_setenv`-style behavior)
 
 ### `--write` behavior
@@ -116,6 +158,7 @@ Scans MTD/UBI plus block devices (SD/eMMC such as `/dev/sd*` and `/dev/mmcblk*`)
 ./uboot_audit env --dev /dev/mtd3 --size 0x10000
 ./uboot_audit env --size 0x10000 /dev/mtd0:0x10000 /dev/mtd1:0x20000
 ./uboot_audit env --output-tcp 192.168.1.50:5000 --verbose
+./uboot_audit env --output-http http://192.168.1.50:5000/env --verbose
 ./uboot_audit env --write ./new_env.txt
 ```
 
@@ -153,6 +196,7 @@ Scans MTD/UBI and block devices (SD/eMMC such as `/dev/sd*` and `/dev/mmcblk*`) 
 - `--pull` — pull image bytes from `--dev` at `--offset` and send over TCP to `--output-tcp`
 - `--offset <bytes>` — image offset used by `--pull` or `--find-address`
 - `--output-tcp <IPv4:port>` — TCP destination used by `--pull`
+- `--output-http <http://host:port/path>` — HTTP destination used by `--pull` (POST body contains image bytes), or for posting normal command output
 - `--find-address` — parse image at `--offset` and print load address (uImage/FIT)
 
 ### `image` argument constraints
@@ -160,7 +204,7 @@ Scans MTD/UBI and block devices (SD/eMMC such as `/dev/sd*` and `/dev/mmcblk*`) 
 - `--pull` **requires**:
   - `--dev`
   - `--offset`
-  - `--output-tcp`
+  - either `--output-tcp` or `--output-http`
 - `--find-address` **requires**:
   - `--dev`
   - `--offset`
@@ -210,6 +254,8 @@ Pull image bytes to TCP listener:
 
 ```bash
 ./uboot_audit image --pull --dev /dev/mtdblock4 --offset 0x200 --output-tcp 192.168.1.50:5000
+./uboot_audit image --pull --dev /dev/mtdblock4 --offset 0x200 --output-http http://192.168.1.50:5000/image
+./uboot_audit image --verbose --output-http http://192.168.1.50:5000/image
 ```
 
 ---

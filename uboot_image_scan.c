@@ -19,7 +19,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
-#include <json-c/json.h>
+#include <json.h>
 #include <csv.h>
 
 #ifndef O_CLOEXEC
@@ -37,6 +37,10 @@ static bool g_allow_text;
 static bool g_send_logs;
 static uint32_t g_crc32_table[256];
 static int g_log_sock = -1;
+static const char *g_output_http_uri = NULL;
+static char *g_output_http_buf = NULL;
+static size_t g_output_http_len;
+static size_t g_output_http_cap;
 enum fw_output_format {
 	FW_OUTPUT_TXT = 0,
 	FW_OUTPUT_CSV,
@@ -44,6 +48,19 @@ enum fw_output_format {
 };
 static enum fw_output_format g_output_format = FW_OUTPUT_TXT;
 static bool g_csv_header_emitted;
+
+static const char *image_http_content_type(void)
+{
+	switch (g_output_format) {
+	case FW_OUTPUT_JSON:
+		return "application/x-ndjson; charset=utf-8";
+	case FW_OUTPUT_CSV:
+		return "text/csv; charset=utf-8";
+	case FW_OUTPUT_TXT:
+	default:
+		return "text/plain; charset=utf-8";
+	}
+}
 
 static void emit_v(FILE *stream, const char *fmt, va_list ap)
 {
@@ -59,11 +76,33 @@ static void emit_v(FILE *stream, const char *fmt, va_list ap)
 	needed = vsnprintf(stack, sizeof(stack), fmt, aq);
 	va_end(aq);
 
-	if (g_log_sock < 0 || needed < 0)
+	if (needed < 0)
 		return;
 
 	if ((size_t)needed < sizeof(stack)) {
-		fw_send_all(g_log_sock, (const uint8_t *)stack, (size_t)needed);
+		if (g_log_sock >= 0)
+			fw_send_all(g_log_sock, (const uint8_t *)stack, (size_t)needed);
+		if (g_output_http_uri) {
+			size_t need = g_output_http_len + (size_t)needed + 1;
+			if (need > g_output_http_cap) {
+				size_t new_cap = g_output_http_cap ? g_output_http_cap : 1024;
+				char *tmp;
+				while (new_cap < need)
+					new_cap *= 2;
+				tmp = realloc(g_output_http_buf, new_cap);
+				if (tmp) {
+					g_output_http_buf = tmp;
+					g_output_http_cap = new_cap;
+					memcpy(g_output_http_buf + g_output_http_len, stack, (size_t)needed);
+					g_output_http_len += (size_t)needed;
+					g_output_http_buf[g_output_http_len] = '\0';
+				}
+			} else {
+				memcpy(g_output_http_buf + g_output_http_len, stack, (size_t)needed);
+				g_output_http_len += (size_t)needed;
+				g_output_http_buf[g_output_http_len] = '\0';
+			}
+		}
 		return;
 	}
 
@@ -74,7 +113,29 @@ static void emit_v(FILE *stream, const char *fmt, va_list ap)
 	va_copy(aq, ap);
 	vsnprintf(dyn, (size_t)needed + 1, fmt, aq);
 	va_end(aq);
-	fw_send_all(g_log_sock, (const uint8_t *)dyn, (size_t)needed);
+	if (g_log_sock >= 0)
+		fw_send_all(g_log_sock, (const uint8_t *)dyn, (size_t)needed);
+	if (g_output_http_uri) {
+		size_t need = g_output_http_len + (size_t)needed + 1;
+		if (need > g_output_http_cap) {
+			size_t new_cap = g_output_http_cap ? g_output_http_cap : 1024;
+			char *tmp;
+			while (new_cap < need)
+				new_cap *= 2;
+			tmp = realloc(g_output_http_buf, new_cap);
+			if (tmp) {
+				g_output_http_buf = tmp;
+				g_output_http_cap = new_cap;
+				memcpy(g_output_http_buf + g_output_http_len, dyn, (size_t)needed);
+				g_output_http_len += (size_t)needed;
+				g_output_http_buf[g_output_http_len] = '\0';
+			}
+		} else {
+			memcpy(g_output_http_buf + g_output_http_len, dyn, (size_t)needed);
+			g_output_http_len += (size_t)needed;
+			g_output_http_buf[g_output_http_len] = '\0';
+		}
+	}
 	free(dyn);
 }
 
@@ -479,6 +540,7 @@ static void usage(const char *prog)
 	fprintf(stderr,
 		"Usage: %s [--verbose] [--dev <device>] [--step <bytes>] [--allow-text]\n"
 		"       %s --pull --dev <device> --offset <bytes> --output-tcp <IPv4:port>\n"
+		"       %s --pull --dev <device> --offset <bytes> --output-http <http://host:port/>\n"
 		"       %s --find-address --dev <device> --offset <bytes>\n"
 		"       %s [--skip-remove] [--skip-mtd] [--skip-ubi] [--skip-sd] [--skip-emmc]\n"
 		"  no args: scan /dev/mtdblock*, /dev/mtd*, /dev/ubi*_*, /dev/ubiblock*_*, /dev/mmcblk* and /dev/sd* for U-Boot image signatures\n"
@@ -495,8 +557,9 @@ static void usage(const char *prog)
 		"  --pull: read image from --dev at --offset and stream bytes to --output-tcp\n"
 		"  --find-address: print image load address from header/FIT data\n"
 		"  --offset: byte offset of image header for --pull\n"
-		"  --output-tcp: IPv4:TCPPort destination for --pull\n",
-		prog, prog, prog, prog);
+		"  --output-tcp: IPv4:TCPPort destination for --pull\n"
+		"  --output-http: HTTP URI destination for POST output\n",
+		prog, prog, prog, prog, prog);
 }
 
 static int find_image_load_address(const char *dev, uint64_t offset)
@@ -673,6 +736,81 @@ static int pull_image_to_output_tcp(const char *dev, uint64_t offset, const char
 	return 0;
 }
 
+static int pull_image_to_output_http(const char *dev, uint64_t offset, const char *output_http_uri)
+{
+	uint8_t hdr[UIMAGE_HDR_SIZE];
+	uint64_t dev_size = fw_guess_size_any(dev);
+	uint64_t total_size = 0;
+	uint8_t *img = NULL;
+	int fd;
+	char errbuf[256];
+
+	fd = open(dev, O_RDONLY | O_CLOEXEC);
+	if (fd < 0) {
+		err_printf("Cannot open %s: %s\n", dev, strerror(errno));
+		return 1;
+	}
+
+	if (pread(fd, hdr, sizeof(hdr), (off_t)offset) != (ssize_t)sizeof(hdr)) {
+		err_printf("Unable to read image header from %s @ 0x%jx\n", dev, (uintmax_t)offset);
+		close(fd);
+		return 1;
+	}
+
+	if (!memcmp(hdr, "\x27\x05\x19\x56", 4)) {
+		if (!validate_uimage_header(hdr, offset, dev_size ? dev_size : UINT64_MAX)) {
+			err_printf("uImage header validation failed at offset 0x%jx\n", (uintmax_t)offset);
+			close(fd);
+			return 1;
+		}
+		total_size = UIMAGE_HDR_SIZE + fw_read_be32(hdr + 12);
+	} else if (!memcmp(hdr, "\xD0\x0D\xFE\xED", 4)) {
+		if (!validate_fit_header(hdr, offset, dev_size ? dev_size : UINT64_MAX)) {
+			err_printf("FIT header validation failed at offset 0x%jx\n", (uintmax_t)offset);
+			close(fd);
+			return 1;
+		}
+		total_size = fw_read_be32(hdr + 4);
+	} else {
+		err_printf("Unknown image format at offset 0x%jx\n", (uintmax_t)offset);
+		close(fd);
+		return 1;
+	}
+
+	img = malloc((size_t)total_size);
+	if (!img) {
+		err_printf("Unable to allocate image buffer (%ju bytes)\n", (uintmax_t)total_size);
+		close(fd);
+		return 1;
+	}
+
+	if (pread(fd, img, (size_t)total_size, (off_t)offset) != (ssize_t)total_size) {
+		err_printf("Pull failed while reading image bytes\n");
+		free(img);
+		close(fd);
+		return 1;
+	}
+
+	if (fw_http_post(output_http_uri, img, (size_t)total_size,
+			 "application/octet-stream", errbuf, sizeof(errbuf)) < 0) {
+		err_printf("Failed HTTP POST to %s: %s\n", output_http_uri, errbuf[0] ? errbuf : "unknown error");
+		free(img);
+		close(fd);
+		return 1;
+	}
+
+	if (g_verbose) {
+		char msg[256];
+		snprintf(msg, sizeof(msg), "Pulled %ju bytes from %s @ 0x%jx to %s",
+			(uintmax_t)total_size, dev, (uintmax_t)offset, output_http_uri);
+		emit_image_verbose(dev, offset, msg);
+	}
+
+	free(img);
+	close(fd);
+	return 0;
+}
+
 static void report_signature(const char *dev, uint64_t off, const char *kind)
 {
 	if (g_output_format == FW_OUTPUT_TXT) {
@@ -772,6 +910,7 @@ int fw_image_scan_main(int argc, char **argv)
 {
 	const char *dev_override = NULL;
 	const char *output_tcp_target = NULL;
+	const char *output_http_target = NULL;
 	uint64_t step = 0x1000;
 	uint64_t pull_offset = 0;
 	bool pull_mode = false;
@@ -809,6 +948,7 @@ int fw_image_scan_main(int argc, char **argv)
 		{ "step", required_argument, NULL, 's' },
 		{ "offset", required_argument, NULL, 'o' },
 		{ "output-tcp", required_argument, NULL, 'p' },
+		{ "output-http", required_argument, NULL, 'O' },
 		{ "pull", no_argument, NULL, 'P' },
 		{ "find-address", no_argument, NULL, 'a' },
 		{ "send-logs", no_argument, NULL, 'L' },
@@ -822,7 +962,7 @@ int fw_image_scan_main(int argc, char **argv)
 		{ 0, 0, 0, 0 }
 	};
 
-	while ((opt = getopt_long(argc, argv, "hvd:s:o:p:PtaLRMUSE", long_opts, NULL)) != -1) {
+	while ((opt = getopt_long(argc, argv, "hvd:s:o:p:O:PtaLRMUSE", long_opts, NULL)) != -1) {
 		switch (opt) {
 		case 'h':
 			usage(argv[0]);
@@ -844,6 +984,9 @@ int fw_image_scan_main(int argc, char **argv)
 			break;
 		case 'p':
 			output_tcp_target = optarg;
+			break;
+		case 'O':
+			output_http_target = optarg;
 			break;
 		case 'P':
 			pull_mode = true;
@@ -892,6 +1035,14 @@ int fw_image_scan_main(int argc, char **argv)
 		return 2;
 	}
 
+	if (output_http_target && strncmp(output_http_target, "http://", 7)) {
+		err_printf("Invalid --output-http URI (expected http://host:port/...): %s\n", output_http_target);
+		return 2;
+	}
+
+	if (output_http_target)
+		g_output_http_uri = output_http_target;
+
 	if (g_send_logs && pull_mode) {
 		err_printf("--send-logs cannot be combined with --pull\n");
 		return 2;
@@ -906,14 +1057,20 @@ int fw_image_scan_main(int argc, char **argv)
 	}
 
 	if (pull_mode) {
-		if (!dev_override || !offset_set || !output_tcp_target) {
-			err_printf("--pull requires --dev, --offset, and --output-tcp\n");
+		if (!dev_override || !offset_set || (!output_tcp_target && !output_http_target)) {
+			err_printf("--pull requires --dev, --offset, and either --output-tcp or --output-http\n");
+			return 2;
+		}
+		if (output_tcp_target && output_http_target) {
+			err_printf("--pull accepts only one of --output-tcp or --output-http\n");
 			return 2;
 		}
 		if (find_address) {
 			err_printf("--find-address cannot be combined with --pull\n");
 			return 2;
 		}
+		if (output_http_target)
+			return pull_image_to_output_http(dev_override, pull_offset, output_http_target);
 		return pull_image_to_output_tcp(dev_override, pull_offset, output_tcp_target);
 	}
 
@@ -1001,6 +1158,26 @@ out:
 
 	if (g_log_sock >= 0)
 		close(g_log_sock);
+
+	if (g_output_http_uri) {
+		char errbuf[256];
+		if (fw_http_post(g_output_http_uri,
+				 (const uint8_t *)(g_output_http_buf ? g_output_http_buf : ""),
+				 g_output_http_len,
+				 image_http_content_type(),
+				 errbuf,
+				 sizeof(errbuf)) < 0) {
+			err_printf("Failed to POST output to %s: %s\n", g_output_http_uri,
+				errbuf[0] ? errbuf : "unknown error");
+			total_hits = -1;
+		}
+	}
+
+	free(g_output_http_buf);
+	g_output_http_buf = NULL;
+	g_output_http_len = 0;
+	g_output_http_cap = 0;
+	g_output_http_uri = NULL;
 
 	return (total_hits < 0) ? 1 : 0;
 }

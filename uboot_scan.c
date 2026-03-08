@@ -12,6 +12,7 @@
 #include <sys/sysmacros.h>
 #include <sys/types.h>
 #include <unistd.h>
+#include <curl/curl.h>
 
 #ifndef O_CLOEXEC
 #define O_CLOEXEC 0
@@ -134,6 +135,81 @@ int fw_send_all(int sock, const uint8_t *buf, size_t len)
 		buf += (size_t)n;
 		len -= (size_t)n;
 	}
+	return 0;
+}
+
+int fw_http_post(const char *uri, const uint8_t *data, size_t len,
+		 const char *content_type, char *errbuf, size_t errbuf_len)
+{
+	CURL *curl;
+	CURLcode rc;
+	long http_code = 0;
+	struct curl_slist *headers = NULL;
+	char header_line[256];
+	static bool curl_global_ready;
+
+	if (errbuf && errbuf_len)
+		errbuf[0] = '\0';
+
+	if (!uri || !*uri) {
+		if (errbuf && errbuf_len)
+			snprintf(errbuf, errbuf_len, "HTTP URI is empty");
+		return -1;
+	}
+
+	if (!curl_global_ready) {
+		if (curl_global_init(CURL_GLOBAL_DEFAULT) != CURLE_OK) {
+			if (errbuf && errbuf_len)
+				snprintf(errbuf, errbuf_len, "curl_global_init failed");
+			return -1;
+		}
+		curl_global_ready = true;
+	}
+
+	curl = curl_easy_init();
+	if (!curl) {
+		if (errbuf && errbuf_len)
+			snprintf(errbuf, errbuf_len, "curl_easy_init failed");
+		return -1;
+	}
+
+	if (!content_type || !*content_type)
+		content_type = "text/plain; charset=utf-8";
+	snprintf(header_line, sizeof(header_line), "Content-Type: %s", content_type);
+	headers = curl_slist_append(headers, header_line);
+	if (!headers) {
+		if (errbuf && errbuf_len)
+			snprintf(errbuf, errbuf_len, "failed to prepare HTTP headers");
+		curl_easy_cleanup(curl);
+		return -1;
+	}
+	curl_easy_setopt(curl, CURLOPT_URL, uri);
+	curl_easy_setopt(curl, CURLOPT_POST, 1L);
+	curl_easy_setopt(curl, CURLOPT_POSTFIELDS, (const char *)data);
+	curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE_LARGE, (curl_off_t)len);
+	curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+	curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);
+	curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
+
+	rc = curl_easy_perform(curl);
+	if (rc != CURLE_OK) {
+		if (errbuf && errbuf_len)
+			snprintf(errbuf, errbuf_len, "curl perform failed: %s", curl_easy_strerror(rc));
+		curl_slist_free_all(headers);
+		curl_easy_cleanup(curl);
+		return -1;
+	}
+
+	curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
+	curl_slist_free_all(headers);
+	curl_easy_cleanup(curl);
+
+	if (http_code < 200 || http_code >= 300) {
+		if (errbuf && errbuf_len)
+			snprintf(errbuf, errbuf_len, "HTTP status %ld", http_code);
+		return -1;
+	}
+
 	return 0;
 }
 

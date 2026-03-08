@@ -74,24 +74,13 @@ jobs:
           BUILT=0
           for T in "${TARGETS[@]}"; do
             echo "Trying target: ${T}"
-            rm -rf third_party/json-c/build-gha
-
-            if CC="zig cc -target ${T}" \
-               cmake -S third_party/json-c -B third_party/json-c/build-gha \
-                 -DCMAKE_BUILD_TYPE=Release \
-                 -DBUILD_SHARED_LIBS=OFF \
-                 -DBUILD_STATIC_LIBS=ON \
-                 -DBUILD_TESTING=OFF \
-                 -DBUILD_APPS=OFF \
-               && cmake --build third_party/json-c/build-gha --target json-c \
-               && zig cc -O2 -static -Wno-deprecated-non-prototype -target "${T}" \
-                    -Ithird_party/libcsv \
-                    -Ithird_party/json-c \
-                    -Ithird_party/json-c/build-gha \
-                    -o dist/${{ matrix.name }}/uboot_audit-${{ matrix.name }} \
-                    uboot_audit.c uboot_env_scan.c uboot_image_scan.c uboot_scan.c \
-                    third_party/libcsv/libcsv.c \
-                    third_party/json-c/build-gha/libjson-c.a; then
+            if make clean \
+               && make static \
+                    CMAKE_C_COMPILER="$(command -v zig)" \
+                    CMAKE_C_COMPILER_ARG1=cc \
+                    CMAKE_C_COMPILER_TARGET="${T}" \
+                    CC="zig cc -target ${T}"; then
+              cp uboot_audit dist/${{ matrix.name }}/uboot_audit-${{ matrix.name }}
               echo "Built successfully with target: ${T}"
               BUILT=1
               break
