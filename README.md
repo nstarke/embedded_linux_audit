@@ -297,9 +297,10 @@ Runs compiled audit rules that are defined under `audit-rules/` (one `.c` file p
 ./uboot_audit audit --rule uboot_validate_crc32 --dev /dev/mtdblock4 --offset 0x0 --size 0x10000
 ```
 
-Initial rule included:
+Initial rules included:
 
 - `uboot_validate_crc32` — validates U-Boot environment CRC32 using standard and redundant layouts.
+- `uboot_validate_secureboot` — validates secure boot related env variables: `secureboot`, `verify`, `bootm_verify_sig`, plus presence of one signature variable (`signature`, `boot_signature`, or `fit_signature`).
 
 ---
 
