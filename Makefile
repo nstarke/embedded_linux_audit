@@ -56,6 +56,7 @@ ZLIB_DIR      := third_party/zlib
 ZLIB_BUILD    := $(ZLIB_DIR)/build-$(CC_TAG)
 ZLIB_LIB      := $(ZLIB_BUILD)/libz.a
 ZLIB_CFLAGS   := -I$(ZLIB_DIR) -I$(ZLIB_BUILD)
+LIBUBOOTENV_EXTRA_CFLAGS := -I$(abspath compat) -I$(abspath $(ZLIB_DIR)) -I$(abspath $(ZLIB_BUILD)) -Wno-switch
 JSONC_DIR     := third_party/json-c
 JSONC_BUILD   := $(JSONC_DIR)/build-$(CC_TAG)
 JSONC_LIB     := $(JSONC_BUILD)/libjson-c.a
@@ -86,6 +87,7 @@ CFLAGS += -I.
 TARGET := uboot_audit
 SRC    := uboot_audit.c uboot_env_scan.c uboot_image_scan.c uboot_audit_scan.c uboot_scan.c \
 	  audit-rules/uboot_validate_crc32_rule.c \
+	  audit-rules/uboot_validate_env_writeability_rule.c \
 	  audit-rules/uboot_validate_secureboot_rule.c \
 	  $(LIBCSV_SRC) $(GENERATED_CA_SRC)
 
@@ -101,8 +103,8 @@ $(JSONC_LIB):
 	cmake -S $(JSONC_DIR) -B $(JSONC_BUILD) $(CMAKE_CC_ARGS) -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DBUILD_STATIC_LIBS=ON -DBUILD_TESTING=OFF -DBUILD_APPS=OFF
 	cmake --build $(JSONC_BUILD) --target json-c
 
-$(LIBUBOOTENV_LIB):
-	cmake -S $(LIBUBOOTENV_DIR) -B $(LIBUBOOTENV_BUILD) $(CMAKE_CC_ARGS) -DCMAKE_BUILD_TYPE=Release -DBUILD_DOC=OFF -DNO_YML_SUPPORT=ON
+$(LIBUBOOTENV_LIB): $(ZLIB_LIB)
+	cmake -S $(LIBUBOOTENV_DIR) -B $(LIBUBOOTENV_BUILD) $(CMAKE_CC_ARGS) -DCMAKE_BUILD_TYPE=Release -DBUILD_DOC=OFF -DNO_YML_SUPPORT=ON -DCMAKE_C_FLAGS="$(LIBUBOOTENV_EXTRA_CFLAGS)"
 	cmake --build $(LIBUBOOTENV_BUILD) --target ubootenv_static
 
 $(ZLIB_LIB):
