@@ -48,9 +48,6 @@ if [ -n "$TEST_OUTPUT_HTTP" ] && [ -n "$TEST_OUTPUT_HTTPS" ]; then
     exit 2
 fi
 
-export TEST_OUTPUT_HTTP
-export TEST_OUTPUT_HTTPS
-
 rc=0
 
 for test_script in \
@@ -62,7 +59,15 @@ for test_script in \
 do
     echo
     echo "===== Running $(basename "$test_script") ====="
-    if ! /bin/sh "$test_script"; then
+    if [ -n "$TEST_OUTPUT_HTTP" ]; then
+        /bin/sh "$test_script" --output-http "$TEST_OUTPUT_HTTP"
+    elif [ -n "$TEST_OUTPUT_HTTPS" ]; then
+        /bin/sh "$test_script" --output-https "$TEST_OUTPUT_HTTPS"
+    else
+        /bin/sh "$test_script"
+    fi
+
+    if [ "$?" -ne 0 ]; then
         rc=1
     fi
 done
