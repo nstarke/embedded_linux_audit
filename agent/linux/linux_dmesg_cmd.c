@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT License - Copyright (c) 2026 Nicholas Starke
 
-#include "uboot_cmd.h"
+#include "embedded_linux_audit_cmd.h"
 
 #include <errno.h>
 #include <getopt.h>
@@ -151,7 +151,7 @@ static void usage(const char *prog)
 		prog);
 }
 
-int uboot_dmesg_scan_main(int argc, char **argv)
+int linux_dmesg_scan_main(int argc, char **argv)
 {
 	const char *output_tcp_target = NULL;
 	const char *output_http_target = NULL;

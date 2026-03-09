@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT License - Copyright (c) 2026 Nicholas Starke
 
-#include "uboot_cmd.h"
+#include "embedded_linux_audit_cmd.h"
 
 #include <errno.h>
 #include <arpa/inet.h>

@@ -54,28 +54,28 @@ export TEST_OUTPUT_HTTPS
 . "$SCRIPT_DIR/common.sh"
 
 require_binary "$BIN"
-print_section "dmesg subcommand argument coverage"
+print_section "linux dmesg subcommand argument coverage"
 
-run_exact_case "dmesg --help" 0 "$BIN" dmesg --help
-run_accept_case "dmesg" "$BIN" dmesg
-run_accept_case "dmesg --verbose" "$BIN" dmesg --verbose
-run_exact_case "dmesg --output-tcp + --help" 0 "$BIN" dmesg --output-tcp 127.0.0.1:9 --help
-run_accept_case "dmesg --output-http" "$BIN" dmesg --output-http http://127.0.0.1:1/dmesg
-run_accept_case "dmesg --output-https" "$BIN" dmesg --output-https https://127.0.0.1:1/dmesg
-run_accept_case "dmesg --insecure" "$BIN" dmesg --insecure
+run_exact_case "linux dmesg --help" 0 "$BIN" linux dmesg --help
+run_accept_case "linux dmesg" "$BIN" linux dmesg
+run_accept_case "linux dmesg --verbose" "$BIN" linux dmesg --verbose
+run_exact_case "linux dmesg --output-tcp + --help" 0 "$BIN" linux dmesg --output-tcp 127.0.0.1:9 --help
+run_accept_case "linux dmesg --output-http" "$BIN" linux dmesg --output-http http://127.0.0.1:1/dmesg
+run_accept_case "linux dmesg --output-https" "$BIN" linux dmesg --output-https https://127.0.0.1:1/dmesg
+run_accept_case "linux dmesg --insecure" "$BIN" linux dmesg --insecure
 
-run_accept_case "dmesg with --output-format txt" "$BIN" --output-format txt dmesg
-run_accept_case "dmesg with --output-format csv" "$BIN" --output-format csv dmesg
-run_accept_case "dmesg with --output-format json" "$BIN" --output-format json dmesg
+run_accept_case "linux dmesg with --output-format txt" "$BIN" --output-format txt linux dmesg
+run_accept_case "linux dmesg with --output-format csv" "$BIN" --output-format csv linux dmesg
+run_accept_case "linux dmesg with --output-format json" "$BIN" --output-format json linux dmesg
 
 log="$(mktemp /tmp/test_dmesg_warn.XXXXXX)"
-run_with_output_override "$BIN" --output-format json dmesg --help >"$log" 2>&1
+run_with_output_override "$BIN" --output-format json linux dmesg --help >"$log" 2>&1
 rc=$?
 if [ "$rc" -eq 0 ] && grep -q "Warning: --output-format has no effect for dmesg" "$log"; then
-    echo "[PASS] dmesg warns when --output-format is set"
+    echo "[PASS] linux dmesg warns when --output-format is set"
     PASS_COUNT="$(expr "$PASS_COUNT" + 1)"
 else
-    echo "[FAIL] dmesg warns when --output-format is set (rc=$rc)"
+    echo "[FAIL] linux dmesg warns when --output-format is set (rc=$rc)"
     sed -n '1,80p' "$log"
     FAIL_COUNT="$(expr "$FAIL_COUNT" + 1)"
 fi

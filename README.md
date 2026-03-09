@@ -2,9 +2,10 @@
 
 `uboot_audit` is a Linux host-side C utility for U-Boot discovery and validation workflows on embedded systems. It focuses on three tasks:
 
-- **Environment discovery** (`uboot_audit env`): scans flash/block devices for valid U-Boot environment candidates and can emit `fw_env.config` entries.
-- **Image discovery/extraction** (`uboot_audit image`): scans for likely U-Boot image headers, resolves load addresses, and can pull image bytes.
-- **Rule-based auditing** (`uboot_audit audit`): runs compiled rules against selected bytes to validate security and configuration expectations.
+- **Environment discovery** (`uboot_audit uboot env`): scans flash/block devices for valid U-Boot environment candidates and can emit `fw_env.config` entries.
+- **Image discovery/extraction** (`uboot_audit uboot image`): scans for likely U-Boot image headers, resolves load addresses, and can pull image bytes.
+- **Rule-based auditing** (`uboot_audit uboot audit`): runs compiled rules against selected bytes to validate security and configuration expectations.
+- **Linux utilities** (`uboot_audit linux dmesg`, `uboot_audit linux remote-copy`): collect kernel logs and transfer files.
 
 ## How it works
 

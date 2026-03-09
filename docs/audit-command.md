@@ -1,10 +1,10 @@
-# `uboot_audit audit` Command
+# `uboot_audit uboot audit` Command
 
-Runs compiled audit rules that are defined under `agent/audit-rules/` (one `.c` file per rule).
+Runs compiled audit rules that are defined under `agent/uboot/audit-rules/` (one `.c` file per rule).
 
 Before running rules, `audit` ensures `./fw_env.config` exists for follow-on environment operations.
 
-- when `audit` is run **without** `--dev`, it performs an env-style device scan (same scan flow as the `env` subcommand) and writes `./fw_env.config`, then exits
+- when `audit` is run **without** `--dev`, it performs an env-style device scan (same scan flow as the `uboot env` subcommand) and writes `./fw_env.config`, then exits
 - when `audit` is run **with** `--dev`, it reuses `./fw_env.config` if present, otherwise falls back to `./uboot_env.config`, and otherwise runs env scan to generate `./fw_env.config`
 
 ## `audit` arguments
@@ -26,13 +26,13 @@ When `audit` is run without `--dev`, it scans devices and writes `./fw_env.confi
 ## `audit` examples
 
 ```bash
-./uboot_audit audit --list-rules
-./uboot_audit audit --dev /dev/mtdblock4 --offset 0x0 --size 0x10000
-./uboot_audit audit --rule uboot_validate_crc32 --dev /dev/mtdblock4 --offset 0x0 --size 0x10000
-./uboot_audit audit --rule uboot_validate_env_security --dev /dev/mtdblock4 --offset 0x0 --size 0x10000
-./uboot_audit audit --rule uboot_validate_cmdline_init_writeability --dev /dev/mtdblock4 --offset 0x0 --size 0x10000
-./uboot_audit audit --rule uboot_validate_secureboot --dev /dev/mtdblock4 --offset 0x0 --size 0x10000 --signature-blob ./fit-image.bin --signature-pubkey ./pubkey.pem --signature-alg sha256
-./uboot_audit audit --rule uboot_validate_secureboot --dev /dev/mtdblock4 --offset 0x0 --size 0x10000 --scan-signature-devices --signature-alg sha256
+./uboot_audit uboot audit --list-rules
+./uboot_audit uboot audit --dev /dev/mtdblock4 --offset 0x0 --size 0x10000
+./uboot_audit uboot audit --rule uboot_validate_crc32 --dev /dev/mtdblock4 --offset 0x0 --size 0x10000
+./uboot_audit uboot audit --rule uboot_validate_env_security --dev /dev/mtdblock4 --offset 0x0 --size 0x10000
+./uboot_audit uboot audit --rule uboot_validate_cmdline_init_writeability --dev /dev/mtdblock4 --offset 0x0 --size 0x10000
+./uboot_audit uboot audit --rule uboot_validate_secureboot --dev /dev/mtdblock4 --offset 0x0 --size 0x10000 --signature-blob ./fit-image.bin --signature-pubkey ./pubkey.pem --signature-alg sha256
+./uboot_audit uboot audit --rule uboot_validate_secureboot --dev /dev/mtdblock4 --offset 0x0 --size 0x10000 --scan-signature-devices --signature-alg sha256
 ```
 
 Initial rules included:

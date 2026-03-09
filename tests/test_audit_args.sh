@@ -54,7 +54,7 @@ export TEST_OUTPUT_HTTPS
 . "$SCRIPT_DIR/common.sh"
 
 require_binary "$BIN"
-print_section "audit subcommand argument coverage"
+print_section "uboot audit subcommand argument coverage"
 
 TMP_DIR="$(mktemp -d /tmp/test_audit_args.XXXXXX)"
 TMP_BLOB="$TMP_DIR/sample.fit"
@@ -69,50 +69,50 @@ FJdGAr5e3g7r5gq2k4J2Y9h6QvVQ6j0S6s7n4i4Nf2n2PqY9sI7rXgsCAwEAAQ==
 -----END PUBLIC KEY-----
 PEM
 
-run_exact_case "audit --help" 0 "$BIN" audit --help
-run_accept_case "audit --list-rules" "$BIN" audit --list-rules
+run_exact_case "uboot audit --help" 0 "$BIN" uboot audit --help
+run_accept_case "uboot audit --list-rules" "$BIN" uboot audit --list-rules
 
 for output_format in txt csv json
 do
-    run_accept_case "audit --list-rules with --output-format ${output_format}" \
-        "$BIN" --output-format "$output_format" audit --list-rules
+    run_accept_case "uboot audit --list-rules with --output-format ${output_format}" \
+        "$BIN" --output-format "$output_format" uboot audit --list-rules
 done
 
-run_accept_case "audit required args: --dev --size" \
-    "$BIN" audit --dev /dev/null --size "$TEST_SIZE"
+run_accept_case "uboot audit required args: --dev --size" \
+    "$BIN" uboot audit --dev /dev/null --size "$TEST_SIZE"
 
-run_accept_case "audit defaults --size to 0x10000 when omitted" \
-    "$BIN" audit --dev /dev/null
+run_accept_case "uboot audit defaults --size to 0x10000 when omitted" \
+    "$BIN" uboot audit --dev /dev/null
 
-run_accept_case "audit without --dev scans devices and writes fw_env.config" \
-    "$BIN" audit
+run_accept_case "uboot audit without --dev scans devices and writes fw_env.config" \
+    "$BIN" uboot audit
 
-run_exact_case "audit without --dev but with --size requires --dev" 2 \
-    "$BIN" audit --size "$TEST_SIZE"
+run_exact_case "uboot audit without --dev but with --size requires --dev" 2 \
+    "$BIN" uboot audit --size "$TEST_SIZE"
 
 for output_format in txt csv json
 do
-    run_accept_case "audit (no --rule) with --output-format ${output_format}" \
-        "$BIN" --output-format "$output_format" audit --dev /dev/null --size "$TEST_SIZE"
+    run_accept_case "uboot audit (no --rule) with --output-format ${output_format}" \
+        "$BIN" --output-format "$output_format" uboot audit --dev /dev/null --size "$TEST_SIZE"
 
-    run_accept_case "audit --offset (no --rule) with --output-format ${output_format}" \
-        "$BIN" --output-format "$output_format" audit --dev /dev/null --offset 0x0 --size "$TEST_SIZE"
+    run_accept_case "uboot audit --offset (no --rule) with --output-format ${output_format}" \
+        "$BIN" --output-format "$output_format" uboot audit --dev /dev/null --offset 0x0 --size "$TEST_SIZE"
 done
 
-run_accept_case "audit --rule uboot_validate_crc32" \
-    "$BIN" audit --rule uboot_validate_crc32 --dev /dev/null --size "$TEST_SIZE"
+run_accept_case "uboot audit --rule uboot_validate_crc32" \
+    "$BIN" uboot audit --rule uboot_validate_crc32 --dev /dev/null --size "$TEST_SIZE"
 
-run_accept_case "audit --rule uboot_validate_env_writeability" \
-    "$BIN" audit --rule uboot_validate_env_writeability --dev /dev/null --size "$TEST_SIZE"
+run_accept_case "uboot audit --rule uboot_validate_env_writeability" \
+    "$BIN" uboot audit --rule uboot_validate_env_writeability --dev /dev/null --size "$TEST_SIZE"
 
-run_accept_case "audit --rule uboot_validate_env_security" \
-    "$BIN" audit --rule uboot_validate_env_security --dev /dev/null --size "$TEST_SIZE"
+run_accept_case "uboot audit --rule uboot_validate_env_security" \
+    "$BIN" uboot audit --rule uboot_validate_env_security --dev /dev/null --size "$TEST_SIZE"
 
-run_accept_case "audit --rule uboot_validate_cmdline_init_writeability" \
-    "$BIN" audit --rule uboot_validate_cmdline_init_writeability --dev /dev/null --size "$TEST_SIZE"
+run_accept_case "uboot audit --rule uboot_validate_cmdline_init_writeability" \
+    "$BIN" uboot audit --rule uboot_validate_cmdline_init_writeability --dev /dev/null --size "$TEST_SIZE"
 
-run_accept_case "audit --rule uboot_validate_secureboot" \
-    "$BIN" audit --rule uboot_validate_secureboot --dev /dev/null --size "$TEST_SIZE"
+run_accept_case "uboot audit --rule uboot_validate_secureboot" \
+    "$BIN" uboot audit --rule uboot_validate_secureboot --dev /dev/null --size "$TEST_SIZE"
 
 for rule in \
     uboot_validate_crc32 \
@@ -123,52 +123,52 @@ for rule in \
 do
     for output_format in txt csv json
     do
-        run_accept_case "audit --rule ${rule} with --output-format ${output_format}" \
-            "$BIN" --output-format "$output_format" audit --rule "$rule" --dev /dev/null --size "$TEST_SIZE"
+        run_accept_case "uboot audit --rule ${rule} with --output-format ${output_format}" \
+            "$BIN" --output-format "$output_format" uboot audit --rule "$rule" --dev /dev/null --size "$TEST_SIZE"
     done
 done
 
-run_accept_case "audit --offset" \
-    "$BIN" audit --dev /dev/null --offset 0x0 --size "$TEST_SIZE"
+run_accept_case "uboot audit --offset" \
+    "$BIN" uboot audit --dev /dev/null --offset 0x0 --size "$TEST_SIZE"
 
-run_accept_case "audit --signature-blob" \
-    "$BIN" audit --dev /dev/null --size "$TEST_SIZE" --signature-blob "$TMP_BLOB"
+run_accept_case "uboot audit --signature-blob" \
+    "$BIN" uboot audit --dev /dev/null --size "$TEST_SIZE" --signature-blob "$TMP_BLOB"
 
-run_accept_case "audit --signature-pubkey" \
-    "$BIN" audit --dev /dev/null --size "$TEST_SIZE" --signature-pubkey "$TMP_PEM"
+run_accept_case "uboot audit --signature-pubkey" \
+    "$BIN" uboot audit --dev /dev/null --size "$TEST_SIZE" --signature-pubkey "$TMP_PEM"
 
-run_accept_case "audit --scan-signature-devices" \
-    "$BIN" audit --dev /dev/null --size "$TEST_SIZE" --scan-signature-devices
+run_accept_case "uboot audit --scan-signature-devices" \
+    "$BIN" uboot audit --dev /dev/null --size "$TEST_SIZE" --scan-signature-devices
 
-run_accept_case "audit --scan-signature-blob" \
-    "$BIN" audit --dev /dev/null --size "$TEST_SIZE" --scan-signature-blob "$TMP_DIR/*.fit"
+run_accept_case "uboot audit --scan-signature-blob" \
+    "$BIN" uboot audit --dev /dev/null --size "$TEST_SIZE" --scan-signature-blob "$TMP_DIR/*.fit"
 
-run_accept_case "audit --scan-signature-pubkey" \
-    "$BIN" audit --dev /dev/null --size "$TEST_SIZE" --scan-signature-pubkey "$TMP_DIR/*.pem"
+run_accept_case "uboot audit --scan-signature-pubkey" \
+    "$BIN" uboot audit --dev /dev/null --size "$TEST_SIZE" --scan-signature-pubkey "$TMP_DIR/*.pem"
 
-run_accept_case "audit --signature-alg" \
-    "$BIN" audit --dev /dev/null --size "$TEST_SIZE" --signature-alg sha256
+run_accept_case "uboot audit --signature-alg" \
+    "$BIN" uboot audit --dev /dev/null --size "$TEST_SIZE" --signature-alg sha256
 
-run_accept_case "audit --verbose" \
-    "$BIN" audit --dev /dev/null --size "$TEST_SIZE" --verbose
+run_accept_case "uboot audit --verbose" \
+    "$BIN" uboot audit --dev /dev/null --size "$TEST_SIZE" --verbose
 
-run_accept_case "audit --output-tcp" \
-    "$BIN" audit --dev /dev/null --size "$TEST_SIZE" --output-tcp 127.0.0.1:9
+run_accept_case "uboot audit --output-tcp" \
+    "$BIN" uboot audit --dev /dev/null --size "$TEST_SIZE" --output-tcp 127.0.0.1:9
 
-run_accept_case "audit --output-http" \
-    "$BIN" audit --dev /dev/null --size "$TEST_SIZE" --output-http http://127.0.0.1:1/audit
+run_accept_case "uboot audit --output-http" \
+    "$BIN" uboot audit --dev /dev/null --size "$TEST_SIZE" --output-http http://127.0.0.1:1/audit
 
-run_accept_case "audit --output-https" \
-    "$BIN" audit --dev /dev/null --size "$TEST_SIZE" --output-https https://127.0.0.1:1/audit
+run_accept_case "uboot audit --output-https" \
+    "$BIN" uboot audit --dev /dev/null --size "$TEST_SIZE" --output-https https://127.0.0.1:1/audit
 
-run_accept_case "audit --insecure" \
-    "$BIN" audit --dev /dev/null --size "$TEST_SIZE" --insecure
+run_accept_case "uboot audit --insecure" \
+    "$BIN" uboot audit --dev /dev/null --size "$TEST_SIZE" --insecure
 
 for output_format in txt csv json
 do
     verbose_log="$(mktemp /tmp/test_audit_verbose.${output_format}.XXXXXX)"
     printf '/dev/null 0x0 0x1000\n' >"$REPO_ROOT/fw_env.config"
-    run_with_output_override "$BIN" --output-format "$output_format" audit --dev "$TMP_AUDIT_DEV" --size "$TEST_SIZE" --rule uboot_validate_crc32 --verbose >"$verbose_log" 2>&1
+    run_with_output_override "$BIN" --output-format "$output_format" uboot audit --dev "$TMP_AUDIT_DEV" --size "$TEST_SIZE" --rule uboot_validate_crc32 --verbose >"$verbose_log" 2>&1
     rc=$?
 
     case "$output_format" in
@@ -187,11 +187,11 @@ do
     esac
 
     if [ "$rc" -eq 2 ] || ! grep -q "$begin_pattern" "$verbose_log" || ! grep -q "$end_pattern" "$verbose_log"; then
-        echo "[FAIL] audit verbose begin/end emits in ${output_format} output stream"
+        echo "[FAIL] uboot audit verbose begin/end emits in ${output_format} output stream"
         sed -n '1,120p' "$verbose_log"
         FAIL_COUNT="$(expr "$FAIL_COUNT" + 1)"
     else
-        echo "[PASS] audit verbose begin/end emits in ${output_format} output stream"
+        echo "[PASS] uboot audit verbose begin/end emits in ${output_format} output stream"
         PASS_COUNT="$(expr "$PASS_COUNT" + 1)"
     fi
 

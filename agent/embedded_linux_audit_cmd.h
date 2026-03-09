@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT License - Copyright (c) 2026 Nicholas Starke
+
 #ifndef UBOOT_SCAN_H
 #define UBOOT_SCAN_H
 
@@ -55,8 +57,8 @@ uint32_t uboot_crc32_calc(const uint32_t table[256], const uint8_t *buf, size_t 
 int uboot_env_scan_main(int argc, char **argv);
 int uboot_image_scan_main(int argc, char **argv);
 int uboot_audit_scan_main(int argc, char **argv);
-int uboot_dmesg_scan_main(int argc, char **argv);
-int uboot_remote_copy_scan_main(int argc, char **argv);
+int linux_dmesg_scan_main(int argc, char **argv);
+int linux_remote_copy_scan_main(int argc, char **argv);
 
 struct uboot_audit_input {
 	const char *device;

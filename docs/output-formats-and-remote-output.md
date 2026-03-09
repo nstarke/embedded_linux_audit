@@ -10,21 +10,21 @@ Global option:
 
 Remote output notes:
 
-- `env --output-tcp <ip:port>` sends the same formatted stream selected by `--output-format` over TCP.
-- `env --output-http <http://host:port/path>` sends the same formatted stream selected by `--output-format` in a single HTTP POST request.
-- `env --output-https <https://host:port/path>` sends the same formatted stream selected by `--output-format` in a single HTTPS POST request using embedded CA certificates.
-- `env --insecure` disables TLS certificate and hostname verification for HTTPS output.
-- `image --output-tcp` is used for `--pull` binary streaming; for formatted scan/find-address output over TCP, use `image --send-logs --output-tcp ...`.
-- `image --output-http <http://host:port/path>` can be used to POST formatted scan/find-address output, or to POST pulled image bytes when used with `--pull`.
-- `image --output-https <https://host:port/path>` can be used to POST formatted scan/find-address output, or to POST pulled image bytes when used with `--pull`, using embedded CA certificates.
-- `image --insecure` disables TLS certificate and hostname verification for HTTPS output.
-- `dmesg --output-tcp <ip:port>` sends dmesg text output to TCP.
-- `dmesg --output-http <http://host:port/path>` sends dmesg text output in a single HTTP POST request with `Content-Type: text/plain; charset=utf-8`.
-- `dmesg --output-https <https://host:port/path>` sends dmesg text output in a single HTTPS POST request with `Content-Type: text/plain; charset=utf-8`, using embedded CA certificates.
-- `dmesg --insecure` disables TLS certificate and hostname verification for HTTPS output.
-- `--output-format` does not affect `dmesg`; if specified, a warning is emitted.
-- `remote-copy --output-tcp <ip:port>` sends raw file bytes over TCP.
-- `remote-copy --output-http <http://host:port/path>` sends raw file bytes in a single HTTP POST request with `Content-Type: application/octet-stream`.
-- `remote-copy --output-https <https://host:port/path>` sends raw file bytes in a single HTTPS POST request with `Content-Type: application/octet-stream`, using embedded CA certificates.
-- `remote-copy --insecure` disables TLS certificate and hostname verification for HTTPS output.
-- `--output-format` does not affect `remote-copy`; if specified, a warning is emitted.
+- `uboot env --output-tcp <ip:port>` sends the same formatted stream selected by `--output-format` over TCP.
+- `uboot env --output-http <http://host:port/path>` sends the same formatted stream selected by `--output-format` in a single HTTP POST request.
+- `uboot env --output-https <https://host:port/path>` sends the same formatted stream selected by `--output-format` in a single HTTPS POST request using embedded CA certificates.
+- `uboot env --insecure` disables TLS certificate and hostname verification for HTTPS output.
+- `uboot image --output-tcp` is used for `--pull` binary streaming; for formatted scan/find-address output over TCP, use `uboot image --send-logs --output-tcp ...`.
+- `uboot image --output-http <http://host:port/path>` can be used to POST formatted scan/find-address output, or to POST pulled image bytes when used with `--pull`.
+- `uboot image --output-https <https://host:port/path>` can be used to POST formatted scan/find-address output, or to POST pulled image bytes when used with `--pull`, using embedded CA certificates.
+- `uboot image --insecure` disables TLS certificate and hostname verification for HTTPS output.
+- `linux dmesg --output-tcp <ip:port>` sends dmesg text output to TCP.
+- `linux dmesg --output-http <http://host:port/path>` sends dmesg text output in a single HTTP POST request with `Content-Type: text/plain; charset=utf-8`.
+- `linux dmesg --output-https <https://host:port/path>` sends dmesg text output in a single HTTPS POST request with `Content-Type: text/plain; charset=utf-8`, using embedded CA certificates.
+- `linux dmesg --insecure` disables TLS certificate and hostname verification for HTTPS output.
+- `--output-format` does not affect `linux dmesg`; if specified, a warning is emitted.
+- `linux remote-copy --output-tcp <ip:port>` sends raw file bytes over TCP.
+- `linux remote-copy --output-http <http://host:port/path>` sends raw file bytes in a single HTTP POST request with `Content-Type: application/octet-stream`.
+- `linux remote-copy --output-https <https://host:port/path>` sends raw file bytes in a single HTTPS POST request with `Content-Type: application/octet-stream`, using embedded CA certificates.
+- `linux remote-copy --insecure` disables TLS certificate and hostname verification for HTTPS output.
+- `--output-format` does not affect `linux remote-copy`; if specified, a warning is emitted.

@@ -86,12 +86,12 @@ CFLAGS += -I.
 CFLAGS += -Iagent
 
 TARGET := uboot_audit
-SRC    := agent/uboot_audit.c agent/uboot_env_cmd.c agent/uboot_image_cmd.c agent/uboot_audit_cmd.c agent/uboot_dmesg_cmd.c agent/uboot_remote_copy_cmd.c agent/uboot_cmd.c \
-	  agent/audit-rules/uboot_validate_crc32_rule.c \
-	  agent/audit-rules/uboot_validate_cmdline_init_writeability_rule.c \
-	  agent/audit-rules/uboot_validate_env_security_rule.c \
-	  agent/audit-rules/uboot_validate_env_writeability_rule.c \
-	  agent/audit-rules/uboot_validate_secureboot_rule.c \
+SRC    := agent/embedded_linux_audit.c agent/uboot/uboot_env_cmd.c agent/uboot/uboot_image_cmd.c agent/uboot/uboot_audit_cmd.c agent/linux/linux_dmesg_cmd.c agent/linux/linux_remote_copy_cmd.c agent/embedded_linux_audit_cmd.c \
+	  agent/uboot/audit-rules/uboot_validate_crc32_rule.c \
+	  agent/uboot/audit-rules/uboot_validate_cmdline_init_writeability_rule.c \
+	  agent/uboot/audit-rules/uboot_validate_env_security_rule.c \
+	  agent/uboot/audit-rules/uboot_validate_env_writeability_rule.c \
+	  agent/uboot/audit-rules/uboot_validate_secureboot_rule.c \
 	  $(LIBCSV_SRC) $(GENERATED_CA_SRC)
 
 .PHONY: all env image static test clean

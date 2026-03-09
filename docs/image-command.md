@@ -1,4 +1,4 @@
-# `uboot_audit image` Command
+# `uboot_audit uboot image` Command
 
 Scans mtdblock/UBI and block devices (SD/eMMC such as `/dev/sd*` and `/dev/mmcblk*`) for likely U-Boot image signatures. FIT/uImage checks are validated structurally to reduce false positives.
 
@@ -52,48 +52,48 @@ Scans mtdblock/UBI and block devices (SD/eMMC such as `/dev/sd*` and `/dev/mmcbl
 Scan all MTD devices:
 
 ```bash
-./uboot_audit image --verbose
-./uboot_audit --output-format csv image --verbose
+./uboot_audit uboot image --verbose
+./uboot_audit --output-format csv uboot image --verbose
 ```
 
 For machine-readable output:
 
 ```bash
-./uboot_audit --output-format json image --verbose
-./uboot_audit --output-format csv image --find-address --dev /dev/mtdblock4 --offset 0x200
+./uboot_audit --output-format json uboot image --verbose
+./uboot_audit --output-format csv uboot image --find-address --dev /dev/mtdblock4 --offset 0x200
 ```
 
 Scan one device:
 
 ```bash
-./uboot_audit image --dev /dev/mtdblock4 --step 0x1000
+./uboot_audit uboot image --dev /dev/mtdblock4 --step 0x1000
 ```
 
 Find load address at known offset:
 
 ```bash
-./uboot_audit image --find-address --dev /dev/mtdblock4 --offset 0x200
+./uboot_audit uboot image --find-address --dev /dev/mtdblock4 --offset 0x200
 ```
 
 List likely commands at known offset:
 
 ```bash
-./uboot_audit image --list-commands --dev /dev/mtdblock4 --offset 0x200
-./uboot_audit --output-format json image --list-commands --dev /dev/mtdblock4 --offset 0x200
+./uboot_audit uboot image --list-commands --dev /dev/mtdblock4 --offset 0x200
+./uboot_audit --output-format json uboot image --list-commands --dev /dev/mtdblock4 --offset 0x200
 ```
 
 Send scan logs over TCP:
 
 ```bash
-./uboot_audit image --verbose --send-logs --output-tcp 192.168.1.50:5000
+./uboot_audit uboot image --verbose --send-logs --output-tcp 192.168.1.50:5000
 ```
 
 Pull image bytes to TCP listener:
 
 ```bash
-./uboot_audit image --pull --dev /dev/mtdblock4 --offset 0x200 --output-tcp 192.168.1.50:5000
-./uboot_audit image --pull --dev /dev/mtdblock4 --offset 0x200 --output-http http://192.168.1.50:5000/image
-./uboot_audit image --pull --dev /dev/mtdblock4 --offset 0x200 --output-https https://192.168.1.50:5443/image
-./uboot_audit image --verbose --output-http http://192.168.1.50:5000/image
-./uboot_audit image --verbose --output-https https://192.168.1.50:5443/image
+./uboot_audit uboot image --pull --dev /dev/mtdblock4 --offset 0x200 --output-tcp 192.168.1.50:5000
+./uboot_audit uboot image --pull --dev /dev/mtdblock4 --offset 0x200 --output-http http://192.168.1.50:5000/image
+./uboot_audit uboot image --pull --dev /dev/mtdblock4 --offset 0x200 --output-https https://192.168.1.50:5443/image
+./uboot_audit uboot image --verbose --output-http http://192.168.1.50:5000/image
+./uboot_audit uboot image --verbose --output-https https://192.168.1.50:5443/image
 ```

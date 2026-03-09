@@ -1,23 +1,23 @@
 # Audit Rules Reference
 
-This project currently builds and registers the following audit rules from `agent/audit-rules/*.c`.
+This project currently builds and registers the following audit rules from `agent/uboot/audit-rules/*.c`.
 
 ## How to list available rules
 
 ```bash
-./uboot_audit audit --list-rules
+./uboot_audit uboot audit --list-rules
 ```
 
 ## How to run a specific rule
 
 ```bash
-./uboot_audit audit --rule <rule-name> --dev <device> --size <bytes>
+./uboot_audit uboot audit --rule <rule-name> --dev <device> --size <bytes>
 ```
 
 Example:
 
 ```bash
-./uboot_audit audit --rule uboot_validate_crc32 --dev /dev/mtdblock4 --offset 0x0 --size 0x10000
+./uboot_audit uboot audit --rule uboot_validate_crc32 --dev /dev/mtdblock4 --offset 0x0 --size 0x10000
 ```
 
 ---
@@ -116,7 +116,7 @@ Example:
 **Example:**
 
 ```bash
-./uboot_audit audit \
+./uboot_audit uboot audit \
   --rule uboot_validate_secureboot \
   --dev /dev/mtdblock4 \
   --offset 0x0 \

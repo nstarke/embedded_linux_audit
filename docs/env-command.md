@@ -1,4 +1,4 @@
-# `uboot_audit env` Command
+# `uboot_audit uboot env` Command
 
 Scans MTD/UBI plus block devices (SD/eMMC such as `/dev/sd*` and `/dev/mmcblk*`) for blocks that resemble a valid U-Boot environment (CRC-verified by default), then prints candidate `fw_env.config` lines.
 
@@ -48,23 +48,23 @@ Scans MTD/UBI plus block devices (SD/eMMC such as `/dev/sd*` and `/dev/mmcblk*`)
 ## `env` examples
 
 ```bash
-./uboot_audit env
-./uboot_audit --output-format json env
-./uboot_audit env --verbose
-./uboot_audit env --size 0x10000
-./uboot_audit env --dev /dev/mtd3 --size 0x10000
-./uboot_audit env --size 0x10000 /dev/mtd0:0x10000 /dev/mtd1:0x20000
-./uboot_audit env --output-tcp 192.168.1.50:5000 --verbose
-./uboot_audit env --output-http http://192.168.1.50:5000/env --verbose
-./uboot_audit env --output-https https://192.168.1.50:5443/env --verbose
-./uboot_audit env --write ./new_env.txt
+./uboot_audit uboot env
+./uboot_audit --output-format json uboot env
+./uboot_audit uboot env --verbose
+./uboot_audit uboot env --size 0x10000
+./uboot_audit uboot env --dev /dev/mtd3 --size 0x10000
+./uboot_audit uboot env --size 0x10000 /dev/mtd0:0x10000 /dev/mtd1:0x20000
+./uboot_audit uboot env --output-tcp 192.168.1.50:5000 --verbose
+./uboot_audit uboot env --output-http http://192.168.1.50:5000/env --verbose
+./uboot_audit uboot env --output-https https://192.168.1.50:5443/env --verbose
+./uboot_audit uboot env --write ./new_env.txt
 ```
 
 For machine-readable output:
 
 ```bash
-./uboot_audit --output-format csv env
-./uboot_audit --output-format json env
+./uboot_audit --output-format csv uboot env
+./uboot_audit --output-format json uboot env
 ```
 
 Example candidate line:

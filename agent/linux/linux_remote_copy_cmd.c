@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT License - Copyright (c) 2026 Nicholas Starke
 
-#include "uboot_cmd.h"
+#include "embedded_linux_audit_cmd.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -149,7 +149,7 @@ out:
 	return rc;
 }
 
-int uboot_remote_copy_scan_main(int argc, char **argv)
+int linux_remote_copy_scan_main(int argc, char **argv)
 {
 	const char *output_tcp = NULL;
 	const char *output_http = NULL;

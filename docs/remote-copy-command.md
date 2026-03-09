@@ -1,4 +1,4 @@
-# `uboot_audit remote-copy` Command
+# `uboot_audit linux remote-copy` Command
 
 Copies a local file to a remote destination using one of:
 
@@ -27,8 +27,8 @@ The source path must be a full absolute OS path and must point to a regular file
 ## Examples
 
 ```bash
-./uboot_audit remote-copy /tmp/fw.bin --output-tcp 192.168.1.50:5000
-./uboot_audit remote-copy /tmp/fw.bin --output-http http://192.168.1.50:5000/upload
-./uboot_audit remote-copy /tmp/fw.bin --output-https https://192.168.1.50:5443/upload
-./uboot_audit remote-copy /tmp/fw.bin --output-https https://192.168.1.50:5443/upload --insecure --verbose
+./uboot_audit linux remote-copy /tmp/fw.bin --output-tcp 192.168.1.50:5000
+./uboot_audit linux remote-copy /tmp/fw.bin --output-http http://192.168.1.50:5000/upload
+./uboot_audit linux remote-copy /tmp/fw.bin --output-https https://192.168.1.50:5443/upload
+./uboot_audit linux remote-copy /tmp/fw.bin --output-https https://192.168.1.50:5443/upload --insecure --verbose
 ```

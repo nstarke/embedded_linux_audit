@@ -23,7 +23,10 @@ make
 
 Notes:
 
-- Project C sources and headers now live under `agent/` (including rule sources under `agent/audit-rules/`).
+- Project C sources and headers now live under `agent/`, grouped by command family:
+  - `agent/uboot/` for U-Boot command implementations and `agent/uboot/audit-rules/` for audit rule sources.
+  - `agent/linux/` for Linux command implementations.
+  - `agent/embedded_linux_audit.c` is the top-level CLI entrypoint.
 - `libcsv` is built from source directly from `third_party/libcsv/libcsv.c`.
 - `zlib` is built from source from the `third_party/zlib` submodule and linked statically.
 - `libubootenv` is built from source from the `third_party/libubootenv` submodule and linked statically.
