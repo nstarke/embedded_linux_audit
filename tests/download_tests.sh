@@ -24,10 +24,6 @@ usage() {
     echo "   or: $0 --webserver <url> --list-isa"
 }
 
-has_printf() {
-    cmd_exists printf
-}
-
 cmd_exists() {
     cmd_name="$1"
 
@@ -43,67 +39,18 @@ cmd_exists() {
     fi
 }
 
-json_query_file() {
-    index_file="$1"
-    query="$2"
-
-    if cmd_exists jq; then
-        jq -r "$query" "$index_file"
-        return $?
-    fi
-
-    if cmd_exists python3; then
-        python3 - "$index_file" "$query" <<'PY'
-import json
-import sys
-
-index_file = sys.argv[1]
-query = sys.argv[2]
-
-with open(index_file, 'r', encoding='utf-8') as f:
-    data = json.load(f)
-
-if query == '.binaries[].isa':
-    for item in data.get('binaries', []):
-        isa = item.get('isa')
-        if isinstance(isa, str):
-            print(isa)
-elif query == '.tests[]':
-    for item in data.get('tests', []):
-        if isinstance(item, str):
-            print(item)
-else:
-    prefix = '.binaries[] | select(.isa == "'
-    suffix = '") | .url'
-    if query.startswith(prefix) and query.endswith(suffix):
-        want = query[len(prefix):-len(suffix)]
-        for item in data.get('binaries', []):
-            if item.get('isa') == want:
-                url = item.get('url')
-                if isinstance(url, str):
-                    print(url)
-    else:
-        raise SystemExit(f'unsupported query: {query}')
-PY
-        return $?
-    fi
-
-    echo "error: need jq or python3 to parse JSON index" >&2
-    return 1
-}
-
 list_valid_isas_from_index_file() {
     index_file="$1"
 
-    json_query_file "$index_file" '.binaries[].isa' | \
-        tr -d '\r' | sed 's/[[:space:]]*$//' | sed '/^$/d' | sort -u
+    sed -n 's#.*href="/isa/\([^"]*\)".*#\1#p' "$index_file" | \
+        tr -d '\r' | sed 's/%2F/\//g' | sed 's/[[:space:]]*$//' | sed '/^$/d' | sort -u
 }
 
 find_release_binary_url_for_isa() {
     index_file="$1"
     isa="$2"
 
-    json_query_file "$index_file" ".binaries[] | select(.isa == \"$isa\") | .url" | \
+    sed -n "s#.*href=\"\(/isa/${isa}\)\".*#\1#p" "$index_file" | \
         tr -d '\r' | sed 's/[[:space:]]*$//' | sed '/^$/d' | head -n 1
 }
 
@@ -127,15 +74,7 @@ resolve_url() {
 
 normalize_isa_value() {
     value="$1"
-    # Strip carriage returns/newlines that may be introduced by copy/paste or CRLF sources.
-    if has_printf; then
-        printf '%s' "$value" | tr -d '\r\n' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//'
-    else
-        # shell fallback when printf is unavailable
-        cat <<EOF_NORMALIZE_ISA | tr -d '\r\n'
-$value
-EOF_NORMALIZE_ISA
-    fi | sed 's/^[[:space:]]*//; s/[[:space:]]*$//'
+    printf '%s' "$value" | tr -d '\r\n' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//'
 }
 
 print_valid_isas() {
@@ -289,7 +228,7 @@ fi
 
 echo "output directory: $DEST_DIR"
 
-json_query_file "$INDEX_FILE" '.tests[]' | \
+sed -n 's#.*href="\(/tests/[^"]*\.sh\)".*#\1#p' "$INDEX_FILE" | \
     tr -d '\r' | sed 's/[[:space:]]*$//' | sed '/^$/d' | sort -u >"$SCRIPT_LIST_FILE"
 
 if [ ! -s "$SCRIPT_LIST_FILE" ]; then
