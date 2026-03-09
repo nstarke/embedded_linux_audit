@@ -63,16 +63,22 @@ run_with_output_override() {
     done
 
     replaced=0
+    has_remote_copy=0
     set --
     while IFS= read -r arg; do
         case "$arg" in
+            remote-copy)
+                has_remote_copy=1
+                set -- "$@" "$arg"
+                ;;
             --output-http|--output-https)
-                IFS= read -r _unused_next_arg || true
-                set -- "$@" "$override_flag" "$override_value"
+                set -- "$@" "$arg"
+                IFS= read -r next_arg || true
+                set -- "$@" "$next_arg"
                 replaced=1
                 ;;
             --output-http=*|--output-https=*)
-                set -- "$@" "${override_flag}=${override_value}"
+                set -- "$@" "$arg"
                 replaced=1
                 ;;
             *)
@@ -83,7 +89,7 @@ run_with_output_override() {
 
     rm -f "$original_args_file"
 
-    if [ "$replaced" -eq 0 ]; then
+    if [ "$replaced" -eq 0 ] && [ "$has_remote_copy" -eq 0 ]; then
         set -- "$@" "$override_flag" "$override_value"
     fi
 
