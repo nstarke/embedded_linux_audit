@@ -391,6 +391,20 @@ function createApp({ logPrefix, assetsDir, testsDir, binaryOutDir, verbose }) {
     console.log(`[${new Date().toISOString()}] ${getClientIp(req)} ${req.method} ${req.originalUrl} -> ${status} (${size} bytes)`);
   }
 
+  if (verbose) {
+    app.use((req, res, next) => {
+      console.log(`[${new Date().toISOString()}] ${getClientIp(req)} ${req.method} ${req.originalUrl}`);
+
+      res.on('finish', () => {
+        const contentLength = res.getHeader('content-length');
+        const size = Number.isFinite(Number(contentLength)) ? Number(contentLength) : 0;
+        console.log(`[${new Date().toISOString()}] ${getClientIp(req)} ${req.method} ${req.originalUrl} -> ${res.statusCode} (${size} bytes)`);
+      });
+
+      next();
+    });
+  }
+
   const routeDeps = {
     path,
     fsp,
@@ -410,8 +424,8 @@ function createApp({ logPrefix, assetsDir, testsDir, binaryOutDir, verbose }) {
     logPathForContentType,
     isWithinRoot,
     getClientIp,
-    verboseRequestLog,
-    verboseResponseLog
+    verboseRequestLog: () => {},
+    verboseResponseLog: () => {}
   };
 
   registerRootRoute(app, routeDeps);
