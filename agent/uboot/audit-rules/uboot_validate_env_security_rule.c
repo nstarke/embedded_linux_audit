@@ -69,7 +69,7 @@ static const char *find_env_value(const struct env_kv_view *pairs, size_t count,
 	return NULL;
 }
 
-static int choose_env_data_offset(const struct uboot_audit_input *input, size_t *data_off)
+static int choose_env_data_offset(const struct embedded_linux_audit_input *input, size_t *data_off)
 {
 	uint32_t stored_le;
 	uint32_t stored_be;
@@ -204,7 +204,7 @@ static bool value_suggests_factory_reset(const char *value)
 	return false;
 }
 
-static int run_validate_env_security(const struct uboot_audit_input *input, char *message, size_t message_len)
+static int run_validate_env_security(const struct embedded_linux_audit_input *input, char *message, size_t message_len)
 {
 	struct env_kv_view pairs[512];
 	const char *bootdelay;
@@ -346,7 +346,7 @@ static int run_validate_env_security(const struct uboot_audit_input *input, char
 	return 1;
 }
 
-static const struct uboot_audit_rule uboot_validate_env_security_rule = {
+static const struct embedded_linux_audit_rule uboot_validate_env_security_rule = {
 	.name = "uboot_validate_env_security",
 	.description = "Validate security-sensitive env vars and network-boot indicators",
 	.run = run_validate_env_security,

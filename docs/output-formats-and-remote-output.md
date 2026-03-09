@@ -2,7 +2,7 @@
 
 Global option:
 
-- `--output-format <csv|json|txt>` — select requested output format at the `uboot_audit` wrapper level (default: `txt`)
+- `--output-format <csv|json|txt>` — select requested output format at the `embedded_linux_audit` wrapper level (default: `txt`)
   - `txt`: existing human-readable output
   - `csv`: comma-separated records (header + rows)
   - `json`: newline-delimited JSON objects (one JSON object per line)

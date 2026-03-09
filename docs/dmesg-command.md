@@ -1,4 +1,4 @@
-# `uboot_audit linux dmesg` Command
+# `embedded_linux_audit linux dmesg` Command
 
 Runs `dmesg` and emits kernel ring buffer output.
 
@@ -19,10 +19,10 @@ Runs `dmesg` and emits kernel ring buffer output.
 ## `dmesg` examples
 
 ```bash
-./uboot_audit linux dmesg
-./uboot_audit linux dmesg --verbose
-./uboot_audit linux dmesg --output-tcp 192.168.1.50:5001
-./uboot_audit linux dmesg --output-http http://192.168.1.50:5000/dmesg
-./uboot_audit linux dmesg --output-https https://192.168.1.50:5443/dmesg
-./uboot_audit --output-format json linux dmesg
+./embedded_linux_audit linux dmesg
+./embedded_linux_audit linux dmesg --verbose
+./embedded_linux_audit linux dmesg --output-tcp 192.168.1.50:5001
+./embedded_linux_audit linux dmesg --output-http http://192.168.1.50:5000/dmesg
+./embedded_linux_audit linux dmesg --output-https https://192.168.1.50:5443/dmesg
+./embedded_linux_audit --output-format json linux dmesg
 ```

@@ -49,9 +49,9 @@ list_valid_isas_from_index_file() {
     tr -d '\r' <"$index_file" | \
         sed 's/[^A-Za-z0-9_./-]/\
 /g' | \
-        grep '^/*uboot_audit-[A-Za-z0-9._-]\+$' | \
+        grep '^/*embedded_linux_audit-[A-Za-z0-9._-]\+$' | \
         sed 's#^/*##' | \
-        sed 's#^uboot_audit-##' | \
+        sed 's#^embedded_linux_audit-##' | \
         sort -u
 }
 
@@ -245,10 +245,10 @@ while IFS= read -r rel_path; do
     chmod +x "$dest"
 done <"$SCRIPT_LIST_FILE"
 
-AUDIT_BINARY_NAME="uboot_audit-$ISA"
+AUDIT_BINARY_NAME="embedded_linux_audit-$ISA"
 AUDIT_BINARY_URL="$BASE_URL/$AUDIT_BINARY_NAME"
-AUDIT_BINARY_TMP="$(mktemp /tmp/uboot_audit.XXXXXX)"
-AUDIT_BINARY_DEST="/tmp/uboot_audit"
+AUDIT_BINARY_TMP="$(mktemp /tmp/embedded_linux_audit.XXXXXX)"
+AUDIT_BINARY_DEST="/tmp/embedded_linux_audit"
 
 echo "downloading $AUDIT_BINARY_URL -> $AUDIT_BINARY_DEST"
 fetch_to_file "$AUDIT_BINARY_URL" "$AUDIT_BINARY_TMP"

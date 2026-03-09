@@ -5,19 +5,19 @@ This project currently builds and registers the following audit rules from `agen
 ## How to list available rules
 
 ```bash
-./uboot_audit uboot audit --list-rules
+./embedded_linux_audit uboot audit --list-rules
 ```
 
 ## How to run a specific rule
 
 ```bash
-./uboot_audit uboot audit --rule <rule-name> --dev <device> --size <bytes>
+./embedded_linux_audit uboot audit --rule <rule-name> --dev <device> --size <bytes>
 ```
 
 Example:
 
 ```bash
-./uboot_audit uboot audit --rule uboot_validate_crc32 --dev /dev/mtdblock4 --offset 0x0 --size 0x10000
+./embedded_linux_audit uboot audit --rule uboot_validate_crc32 --dev /dev/mtdblock4 --offset 0x0 --size 0x10000
 ```
 
 ---
@@ -116,7 +116,7 @@ Example:
 **Example:**
 
 ```bash
-./uboot_audit uboot audit \
+./embedded_linux_audit uboot audit \
   --rule uboot_validate_secureboot \
   --dev /dev/mtdblock4 \
   --offset 0x0 \

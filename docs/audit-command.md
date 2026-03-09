@@ -1,4 +1,4 @@
-# `uboot_audit uboot audit` Command
+# `embedded_linux_audit uboot audit` Command
 
 Runs compiled audit rules that are defined under `agent/uboot/audit-rules/` (one `.c` file per rule).
 
@@ -26,13 +26,13 @@ When `audit` is run without `--dev`, it scans devices and writes `./fw_env.confi
 ## `audit` examples
 
 ```bash
-./uboot_audit uboot audit --list-rules
-./uboot_audit uboot audit --dev /dev/mtdblock4 --offset 0x0 --size 0x10000
-./uboot_audit uboot audit --rule uboot_validate_crc32 --dev /dev/mtdblock4 --offset 0x0 --size 0x10000
-./uboot_audit uboot audit --rule uboot_validate_env_security --dev /dev/mtdblock4 --offset 0x0 --size 0x10000
-./uboot_audit uboot audit --rule uboot_validate_cmdline_init_writeability --dev /dev/mtdblock4 --offset 0x0 --size 0x10000
-./uboot_audit uboot audit --rule uboot_validate_secureboot --dev /dev/mtdblock4 --offset 0x0 --size 0x10000 --signature-blob ./fit-image.bin --signature-pubkey ./pubkey.pem --signature-alg sha256
-./uboot_audit uboot audit --rule uboot_validate_secureboot --dev /dev/mtdblock4 --offset 0x0 --size 0x10000 --scan-signature-devices --signature-alg sha256
+./embedded_linux_audit uboot audit --list-rules
+./embedded_linux_audit uboot audit --dev /dev/mtdblock4 --offset 0x0 --size 0x10000
+./embedded_linux_audit uboot audit --rule uboot_validate_crc32 --dev /dev/mtdblock4 --offset 0x0 --size 0x10000
+./embedded_linux_audit uboot audit --rule uboot_validate_env_security --dev /dev/mtdblock4 --offset 0x0 --size 0x10000
+./embedded_linux_audit uboot audit --rule uboot_validate_cmdline_init_writeability --dev /dev/mtdblock4 --offset 0x0 --size 0x10000
+./embedded_linux_audit uboot audit --rule uboot_validate_secureboot --dev /dev/mtdblock4 --offset 0x0 --size 0x10000 --signature-blob ./fit-image.bin --signature-pubkey ./pubkey.pem --signature-alg sha256
+./embedded_linux_audit uboot audit --rule uboot_validate_secureboot --dev /dev/mtdblock4 --offset 0x0 --size 0x10000 --scan-signature-devices --signature-alg sha256
 ```
 
 Initial rules included:

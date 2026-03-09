@@ -77,7 +77,7 @@ static const char *find_env_value(const struct env_kv_view *pairs, size_t count,
 	return NULL;
 }
 
-static int choose_env_data_offset(const struct uboot_audit_input *input, size_t *data_off)
+static int choose_env_data_offset(const struct embedded_linux_audit_input *input, size_t *data_off)
 {
 	uint32_t stored_le;
 	uint32_t stored_be;
@@ -175,7 +175,7 @@ static bool env_block_is_writeable(const char *dev)
 	return true;
 }
 
-static int run_validate_cmdline_init_writeability(const struct uboot_audit_input *input,
+static int run_validate_cmdline_init_writeability(const struct embedded_linux_audit_input *input,
 						  char *message,
 						  size_t message_len)
 {
@@ -245,7 +245,7 @@ static int run_validate_cmdline_init_writeability(const struct uboot_audit_input
 	return 0;
 }
 
-static const struct uboot_audit_rule uboot_validate_cmdline_init_writeability_rule = {
+static const struct embedded_linux_audit_rule uboot_validate_cmdline_init_writeability_rule = {
 	.name = "uboot_validate_cmdline_init_writeability",
 	.description = "Parse kernel cmdline from bootargs and warn when valid init= is combined with writeable env block",
 	.run = run_validate_cmdline_init_writeability,

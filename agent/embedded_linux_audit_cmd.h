@@ -59,13 +59,13 @@ int uboot_env_scan_core_main(int argc, char **argv);
 int uboot_env_read_vars_main(int argc, char **argv);
 int uboot_env_write_vars_main(int argc, char **argv);
 int uboot_image_scan_main(int argc, char **argv);
-int uboot_audit_scan_main(int argc, char **argv);
+int embedded_linux_audit_scan_main(int argc, char **argv);
 int linux_dmesg_scan_main(int argc, char **argv);
 int linux_remote_copy_scan_main(int argc, char **argv);
 int efi_orom_main(int argc, char **argv);
 int bios_orom_main(int argc, char **argv);
 
-struct uboot_audit_input {
+struct embedded_linux_audit_input {
 	const char *device;
 	uint64_t offset;
 	const uint8_t *data;
@@ -77,13 +77,13 @@ struct uboot_audit_input {
 	bool verbose;
 };
 
-struct uboot_audit_rule {
+struct embedded_linux_audit_rule {
 	const char *name;
 	const char *description;
-	int (*run)(const struct uboot_audit_input *input, char *message, size_t message_len);
+	int (*run)(const struct embedded_linux_audit_input *input, char *message, size_t message_len);
 };
 
-#define FW_AUDIT_RULE_SECTION "uboot_audit_rules"
+#define FW_AUDIT_RULE_SECTION "embedded_linux_audit_rules"
 
 #if defined(__has_attribute)
 #  if __has_attribute(retain)
@@ -98,10 +98,10 @@ struct uboot_audit_rule {
 #endif
 
 #define FW_REGISTER_AUDIT_RULE(symbol) \
-	static const struct uboot_audit_rule * const __uboot_audit_rule_ptr_##symbol \
+	static const struct embedded_linux_audit_rule * const __embedded_linux_audit_rule_ptr_##symbol \
 	__attribute__((used, section(FW_AUDIT_RULE_SECTION))) UBOOT_SECTION_RETAIN = &(symbol)
 
-extern const struct uboot_audit_rule * const __start_uboot_audit_rules[];
-extern const struct uboot_audit_rule * const __stop_uboot_audit_rules[];
+extern const struct embedded_linux_audit_rule * const __start_embedded_linux_audit_rules[];
+extern const struct embedded_linux_audit_rule * const __stop_embedded_linux_audit_rules[];
 
 #endif

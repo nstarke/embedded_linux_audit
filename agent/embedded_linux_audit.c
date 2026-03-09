@@ -111,7 +111,7 @@ int main(int argc, char **argv)
 			return uboot_image_scan_main(argc - sub_idx, argv + sub_idx);
 
 		if (!strcmp(argv[sub_idx], "audit"))
-			return uboot_audit_scan_main(argc - sub_idx, argv + sub_idx);
+			return embedded_linux_audit_scan_main(argc - sub_idx, argv + sub_idx);
 
 		fprintf(stderr, "Unknown uboot subcommand: %s\n\n", argv[sub_idx]);
 		usage(argv[0]);

@@ -42,7 +42,7 @@ static int ensure_fw_env_config_exists(void)
 	return uboot_env_scan_main(argc, argv);
 }
 
-static int run_validate_crc32(const struct uboot_audit_input *input, char *message, size_t message_len)
+static int run_validate_crc32(const struct embedded_linux_audit_input *input, char *message, size_t message_len)
 {
 	uint32_t stored_le;
 	uint32_t stored_be;
@@ -105,7 +105,7 @@ static int run_validate_crc32(const struct uboot_audit_input *input, char *messa
 	return 1;
 }
 
-static const struct uboot_audit_rule uboot_validate_crc32_rule = {
+static const struct embedded_linux_audit_rule uboot_validate_crc32_rule = {
 	.name = "uboot_validate_crc32",
 	.description = "Validate U-Boot environment CRC32 checksum (standard/redundant layouts)",
 	.run = run_validate_crc32,

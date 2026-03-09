@@ -47,7 +47,7 @@ static int ensure_fw_env_config_exists(void)
 	return uboot_env_scan_main(argc, argv);
 }
 
-static int run_validate_env_writeability(const struct uboot_audit_input *input,
+static int run_validate_env_writeability(const struct embedded_linux_audit_input *input,
 					 char *message,
 					 size_t message_len)
 {
@@ -106,7 +106,7 @@ static int run_validate_env_writeability(const struct uboot_audit_input *input,
 	return -1;
 }
 
-static const struct uboot_audit_rule uboot_validate_env_writeability_rule = {
+static const struct embedded_linux_audit_rule uboot_validate_env_writeability_rule = {
 	.name = "uboot_validate_env_writeability",
 	.description = "Validate that the environment block device is not writable",
 	.run = run_validate_env_writeability,

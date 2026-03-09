@@ -1,4 +1,4 @@
-# `uboot_audit efi orom` Command
+# `embedded_linux_audit efi orom` Command
 
 EFI option ROM utilities for listing and pulling payloads from PCI sysfs ROM nodes.
 
@@ -23,8 +23,8 @@ EFI option ROM utilities for listing and pulling payloads from PCI sysfs ROM nod
 ## Examples
 
 ```bash
-./uboot_audit efi orom pull --output-tcp 192.168.1.50:5000 --verbose
-./uboot_audit efi orom pull --output-http http://192.168.1.50:5000/orom --verbose
-./uboot_audit efi orom pull --output-https https://192.168.1.50:5443/orom --insecure --verbose
-./uboot_audit --output-format csv efi orom list --output-http http://192.168.1.50:5000/orom --verbose
+./embedded_linux_audit efi orom pull --output-tcp 192.168.1.50:5000 --verbose
+./embedded_linux_audit efi orom pull --output-http http://192.168.1.50:5000/orom --verbose
+./embedded_linux_audit efi orom pull --output-https https://192.168.1.50:5443/orom --insecure --verbose
+./embedded_linux_audit --output-format csv efi orom list --output-http http://192.168.1.50:5000/orom --verbose
 ```

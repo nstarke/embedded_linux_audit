@@ -10,7 +10,7 @@ This repository includes shell-based argument coverage tests under `tests/`.
 make
 ```
 
-- Test scripts expect `./uboot_audit` at the repo root.
+- Test scripts expect `./embedded_linux_audit` at the repo root.
 
 ## Run all tests
 
@@ -75,7 +75,7 @@ Set only one of them at a time.
 
 `tests/download_tests.sh` can download test scripts and a selected release binary from a web server.
 
-List supported ISAs (derived from `tools/release_binaries/uboot_audit-*`):
+List supported ISAs (derived from `tools/release_binaries/embedded_linux_audit-*`):
 
 ```bash
 sh tests/download_tests.sh --list-isa
