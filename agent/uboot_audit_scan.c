@@ -763,6 +763,41 @@ static void print_rule_listing(enum uboot_output_format fmt, const struct uboot_
 	out_printf("\n");
 }
 
+static void print_verbose_rule_begin(enum uboot_output_format fmt,
+				    const struct uboot_audit_rule *rule)
+{
+	const char *name = (rule && rule->name) ? rule->name : "";
+
+	if (fmt == FW_OUTPUT_CSV) {
+		out_printf("audit_rule_progress,%s,begin,rule execution started\n", name);
+		return;
+	}
+
+	if (fmt == FW_OUTPUT_JSON) {
+		out_printf("{\"record\":\"audit_rule_progress\",\"rule\":\"%s\",\"status\":\"begin\",\"message\":\"rule execution started\"}\n",
+		       name);
+		return;
+	}
+
+	out_printf("audit rule begin: %s\n", name[0] ? name : "(unnamed-rule)");
+}
+
+static void print_verbose_audit_end(enum uboot_output_format fmt, int rc)
+{
+	if (fmt == FW_OUTPUT_CSV) {
+		out_printf("audit_run,,end,audit completed with rc=%d\n", rc);
+		return;
+	}
+
+	if (fmt == FW_OUTPUT_JSON) {
+		out_printf("{\"record\":\"audit_run\",\"status\":\"end\",\"message\":\"audit completed with rc=%d\"}\n",
+		       rc);
+		return;
+	}
+
+	out_printf("audit run end: rc=%d\n", rc);
+}
+
 int uboot_audit_scan_main(int argc, char **argv)
 {
 	const char *dev = NULL;
@@ -1087,6 +1122,8 @@ int uboot_audit_scan_main(int argc, char **argv)
 			continue;
 
 		ran_any = true;
+		if (verbose)
+			print_verbose_rule_begin(fmt, rule);
 		input.device = dev;
 		input.offset = offset;
 		input.data = buf;
@@ -1109,6 +1146,9 @@ int uboot_audit_scan_main(int argc, char **argv)
 			rule_filter ? rule_filter : "");
 		ret = 2;
 	}
+
+	if (verbose && ran_any)
+		print_verbose_audit_end(fmt, ret);
 
 out:
 	if (flush_output_http_buffer() < 0 && ret == 0)

@@ -15,7 +15,9 @@ print_section "audit subcommand argument coverage"
 TMP_DIR="$(mktemp -d /tmp/test_audit_args.XXXXXX)"
 TMP_BLOB="$TMP_DIR/sample.fit"
 TMP_PEM="$TMP_DIR/sample.pem"
+TMP_AUDIT_DEV="$TMP_DIR/audit_input.bin"
 echo 'fit-placeholder' >"$TMP_BLOB"
+dd if=/dev/zero of="$TMP_AUDIT_DEV" bs=1 count=65536 >/dev/null 2>&1
 cat >"$TMP_PEM" <<'PEM'
 -----BEGIN PUBLIC KEY-----
 MFwwDQYJKoZIhvcNAQEBBQADSwAwSAJBAK6y8l6P0w8Q3Xj2sI8hXk7wQ+9QmVqX
@@ -111,6 +113,42 @@ run_accept_case "audit --output-https" \
 
 run_accept_case "audit --insecure" \
     "$BIN" audit --dev /dev/null --size "$TEST_SIZE" --insecure
+
+for output_format in txt csv json
+do
+    verbose_log="$(mktemp /tmp/test_audit_verbose.${output_format}.XXXXXX)"
+    printf '/dev/null 0x0 0x1000\n' >"$REPO_ROOT/fw_env.config"
+    run_with_output_override "$BIN" --output-format "$output_format" audit --dev "$TMP_AUDIT_DEV" --size "$TEST_SIZE" --rule uboot_validate_crc32 --verbose >"$verbose_log" 2>&1
+    rc=$?
+
+    case "$output_format" in
+        txt)
+            begin_pattern='audit rule begin: uboot_validate_crc32'
+            end_pattern='audit run end: rc='
+            ;;
+        csv)
+            begin_pattern='audit_rule_progress,uboot_validate_crc32,begin,rule execution started'
+            end_pattern='audit_run,,end,audit completed with rc='
+            ;;
+        json)
+            begin_pattern='"record":"audit_rule_progress","rule":"uboot_validate_crc32","status":"begin"'
+            end_pattern='"record":"audit_run","status":"end","message":"audit completed with rc='
+            ;;
+    esac
+
+    if [ "$rc" -eq 2 ] || ! grep -q "$begin_pattern" "$verbose_log" || ! grep -q "$end_pattern" "$verbose_log"; then
+        echo "[FAIL] audit verbose begin/end emits in ${output_format} output stream"
+        sed -n '1,120p' "$verbose_log"
+        FAIL_COUNT="$(expr "$FAIL_COUNT" + 1)"
+    else
+        echo "[PASS] audit verbose begin/end emits in ${output_format} output stream"
+        PASS_COUNT="$(expr "$PASS_COUNT" + 1)"
+    fi
+
+    rm -f "$verbose_log"
+done
+
+rm -f "$REPO_ROOT/fw_env.config"
 
 rm -rf "$TMP_DIR"
 finish_tests
