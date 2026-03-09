@@ -49,10 +49,49 @@ list_valid_isas_from_index_file() {
     tr -d '\r' <"$index_file" | \
         sed 's/[^A-Za-z0-9_./-]/\
 /g' | \
-        grep '^/*embedded_linux_audit-[A-Za-z0-9._-]\+$' | \
+        grep '^/*\(embedded_linux_audit\|uboot_audit\)-[A-Za-z0-9._-]\+$' | \
         sed 's#^/*##' | \
         sed 's#^embedded_linux_audit-##' | \
+        sed 's#^uboot_audit-##' | \
         sort -u
+}
+
+find_release_binary_name_for_isa() {
+    index_file="$1"
+    isa="$2"
+
+    # Prefer the current binary name, but keep compatibility with older releases.
+    bin_name="$(
+        tr -d '\r' <"$index_file" | \
+            sed 's/[^A-Za-z0-9_./-]/\
+/g' | \
+            grep '^/*embedded_linux_audit-[A-Za-z0-9._-]\+$' | \
+            sed 's#^/*##' | \
+            grep -x "embedded_linux_audit-$isa" | \
+            head -n 1
+    )"
+
+    if [ -n "$bin_name" ]; then
+        echo "$bin_name"
+        return 0
+    fi
+
+    bin_name="$(
+        tr -d '\r' <"$index_file" | \
+            sed 's/[^A-Za-z0-9_./-]/\
+/g' | \
+            grep '^/*uboot_audit-[A-Za-z0-9._-]\+$' | \
+            sed 's#^/*##' | \
+            grep -x "uboot_audit-$isa" | \
+            head -n 1
+    )"
+
+    if [ -n "$bin_name" ]; then
+        echo "$bin_name"
+        return 0
+    fi
+
+    return 1
 }
 
 normalize_isa_value() {
@@ -245,7 +284,12 @@ while IFS= read -r rel_path; do
     chmod +x "$dest"
 done <"$SCRIPT_LIST_FILE"
 
-AUDIT_BINARY_NAME="embedded_linux_audit-$ISA"
+AUDIT_BINARY_NAME="$(find_release_binary_name_for_isa "$INDEX_FILE" "$ISA")"
+if [ -z "$AUDIT_BINARY_NAME" ]; then
+    echo "error: could not find a release binary for ISA '$ISA' in index at $BASE_URL/"
+    exit 1
+fi
+
 AUDIT_BINARY_URL="$BASE_URL/$AUDIT_BINARY_NAME"
 AUDIT_BINARY_TMP="$(mktemp /tmp/embedded_linux_audit.XXXXXX)"
 AUDIT_BINARY_DEST="/tmp/embedded_linux_audit"
