@@ -51,12 +51,12 @@ fi
 rc=0
 
 for test_script in \
-    "$SCRIPT_DIR/test_env_args.sh" \
-    "$SCRIPT_DIR/test_image_args.sh" \
-    "$SCRIPT_DIR/test_audit_args.sh" \
-    "$SCRIPT_DIR/test_dmesg_args.sh" \
-    "$SCRIPT_DIR/test_remote_copy_args.sh" \
-    "$SCRIPT_DIR/test_orom_args.sh"
+    "$SCRIPT_DIR/test_uboot_env_args.sh" \
+    "$SCRIPT_DIR/test_uboot_image_args.sh" \
+    "$SCRIPT_DIR/test_uboot_audit_args.sh" \
+    "$SCRIPT_DIR/test_linux_dmesg_args.sh" \
+    "$SCRIPT_DIR/test_linux_remote_copy_args.sh" \
+    "$SCRIPT_DIR/test_efi_bios_orom_args.sh"
 do
     echo
     echo "===== Running $(basename "$test_script") ====="

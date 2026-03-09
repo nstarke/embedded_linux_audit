@@ -27,31 +27,34 @@ bash tests/test_all.sh
 ```
 
 `test_all.sh` executes:
-- `tests/test_env_args.sh`
-- `tests/test_image_args.sh`
-- `tests/test_audit_args.sh`
-- `tests/test_dmesg_args.sh`
-- `tests/test_remote_copy_args.sh`
+- `tests/test_uboot_env_args.sh`
+- `tests/test_uboot_image_args.sh`
+- `tests/test_uboot_audit_args.sh`
+- `tests/test_linux_dmesg_args.sh`
+- `tests/test_linux_remote_copy_args.sh`
+- `tests/test_efi_bios_orom_args.sh`
 
 It returns non-zero if any test group fails.
 
 ## Run individual test groups
 
 ```bash
-sh tests/test_env_args.sh
-sh tests/test_image_args.sh
-sh tests/test_audit_args.sh
-sh tests/test_dmesg_args.sh
-sh tests/test_remote_copy_args.sh
+sh tests/test_uboot_env_args.sh
+sh tests/test_uboot_image_args.sh
+sh tests/test_uboot_audit_args.sh
+sh tests/test_linux_dmesg_args.sh
+sh tests/test_linux_remote_copy_args.sh
+sh tests/test_efi_bios_orom_args.sh
 ```
 
 ## What each test script covers
 
-- `test_env_args.sh`: validates accepted/expected behavior of `env` arguments.
-- `test_image_args.sh`: validates accepted/expected behavior of `image` arguments and mode combinations.
-- `test_audit_args.sh`: validates accepted/expected behavior of `audit` arguments, output formats, and rule selections.
-- `test_dmesg_args.sh`: validates accepted/expected behavior of `dmesg` arguments and `--output-format` warning behavior.
-- `test_remote_copy_args.sh`: validates accepted/expected behavior of `remote-copy` arguments and transfer-target constraints.
+- `test_uboot_env_args.sh`: validates accepted/expected behavior of `uboot env` arguments.
+- `test_uboot_image_args.sh`: validates accepted/expected behavior of `uboot image` arguments and mode combinations.
+- `test_uboot_audit_args.sh`: validates accepted/expected behavior of `uboot audit` arguments, output formats, and rule selections.
+- `test_linux_dmesg_args.sh`: validates accepted/expected behavior of `linux dmesg` arguments and `--output-format` warning behavior.
+- `test_linux_remote_copy_args.sh`: validates accepted/expected behavior of `linux remote-copy` arguments and transfer-target constraints.
+- `test_efi_bios_orom_args.sh`: validates accepted/expected behavior of `efi/bios orom` arguments.
 
 These are argument/CLI behavior coverage tests, not full hardware integration tests.
 
