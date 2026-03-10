@@ -301,6 +301,7 @@ function ensureSelfSignedCert(certPath, keyPath) {
 function parseArgs(argv) {
   const npmLogLevel = String(process.env.npm_config_loglevel || '').toLowerCase();
   const defaultVerbose = ['verbose', 'silly'].includes(npmLogLevel);
+  const defaultClean = String(process.env.npm_config_clean || '').toLowerCase() === 'true';
   const defaults = {
     host: '0.0.0.0',
     port: 5000,
@@ -311,7 +312,7 @@ function parseArgs(argv) {
     binaryOutDir: '',
     githubToken: process.env.GITHUB_TOKEN || '',
     forceDownload: false,
-    clean: false,
+    clean: defaultClean,
     https: false,
     verbose: defaultVerbose,
     cert: 'tools/certs/localhost.crt',
