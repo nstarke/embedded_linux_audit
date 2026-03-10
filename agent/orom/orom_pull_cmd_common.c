@@ -469,6 +469,7 @@ static int orom_execute_list(struct orom_ctx *ctx)
 	globfree(&g);
 
 	if (listed == 0) {
+		log_line(ctx, false, "No matching %s option ROM payloads found\n", ctx->fw_mode);
 		emit_record(ctx, "orom_list", "", 0, "match", "none");
 		return 1;
 	}
