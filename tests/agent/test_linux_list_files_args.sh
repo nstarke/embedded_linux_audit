@@ -110,6 +110,103 @@ run_exact_case "linux list-files --user" 0 "$BIN" linux list-files "$TMP_DIR" --
 run_exact_case "linux list-files --group" 0 "$BIN" linux list-files "$TMP_DIR" --group "$CURRENT_GROUP"
 run_accept_case "linux list-files global --output-http" "$BIN" --output-http http://127.0.0.1:1/file-list linux list-files "$TMP_DIR"
 run_accept_case "linux list-files global --output-https" "$BIN" --output-https https://127.0.0.1:1/file-list linux list-files "$TMP_DIR"
+
+python_bin="$(find_python_bin || true)"
+
+if [ -n "$python_bin" ]; then
+    http_req_path="$(mktemp /tmp/test_list_files_http_path.XXXXXX)"
+    http_req_type="$(mktemp /tmp/test_list_files_http_type.XXXXXX)"
+    http_req_body="$(mktemp /tmp/test_list_files_http_body.XXXXXX)"
+    http_server_log="$(mktemp /tmp/test_list_files_http_server.XXXXXX)"
+
+    REQUEST_PATH_FILE="$http_req_path" REQUEST_TYPE_FILE="$http_req_type" REQUEST_BODY_FILE="$http_req_body" \
+        "$python_bin" - <<'PY' >"$http_server_log" 2>&1 &
+import http.server
+import os
+import socketserver
+import threading
+
+path_file = os.environ['REQUEST_PATH_FILE']
+type_file = os.environ['REQUEST_TYPE_FILE']
+body_file = os.environ['REQUEST_BODY_FILE']
+
+class OneShotTCPServer(socketserver.TCPServer):
+    allow_reuse_address = True
+
+class Handler(http.server.BaseHTTPRequestHandler):
+    def do_POST(self):
+        length = int(self.headers.get('Content-Length', '0'))
+        body = self.rfile.read(length)
+        with open(path_file, 'w', encoding='utf-8') as fh:
+            fh.write(self.path)
+        with open(type_file, 'w', encoding='utf-8') as fh:
+            fh.write(self.headers.get('Content-Type', ''))
+        with open(body_file, 'wb') as fh:
+            fh.write(body)
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b'ok\n')
+        threading.Thread(target=self.server.shutdown, daemon=True).start()
+
+    def log_message(self, format, *args):
+        pass
+
+with OneShotTCPServer(('127.0.0.1', 0), Handler) as httpd:
+    print(f'ready:{httpd.server_address[1]}', flush=True)
+    httpd.serve_forever()
+PY
+    http_server_pid=$!
+
+    ready=0
+    http_port=""
+    i=0
+    while [ "$i" -lt 50 ]; do
+        http_port="$(sed -n 's/^ready://p' "$http_server_log" 2>/dev/null | head -n 1)"
+        if [ -n "$http_port" ]; then
+            ready=1
+            break
+        fi
+        if ! kill -0 "$http_server_pid" 2>/dev/null; then
+            break
+        fi
+        sleep 0.1
+        i="$(expr "$i" + 1)"
+    done
+
+    http_post_log="$(mktemp /tmp/test_list_files_http_post.XXXXXX)"
+    if [ "$ready" -eq 1 ]; then
+        "$BIN" --output-http "http://127.0.0.1:$http_port" linux list-files "$TMP_DIR" >"$http_post_log" 2>&1
+        rc=$?
+        wait "$http_server_pid" 2>/dev/null || true
+
+        if [ "$rc" -eq 0 ] && \
+           grep -F "/upload/file-list?filePath=%2F" "$http_req_path" >/dev/null 2>&1 && \
+           grep -F "text/plain; charset=utf-8" "$http_req_type" >/dev/null 2>&1 && \
+           file_has_exact_line "$TMP_TOP_FILE" "$http_req_body"; then
+            echo "[PASS] linux list-files global --output-http performs HTTP POST upload"
+            PASS_COUNT="$(expr "$PASS_COUNT" + 1)"
+        else
+            echo "[FAIL] linux list-files global --output-http performs HTTP POST upload (rc=$rc)"
+            sed -n '1,80p' "$http_post_log"
+            echo "--- request path ---"
+            sed -n '1,20p' "$http_req_path" 2>/dev/null || true
+            echo "--- request content-type ---"
+            sed -n '1,20p' "$http_req_type" 2>/dev/null || true
+            echo "--- request body ---"
+            sed -n '1,20p' "$http_req_body" 2>/dev/null || true
+            FAIL_COUNT="$(expr "$FAIL_COUNT" + 1)"
+        fi
+    else
+        echo "[FAIL] linux list-files global --output-http performs HTTP POST upload (server did not start)"
+        sed -n '1,80p' "$http_server_log" 2>/dev/null || true
+        FAIL_COUNT="$(expr "$FAIL_COUNT" + 1)"
+        kill "$http_server_pid" 2>/dev/null || true
+        wait "$http_server_pid" 2>/dev/null || true
+    fi
+
+    rm -f "$http_req_path" "$http_req_type" "$http_req_body" "$http_server_log" "$http_post_log"
+fi
+
 tcp_log="$(mktemp /tmp/test_list_files_tcp.XXXXXX)"
 "$BIN" --output-tcp 127.0.0.1:9 linux list-files "$TMP_DIR" >"$tcp_log" 2>&1
 rc=$?
@@ -129,7 +226,7 @@ run_accept_case "linux list-files with --output-format csv" "$BIN" --output-form
 run_accept_case "linux list-files with --output-format json" "$BIN" --output-format json linux list-files "$TMP_DIR"
 
 local_log="$(mktemp /tmp/test_list_files_local.XXXXXX)"
-run_with_output_override "$BIN" linux list-files "$TMP_DIR" >"$local_log" 2>&1
+TEST_DISABLE_OUTPUT_OVERRIDE=1 run_with_output_override "$BIN" linux list-files "$TMP_DIR" >"$local_log" 2>&1
 rc=$?
 if [ "$rc" -eq 0 ] && file_has_exact_line "$TMP_TOP_FILE" "$local_log" && ! file_has_exact_line "$TMP_FILE" "$local_log"; then
     echo "[PASS] linux list-files default listing stays non-recursive"
@@ -142,7 +239,7 @@ fi
 rm -f "$local_log"
 
 recursive_log="$(mktemp /tmp/test_list_files_recursive.XXXXXX)"
-run_with_output_override "$BIN" linux list-files "$TMP_DIR" --recursive >"$recursive_log" 2>&1
+TEST_DISABLE_OUTPUT_OVERRIDE=1 run_with_output_override "$BIN" linux list-files "$TMP_DIR" --recursive >"$recursive_log" 2>&1
 rc=$?
 if [ "$rc" -eq 0 ] && file_has_exact_line "$TMP_TOP_FILE" "$recursive_log" && file_has_exact_line "$TMP_FILE" "$recursive_log"; then
     echo "[PASS] linux list-files --recursive includes nested files"
@@ -155,7 +252,7 @@ fi
 rm -f "$recursive_log"
 
 suid_log="$(mktemp /tmp/test_list_files_suid.XXXXXX)"
-run_with_output_override "$BIN" linux list-files "$TMP_DIR" --suid-only >"$suid_log" 2>&1
+TEST_DISABLE_OUTPUT_OVERRIDE=1 run_with_output_override "$BIN" linux list-files "$TMP_DIR" --suid-only >"$suid_log" 2>&1
 rc=$?
 if [ "$rc" -eq 0 ] && file_has_exact_line "$TMP_TOP_SUID_FILE" "$suid_log" && ! file_has_exact_line "$TMP_SUID_FILE" "$suid_log" && ! file_has_exact_line "$TMP_FILE" "$suid_log"; then
     echo "[PASS] linux list-files --suid-only filters non-SUID files"
@@ -168,7 +265,7 @@ fi
 rm -f "$suid_log"
 
 recursive_suid_log="$(mktemp /tmp/test_list_files_recursive_suid.XXXXXX)"
-run_with_output_override "$BIN" linux list-files "$TMP_DIR" --recursive --suid-only >"$recursive_suid_log" 2>&1
+TEST_DISABLE_OUTPUT_OVERRIDE=1 run_with_output_override "$BIN" linux list-files "$TMP_DIR" --recursive --suid-only >"$recursive_suid_log" 2>&1
 rc=$?
 if [ "$rc" -eq 0 ] && file_has_exact_line "$TMP_TOP_SUID_FILE" "$recursive_suid_log" && file_has_exact_line "$TMP_SUID_FILE" "$recursive_suid_log" && ! file_has_exact_line "$TMP_FILE" "$recursive_suid_log"; then
     echo "[PASS] linux list-files --recursive --suid-only includes nested SUID files only"
@@ -181,7 +278,7 @@ fi
 rm -f "$recursive_suid_log"
 
 perm_octal_log="$(mktemp /tmp/test_list_files_perm_octal.XXXXXX)"
-run_with_output_override "$BIN" linux list-files "$TMP_DIR" --permissions 0600 >"$perm_octal_log" 2>&1
+TEST_DISABLE_OUTPUT_OVERRIDE=1 run_with_output_override "$BIN" linux list-files "$TMP_DIR" --permissions 0600 >"$perm_octal_log" 2>&1
 rc=$?
 if [ "$rc" -eq 0 ] && file_has_exact_line "$TMP_TOP_600_FILE" "$perm_octal_log" && ! file_has_exact_line "$TMP_TOP_FILE" "$perm_octal_log" && ! file_has_exact_line "$TMP_TOP_SUID_FILE" "$perm_octal_log"; then
     echo "[PASS] linux list-files --permissions octal filters exact mode"
@@ -194,7 +291,7 @@ fi
 rm -f "$perm_octal_log"
 
 perm_symbolic_log="$(mktemp /tmp/test_list_files_perm_symbolic.XXXXXX)"
-run_with_output_override "$BIN" linux list-files "$TMP_DIR" --permissions u+rw,go-rwx >"$perm_symbolic_log" 2>&1
+TEST_DISABLE_OUTPUT_OVERRIDE=1 run_with_output_override "$BIN" linux list-files "$TMP_DIR" --permissions u+rw,go-rwx >"$perm_symbolic_log" 2>&1
 rc=$?
 if [ "$rc" -eq 0 ] && file_has_exact_line "$TMP_TOP_600_FILE" "$perm_symbolic_log" && ! file_has_exact_line "$TMP_TOP_FILE" "$perm_symbolic_log" && ! file_has_exact_line "$TMP_TOP_SUID_FILE" "$perm_symbolic_log"; then
     echo "[PASS] linux list-files --permissions symbolic filters matching permissions"
@@ -207,7 +304,7 @@ fi
 rm -f "$perm_symbolic_log"
 
 user_log="$(mktemp /tmp/test_list_files_user.XXXXXX)"
-run_with_output_override "$BIN" linux list-files "$TMP_DIR" --user "$CURRENT_USER" >"$user_log" 2>&1
+TEST_DISABLE_OUTPUT_OVERRIDE=1 run_with_output_override "$BIN" linux list-files "$TMP_DIR" --user "$CURRENT_USER" >"$user_log" 2>&1
 rc=$?
 if [ "$rc" -eq 0 ] && file_has_exact_line "$TMP_TOP_FILE" "$user_log" && file_has_exact_line "$TMP_TOP_SUID_FILE" "$user_log" && file_has_exact_line "$TMP_TOP_600_FILE" "$user_log"; then
     echo "[PASS] linux list-files --user filters by owner"
@@ -220,7 +317,7 @@ fi
 rm -f "$user_log"
 
 group_log="$(mktemp /tmp/test_list_files_group.XXXXXX)"
-run_with_output_override "$BIN" linux list-files "$TMP_DIR" --group "$CURRENT_GROUP" >"$group_log" 2>&1
+TEST_DISABLE_OUTPUT_OVERRIDE=1 run_with_output_override "$BIN" linux list-files "$TMP_DIR" --group "$CURRENT_GROUP" >"$group_log" 2>&1
 rc=$?
 if [ "$rc" -eq 0 ] && file_has_exact_line "$TMP_TOP_FILE" "$group_log" && file_has_exact_line "$TMP_TOP_SUID_FILE" "$group_log" && file_has_exact_line "$TMP_TOP_600_FILE" "$group_log"; then
     echo "[PASS] linux list-files --group filters by group"

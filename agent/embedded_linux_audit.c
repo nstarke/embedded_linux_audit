@@ -16,6 +16,7 @@
 #include <readline/readline.h>
 #endif
 
+#if defined(ELA_HAS_READLINE)
 static const char *const interactive_top_level_commands[] = {
 	"help",
 	"quit",
@@ -61,6 +62,7 @@ static const char *const interactive_set_variables[] = {
 };
 
 static const char *const *interactive_completion_candidates;
+#endif
 
 static int embedded_linux_audit_dispatch(int argc, char **argv);
 
@@ -209,6 +211,7 @@ static int interactive_set_command(int argc, char **argv)
 	return 2;
 }
 
+#if defined(ELA_HAS_READLINE)
 static const char *const *interactive_candidates_for_position(int argc, char **argv)
 {
 	if (argc <= 0)
@@ -235,7 +238,6 @@ static const char *const *interactive_candidates_for_position(int argc, char **a
 	return NULL;
 }
 
-#if defined(ELA_HAS_READLINE)
 static char *interactive_completion_generator(const char *text, int state)
 {
 	static int index;

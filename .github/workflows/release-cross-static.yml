@@ -98,6 +98,10 @@ jobs:
       - name: Build default static binary
         run: |
           set -euo pipefail
+          export CFLAGS=
+          export CPPFLAGS=
+          export CXXFLAGS=
+          export LDFLAGS=
           test -f agent/embedded_linux_audit.c
           test -f agent/embedded_linux_audit_cmd.h
           test -f third_party/ncurses/configure
@@ -131,6 +135,10 @@ jobs:
       - name: Build CPU_COMPAT static binary
         run: |
           set -euo pipefail
+          export CFLAGS=
+          export CPPFLAGS=
+          export CXXFLAGS=
+          export LDFLAGS=
           test -f agent/embedded_linux_audit.c
           test -f agent/embedded_linux_audit_cmd.h
           test -f third_party/ncurses/configure

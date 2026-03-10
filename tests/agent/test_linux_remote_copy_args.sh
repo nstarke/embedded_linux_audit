@@ -148,6 +148,102 @@ run_accept_case "linux remote-copy with --output-format txt" "$BIN" --output-for
 run_accept_case "linux remote-copy with --output-format csv" "$BIN" --output-format csv --output-http http://127.0.0.1:1 linux remote-copy "$TMP_FILE"
 run_accept_case "linux remote-copy with --output-format json" "$BIN" --output-format json --output-http http://127.0.0.1:1 linux remote-copy "$TMP_FILE"
 
+python_bin="$(find_python_bin || true)"
+
+if [ -n "$python_bin" ]; then
+remote_http_req_path="$(mktemp /tmp/test_remote_copy_http_path.XXXXXX)"
+remote_http_req_type="$(mktemp /tmp/test_remote_copy_http_type.XXXXXX)"
+remote_http_req_body="$(mktemp /tmp/test_remote_copy_http_body.XXXXXX)"
+remote_http_server_log="$(mktemp /tmp/test_remote_copy_http_server.XXXXXX)"
+
+REQUEST_PATH_FILE="$remote_http_req_path" REQUEST_TYPE_FILE="$remote_http_req_type" REQUEST_BODY_FILE="$remote_http_req_body" \
+    "$python_bin" - <<'PY' >"$remote_http_server_log" 2>&1 &
+import http.server
+import os
+import socketserver
+import threading
+
+path_file = os.environ['REQUEST_PATH_FILE']
+type_file = os.environ['REQUEST_TYPE_FILE']
+body_file = os.environ['REQUEST_BODY_FILE']
+
+class OneShotTCPServer(socketserver.TCPServer):
+    allow_reuse_address = True
+
+class Handler(http.server.BaseHTTPRequestHandler):
+    def do_POST(self):
+        length = int(self.headers.get('Content-Length', '0'))
+        body = self.rfile.read(length)
+        with open(path_file, 'w', encoding='utf-8') as fh:
+            fh.write(self.path)
+        with open(type_file, 'w', encoding='utf-8') as fh:
+            fh.write(self.headers.get('Content-Type', ''))
+        with open(body_file, 'wb') as fh:
+            fh.write(body)
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b'ok\n')
+        threading.Thread(target=self.server.shutdown, daemon=True).start()
+
+    def log_message(self, format, *args):
+        pass
+
+with OneShotTCPServer(('127.0.0.1', 0), Handler) as httpd:
+    print(f'ready:{httpd.server_address[1]}', flush=True)
+    httpd.serve_forever()
+PY
+remote_http_server_pid=$!
+
+remote_http_ready=0
+remote_http_port=""
+i=0
+while [ "$i" -lt 50 ]; do
+    remote_http_port="$(sed -n 's/^ready://p' "$remote_http_server_log" 2>/dev/null | head -n 1)"
+    if [ -n "$remote_http_port" ]; then
+        remote_http_ready=1
+        break
+    fi
+    if ! kill -0 "$remote_http_server_pid" 2>/dev/null; then
+        break
+    fi
+    sleep 0.1
+    i="$(expr "$i" + 1)"
+done
+
+remote_http_post_log="$(mktemp /tmp/test_remote_copy_http_post.XXXXXX)"
+if [ "$remote_http_ready" -eq 1 ]; then
+    "$BIN" --output-http "http://127.0.0.1:$remote_http_port" linux remote-copy "$TMP_FILE" >"$remote_http_post_log" 2>&1
+    rc=$?
+    wait "$remote_http_server_pid" 2>/dev/null || true
+
+    if [ "$rc" -eq 0 ] && \
+       grep -F "/upload/file?filePath=%2F" "$remote_http_req_path" >/dev/null 2>&1 && \
+       grep -F "application/octet-stream" "$remote_http_req_type" >/dev/null 2>&1 && \
+       cmp -s "$TMP_FILE" "$remote_http_req_body"; then
+        echo "[PASS] linux remote-copy --output-http performs HTTP POST upload via /upload/file"
+        PASS_COUNT="$(expr "$PASS_COUNT" + 1)"
+    else
+        echo "[FAIL] linux remote-copy --output-http performs HTTP POST upload via /upload/file (rc=$rc)"
+        sed -n '1,120p' "$remote_http_post_log"
+        echo "--- request path ---"
+        sed -n '1,20p' "$remote_http_req_path" 2>/dev/null || true
+        echo "--- request content-type ---"
+        sed -n '1,20p' "$remote_http_req_type" 2>/dev/null || true
+        echo "--- request body (hex) ---"
+        od -An -tx1 "$remote_http_req_body" 2>/dev/null || true
+        FAIL_COUNT="$(expr "$FAIL_COUNT" + 1)"
+    fi
+else
+    echo "[FAIL] linux remote-copy --output-http performs HTTP POST upload via /upload/file (server did not start)"
+    sed -n '1,80p' "$remote_http_server_log" 2>/dev/null || true
+    FAIL_COUNT="$(expr "$FAIL_COUNT" + 1)"
+    kill "$remote_http_server_pid" 2>/dev/null || true
+    wait "$remote_http_server_pid" 2>/dev/null || true
+fi
+
+rm -f "$remote_http_req_path" "$remote_http_req_type" "$remote_http_req_body" "$remote_http_server_log" "$remote_http_post_log"
+fi
+
 warn_log="$(mktemp /tmp/test_remote_copy_warn.XXXXXX)"
 run_with_output_override "$BIN" --output-format json linux remote-copy "$TMP_FILE" --help >"$warn_log" 2>&1
 rc=$?
@@ -164,7 +260,6 @@ rm -f "$warn_log"
 verbose_server_log="$(mktemp /tmp/test_remote_copy_verbose_server.XXXXXX)"
 verbose_log="$(mktemp /tmp/test_remote_copy_verbose.XXXXXX)"
 verbose_port_file="$(mktemp /tmp/test_remote_copy_verbose_port.XXXXXX)"
-python_bin="$(find_python_bin || true)"
 
 if [ -n "$python_bin" ]; then
 "$python_bin" -c '

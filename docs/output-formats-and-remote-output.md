@@ -34,8 +34,8 @@ Remote output notes:
 - `./embedded_linux_audit --insecure --output-https <https://host:port/path> linux dmesg` disables TLS certificate and hostname verification for HTTPS output.
 - `--output-format` does not affect `linux dmesg`; if specified, a warning is emitted.
 - `./embedded_linux_audit --output-tcp <ip:port> linux remote-copy <path>` sends raw file bytes over TCP.
-- `./embedded_linux_audit --output-http <http://host:port/path> linux remote-copy <path>` sends raw file bytes in a single HTTP POST request with `Content-Type: application/octet-stream`.
-- `./embedded_linux_audit --output-https <https://host:port/path> linux remote-copy <path>` sends raw file bytes in a single HTTPS POST request with `Content-Type: application/octet-stream`, using embedded CA certificates.
+- `./embedded_linux_audit --output-http <http://host:port/path> linux remote-copy <path>` sends raw file bytes in a single HTTP POST request with `Content-Type: application/octet-stream`, using the API upload type `file` and including the absolute source path as `filePath`.
+- `./embedded_linux_audit --output-https <https://host:port/path> linux remote-copy <path>` sends raw file bytes in a single HTTPS POST request with `Content-Type: application/octet-stream`, using the API upload type `file` and including the absolute source path as `filePath`, using embedded CA certificates.
 - `./embedded_linux_audit --insecure --output-https <https://host:port/path> linux remote-copy <path>` disables TLS certificate and hostname verification for HTTPS output.
 - `--output-format` does not affect `linux remote-copy`; if specified, a warning is emitted.
 - `./embedded_linux_audit --output-tcp <ip:port> efi orom pull` sends matching EFI option ROM payloads over TCP.

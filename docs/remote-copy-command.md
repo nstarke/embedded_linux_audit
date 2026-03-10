@@ -29,6 +29,8 @@ The source path must be a full absolute OS path. Directory uploads are supported
 - Symlinks are skipped unless `--allow-symlinks` is provided
 - `--output-format` does not affect this subcommand; transfers are raw file bytes
 - For HTTP(S), use the server base URL; the client constructs `/{mac_address}/upload/{type}` automatically
+- Regular file uploads from `linux remote-copy` are sent to `/{mac_address}/upload/file?filePath=<absolute-path>`
+- Symlink uploads from `linux remote-copy --allow-symlinks` also use `/{mac_address}/upload/file`, with `symlink=true` and `symlinkPath=<target>` query parameters
 
 ## Examples
 
