@@ -26,6 +26,8 @@ module.exports = function registerUploadRoute(app, deps) {
         return path.join(baseDir, 'dmesg');
       case 'file-list':
         return path.join(baseDir, 'file-list');
+      case 'symlink-list':
+        return path.join(baseDir, 'symlink-list');
       case 'orom':
         return path.join(baseDir, 'orom');
       case 'uboot-image':
@@ -192,10 +194,10 @@ module.exports = function registerUploadRoute(app, deps) {
       const targetDir = uploadDirectoryForType(macDataDir, uploadType);
       await fsp.mkdir(targetDir, { recursive: true });
 
-      if (uploadType === 'file-list') {
+      if (uploadType === 'file-list' || uploadType === 'symlink-list') {
         const requestedListPath = sanitizeFileListPath(req.query.filePath);
         if (!requestedListPath) {
-          const body = 'file-list uploads require absolute filePath\n';
+          const body = `${uploadType} uploads require absolute filePath\n`;
           res.status(400).type('text').send(body);
           verboseResponseLog(req, 400, Buffer.byteLength(body));
           return;

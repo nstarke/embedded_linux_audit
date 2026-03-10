@@ -25,6 +25,7 @@ static void usage(const char *prog)
 		"  uboot audit        Run U-Boot audit rules\n"
 		"  linux dmesg        Dump kernel ring buffer output\n"
 		"  linux list-files   List files under a directory (use --recursive to recurse)\n"
+		"  linux list-symlinks List symlinks under a directory (use --recursive to recurse)\n"
 		"  linux remote-copy  Copy a local file to remote destination\n"
 		"  efi orom           EFI option ROM utilities (pull/list)\n"
 		"  bios orom          BIOS option ROM utilities (pull/list)\n"
@@ -35,10 +36,11 @@ static void usage(const char *prog)
 		"  %s uboot audit --dev /dev/mtdblock4 --offset 0x0 --size 0x10000\n"
 		"  %s --verbose --output-http http://127.0.0.1:5000/dmesg linux dmesg\n"
 		"  %s --output-http http://127.0.0.1:5000 linux list-files /etc\n"
+		"  %s --output-format json --output-http http://127.0.0.1:5000 linux list-symlinks /etc --recursive\n"
 		"  %s --output-https https://127.0.0.1:5443/upload linux remote-copy /tmp/fw.bin\n"
 		"  %s --output-http http://127.0.0.1:5000/orom --verbose efi orom pull\n"
 		"  %s --output-tcp 127.0.0.1:5001 --verbose bios orom list\n",
-		prog, prog, prog, prog, prog, prog, prog, prog, prog);
+		prog, prog, prog, prog, prog, prog, prog, prog, prog, prog);
 }
 
 int main(int argc, char **argv)
@@ -264,6 +266,9 @@ int main(int argc, char **argv)
 					"Warning: --output-format has no effect for list-files; output is always text/plain\n");
 			return linux_list_files_scan_main(argc - sub_idx, argv + sub_idx);
 		}
+
+		if (!strcmp(argv[sub_idx], "list-symlinks"))
+			return linux_list_symlinks_scan_main(argc - sub_idx, argv + sub_idx);
 
 		fprintf(stderr, "Unknown linux subcommand: %s\n\n", argv[sub_idx]);
 		usage(argv[0]);
