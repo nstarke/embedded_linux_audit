@@ -40,12 +40,13 @@ module.exports = function registerUploadRoute(app, deps) {
   }
 
   function logFilePrefixForUploadType(targetDir, uploadType) {
+    const timestamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\..+/, 'Z')
     switch (uploadType) {
       case 'log':
       case 'logs':
-        return path.join(targetDir, 'log');
+        return path.join(targetDir, `log.${timestamp}`);
       case 'dmesg':
-        return path.join(targetDir, `dmesg.${new Date().toISOString().replace(/[-:]/g, '').replace(/\..+/, 'Z')}`);
+        return path.join(targetDir, `dmesg.${timestamp}`);
       default:
         return path.join(targetDir, uploadType);
     }
@@ -85,12 +86,13 @@ module.exports = function registerUploadRoute(app, deps) {
   }
 
   function fileListNameForPath(filePath) {
+    const timestamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\..+/, 'Z');
     if (filePath === '/') {
-      return 'root-fs';
+      return `root-fs_${timestamp}`;
     }
 
     const stripped = filePath.replace(/^\/+/, '');
-    return (stripped ? stripped.replace(/\//g, '-') : 'root');
+    return (stripped ? stripped.replace(/\//g, '-') : 'root') + `_${timestamp}`;
   }
 
   app.post('/:mac/upload/:type', async (req, res) => {
