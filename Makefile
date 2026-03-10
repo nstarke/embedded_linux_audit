@@ -2,6 +2,7 @@ CC      ?= gcc
 CFLAGS  ?= -O2 -Wall -Wextra
 LDFLAGS ?=
 LDLIBS  ?=
+JOBS    ?= 4
 
 COMPAT_CPU ?=
 COMPAT_CFLAGS :=
@@ -114,6 +115,28 @@ ifneq ($(strip $(COMPAT_CFLAGS)),)
 CMAKE_CC_ARGS += -DCMAKE_C_FLAGS="$(COMPAT_CFLAGS)"
 endif
 
+CURL_CMAKE_ARGS := $(CMAKE_CC_ARGS)
+ifneq ($(strip $(CMAKE_C_COMPILER_TARGET)),)
+# curl's CMake feature probes are fragile for older cross targets under zig cc.
+# Prefill known Unix results so configure does not depend on executable try-compile
+# checks that fail for arm32 compatibility targets.
+CURL_CMAKE_ARGS += -D_CURL_PREFILL=ON
+ifneq (,$(findstring linux,$(CMAKE_C_COMPILER_TARGET)))
+# musl uses the POSIX strerror_r signature; curl's probe can become ambiguous
+# when cross-compiling these Zig Linux targets and then trips a hard preprocessor error.
+CURL_CMAKE_ARGS += -DHAVE_POSIX_STRERROR_R=1 -DHAVE_GLIBC_STRERROR_R=0
+endif
+endif
+ifneq ($(filter $(COMPAT_CPU),arm32 armeb),)
+# Older 32-bit ARM compatibility targets do not reliably report these sizes via
+# curl's CMake probes when cross-compiling with zig cc. Seed the known values.
+CURL_CMAKE_ARGS += -DSIZEOF_SIZE_T=4 -DSIZEOF_SSIZE_T=4 -DSIZEOF_LONG=4 -DSIZEOF_INT=4 -DSIZEOF_TIME_T=4 -DSIZEOF_SUSECONDS_T=4 -DSIZEOF_SA_FAMILY_T=2 -DSIZEOF_OFF_T=8 -DSIZEOF_CURL_OFF_T=8 -DSIZEOF_CURL_SOCKET_T=4
+# Zig's older 32-bit ARM compatibility targets do not provide the legacy
+# __sync atomics that curl's lock-free init path expects. Disable that probe
+# so curl falls back to the non-atomic path for these cross builds.
+CURL_CMAKE_ARGS += -DHAVE_ATOMIC=0 -DHAVE_STDATOMIC_H=0
+endif
+
 LIBCSV_DIR    := third_party/libcsv
 LIBCSV_SRC    := $(LIBCSV_DIR)/libcsv.c
 LIBCSV_CFLAGS := -I$(LIBCSV_DIR)
@@ -125,6 +148,7 @@ ZLIB_DIR      := third_party/zlib
 ZLIB_BUILD    := $(ZLIB_DIR)/build-$(CC_TAG)
 ZLIB_LIB      := $(ZLIB_BUILD)/libz.a
 ZLIB_CFLAGS   := -I$(ZLIB_DIR) -I$(ZLIB_BUILD)
+ZLIB_EXTRA_CFLAGS := $(COMPAT_CFLAGS)
 LIBUBOOTENV_EXTRA_CFLAGS := -I$(abspath compat) -I$(abspath $(ZLIB_DIR)) -I$(abspath $(ZLIB_BUILD)) -Wno-switch $(COMPAT_CFLAGS)
 JSONC_DIR     := third_party/json-c
 JSONC_BUILD   := $(JSONC_DIR)/build-$(CC_TAG)
@@ -155,6 +179,17 @@ CA_BUNDLE_URL ?= https://curl.se/ca/cacert.pem
 CA_BUNDLE_PEM ?= $(DEFAULT_CA_BUNDLE_PEM)
 GENERATED_CA_SRC := $(GENERATED_DIR)/fw_default_ca_bundle.c
 
+ifneq ($(filter $(COMPAT_CPU),arm32 armeb),)
+# Older 32-bit ARM targets handled via Zig do not provide working lock-free
+# atomics for zlib's z_once helper. Force zlib onto its non-atomic fallback.
+ZLIB_EXTRA_CFLAGS += -D__STDC_NO_ATOMICS__=1
+endif
+
+ZLIB_CMAKE_ARGS := $(CMAKE_CC_ARGS)
+ifneq ($(strip $(ZLIB_EXTRA_CFLAGS)),)
+ZLIB_CMAKE_ARGS += -DCMAKE_C_FLAGS="$(ZLIB_EXTRA_CFLAGS)"
+endif
+
 CFLAGS += $(LIBCSV_CFLAGS)
 CFLAGS += $(LIBUBOOTENV_CFLAGS)
 CFLAGS += $(ZLIB_CFLAGS)
@@ -182,6 +217,10 @@ SRC    := agent/embedded_linux_audit.c agent/uboot/env/uboot_env_cmd.c agent/ubo
 	  agent/uboot/audit-rules/uboot_validate_secureboot_rule.c \
 	  $(LIBCSV_SRC) $(GENERATED_CA_SRC)
 
+ifneq ($(filter $(COMPAT_CPU),arm32 armeb),)
+SRC += compat/legacy_sync_builtins.c
+endif
+
 .PHONY: all env image static test clean
 
 all: $(TARGET)
@@ -192,26 +231,27 @@ image: $(TARGET)
 
 $(JSONC_LIB):
 	cmake -S $(JSONC_DIR) -B $(JSONC_BUILD) $(CMAKE_CC_ARGS) -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DBUILD_STATIC_LIBS=ON -DBUILD_TESTING=OFF -DBUILD_APPS=OFF
-	cmake --build $(JSONC_BUILD) --target json-c
+	cmake --build $(JSONC_BUILD) --parallel $(JOBS) --target json-c
 
 $(LIBUBOOTENV_LIB): $(ZLIB_LIB)
 	cmake -S $(LIBUBOOTENV_DIR) -B $(LIBUBOOTENV_BUILD) $(CMAKE_CC_ARGS) -DCMAKE_BUILD_TYPE=Release -DBUILD_DOC=OFF -DNO_YML_SUPPORT=ON -DCMAKE_C_FLAGS="$(LIBUBOOTENV_EXTRA_CFLAGS)"
-	cmake --build $(LIBUBOOTENV_BUILD) --target ubootenv_static
+	cmake --build $(LIBUBOOTENV_BUILD) --parallel $(JOBS) --target ubootenv_static
 
 $(ZLIB_LIB):
-	cmake -S $(ZLIB_DIR) -B $(ZLIB_BUILD) $(CMAKE_CC_ARGS) -DCMAKE_BUILD_TYPE=Release -DZLIB_BUILD_SHARED=OFF -DZLIB_BUILD_STATIC=ON -DZLIB_BUILD_TESTING=OFF -DZLIB_INSTALL=OFF
-	cmake --build $(ZLIB_BUILD) --target zlibstatic
+	cmake -S $(ZLIB_DIR) -B $(ZLIB_BUILD) $(ZLIB_CMAKE_ARGS) -DCMAKE_BUILD_TYPE=Release -DZLIB_BUILD_SHARED=OFF -DZLIB_BUILD_STATIC=ON -DZLIB_BUILD_TESTING=OFF -DZLIB_INSTALL=OFF
+	cmake --build $(ZLIB_BUILD) --parallel $(JOBS) --target zlibstatic
 
 $(CURL_LIB):
-	cmake -S $(CURL_DIR) -B $(CURL_BUILD) $(CMAKE_CC_ARGS) -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DBUILD_CURL_EXE=OFF -DBUILD_LIBCURL_DOCS=OFF -DBUILD_MISC_DOCS=OFF -DBUILD_TESTING=OFF -DCURL_USE_OPENSSL=OFF -DCURL_ZLIB=OFF -DUSE_LIBIDN2=OFF -DUSE_NGHTTP2=OFF -DCURL_BROTLI=OFF -DCURL_ZSTD=OFF -DENABLE_ARES=OFF -DCURL_USE_LIBPSL=OFF -DCURL_USE_LIBSSH2=OFF -DCURL_DISABLE_NETRC=ON -DHTTP_ONLY=ON
-	cmake --build $(CURL_BUILD) --target libcurl_static
+	cmake -S $(CURL_DIR) -B $(CURL_BUILD) $(CURL_CMAKE_ARGS) -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DBUILD_CURL_EXE=OFF -DBUILD_LIBCURL_DOCS=OFF -DBUILD_MISC_DOCS=OFF -DBUILD_TESTING=OFF -DCURL_USE_OPENSSL=OFF -DCURL_ZLIB=OFF -DUSE_LIBIDN2=OFF -DUSE_NGHTTP2=OFF -DCURL_BROTLI=OFF -DCURL_ZSTD=OFF -DENABLE_ARES=OFF -DENABLE_THREADED_RESOLVER=OFF -DCURL_USE_LIBPSL=OFF -DCURL_USE_LIBSSH2=OFF -DCURL_DISABLE_NETRC=ON -DHTTP_ONLY=ON
+	cmake --build $(CURL_BUILD) --parallel $(JOBS) --target libcurl_static
 
 $(OPENSSL_LIB):
 	mkdir -p $(OPENSSL_BUILD)
 	cd $(OPENSSL_DIR) && $(MAKE) distclean >/dev/null 2>&1 || true
 	# Use no-asm so cross builds (e.g. zig cc -target arm-*) don't pick host x86 asm paths.
 	cd $(OPENSSL_DIR) && CC="$(CC)" CFLAGS="$(COMPAT_CFLAGS)" ./Configure $(OPENSSL_CONFIGURE_TARGET) no-asm no-shared no-module no-threads no-tests no-docs --prefix="$(abspath $(OPENSSL_INSTALL))" --openssldir="$(abspath $(OPENSSL_INSTALL))/ssl" --libdir=lib
-	$(MAKE) -C $(OPENSSL_DIR) build_libs
+	$(MAKE) -C $(OPENSSL_DIR) -j$(JOBS) build_generated
+	$(MAKE) -C $(OPENSSL_DIR) -j$(JOBS) build_libs
 	mkdir -p "$(OPENSSL_INSTALL)/include" "$(OPENSSL_INSTALL)/lib"
 	rm -rf "$(OPENSSL_INSTALL)/include/openssl"
 	cp -a "$(OPENSSL_DIR)/include/openssl" "$(OPENSSL_INSTALL)/include/"
@@ -231,13 +271,13 @@ $(GENERATED_CA_SRC): tools/embed_ca_bundle.py $(CA_BUNDLE_PEM)
 $(NCURSES_BUILD_STAMP):
 	cd $(NCURSES_DIR) && $(MAKE) distclean >/dev/null 2>&1 || true
 	cd $(NCURSES_DIR) && ./configure --without-shared --without-cxx --without-cxx-binding --without-ada --without-tests --without-progs --without-manpages --with-normal --with-termlib CC='$(CC)' CFLAGS='$(CFLAGS)'
-	$(MAKE) -C $(NCURSES_DIR) -j2 libs
+	$(MAKE) -C $(NCURSES_DIR) -j$(JOBS) libs
 	touch $@
 
 $(READLINE_BUILD_STAMP):
 	cd $(READLINE_DIR) && $(MAKE) distclean >/dev/null 2>&1 || true
 	cd $(READLINE_DIR) && bash_cv_termcap_lib=libtermcap ac_cv_type_signal=void bash_cv_void_sighandler=yes ./configure --disable-shared --enable-static CC='$(CC) -std=gnu89' CFLAGS='$(READLINE_BUILD_CFLAGS)' LDFLAGS='-L$(abspath $(NCURSES_LIB_DIR))'
-	$(MAKE) -C $(READLINE_DIR) libreadline.a libhistory.a
+	$(MAKE) -C $(READLINE_DIR) -j$(JOBS) libreadline.a libhistory.a
 	touch $@
 
 $(TARGET): $(SRC) $(ZLIB_LIB) $(LIBUBOOTENV_LIB) $(JSONC_LIB) $(CURL_LIB) $(OPENSSL_LIB) $(READLINE_DEPS)

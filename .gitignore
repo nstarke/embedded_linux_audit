@@ -7,3 +7,5 @@ node_modules
 api/agent/data/*
 *.log   
 embedded_linux_audit
+logs
+.tools
