@@ -1,5 +1,7 @@
 # embedded_linux_audit
 
+![embedded_linux_audit logo](images/logo.png)
+
 `embedded_linux_audit` is a Linux host-side C utility for U-Boot discovery and validation workflows on embedded systems. It focuses on three tasks:
 
 - **Environment discovery** (`embedded_linux_audit uboot env`): scans flash/block devices for valid U-Boot environment candidates and can emit `fw_env.config` entries.
