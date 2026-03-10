@@ -52,6 +52,8 @@ int main(int argc, char **argv)
 	const char *output_tcp = NULL;
 	const char *output_http = NULL;
 	const char *output_https = NULL;
+	const char *ela_api_url = NULL;
+	const char *ela_api_insecure = NULL;
 	bool verbose = true;
 	bool insecure = false;
 	bool output_format_explicit = false;
@@ -158,6 +160,26 @@ int main(int argc, char **argv)
 		usage(argv[0]);
 		return 2;
 	}
+
+	ela_api_url = getenv("ELA_API_URL");
+	if ((!output_http || !*output_http) && (!output_https || !*output_https) &&
+	    ela_api_url && *ela_api_url) {
+		if (!strncmp(ela_api_url, "http://", 7)) {
+			output_http = ela_api_url;
+		} else if (!strncmp(ela_api_url, "https://", 8)) {
+			output_https = ela_api_url;
+		} else {
+			fprintf(stderr,
+				"Invalid ELA_API_URL (expected http://host:port/... or https://host:port/...): %s\n\n",
+				ela_api_url);
+			usage(argv[0]);
+			return 2;
+		}
+	}
+
+	ela_api_insecure = getenv("ELA_API_INSECURE");
+	if (!insecure && ela_api_insecure && !strcmp(ela_api_insecure, "true"))
+		insecure = true;
 
 	if (output_http && strncmp(output_http, "http://", 7)) {
 		fprintf(stderr, "Invalid --output-http URI (expected http://host:port/...): %s\n\n", output_http);

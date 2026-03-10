@@ -62,6 +62,9 @@ run_exact_case "linux execute-command invalid global --output-http" 2 "$BIN" --o
 run_exact_case "linux execute-command invalid global --output-https" 2 "$BIN" --output-https http://127.0.0.1:1 linux execute-command "echo hello"
 run_exact_case "linux execute-command both global http+https" 2 "$BIN" --output-http http://127.0.0.1:1 --output-https https://127.0.0.1:1 linux execute-command "echo hello"
 run_exact_case "linux execute-command invalid global --output-tcp" 2 "$BIN" --output-tcp invalid-target linux execute-command "echo hello"
+run_accept_case "linux execute-command ELA_API_URL http" env ELA_API_URL=http://127.0.0.1:1 "$BIN" linux execute-command "echo hello"
+run_accept_case "linux execute-command ELA_API_URL https + ELA_API_INSECURE=true" env ELA_API_URL=https://127.0.0.1:1 ELA_API_INSECURE=true "$BIN" linux execute-command "echo hello"
+run_exact_case "linux execute-command invalid ELA_API_URL" 2 env ELA_API_URL=ftp://127.0.0.1:1 "$BIN" linux execute-command "echo hello"
 
 run_accept_case "linux execute-command txt" "$BIN" --output-format txt linux execute-command "echo hello"
 run_accept_case "linux execute-command csv" "$BIN" --output-format csv linux execute-command "echo hello"
