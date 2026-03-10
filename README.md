@@ -30,3 +30,31 @@ Why this matters:
 The full usage and reference material has moved to the `docs/` folder:
 
 - [Documentation index](docs/index.md)
+
+## Companion API
+
+This repository also includes a companion Node.js helper API in [`api/`](api/) for local collection and test workflows. The helper server is useful when you want a lightweight HTTP/HTTPS endpoint for agent uploads and a simple way to serve downloaded release binaries and agent test scripts.
+
+Key capabilities:
+
+- Accepts uploads for command output, `dmesg`, file contents, file lists, symlink lists, option ROM data, U-Boot images, and U-Boot environment data.
+- Validates upload content types and stores runtime data under timestamped directories in `api/data/`.
+- Adds timestamp and source IP metadata to JSON command uploads.
+- Serves a simple index at `GET /` plus helper routes for release binaries, agent test scripts, ISA assets, and U-Boot environment files.
+- Can automatically download and cache the latest GitHub release binaries for `embedded_linux_audit`.
+
+To start the companion API:
+
+```bash
+cd api && npm install && npm start -- --host 0.0.0.0 --port 5000
+```
+
+Common options include:
+
+- `--https` to enable HTTPS with a self-signed localhost certificate
+- `--data-dir` to change the runtime storage location
+- `--clean` to remove previous runtime upload data before startup
+- `--force-download` to refresh cached release binaries
+- `--verbose` to enable per-request console logging
+
+For more detail, see [docs/api-helper-server.md](docs/api-helper-server.md).
