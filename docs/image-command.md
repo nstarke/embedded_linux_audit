@@ -4,7 +4,7 @@ Scans mtdblock/UBI and block devices (SD/eMMC such as `/dev/sd*` and `/dev/mmcbl
 
 ## `image` arguments
 
-- `--verbose` — print scan progress
+- `--verbose` — print scan progress; preferred as a top-level `embedded_linux_audit` option
 - `--dev <device>` — restrict scan or action to one device
 - `--step <bytes>` — scan stride (default `0x1000`)
 - `--allow-text[=<text>]` — also match plain text (default `U-Boot`; higher false-positive risk)
@@ -16,9 +16,9 @@ Scans mtdblock/UBI and block devices (SD/eMMC such as `/dev/sd*` and `/dev/mmcbl
 - `--send-logs` — send tool logs over TCP using `--output-tcp <IPv4:port>`
 - `pull` subcommand — pull image bytes from `--dev` at `--offset` and send to one remote destination (`--output-tcp`, `--output-http`, or `--output-https`)
 - `--offset <bytes>` — image offset used by `--pull` or `--find-address`
-- `--output-tcp <IPv4:port>` — TCP destination used by `--pull`
-- `--output-http <http://host:port/path>` — HTTP destination used by `--pull` (POST body contains image bytes), or for posting normal command output
-- `--output-https <https://host:port/path>` — HTTPS destination used by `--pull` (POST body contains image bytes), or for posting normal command output
+- `--output-tcp <IPv4:port>` — TCP destination used by `pull`; preferred at the top level
+- `--output-http <http://host:port/path>` — HTTP destination used by `pull` (POST body contains image bytes), or for posting normal command output; preferred at the top level
+- `--output-https <https://host:port/path>` — HTTPS destination used by `pull` (POST body contains image bytes), or for posting normal command output; preferred at the top level
 - `--insecure` — disable TLS certificate and hostname verification for HTTPS output
 - `find-address` subcommand — parse image at `--offset` and print load address (uImage/FIT)
 - `list-commands` subcommand — best-effort static extraction of likely U-Boot command names from image bytes at `--offset`; emits confidence labels (`high`/`medium`/`low`)
@@ -52,14 +52,14 @@ Scans mtdblock/UBI and block devices (SD/eMMC such as `/dev/sd*` and `/dev/mmcbl
 Scan all MTD devices:
 
 ```bash
-./embedded_linux_audit uboot image --verbose
-./embedded_linux_audit --output-format csv uboot image --verbose
+./embedded_linux_audit --verbose uboot image
+./embedded_linux_audit --output-format csv --verbose uboot image
 ```
 
 For machine-readable output:
 
 ```bash
-./embedded_linux_audit --output-format json uboot image --verbose
+./embedded_linux_audit --output-format json --verbose uboot image
 ./embedded_linux_audit --output-format csv uboot image find-address --dev /dev/mtdblock4 --offset 0x200
 ```
 
@@ -85,15 +85,15 @@ List likely commands at known offset:
 Send scan logs over TCP:
 
 ```bash
-./embedded_linux_audit uboot image --verbose --send-logs --output-tcp 192.168.1.50:5000
+./embedded_linux_audit --verbose --output-tcp 192.168.1.50:5000 uboot image --send-logs
 ```
 
 Pull image bytes to TCP listener:
 
 ```bash
-./embedded_linux_audit uboot image pull --dev /dev/mtdblock4 --offset 0x200 --output-tcp 192.168.1.50:5000
-./embedded_linux_audit uboot image pull --dev /dev/mtdblock4 --offset 0x200 --output-http http://192.168.1.50:5000/image
-./embedded_linux_audit uboot image pull --dev /dev/mtdblock4 --offset 0x200 --output-https https://192.168.1.50:5443/image
-./embedded_linux_audit uboot image --verbose --output-http http://192.168.1.50:5000/image
-./embedded_linux_audit uboot image --verbose --output-https https://192.168.1.50:5443/image
+./embedded_linux_audit --output-tcp 192.168.1.50:5000 uboot image pull --dev /dev/mtdblock4 --offset 0x200
+./embedded_linux_audit --output-http http://192.168.1.50:5000/image uboot image pull --dev /dev/mtdblock4 --offset 0x200
+./embedded_linux_audit --output-https https://192.168.1.50:5443/image uboot image pull --dev /dev/mtdblock4 --offset 0x200
+./embedded_linux_audit --verbose --output-http http://192.168.1.50:5000/image uboot image
+./embedded_linux_audit --verbose --output-https https://192.168.1.50:5443/image uboot image
 ```

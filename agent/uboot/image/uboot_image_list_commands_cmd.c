@@ -7,23 +7,25 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 static void usage(const char *prog)
 {
 	fprintf(stderr,
-		"Usage: %s --dev <device> --offset <bytes> [--output-http <http://host:port/path> | --output-https <https://host:port/path>] [--insecure] [--verbose] [--send-logs --output-tcp <IPv4:port>]\n",
+		"Usage: %s --dev <device> --offset <bytes> [--insecure] [--send-logs --output-tcp <IPv4:port>]\n",
 		prog);
 }
 
 int uboot_image_list_commands_main(int argc, char **argv)
 {
 	const char *dev = NULL;
-	const char *output_tcp = NULL;
-	const char *output_http = NULL;
-	const char *output_https = NULL;
+	const char *output_tcp = getenv("FW_AUDIT_OUTPUT_TCP");
+	const char *output_http = getenv("FW_AUDIT_OUTPUT_HTTP");
+	const char *output_https = getenv("FW_AUDIT_OUTPUT_HTTPS");
 	uint64_t offset = 0;
 	bool have_offset = false;
-	bool verbose = false;
+	bool verbose = getenv("FW_AUDIT_VERBOSE") && !strcmp(getenv("FW_AUDIT_VERBOSE"), "1");
 	bool insecure = false;
 	bool send_logs = false;
 	int opt;

@@ -4,7 +4,7 @@ Scans MTD/UBI plus block devices (SD/eMMC such as `/dev/sd*` and `/dev/mmcblk*`)
 
 ## `env` arguments
 
-- `--verbose` — print scan progress and non-hit details
+- `--verbose` — print scan progress and non-hit details; preferred as a top-level `embedded_linux_audit` option
 - `--size <env_size>` — fixed environment size (for example `0x10000`)
 - `--hint <hint>` — override hint string used for positive labeling
 - `--dev <device>` — scan only one device (step inferred from sysfs/proc)
@@ -16,9 +16,9 @@ Scans MTD/UBI plus block devices (SD/eMMC such as `/dev/sd*` and `/dev/mmcblk*`)
 - `--skip-emmc` — skip `/dev/mmcblk*` scan targets
 - `read-vars` — subcommand to print parsed key/value variables from candidate environments (parsed via `libubootenv`)
 - `--output-config[=<path>]` — write discovered `fw_env.config` lines to file (default `fw_env.config`)
-- `--output-tcp <IPv4:port>` — duplicate output to TCP destination
-- `--output-http <http://host:port/path>` — duplicate output to HTTP endpoint via POST
-- `--output-https <https://host:port/path>` — duplicate output to HTTPS endpoint via POST
+- `--output-tcp <IPv4:port>` — duplicate output to TCP destination; preferred at the top level
+- `--output-http <http://host:port/path>` — duplicate output to HTTP endpoint via POST; preferred at the top level
+- `--output-https <https://host:port/path>` — duplicate output to HTTPS endpoint via POST; preferred at the top level
 - `--insecure` — disable TLS certificate and hostname verification for HTTPS output
 - `write-vars <path|http(s)://...>` — subcommand to apply env updates from a local text file or fetch the script from HTTP(S)
 
@@ -50,13 +50,13 @@ Scans MTD/UBI plus block devices (SD/eMMC such as `/dev/sd*` and `/dev/mmcblk*`)
 ```bash
 ./embedded_linux_audit uboot env
 ./embedded_linux_audit --output-format json uboot env
-./embedded_linux_audit uboot env --verbose
+./embedded_linux_audit --verbose uboot env
 ./embedded_linux_audit uboot env --size 0x10000
 ./embedded_linux_audit uboot env --dev /dev/mtd3 --size 0x10000
 ./embedded_linux_audit uboot env --size 0x10000 /dev/mtd0:0x10000 /dev/mtd1:0x20000
-./embedded_linux_audit uboot env --output-tcp 192.168.1.50:5000 --verbose
-./embedded_linux_audit uboot env --output-http http://192.168.1.50:5000/env --verbose
-./embedded_linux_audit uboot env --output-https https://192.168.1.50:5443/env --verbose
+./embedded_linux_audit --output-tcp 192.168.1.50:5000 --verbose uboot env
+./embedded_linux_audit --output-http http://192.168.1.50:5000/env --verbose uboot env
+./embedded_linux_audit --output-https https://192.168.1.50:5443/env --verbose uboot env
 ./embedded_linux_audit uboot env read-vars --size 0x10000
 ./embedded_linux_audit uboot env write-vars ./new_env.txt
 ```

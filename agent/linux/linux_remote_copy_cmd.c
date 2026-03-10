@@ -29,18 +29,14 @@
 static void usage(const char *prog)
 {
 	fprintf(stderr,
-		"Usage: %s <absolute-path> [--output-tcp <IPv4:port> | --output-http <http://...> | --output-https <https://...>] [--recursive] [--allow-dev] [--allow-sysfs] [--allow-proc] [--insecure] [--verbose]\n"
+		"Usage: %s <absolute-path> [--recursive] [--allow-dev] [--allow-sysfs] [--allow-proc] [--allow-symlinks] [--insecure]\n"
 		"  Copy one local file to remote destination, or upload directory contents over HTTP(S)\n"
-		"  --output-tcp <IPv4:port>       Send file bytes over TCP\n"
-		"  --output-http <http://...>     Send file bytes via HTTP POST\n"
-		"  --output-https <https://...>   Send file bytes via HTTPS POST\n"
 		"  --recursive                    Recurse into subdirectories when source is a directory\n"
 		"  --allow-dev                    Allow copying paths under /dev\n"
 		"  --allow-sysfs                  Allow copying paths under /sys\n"
 		"  --allow-proc                   Allow copying paths under /proc\n"
 		"  --allow-symlinks               Upload symlinks as symlinks over HTTP(S)\n"
-		"  --insecure                     Disable TLS certificate/hostname verification for HTTPS\n"
-		"  --verbose                      Print transfer progress\n",
+		"  --insecure                     Disable TLS certificate/hostname verification for HTTPS\n",
 		prog);
 }
 
@@ -365,9 +361,9 @@ static int upload_path_http(const char *path,
 
 int linux_remote_copy_scan_main(int argc, char **argv)
 {
-	const char *output_tcp = NULL;
-	const char *output_http = NULL;
-	const char *output_https = NULL;
+	const char *output_tcp = getenv("FW_AUDIT_OUTPUT_TCP");
+	const char *output_http = getenv("FW_AUDIT_OUTPUT_HTTP");
+	const char *output_https = getenv("FW_AUDIT_OUTPUT_HTTPS");
 	const char *output_uri = NULL;
 	const char *path = NULL;
 	struct stat st;
@@ -377,7 +373,7 @@ int linux_remote_copy_scan_main(int argc, char **argv)
 	bool allow_proc = false;
 	bool allow_symlinks = false;
 	bool insecure = false;
-	bool verbose = false;
+	bool verbose = getenv("FW_AUDIT_VERBOSE") && !strcmp(getenv("FW_AUDIT_VERBOSE"), "1");
 	int opt;
 
 	static const struct option long_opts[] = {

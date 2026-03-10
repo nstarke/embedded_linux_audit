@@ -1000,13 +1000,12 @@ uint64_t uboot_image_parse_u64(const char *s)
 static void usage(const char *prog)
 {
 	fprintf(stderr,
-		"Usage: %s [--verbose] [--dev <device>] [--step <bytes>] [--allow-text]\n"
+		"Usage: %s [--dev <device>] [--step <bytes>] [--allow-text]\n"
 		"       %s [--skip-remove] [--skip-mtd] [--skip-ubi] [--skip-sd] [--skip-emmc]\n"
-		"       %s pull --dev <device> --offset <bytes> [--output-tcp <IPv4:port> | --output-http <http://host:port/> | --output-https <https://host:port/>]\n"
+		"       %s pull --dev <device> --offset <bytes>\n"
 		"       %s find-address --dev <device> --offset <bytes>\n"
 		"       %s list-commands --dev <device> --offset <bytes>\n"
 		"  no args: scan /dev/mtdblock*, /dev/ubi*_*, /dev/ubiblock*_*, /dev/mmcblk* and /dev/sd* for U-Boot image signatures\n"
-		"  --verbose: print scan progress\n"
 		"  --dev: scan only a specific device\n"
 		"  --step: step size when scanning (default: 0x1000)\n"
 		"  --allow-text[=<text>]: also match plain text (default: 'U-Boot'; higher false-positive risk)\n"
@@ -1384,9 +1383,9 @@ static int scan_dev_for_image(const char *dev, uint64_t step)
 int uboot_image_scan_main(int argc, char **argv)
 {
 	const char *dev_override = NULL;
-	const char *output_tcp_target = NULL;
-	const char *output_http_target = NULL;
-	const char *output_https_target = NULL;
+	const char *output_tcp_target = getenv("FW_AUDIT_OUTPUT_TCP");
+	const char *output_http_target = getenv("FW_AUDIT_OUTPUT_HTTP");
+	const char *output_https_target = getenv("FW_AUDIT_OUTPUT_HTTPS");
 	uint64_t step = 0x1000;
 	bool skip_mtd = false;
 	bool skip_ubi = false;
@@ -1406,7 +1405,7 @@ int uboot_image_scan_main(int argc, char **argv)
 
 	optind = 1;
 	detect_output_format();
-	g_verbose = false;
+	g_verbose = getenv("FW_AUDIT_VERBOSE") && !strcmp(getenv("FW_AUDIT_VERBOSE"), "1");
 	g_allow_text = false;
 	g_allow_text_pattern = "U-Boot";
 	if (argc > 1) {

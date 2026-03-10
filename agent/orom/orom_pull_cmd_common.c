@@ -28,7 +28,7 @@
 static void usage(const char *prog, const char *fw_mode)
 {
 	fprintf(stderr,
-		"Usage: %s <pull|list> [--verbose] [--insecure] [--output-tcp <IPv4:port> | --output-http <http://host:port/path> | --output-https <https://host:port/path>]\n"
+		"Usage: %s <pull|list> [--insecure]\n"
 		"  pull: read %s PCI option ROM payloads from sysfs and stream bytes to remote output\n"
 		"  list: enumerate %s PCI option ROM candidates and emit formatted records\n",
 		prog, fw_mode, fw_mode);
@@ -485,6 +485,10 @@ int orom_group_main(const char *fw_mode, int argc, char **argv)
 	optind = 1;
 	memset(&ctx, 0, sizeof(ctx));
 	ctx.fw_mode = fw_mode;
+	ctx.verbose = getenv("FW_AUDIT_VERBOSE") && !strcmp(getenv("FW_AUDIT_VERBOSE"), "1");
+	ctx.output_tcp = getenv("FW_AUDIT_OUTPUT_TCP");
+	ctx.output_http = getenv("FW_AUDIT_OUTPUT_HTTP");
+	ctx.output_https = getenv("FW_AUDIT_OUTPUT_HTTPS");
 	detect_output_format(&ctx);
 
 	static const struct option long_opts[] = {

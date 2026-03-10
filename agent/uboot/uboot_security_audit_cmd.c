@@ -638,7 +638,7 @@ static int auto_scan_signature_artifacts(char **blob_path_out, char **pubkey_pat
 static void usage(const char *prog)
 {
 	err_printf(
-		"Usage: %s [--list-rules] [--rule <name>] --dev <device> [--offset <bytes>] [--size <bytes>] [--verbose]\n"
+		"Usage: %s [--list-rules] [--rule <name>] --dev <device> [--offset <bytes>] [--size <bytes>]\n"
 		"  --list-rules    List compiled audit rules\n"
 		"  --rule <name>   Run only one rule by name\n"
 		"  --dev <device>  Input device/file to audit\n"
@@ -649,9 +649,6 @@ static void usage(const char *prog)
 		"  --scan-signature-devices  Force device scan for FIT blob and PEM pubkey (default if paths missing)\n"
 		"  --scan-signature-blob <glob>   Auto-select first readable blob path matching glob\n"
 		"  --scan-signature-pubkey <glob> Auto-select first readable pubkey path matching glob\n"
-		"  --output-tcp <IPv4:port>       Send discovered signature artifact records to TCP\n"
-		"  --output-http <http://...>     Send discovered signature artifact records via HTTP POST\n"
-		"  --output-https <https://...>   Send discovered signature artifact records via HTTPS POST\n"
 		"  --insecure                     Disable TLS certificate/hostname verification for HTTPS\n"
 		"  --signature-alg <name>    Digest algorithm (if omitted: tries sha256, sha384, sha512, sha1, sha224)\n"
 		"  --verbose       Enable verbose audit output\n",
@@ -847,16 +844,16 @@ int embedded_linux_audit_scan_main(int argc, char **argv)
 	const char *signature_blob_scan = NULL;
 	const char *signature_pubkey_scan = NULL;
 	const char *signature_algorithm = NULL;
-	const char *output_tcp_target = NULL;
-	const char *output_http_target = NULL;
-	const char *output_https_target = NULL;
+	const char *output_tcp_target = getenv("FW_AUDIT_OUTPUT_TCP");
+	const char *output_http_target = getenv("FW_AUDIT_OUTPUT_HTTP");
+	const char *output_https_target = getenv("FW_AUDIT_OUTPUT_HTTPS");
 	const char *output_http_uri = NULL;
 	bool scan_signature_devices = false;
 	bool insecure = false;
 	uint64_t offset = 0;
 	uint64_t size = DEFAULT_AUDIT_SIZE;
 	bool size_explicit = false;
-	bool verbose = false;
+	bool verbose = getenv("FW_AUDIT_VERBOSE") && !strcmp(getenv("FW_AUDIT_VERBOSE"), "1");
 	bool list_rules = false;
 	uint32_t crc32_table[256];
 	const struct embedded_linux_audit_rule * const *rulep;

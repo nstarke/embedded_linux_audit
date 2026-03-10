@@ -162,22 +162,22 @@ static int flush_output_http_buffer(void)
 
 static void usage(const char *prog)
 {
-	err_printf("Usage: %s [--verbose] [--output-tcp <ip:port>] [--output-http <http://host:port/path>] [--output-https <https://host:port/path>] [--insecure]\n",
+	err_printf("Usage: %s [--insecure]\n",
 		prog);
 }
 
 int linux_dmesg_scan_main(int argc, char **argv)
 {
-	const char *output_tcp_target = NULL;
-	const char *output_http_target = NULL;
-	const char *output_https_target = NULL;
+	const char *output_tcp_target = getenv("FW_AUDIT_OUTPUT_TCP");
+	const char *output_http_target = getenv("FW_AUDIT_OUTPUT_HTTP");
+	const char *output_https_target = getenv("FW_AUDIT_OUTPUT_HTTPS");
 	FILE *fp = NULL;
 	char line[4096];
 	int ret = 0;
 	int opt;
 
 	optind = 1;
-	g_verbose = false;
+	g_verbose = getenv("FW_AUDIT_VERBOSE") && !strcmp(getenv("FW_AUDIT_VERBOSE"), "1");
 	g_insecure = false;
 	if (g_output_sock >= 0) {
 		close(g_output_sock);

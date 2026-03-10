@@ -1404,12 +1404,9 @@ static int scan_dev(const char *dev, uint64_t step, uint64_t env_size, const cha
 
 static void usage(const char *prog)
 {
-	err_printf("Usage: %s [parse-vars] [--verbose] [--size <env_size>] [--hint <hint>] [--dev <dev>] [--bruteforce] [--skip-remove] [--skip-mtd] [--skip-ubi] [--skip-sd] [--skip-emmc] [--output-config[=<path>]] [<dev:step> ...]\n"
-		"       %s write <path|http(s)://...> [--verbose] [--size <env_size>] [--hint <hint>] [--dev <dev>] [--bruteforce] [--skip-remove] [--skip-mtd] [--skip-ubi] [--skip-sd] [--skip-emmc] [--output-config[=<path>]] [<dev:step> ...]\n"
+	err_printf("Usage: %s [parse-vars] [--size <env_size>] [--hint <hint>] [--dev <dev>] [--bruteforce] [--skip-remove] [--skip-mtd] [--skip-ubi] [--skip-sd] [--skip-emmc] [--output-config[=<path>]] [<dev:step> ...]\n"
+		"       %s write <path|http(s)://...> [--size <env_size>] [--hint <hint>] [--dev <dev>] [--bruteforce] [--skip-remove] [--skip-mtd] [--skip-ubi] [--skip-sd] [--skip-emmc] [--output-config[=<path>]] [<dev:step> ...]\n"
 		"             (legacy flags still accepted: --parse-vars, --write <path>)\n"
-		"             [--output-tcp <ip:port>]\n"
-		"             [--output-http <http://host:port/>]\n"
-		"             [--output-https <https://host:port/>]\n"
 		"             [--insecure]\n", prog, prog);
 }
 
@@ -1420,9 +1417,9 @@ int uboot_env_scan_core_main(int argc, char **argv)
 	uint64_t env_size = 0;
 	const char *hint_override = NULL;
 	const char *dev_override = NULL;
-	const char *output_tcp_target = NULL;
-	const char *output_http_target = NULL;
-	const char *output_https_target = NULL;
+	const char *output_tcp_target = getenv("FW_AUDIT_OUTPUT_TCP");
+	const char *output_http_target = getenv("FW_AUDIT_OUTPUT_HTTP");
+	const char *output_https_target = getenv("FW_AUDIT_OUTPUT_HTTPS");
 	const char *output_config_path = NULL;
 	const char *write_script_path = NULL;
 	char **parse_argv = argv;
@@ -1453,7 +1450,7 @@ int uboot_env_scan_core_main(int argc, char **argv)
 
 	optind = 1;
 	detect_output_format();
-	g_verbose = false;
+	g_verbose = getenv("FW_AUDIT_VERBOSE") && !strcmp(getenv("FW_AUDIT_VERBOSE"), "1");
 	g_bruteforce = false;
 	g_insecure = false;
 	g_csv_header_emitted = false;
