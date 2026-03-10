@@ -23,7 +23,7 @@ cd api && npm start -- --verbose
 Additional server options:
 
 - `--https` enables HTTPS with a self-signed localhost certificate.
-- `--clean` deletes everything under `api/data` before startup.
+- `--clean` deletes runtime upload data under `api/data` before startup, but preserves cached release binaries in `api/data/release_binaries`.
 - `--force-download` refreshes the cached release binaries in `api/data/release_binaries`.
 
 POST handling notes:

@@ -225,10 +225,13 @@ async function clearDownloadedAssets(outDir) {
   }
 }
 
-async function removeDirectoryContents(dirPath) {
+async function removeDirectoryContents(dirPath, preservedNames = new Set()) {
   try {
     const entries = await fsp.readdir(dirPath, { withFileTypes: true });
     for (const entry of entries) {
+      if (preservedNames.has(entry.name)) {
+        continue;
+      }
       const fullPath = path.join(dirPath, entry.name);
       await fsp.rm(fullPath, { recursive: true, force: true });
     }
@@ -483,7 +486,7 @@ async function main() {
   const dataDir = defaultDataDir;
 
   if (args.clean) {
-    await removeDirectoryContents(path.join(WEB_ROOT, 'data'));
+    await removeDirectoryContents(path.join(WEB_ROOT, 'data'), new Set(['release_binaries']));
   }
 
   await Promise.all([
@@ -577,6 +580,7 @@ module.exports = {
   getClientIp,
   sanitizeUploadPath,
   writeUploadFile,
+  removeDirectoryContents,
   createApp,
   parseArgs,
   printHelp,
