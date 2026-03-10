@@ -1,10 +1,9 @@
 #!/bin/sh
 
 set -u
-
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-BIN="$REPO_ROOT/embedded_linux_audit"
+BIN="/tmp/embedded_linux_audit"
 
 TEST_OUTPUT_HTTP="${TEST_OUTPUT_HTTP:-}"
 TEST_OUTPUT_HTTPS="${TEST_OUTPUT_HTTPS:-}"
