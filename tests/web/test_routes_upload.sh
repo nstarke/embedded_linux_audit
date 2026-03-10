@@ -37,9 +37,15 @@ run_curl_case "POST file-list requires absolute filePath" POST "$TEST_WEB_BASE_U
 run_curl_case "POST file-list stores newline-terminated content" POST "$TEST_WEB_BASE_URL/$MAC/upload/file-list?filePath=/var/log/messages" 200 "ok" -H "Content-Type: text/plain" --data-binary "first-entry"
 assert_file_contains "file-list writes transformed filename" "$MAC_DIR/file-list/var-log-messages" "first-entry"
 
+run_curl_case "POST file-list stores root path as root-fs filename" POST "$TEST_WEB_BASE_URL/$MAC/upload/file-list?filePath=/" 200 "ok" -H "Content-Type: text/plain" --data-binary "root-entry"
+assert_file_contains "file-list writes root-fs filename" "$MAC_DIR/file-list/root-fs" "root-entry"
+
 run_curl_case "POST symlink-list requires absolute filePath" POST "$TEST_WEB_BASE_URL/$MAC/upload/symlink-list?filePath=relative/path" 400 "symlink-list uploads require absolute filePath" -H "Content-Type: text/plain" --data-binary "entry"
 run_curl_case "POST symlink-list stores newline-terminated content" POST "$TEST_WEB_BASE_URL/$MAC/upload/symlink-list?filePath=/var/lib" 200 "ok" -H "Content-Type: text/plain" --data-binary "link -> target"
 assert_file_contains "symlink-list writes transformed filename" "$MAC_DIR/symlink-list/var-lib" "link -> target"
+
+run_curl_case "POST symlink-list stores root path as root-fs filename" POST "$TEST_WEB_BASE_URL/$MAC/upload/symlink-list?filePath=/" 200 "ok" -H "Content-Type: text/plain" --data-binary "root-link -> target"
+assert_file_contains "symlink-list writes root-fs filename" "$MAC_DIR/symlink-list/root-fs" "root-link -> target"
 
 run_curl_case "POST log stores plain-text log" POST "$TEST_WEB_BASE_URL/$MAC/upload/log" 200 "ok" -H "Content-Type: text/plain" --data-binary "log line"
 assert_file_contains "log upload appends to text log" "$MAC_DIR/logs/log.text_plain.log" "log line"

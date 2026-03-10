@@ -88,6 +88,7 @@ run_exact_case "linux list-files invalid --permissions" 2 "$BIN" --verbose linux
 run_exact_case "linux list-files invalid --user" 2 "$BIN" --verbose linux list-files "$TMP_DIR" --user this-user-should-not-exist-fw-scan
 run_exact_case "linux list-files invalid --group" 2 "$BIN" --verbose linux list-files "$TMP_DIR" --group this-group-should-not-exist-fw-scan
 
+run_exact_case "linux list-files no directory argument defaults to /" 0 "$BIN" --verbose linux list-files
 run_exact_case "linux list-files local directory" 0 "$BIN" --verbose linux list-files "$TMP_DIR"
 run_exact_case "linux list-files --recursive" 0 "$BIN" --verbose linux list-files "$TMP_DIR" --recursive
 run_exact_case "linux list-files --suid-only" 0 "$BIN" --verbose linux list-files "$TMP_DIR" --suid-only

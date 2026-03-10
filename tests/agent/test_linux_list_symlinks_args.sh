@@ -32,6 +32,7 @@ run_exact_case "linux list-symlinks invalid --output-https" 2 "$BIN" --verbose l
 run_exact_case "linux list-symlinks both http+https" 2 "$BIN" --verbose linux list-symlinks "$TMP_DIR" --output-http http://127.0.0.1:1/symlink-list --output-https https://127.0.0.1:1/symlink-list
 run_exact_case "linux list-symlinks extra positional argument" 2 "$BIN" --verbose linux list-symlinks "$TMP_DIR" /tmp/extra
 
+run_exact_case "linux list-symlinks no directory argument defaults to /" 0 "$BIN" --verbose linux list-symlinks
 run_exact_case "linux list-symlinks default directory" 0 "$BIN" --verbose linux list-symlinks "$TMP_DIR"
 run_exact_case "linux list-symlinks --recursive" 0 "$BIN" --verbose linux list-symlinks "$TMP_DIR" --recursive
 run_accept_case "linux list-symlinks --output-http" "$BIN" --verbose linux list-symlinks "$TMP_DIR" --output-http http://127.0.0.1:1/symlink-list

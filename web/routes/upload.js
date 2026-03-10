@@ -83,6 +83,10 @@ module.exports = function registerUploadRoute(app, deps) {
   }
 
   function fileListNameForPath(filePath) {
+    if (filePath === '/') {
+      return 'root-fs';
+    }
+
     const stripped = filePath.replace(/^\/+/, '');
     return (stripped ? stripped.replace(/\//g, '-') : 'root');
   }
