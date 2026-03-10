@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -155,15 +156,25 @@ static int build_lifecycle_payload(const char *output_format,
 	size_t len = 0;
 	size_t cap = 0;
 	char rc_buf[32];
+	char ts_buf[64];
 	const char *fmt = output_format && *output_format ? output_format : "txt";
+	time_t now;
+	struct tm tm_now;
 
 	if (!command || !phase || !payload_out)
 		return -1;
 
 	snprintf(rc_buf, sizeof(rc_buf), "%d", rc);
+	now = time(NULL);
+	if (localtime_r(&now, &tm_now) == NULL)
+		return -1;
+	if (strftime(ts_buf, sizeof(ts_buf), "%Y-%m-%dT%H:%M:%S%z", &tm_now) == 0)
+		return -1;
 
 	if (!strcmp(fmt, "json")) {
-		if (append_text(&buf, &len, &cap, "{\"record\":\"log\",\"phase\":\"") != 0 ||
+		if (append_text(&buf, &len, &cap, "{\"record\":\"log\",\"timestamp\":\"") != 0 ||
+		    append_json_escaped(&buf, &len, &cap, ts_buf) != 0 ||
+		    append_text(&buf, &len, &cap, "\",\"phase\":\"") != 0 ||
 		    append_json_escaped(&buf, &len, &cap, phase) != 0 ||
 		    append_text(&buf, &len, &cap, "\",\"command\":\"") != 0 ||
 		    append_json_escaped(&buf, &len, &cap, command) != 0 ||
@@ -174,6 +185,8 @@ static int build_lifecycle_payload(const char *output_format,
 	} else if (!strcmp(fmt, "csv")) {
 		if (append_csv_field(&buf, &len, &cap, "log") != 0 ||
 		    append_text(&buf, &len, &cap, ",") != 0 ||
+		    append_csv_field(&buf, &len, &cap, ts_buf) != 0 ||
+		    append_text(&buf, &len, &cap, ",") != 0 ||
 		    append_csv_field(&buf, &len, &cap, phase) != 0 ||
 		    append_text(&buf, &len, &cap, ",") != 0 ||
 		    append_csv_field(&buf, &len, &cap, command) != 0 ||
@@ -182,7 +195,9 @@ static int build_lifecycle_payload(const char *output_format,
 		    append_text(&buf, &len, &cap, "\n") != 0)
 			goto fail;
 	} else {
-		if (append_text(&buf, &len, &cap, "log phase=") != 0 ||
+		if (append_text(&buf, &len, &cap, "log timestamp=") != 0 ||
+		    append_text(&buf, &len, &cap, ts_buf) != 0 ||
+		    append_text(&buf, &len, &cap, " phase=") != 0 ||
 		    append_text(&buf, &len, &cap, phase) != 0 ||
 		    append_text(&buf, &len, &cap, " command=") != 0 ||
 		    append_text(&buf, &len, &cap, command) != 0 ||
