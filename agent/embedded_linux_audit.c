@@ -25,6 +25,7 @@ static void usage(const char *prog)
 		"  uboot image        Scan or extract U-Boot images\n"
 		"  uboot audit        Run U-Boot audit rules\n"
 		"  linux dmesg        Dump kernel ring buffer output\n"
+		"  linux execute-command Execute a shell command and capture/upload its output\n"
 		"  linux list-files   List files under a directory (use --recursive to recurse)\n"
 		"  linux list-symlinks List symlinks under a directory (use --recursive to recurse)\n"
 		"  linux remote-copy  Copy a local file to remote destination\n"
@@ -36,12 +37,13 @@ static void usage(const char *prog)
 		"  %s uboot image --dev /dev/mtdblock4 --step 0x1000\n"
 		"  %s uboot audit --dev /dev/mtdblock4 --offset 0x0 --size 0x10000\n"
 		"  %s --output-http http://127.0.0.1:5000/dmesg linux dmesg\n"
+		"  %s --output-format json --output-http http://127.0.0.1:5000 linux execute-command \"uname -a\"\n"
 		"  %s --output-http http://127.0.0.1:5000 linux list-files /etc\n"
 		"  %s --output-format json --output-http http://127.0.0.1:5000 linux list-symlinks /etc --recursive\n"
 		"  %s --output-https https://127.0.0.1:5443 linux remote-copy /tmp/fw.bin\n"
 		"  %s --quiet --output-http http://127.0.0.1:5000/orom efi orom pull\n"
 		"  %s --quiet --output-tcp 127.0.0.1:5001 bios orom list\n",
-		prog, prog, prog, prog, prog, prog, prog, prog, prog, prog);
+		prog, prog, prog, prog, prog, prog, prog, prog, prog, prog, prog);
 }
 
 int main(int argc, char **argv)
@@ -265,6 +267,9 @@ int main(int argc, char **argv)
 					"Warning: --output-format has no effect for dmesg; remote output is always text/plain\n");
 			return linux_dmesg_scan_main(argc - sub_idx, argv + sub_idx);
 		}
+
+		if (!strcmp(argv[sub_idx], "execute-command"))
+			return linux_execute_command_scan_main(argc - sub_idx, argv + sub_idx);
 
 		if (!strcmp(argv[sub_idx], "remote-copy")) {
 			if (output_format_explicit)

@@ -56,10 +56,10 @@ require_binary "$BIN"
 print_section "uboot env subcommand argument coverage"
 
 run_exact_case "uboot env --help" 2 "$BIN" uboot env --help
-run_accept_case "uboot env --output-format txt --size $TEST_SIZE" "$BIN" --output-format txt uboot env --size "$TEST_SIZE" --verbose
-run_accept_case "uboot env --output-format csv --size $TEST_SIZE" "$BIN" --output-format csv uboot env --size "$TEST_SIZE" --verbose
-run_accept_case "uboot env --output-format json --size $TEST_SIZE" "$BIN" --output-format json uboot env --size "$TEST_SIZE" --verbose
-run_accept_case "uboot env --verbose --size $TEST_SIZE" "$BIN" uboot env --verbose --size "$TEST_SIZE"
+run_accept_case "uboot env --output-format txt --size $TEST_SIZE" "$BIN" --output-format txt uboot env --size "$TEST_SIZE"
+run_accept_case "uboot env --output-format csv --size $TEST_SIZE" "$BIN" --output-format csv uboot env --size "$TEST_SIZE"
+run_accept_case "uboot env --output-format json --size $TEST_SIZE" "$BIN" --output-format json uboot env --size "$TEST_SIZE"
+run_accept_case "uboot env default verbose --size $TEST_SIZE" "$BIN" uboot env --size "$TEST_SIZE"
 run_accept_case "uboot env --size" "$BIN" uboot env --size "$TEST_SIZE"
 run_accept_case "uboot env --hint --size $TEST_SIZE" "$BIN" uboot env --hint bootcmd= --size "$TEST_SIZE"
 run_accept_case "uboot env --dev --size $TEST_SIZE" "$BIN" uboot env --dev /dev/null --size "$TEST_SIZE"
@@ -77,9 +77,9 @@ run_accept_case "uboot env global --output-http --size $TEST_SIZE" "$BIN" --outp
 run_accept_case "uboot env global --output-https --size $TEST_SIZE" "$BIN" --output-https https://127.0.0.1:1/env uboot env --size "$TEST_SIZE"
 run_accept_case "--insecure uboot env --size $TEST_SIZE" "$BIN" --insecure uboot env --size "$TEST_SIZE"
 run_exact_case "uboot env invalid --size" 2 "$BIN" uboot env --size nope
-run_accept_case "uboot env invalid global --output-http reaches pre-root path" "$BIN" --output-http ftp://127.0.0.1:1/env uboot env --size "$TEST_SIZE"
-run_accept_case "uboot env invalid global --output-https reaches pre-root path" "$BIN" --output-https http://127.0.0.1:1/env uboot env --size "$TEST_SIZE"
-run_accept_case "uboot env both global http+https reaches pre-root path" "$BIN" --output-http http://127.0.0.1:1/env --output-https https://127.0.0.1:1/env uboot env --size "$TEST_SIZE"
+run_exact_case "uboot env invalid global --output-http" 2 "$BIN" --output-http ftp://127.0.0.1:1/env uboot env --size "$TEST_SIZE"
+run_exact_case "uboot env invalid global --output-https" 2 "$BIN" --output-https http://127.0.0.1:1/env uboot env --size "$TEST_SIZE"
+run_exact_case "uboot env both global http+https" 2 "$BIN" --output-http http://127.0.0.1:1/env --output-https https://127.0.0.1:1/env uboot env --size "$TEST_SIZE"
 run_accept_case "uboot env rejects raw mtd char device after root check path" "$BIN" uboot env --dev /dev/mtd0 --size "$TEST_SIZE"
 
 if [ "$(current_uid)" -ne 0 ]; then
@@ -87,7 +87,7 @@ if [ "$(current_uid)" -ne 0 ]; then
         "$BIN" uboot env write-vars https://127.0.0.1/fw_setenv_script.txt
 fi
 
-run_accept_case "uboot env write missing path reaches pre-root path" "$BIN" uboot env write
+run_exact_case "uboot env write missing path" 2 "$BIN" uboot env write
 
 if [ "$(current_uid)" -eq 0 ]; then
     TMP_ENV_IMAGE="$(mktemp /tmp/uboot_env_parse_vars.XXXXXX.bin)"

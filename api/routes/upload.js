@@ -24,6 +24,8 @@ module.exports = function registerUploadRoute(app, deps) {
         return path.join(baseDir, 'logs');
       case 'dmesg':
         return path.join(baseDir, 'dmesg');
+      case 'cmd':
+        return path.join(baseDir, 'cmd');
       case 'file-list':
         return path.join(baseDir, 'file-list');
       case 'symlink-list':
@@ -47,6 +49,8 @@ module.exports = function registerUploadRoute(app, deps) {
         return path.join(targetDir, `log.${timestamp}`);
       case 'dmesg':
         return path.join(targetDir, `dmesg.${timestamp}`);
+      case 'cmd':
+        return path.join(targetDir, `cmd.${timestamp}`);
       default:
         return path.join(targetDir, uploadType);
     }
@@ -154,6 +158,17 @@ module.exports = function registerUploadRoute(app, deps) {
 
     if (!Object.prototype.hasOwnProperty.call(validContentTypes, normalizedContentType)) {
       const allowed = Object.keys(validContentTypes).sort().join(', ');
+      const body = `unsupported content type; expected one of: ${allowed}\n`;
+      res.status(415).type('text').send(body);
+      verboseResponseLog(req, 415, Buffer.byteLength(body));
+      return;
+    }
+
+    if (normalizedContentType === 'application/json' && uploadType !== 'cmd') {
+      const allowed = Object.keys(validContentTypes)
+        .filter((type) => type !== 'application/json')
+        .sort()
+        .join(', ');
       const body = `unsupported content type; expected one of: ${allowed}\n`;
       res.status(415).type('text').send(body);
       verboseResponseLog(req, 415, Buffer.byteLength(body));

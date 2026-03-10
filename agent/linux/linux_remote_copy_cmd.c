@@ -29,14 +29,13 @@
 static void usage(const char *prog)
 {
 	fprintf(stderr,
-		"Usage: %s <absolute-path> [--recursive] [--allow-dev] [--allow-sysfs] [--allow-proc] [--allow-symlinks] [--insecure]\n"
+		"Usage: %s <absolute-path> [--recursive] [--allow-dev] [--allow-sysfs] [--allow-proc] [--allow-symlinks]\n"
 		"  Copy one local file to remote destination, or upload directory contents over HTTP(S)\n"
 		"  --recursive                    Recurse into subdirectories when source is a directory\n"
 		"  --allow-dev                    Allow copying paths under /dev\n"
 		"  --allow-sysfs                  Allow copying paths under /sys\n"
 		"  --allow-proc                   Allow copying paths under /proc\n"
-		"  --allow-symlinks               Upload symlinks as symlinks over HTTP(S)\n"
-		"  --insecure                     Disable TLS certificate/hostname verification for HTTPS\n",
+		"  --allow-symlinks               Upload symlinks as symlinks over HTTP(S)\n",
 		prog);
 }
 
@@ -466,34 +465,20 @@ int linux_remote_copy_scan_main(int argc, char **argv)
 
 	static const struct option long_opts[] = {
 		{ "help", no_argument, NULL, 'h' },
-		{ "output-tcp", required_argument, NULL, 'p' },
-		{ "output-http", required_argument, NULL, 'O' },
-		{ "output-https", required_argument, NULL, 'T' },
 		{ "recursive", no_argument, NULL, 'r' },
 		{ "allow-dev", no_argument, NULL, 'D' },
 		{ "allow-sysfs", no_argument, NULL, 'S' },
 		{ "allow-proc", no_argument, NULL, 'P' },
 		{ "allow-symlinks", no_argument, NULL, 'L' },
-		{ "insecure", no_argument, NULL, 'k' },
-		{ "verbose", no_argument, NULL, 'v' },
 		{ 0, 0, 0, 0 }
 	};
 
 	optind = 1;
-	while ((opt = getopt_long(argc, argv, "hp:O:T:rDSPLkv", long_opts, NULL)) != -1) {
+	while ((opt = getopt_long(argc, argv, "hrDSPL", long_opts, NULL)) != -1) {
 		switch (opt) {
 		case 'h':
 			usage(argv[0]);
 			return 0;
-		case 'p':
-			output_tcp = optarg;
-			break;
-		case 'O':
-			output_http = optarg;
-			break;
-		case 'T':
-			output_https = optarg;
-			break;
 		case 'r':
 			recursive = true;
 			break;
@@ -508,12 +493,6 @@ int linux_remote_copy_scan_main(int argc, char **argv)
 			break;
 		case 'L':
 			allow_symlinks = true;
-			break;
-		case 'k':
-			insecure = true;
-			break;
-		case 'v':
-			verbose = true;
 			break;
 		default:
 			usage(argv[0]);

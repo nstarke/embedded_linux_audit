@@ -28,7 +28,7 @@
 static void usage(const char *prog, const char *fw_mode)
 {
 	fprintf(stderr,
-		"Usage: %s <pull|list> [--insecure]\n"
+		"Usage: %s <pull|list>\n"
 		"  pull: read %s PCI option ROM payloads from sysfs and stream bytes to remote output\n"
 		"  list: enumerate %s PCI option ROM candidates and emit formatted records\n",
 		prog, fw_mode, fw_mode);
@@ -494,8 +494,6 @@ int orom_group_main(const char *fw_mode, int argc, char **argv)
 
 	static const struct option long_opts[] = {
 		{ "help", no_argument, NULL, 'h' },
-		{ "verbose", no_argument, NULL, 'v' },
-		{ "insecure", no_argument, NULL, 'k' },
 		{ "output-tcp", required_argument, NULL, 't' },
 		{ "output-http", required_argument, NULL, 'O' },
 		{ "output-https", required_argument, NULL, 'T' },
@@ -519,17 +517,11 @@ int orom_group_main(const char *fw_mode, int argc, char **argv)
 
 	optind = 2;
 
-	while ((opt = getopt_long(argc, argv, "hvkt:O:T:", long_opts, NULL)) != -1) {
+	while ((opt = getopt_long(argc, argv, "ht:O:T:", long_opts, NULL)) != -1) {
 		switch (opt) {
 		case 'h':
 			usage(argv[0], fw_mode);
 			return 0;
-		case 'v':
-			ctx.verbose = true;
-			break;
-		case 'k':
-			ctx.insecure = true;
-			break;
 		case 't':
 			ctx.output_tcp = optarg;
 			break;

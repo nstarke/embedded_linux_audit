@@ -60,10 +60,10 @@ run_exact_case "uboot image pull --help" 0 "$BIN" uboot image pull --help
 run_exact_case "uboot image find-address --help" 0 "$BIN" uboot image find-address --help
 run_exact_case "uboot image list-commands --help" 0 "$BIN" uboot image list-commands --help
 
-run_accept_case "uboot image --output-format txt" "$BIN" --output-format txt uboot image --verbose
-run_accept_case "uboot image --output-format csv" "$BIN" --output-format csv uboot image --verbose
-run_accept_case "uboot image --output-format json" "$BIN" --output-format json uboot image --verbose
-run_accept_case "uboot image --verbose" "$BIN" uboot image --verbose
+run_accept_case "uboot image --output-format txt" "$BIN" --output-format txt uboot image
+run_accept_case "uboot image --output-format csv" "$BIN" --output-format csv uboot image
+run_accept_case "uboot image --output-format json" "$BIN" --output-format json uboot image
+run_accept_case "uboot image default verbose" "$BIN" uboot image
 run_accept_case "uboot image --dev" "$BIN" uboot image --dev /dev/null
 run_accept_case "uboot image --step" "$BIN" uboot image --step 0x1000
 run_accept_case "uboot image --step 0 falls back to default" "$BIN" uboot image --step 0
@@ -75,7 +75,7 @@ run_accept_case "uboot image --skip-mtd" "$BIN" uboot image --skip-mtd
 run_accept_case "uboot image --skip-ubi" "$BIN" uboot image --skip-ubi
 run_accept_case "uboot image --skip-sd" "$BIN" uboot image --skip-sd
 run_accept_case "uboot image --skip-emmc" "$BIN" uboot image --skip-emmc
-run_accept_case "--insecure uboot image" "$BIN" --insecure uboot image
+run_accept_case "global --insecure uboot image" "$BIN" --insecure uboot image
 
 run_accept_case "uboot image find-address --offset" \
     "$BIN" uboot image find-address --dev /dev/null --offset 0x0
@@ -84,16 +84,16 @@ run_accept_case "uboot image list-commands --offset" \
     "$BIN" uboot image list-commands --dev /dev/null --offset 0x0
 
 run_accept_case "uboot image --send-logs + global --output-tcp" \
-	"$BIN" --output-tcp 127.0.0.1:9 uboot image --verbose --send-logs
+	"$BIN" --output-tcp 127.0.0.1:9 uboot image --send-logs
 
-run_accept_case "uboot image pull --output-tcp" \
-    "$BIN" uboot image pull --dev /dev/null --offset 0x0 --output-tcp 127.0.0.1:9
+run_accept_case "uboot image pull global --output-tcp" \
+    "$BIN" --output-tcp 127.0.0.1:9 uboot image pull --dev /dev/null --offset 0x0
 
-run_accept_case "uboot image pull --output-http" \
-    "$BIN" uboot image pull --dev /dev/null --offset 0x0 --output-http http://127.0.0.1:1/image
+run_accept_case "uboot image pull global --output-http" \
+    "$BIN" --output-http http://127.0.0.1:1/image uboot image pull --dev /dev/null --offset 0x0
 
-run_accept_case "uboot image pull --output-https" \
-    "$BIN" uboot image pull --dev /dev/null --offset 0x0 --output-https https://127.0.0.1:1/image
+run_accept_case "uboot image pull global --output-https" \
+    "$BIN" --output-https https://127.0.0.1:1/image uboot image pull --dev /dev/null --offset 0x0
 
 run_exact_case "uboot image --step invalid" 2 \
     "$BIN" uboot image --step nope
@@ -119,23 +119,23 @@ run_exact_case "uboot image pull requires --offset" 2 \
 run_exact_case "uboot image pull invalid --offset value" 2 \
     "$BIN" uboot image pull --dev /dev/null --offset nope --output-tcp 127.0.0.1:9
 
-run_exact_case "uboot image pull requires one remote target" 2 \
+run_exact_case "uboot image pull requires one global remote target" 2 \
     "$BIN" uboot image pull --dev /dev/null --offset 0x0
 
 run_exact_case "uboot image pull rejects --send-logs" 2 \
     "$BIN" uboot image pull --dev /dev/null --offset 0x0 --send-logs --output-tcp 127.0.0.1:9
 
-run_exact_case "uboot image pull rejects both http and https targets" 2 \
-    "$BIN" uboot image pull --dev /dev/null --offset 0x0 --output-http http://127.0.0.1:1/image --output-https https://127.0.0.1:1/image
+run_exact_case "uboot image pull rejects both global http and https targets" 2 \
+    "$BIN" --output-http http://127.0.0.1:1/image --output-https https://127.0.0.1:1/image uboot image pull --dev /dev/null --offset 0x0
 
-run_exact_case "uboot image pull rejects tcp plus http target" 2 \
-    "$BIN" uboot image pull --dev /dev/null --offset 0x0 --output-tcp 127.0.0.1:9 --output-http http://127.0.0.1:1/image
+run_exact_case "uboot image pull rejects multiple global transport targets" 2 \
+    "$BIN" --output-tcp 127.0.0.1:9 --output-http http://127.0.0.1:1/image uboot image pull --dev /dev/null --offset 0x0
 
-run_exact_case "uboot image pull invalid --output-http URI" 2 \
-    "$BIN" uboot image pull --dev /dev/null --offset 0x0 --output-http ftp://127.0.0.1:1/image
+run_exact_case "uboot image pull invalid global --output-http URI" 2 \
+    "$BIN" --output-http ftp://127.0.0.1:1/image uboot image pull --dev /dev/null --offset 0x0
 
-run_exact_case "uboot image pull invalid --output-https URI" 2 \
-    "$BIN" uboot image pull --dev /dev/null --offset 0x0 --output-https http://127.0.0.1:1/image
+run_exact_case "uboot image pull invalid global --output-https URI" 2 \
+    "$BIN" --output-https http://127.0.0.1:1/image uboot image pull --dev /dev/null --offset 0x0
 
 run_exact_case "uboot image pull rejects trailing positional arg" 2 \
     "$BIN" uboot image pull --dev /dev/null --offset 0x0 --output-tcp 127.0.0.1:9 extra
@@ -149,14 +149,14 @@ run_exact_case "uboot image find-address requires --offset" 2 \
 run_exact_case "uboot image find-address invalid --offset value" 2 \
     "$BIN" uboot image find-address --dev /dev/null --offset nope
 
-run_exact_case "uboot image find-address rejects --output-tcp without --send-logs" 2 \
-    "$BIN" uboot image find-address --dev /dev/null --offset 0x0 --output-tcp 127.0.0.1:9
+run_exact_case "uboot image find-address rejects global --output-tcp without --send-logs" 2 \
+    "$BIN" --output-tcp 127.0.0.1:9 uboot image find-address --dev /dev/null --offset 0x0
 
-run_exact_case "uboot image find-address rejects --send-logs without --output-tcp even with http output" 2 \
-    "$BIN" uboot image find-address --dev /dev/null --offset 0x0 --send-logs --output-http http://127.0.0.1:1/image
+run_exact_case "uboot image find-address rejects --send-logs without global --output-tcp even with global http output" 2 \
+    "$BIN" --output-http http://127.0.0.1:1/image uboot image find-address --dev /dev/null --offset 0x0 --send-logs
 
 log="$(mktemp /tmp/test_image_find_address_send_logs.XXXXXX)"
-run_with_output_override "$BIN" uboot image find-address --dev /dev/null --offset 0x0 --send-logs --output-tcp 127.0.0.1:9 >"$log" 2>&1
+run_with_output_override "$BIN" --output-tcp 127.0.0.1:9 uboot image find-address --dev /dev/null --offset 0x0 --send-logs >"$log" 2>&1
 rc=$?
 if [ "$rc" -eq 2 ] && grep -q "Unable to connect to log output target 127.0.0.1:9" "$log"; then
     echo "[PASS] uboot image find-address accepts --send-logs with --output-tcp and reaches log connection path"
@@ -168,14 +168,14 @@ else
 fi
 rm -f "$log"
 
-run_exact_case "uboot image find-address invalid --output-http URI" 2 \
-    "$BIN" uboot image find-address --dev /dev/null --offset 0x0 --output-http ftp://127.0.0.1:1/image
+run_exact_case "uboot image find-address invalid global --output-http URI" 2 \
+    "$BIN" --output-http ftp://127.0.0.1:1/image uboot image find-address --dev /dev/null --offset 0x0
 
-run_exact_case "uboot image find-address invalid --output-https URI" 2 \
-    "$BIN" uboot image find-address --dev /dev/null --offset 0x0 --output-https http://127.0.0.1:1/image
+run_exact_case "uboot image find-address invalid global --output-https URI" 2 \
+    "$BIN" --output-https http://127.0.0.1:1/image uboot image find-address --dev /dev/null --offset 0x0
 
-run_exact_case "uboot image find-address rejects both http and https targets" 2 \
-    "$BIN" uboot image find-address --dev /dev/null --offset 0x0 --output-http http://127.0.0.1:1/image --output-https https://127.0.0.1:1/image
+run_exact_case "uboot image find-address rejects both global http and https targets" 2 \
+    "$BIN" --output-http http://127.0.0.1:1/image --output-https https://127.0.0.1:1/image uboot image find-address --dev /dev/null --offset 0x0
 
 run_exact_case "uboot image find-address rejects trailing positional arg" 2 \
     "$BIN" uboot image find-address --dev /dev/null --offset 0x0 extra
@@ -189,14 +189,14 @@ run_exact_case "uboot image list-commands requires --offset" 2 \
 run_exact_case "uboot image list-commands invalid --offset value" 2 \
     "$BIN" uboot image list-commands --dev /dev/null --offset nope
 
-run_exact_case "uboot image list-commands rejects --output-tcp without --send-logs" 2 \
-    "$BIN" uboot image list-commands --dev /dev/null --offset 0x0 --output-tcp 127.0.0.1:9
+run_exact_case "uboot image list-commands rejects global --output-tcp without --send-logs" 2 \
+    "$BIN" --output-tcp 127.0.0.1:9 uboot image list-commands --dev /dev/null --offset 0x0
 
-run_exact_case "uboot image list-commands rejects --send-logs without --output-tcp even with https output" 2 \
-    "$BIN" uboot image list-commands --dev /dev/null --offset 0x0 --send-logs --output-https https://127.0.0.1:1/image
+run_exact_case "uboot image list-commands rejects --send-logs without global --output-tcp even with global https output" 2 \
+    "$BIN" --output-https https://127.0.0.1:1/image uboot image list-commands --dev /dev/null --offset 0x0 --send-logs
 
 log="$(mktemp /tmp/test_image_list_commands_send_logs.XXXXXX)"
-run_with_output_override "$BIN" uboot image list-commands --dev /dev/null --offset 0x0 --send-logs --output-tcp 127.0.0.1:9 >"$log" 2>&1
+run_with_output_override "$BIN" --output-tcp 127.0.0.1:9 uboot image list-commands --dev /dev/null --offset 0x0 --send-logs >"$log" 2>&1
 rc=$?
 if [ "$rc" -eq 2 ] && grep -q "Unable to connect to log output target 127.0.0.1:9" "$log"; then
     echo "[PASS] uboot image list-commands accepts --send-logs with --output-tcp and reaches log connection path"
@@ -208,14 +208,14 @@ else
 fi
 rm -f "$log"
 
-run_exact_case "uboot image list-commands invalid --output-http URI" 2 \
-    "$BIN" uboot image list-commands --dev /dev/null --offset 0x0 --output-http ftp://127.0.0.1:1/image
+run_exact_case "uboot image list-commands invalid global --output-http URI" 2 \
+    "$BIN" --output-http ftp://127.0.0.1:1/image uboot image list-commands --dev /dev/null --offset 0x0
 
-run_exact_case "uboot image list-commands invalid --output-https URI" 2 \
-    "$BIN" uboot image list-commands --dev /dev/null --offset 0x0 --output-https http://127.0.0.1:1/image
+run_exact_case "uboot image list-commands invalid global --output-https URI" 2 \
+    "$BIN" --output-https http://127.0.0.1:1/image uboot image list-commands --dev /dev/null --offset 0x0
 
-run_exact_case "uboot image list-commands rejects both http and https targets" 2 \
-    "$BIN" uboot image list-commands --dev /dev/null --offset 0x0 --output-http http://127.0.0.1:1/image --output-https https://127.0.0.1:1/image
+run_exact_case "uboot image list-commands rejects both global http and https targets" 2 \
+    "$BIN" --output-http http://127.0.0.1:1/image --output-https https://127.0.0.1:1/image uboot image list-commands --dev /dev/null --offset 0x0
 
 run_exact_case "uboot image list-commands rejects trailing positional arg" 2 \
     "$BIN" uboot image list-commands --dev /dev/null --offset 0x0 extra

@@ -1407,7 +1407,7 @@ static void usage(const char *prog)
 	err_printf("Usage: %s [parse-vars] [--size <env_size>] [--hint <hint>] [--dev <dev>] [--bruteforce] [--skip-remove] [--skip-mtd] [--skip-ubi] [--skip-sd] [--skip-emmc] [--output-config[=<path>]] [<dev:step> ...]\n"
 		"       %s write <path|http(s)://...> [--size <env_size>] [--hint <hint>] [--dev <dev>] [--bruteforce] [--skip-remove] [--skip-mtd] [--skip-ubi] [--skip-sd] [--skip-emmc] [--output-config[=<path>]] [<dev:step> ...]\n"
 		"             (legacy flags still accepted: --parse-vars, --write <path>)\n"
-		"             [--insecure]\n", prog, prog);
+		"             Global HTTPS behavior is controlled by top-level arguments such as --insecure\n", prog, prog);
 }
 
 int uboot_env_scan_core_main(int argc, char **argv)
@@ -1493,7 +1493,6 @@ int uboot_env_scan_core_main(int argc, char **argv)
 	}
 
 	static const struct option long_opts[] = {
-		{ "verbose", no_argument, NULL, 'v' },
 		{ "size", required_argument, NULL, 's' },
 		{ "hint", required_argument, NULL, 'H' },
 		{ "dev", required_argument, NULL, 'd' },
@@ -1505,15 +1504,13 @@ int uboot_env_scan_core_main(int argc, char **argv)
 		{ "skip-emmc", no_argument, NULL, 'E' },
 		{ "parse-vars", no_argument, NULL, 'P' },
 		{ "output-config", optional_argument, NULL, 'c' },
-		{ "insecure", no_argument, NULL, 'k' },
 		{ "write", required_argument, NULL, 'w' },
 		{ 0, 0, 0, 0 }
 	};
 
-	while ((opt = getopt_long(parse_argc, parse_argv, "hvs:H:d:bkRMUSEPc::w:", long_opts, NULL)) != -1) {
+	while ((opt = getopt_long(parse_argc, parse_argv, "hs:H:d:bRMUSEPc::w:", long_opts, NULL)) != -1) {
 		switch (opt) {
 		case 'h': usage(prog); return 0;
-		case 'v': g_verbose = true; break;
 		case 's': env_size = parse_u64(optarg); fixed_size = true; break;
 		case 'H': hint_override = optarg; break;
 		case 'd': dev_override = optarg; break;
@@ -1525,7 +1522,6 @@ int uboot_env_scan_core_main(int argc, char **argv)
 		case 'E': skip_emmc = true; break;
 		case 'P': g_parse_vars = true; break;
 		case 'c': output_config_path = optarg ? optarg : "uboot_env.config"; break;
-		case 'k': g_insecure = true; break;
 		case 'w': write_script_path = optarg; break;
 		default: usage(prog); return 2;
 		}

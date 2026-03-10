@@ -63,7 +63,7 @@ struct list_files_filters {
 static void usage(const char *prog)
 {
 	fprintf(stderr,
-		"Usage: %s [absolute-directory] [--recursive] [--insecure] [--suid-only] [--permissions mode] [--user name|uid] [--group name|gid]\n"
+		"Usage: %s [absolute-directory] [--recursive] [--suid-only] [--permissions mode] [--user name|uid] [--group name|gid]\n"
 		"  List files under the given absolute directory (default: /)\n"
 		"  When --recursive is set, recurse into subdirectories\n"
 		"  When --suid-only is set, only files with the SUID bit set are returned\n"
@@ -488,7 +488,6 @@ int linux_list_files_scan_main(int argc, char **argv)
 	static const struct option long_opts[] = {
 		{ "help", no_argument, NULL, 'h' },
 		{ "recursive", no_argument, NULL, 'r' },
-		{ "insecure", no_argument, NULL, 'k' },
 		{ "suid-only", no_argument, NULL, 's' },
 		{ "permissions", required_argument, NULL, 'p' },
 		{ "user", required_argument, NULL, 'u' },
@@ -497,16 +496,13 @@ int linux_list_files_scan_main(int argc, char **argv)
 	};
 
 	optind = 1;
-	while ((opt = getopt_long(argc, argv, "hrksp:u:g:", long_opts, NULL)) != -1) {
+	while ((opt = getopt_long(argc, argv, "hrsp:u:g:", long_opts, NULL)) != -1) {
 		switch (opt) {
 		case 'h':
 			usage(argv[0]);
 			return 0;
 		case 'r':
 			recursive = true;
-			break;
-		case 'k':
-			insecure = true;
 			break;
 		case 's':
 			filters.suid_only = true;

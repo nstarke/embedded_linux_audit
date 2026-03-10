@@ -74,17 +74,17 @@ run_exact_case "bios orom invalid action" 2 "$BIN" bios orom invalid
 run_accept_case "efi orom pull --output-tcp" "$BIN" efi orom pull --output-tcp 127.0.0.1:9
 run_accept_case "efi orom pull --output-http" "$BIN" efi orom pull --output-http http://127.0.0.1:1/orom
 run_accept_case "efi orom pull --output-https" "$BIN" efi orom pull --output-https https://127.0.0.1:1/orom
-run_accept_case "efi orom pull --verbose" "$BIN" efi orom pull --output-http http://127.0.0.1:1/orom --verbose
+run_accept_case "efi orom pull default verbose" "$BIN" efi orom pull --output-http http://127.0.0.1:1/orom
 
 run_accept_case "bios orom pull --output-tcp" "$BIN" bios orom pull --output-tcp 127.0.0.1:9
 run_accept_case "bios orom pull --output-http" "$BIN" bios orom pull --output-http http://127.0.0.1:1/orom
 run_accept_case "bios orom pull --output-https" "$BIN" bios orom pull --output-https https://127.0.0.1:1/orom
-run_accept_case "bios orom pull --verbose" "$BIN" bios orom pull --output-http http://127.0.0.1:1/orom --verbose
+run_accept_case "bios orom pull default verbose" "$BIN" bios orom pull --output-http http://127.0.0.1:1/orom
 
 run_accept_case "efi orom list --output-tcp" "$BIN" efi orom list --output-tcp 127.0.0.1:9
 run_accept_case "efi orom list --output-http" "$BIN" efi orom list --output-http http://127.0.0.1:1/orom
 run_accept_case "bios orom list --output-https" "$BIN" bios orom list --output-https https://127.0.0.1:1/orom
-run_accept_case "bios orom list --verbose" "$BIN" bios orom list --output-http http://127.0.0.1:1/orom --verbose
+run_accept_case "bios orom list default verbose" "$BIN" bios orom list --output-http http://127.0.0.1:1/orom
 run_accept_case "efi orom list --output-http" "$BIN" efi orom list --output-http http://127.0.0.1:1/orom
 run_accept_case "bios orom pull --insecure" "$BIN" --insecure bios orom pull --output-https https://127.0.0.1:1/orom
 

@@ -9,11 +9,11 @@ BIOS option ROM utilities for listing and pulling payloads from PCI sysfs ROM no
 
 ## `bios orom` arguments
 
-- `--verbose` — print progress and mirror verbose messages to configured network output; preferred at the top level
+- verbose logging is enabled by default; use top-level `--quiet` to suppress progress and mirrored verbose messages
 - `--output-tcp <IPv4:port>` — send each ROM over TCP; preferred at the top level
 - `--output-http <http://host:port/path>` — send each ROM via HTTP POST; preferred at the top level
 - `--output-https <https://host:port/path>` — send each ROM via HTTPS POST; preferred at the top level
-- `--insecure` — disable TLS certificate/hostname verification for HTTPS output
+- `--insecure` — top-level global option to disable TLS certificate/hostname verification for HTTPS output
 
 ## Constraints
 
@@ -23,8 +23,8 @@ BIOS option ROM utilities for listing and pulling payloads from PCI sysfs ROM no
 ## Examples
 
 ```bash
-./embedded_linux_audit --output-tcp 192.168.1.50:5000 --verbose bios orom pull
-./embedded_linux_audit --output-http http://192.168.1.50:5000/orom --verbose bios orom pull
-./embedded_linux_audit --output-https https://192.168.1.50:5443/orom --verbose bios orom pull --insecure
-./embedded_linux_audit --output-format json --output-http http://192.168.1.50:5000/orom --verbose bios orom list
+./embedded_linux_audit --output-tcp 192.168.1.50:5000 bios orom pull
+./embedded_linux_audit --output-http http://192.168.1.50:5000/orom bios orom pull
+./embedded_linux_audit --insecure --output-https https://192.168.1.50:5443/orom bios orom pull
+./embedded_linux_audit --output-format json --output-http http://192.168.1.50:5000/orom bios orom list
 ```

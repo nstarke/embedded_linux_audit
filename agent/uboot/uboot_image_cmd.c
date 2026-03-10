@@ -1419,11 +1419,9 @@ int uboot_image_scan_main(int argc, char **argv)
 	}
 
 	static const struct option long_opts[] = {
-		{ "verbose", no_argument, NULL, 'v' },
 		{ "dev", required_argument, NULL, 'd' },
 		{ "step", required_argument, NULL, 's' },
 		{ "send-logs", no_argument, NULL, 'L' },
-		{ "insecure", no_argument, NULL, 'k' },
 		{ "allow-text", optional_argument, NULL, 't' },
 		{ "skip-remove", no_argument, NULL, 'R' },
 		{ "skip-mtd", no_argument, NULL, 'M' },
@@ -1434,14 +1432,11 @@ int uboot_image_scan_main(int argc, char **argv)
 		{ 0, 0, 0, 0 }
 	};
 
-	while ((opt = getopt_long(argc, argv, "hvd:s:kt::LRMUSE", long_opts, NULL)) != -1) {
+	while ((opt = getopt_long(argc, argv, "hd:s:t::LRMUSE", long_opts, NULL)) != -1) {
 		switch (opt) {
 		case 'h':
 			usage(argv[0]);
 			return 0;
-		case 'v':
-			g_verbose = true;
-			break;
 		case 'd':
 			dev_override = optarg;
 			break;
@@ -1452,9 +1447,6 @@ int uboot_image_scan_main(int argc, char **argv)
 			break;
 		case 'L':
 			send_logs = true;
-			break;
-		case 'k':
-			g_insecure = true;
 			break;
 		case 't':
 			g_allow_text = true;

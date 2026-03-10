@@ -35,23 +35,50 @@ assert_symlink_target "file upload writes symlink" "$MAC_DIR/fs/etc/current" "..
 
 run_curl_case "POST file-list requires absolute filePath" POST "$TEST_WEB_BASE_URL/$MAC/upload/file-list?filePath=relative/path" 400 "file-list uploads require absolute filePath" -H "Content-Type: text/plain" --data-binary "entry"
 run_curl_case "POST file-list stores newline-terminated content" POST "$TEST_WEB_BASE_URL/$MAC/upload/file-list?filePath=/var/log/messages" 200 "ok" -H "Content-Type: text/plain" --data-binary "first-entry"
-assert_file_contains "file-list writes transformed filename" "$MAC_DIR/file-list/var-log-messages" "first-entry"
+file_list_log="$(find "$MAC_DIR/file-list" -maxdepth 1 -type f -name 'var-log-messages*' | head -n 1)"
+assert_file_contains "file-list writes transformed filename" "$file_list_log" "first-entry"
 
 run_curl_case "POST file-list stores root path as root-fs filename" POST "$TEST_WEB_BASE_URL/$MAC/upload/file-list?filePath=/" 200 "ok" -H "Content-Type: text/plain" --data-binary "root-entry"
-assert_file_contains "file-list writes root-fs filename" "$MAC_DIR/file-list/root-fs" "root-entry"
+root_fs_log="$(find "$MAC_DIR/file-list" -maxdepth 1 -type f -name 'root-fs*' | head -n 1)"
+assert_file_contains "file-list writes root-fs filename" "$root_fs_log" "root-entry"
 
 run_curl_case "POST symlink-list requires absolute filePath" POST "$TEST_WEB_BASE_URL/$MAC/upload/symlink-list?filePath=relative/path" 400 "symlink-list uploads require absolute filePath" -H "Content-Type: text/plain" --data-binary "entry"
 run_curl_case "POST symlink-list stores newline-terminated content" POST "$TEST_WEB_BASE_URL/$MAC/upload/symlink-list?filePath=/var/lib" 200 "ok" -H "Content-Type: text/plain" --data-binary "link -> target"
-assert_file_contains "symlink-list writes transformed filename" "$MAC_DIR/symlink-list/var-lib" "link -> target"
+symlink_list_log="$(find "$MAC_DIR/symlink-list" -maxdepth 1 -type f -name 'var-lib*' | head -n 1)"
+assert_file_contains "symlink-list writes transformed filename" "$symlink_list_log" "link -> target"
 
 run_curl_case "POST symlink-list stores root path as root-fs filename" POST "$TEST_WEB_BASE_URL/$MAC/upload/symlink-list?filePath=/" 200 "ok" -H "Content-Type: text/plain" --data-binary "root-link -> target"
-assert_file_contains "symlink-list writes root-fs filename" "$MAC_DIR/symlink-list/root-fs" "root-link -> target"
+root_symlink_log="$(find "$MAC_DIR/symlink-list" -maxdepth 1 -type f -name 'root-fs*' | head -n 1)"
+assert_file_contains "symlink-list writes root-fs filename" "$root_symlink_log" "root-link -> target"
 
 run_curl_case "POST log stores plain-text log" POST "$TEST_WEB_BASE_URL/$MAC/upload/log" 200 "ok" -H "Content-Type: text/plain" --data-binary "log line"
-assert_file_contains "log upload appends to text log" "$MAC_DIR/logs/log.text_plain.log" "log line"
+plain_log="$(find "$MAC_DIR/logs" -maxdepth 1 -type f -name 'log*.text_plain.log' | head -n 1)"
+assert_file_contains "log upload appends to text log" "$plain_log" "log line"
+
+run_curl_case "POST cmd stores plain-text log" POST "$TEST_WEB_BASE_URL/$MAC/upload/cmd" 200 "ok" -H "Content-Type: text/plain" --data-binary "echo hello
+hello"
+cmd_text_log="$(find "$MAC_DIR/cmd" -maxdepth 1 -type f -name 'cmd.*.text_plain.log' | head -n 1)"
+if [ -n "$cmd_text_log" ]; then
+    pass_case "cmd upload creates timestamped text log"
+else
+    fail_case "cmd upload creates timestamped text log" sh -c "find \"$MAC_DIR/cmd\" -maxdepth 1 -type f -print 2>/dev/null || true"
+fi
+assert_file_contains "cmd upload stores command text payload" "$cmd_text_log" "echo hello"
+assert_file_contains "cmd upload stores command output payload" "$cmd_text_log" "hello"
+
+run_curl_case "POST cmd stores json log" POST "$TEST_WEB_BASE_URL/$MAC/upload/cmd" 200 "ok" -H "Content-Type: application/json" --data-binary '{"command":"echo hello","output":"hello"}'
+cmd_json_log="$(find "$MAC_DIR/cmd" -maxdepth 1 -type f -name 'cmd.*.application_json.log' | head -n 1)"
+if [ -n "$cmd_json_log" ]; then
+    pass_case "cmd upload creates timestamped json log"
+else
+    fail_case "cmd upload creates timestamped json log" sh -c "find \"$MAC_DIR/cmd\" -maxdepth 1 -type f -print 2>/dev/null || true"
+fi
+assert_file_contains "cmd upload stores json command key" "$cmd_json_log" '"command":"echo hello"'
+assert_file_contains "cmd upload stores json output key" "$cmd_json_log" '"output":"hello"'
 
 run_curl_case "POST logs alias stores in same directory" POST "$TEST_WEB_BASE_URL/$MAC/upload/logs" 200 "ok" -H "Content-Type: text/csv" --data-binary "col1,col2"
-assert_file_contains "logs upload appends csv log" "$MAC_DIR/logs/log.text_csv.log" "col1,col2"
+csv_log="$(find "$MAC_DIR/logs" -maxdepth 1 -type f -name 'log*.text_csv.log' | head -n 1)"
+assert_file_contains "logs upload appends csv log" "$csv_log" "col1,col2"
 
 run_curl_case "POST ndjson augments object payload" POST "$TEST_WEB_BASE_URL/$MAC/upload/dmesg" 200 "ok" -H "Content-Type: application/x-ndjson" --data-binary '{"event":"boot"}'
 dmesg_log="$(find "$MAC_DIR/dmesg" -maxdepth 1 -type f -name 'dmesg.*.application_x_ndjson.log' | head -n 1)"

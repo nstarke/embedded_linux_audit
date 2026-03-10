@@ -306,8 +306,6 @@ static int ensure_fw_env_config_exists(bool force_scan, bool verbose)
 	}
 	if (output_insecure && *output_insecure && strcmp(output_insecure, "0"))
 		env_argv[env_argc++] = "--insecure";
-	if (verbose)
-		env_argv[env_argc++] = "--verbose";
 	env_argv[env_argc] = NULL;
 
 	if (!force_scan && access("fw_env.config", F_OK) == 0)
@@ -649,9 +647,7 @@ static void usage(const char *prog)
 		"  --scan-signature-devices  Force device scan for FIT blob and PEM pubkey (default if paths missing)\n"
 		"  --scan-signature-blob <glob>   Auto-select first readable blob path matching glob\n"
 		"  --scan-signature-pubkey <glob> Auto-select first readable pubkey path matching glob\n"
-		"  --insecure                     Disable TLS certificate/hostname verification for HTTPS\n"
-		"  --signature-alg <name>    Digest algorithm (if omitted: tries sha256, sha384, sha512, sha1, sha224)\n"
-		"  --verbose       Enable verbose audit output\n",
+		"  --signature-alg <name>    Digest algorithm (if omitted: tries sha256, sha384, sha512, sha1, sha224)\n",
 		prog);
 }
 
@@ -883,9 +879,7 @@ int embedded_linux_audit_scan_main(int argc, char **argv)
 		{ "output-tcp", required_argument, NULL, 'p' },
 		{ "output-http", required_argument, NULL, 'O' },
 		{ "output-https", required_argument, NULL, 'T' },
-		{ "insecure", no_argument, NULL, 'k' },
 		{ "signature-alg", required_argument, NULL, 'A' },
-		{ "verbose", no_argument, NULL, 'v' },
 		{ "rule", required_argument, NULL, 'r' },
 		{ "list-rules", no_argument, NULL, 'l' },
 		{ 0, 0, 0, 0 }
@@ -902,7 +896,7 @@ int embedded_linux_audit_scan_main(int argc, char **argv)
 	g_http_insecure = false;
 	g_http_verbose = false;
 
-	while ((opt = getopt_long(argc, argv, "hd:o:s:B:K:X:Y:Zp:O:T:kA:vr:l", long_opts, NULL)) != -1) {
+	while ((opt = getopt_long(argc, argv, "hd:o:s:B:K:X:Y:Zp:O:T:A:r:l", long_opts, NULL)) != -1) {
 		switch (opt) {
 		case 'h':
 			usage(argv[0]);
@@ -941,14 +935,8 @@ int embedded_linux_audit_scan_main(int argc, char **argv)
 		case 'T':
 			output_https_target = optarg;
 			break;
-		case 'k':
-			insecure = true;
-			break;
 		case 'A':
 			signature_algorithm = optarg;
-			break;
-		case 'v':
-			verbose = true;
 			break;
 		case 'r':
 			rule_filter = optarg;

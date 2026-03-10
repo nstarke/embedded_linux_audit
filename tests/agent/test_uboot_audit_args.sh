@@ -149,8 +149,8 @@ run_accept_case "uboot audit --scan-signature-pubkey" \
 run_accept_case "uboot audit --signature-alg" \
     "$BIN" uboot audit --dev /dev/null --size "$TEST_SIZE" --signature-alg sha256
 
-run_accept_case "uboot audit --verbose" \
-    "$BIN" uboot audit --dev /dev/null --size "$TEST_SIZE" --verbose
+run_accept_case "uboot audit default verbose" \
+    "$BIN" uboot audit --dev /dev/null --size "$TEST_SIZE"
 
 run_accept_case "uboot audit --output-tcp" \
     "$BIN" uboot audit --dev /dev/null --size "$TEST_SIZE" --output-tcp 127.0.0.1:9
@@ -186,7 +186,7 @@ for output_format in txt csv json
 do
     verbose_log="$(mktemp /tmp/test_audit_verbose.${output_format}.XXXXXX)"
     printf '/dev/null 0x0 0x1000\n' >"$REPO_ROOT/fw_env.config"
-    run_with_output_override "$BIN" --output-format "$output_format" uboot audit --dev "$TMP_AUDIT_DEV" --size "$TEST_SIZE" --rule uboot_validate_crc32 --verbose >"$verbose_log" 2>&1
+    run_with_output_override "$BIN" --output-format "$output_format" uboot audit --dev "$TMP_AUDIT_DEV" --size "$TEST_SIZE" --rule uboot_validate_crc32 >"$verbose_log" 2>&1
     rc=$?
 
     case "$output_format" in

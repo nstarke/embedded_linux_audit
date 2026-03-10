@@ -28,7 +28,7 @@ struct output_buffer {
 static void usage(const char *prog)
 {
 	fprintf(stderr,
-		"Usage: %s [absolute-directory] [--recursive] [--insecure]\n"
+		"Usage: %s [absolute-directory] [--recursive]\n"
 		"  List symlinks under the given absolute directory (default: /)\n"
 		"  When --recursive is set, recurse into subdirectories\n"
 		"  Output honors --output-format as txt, csv, or json\n"
@@ -311,7 +311,6 @@ int linux_list_symlinks_scan_main(int argc, char **argv)
 	static const struct option long_opts[] = {
 		{ "help", no_argument, NULL, 'h' },
 		{ "recursive", no_argument, NULL, 'r' },
-		{ "insecure", no_argument, NULL, 'k' },
 		{ 0, 0, 0, 0 }
 	};
 
@@ -319,16 +318,13 @@ int linux_list_symlinks_scan_main(int argc, char **argv)
 		output_format = "txt";
 
 	optind = 1;
-	while ((opt = getopt_long(argc, argv, "hrk", long_opts, NULL)) != -1) {
+	while ((opt = getopt_long(argc, argv, "hr", long_opts, NULL)) != -1) {
 		switch (opt) {
 		case 'h':
 			usage(argv[0]);
 			return 0;
 		case 'r':
 			recursive = true;
-			break;
-		case 'k':
-			insecure = true;
 			break;
 		default:
 			usage(argv[0]);

@@ -19,7 +19,7 @@ Before running rules, `audit` ensures `./fw_env.config` exists for follow-on env
 - `--scan-signature-devices` — force scan of MTD/UBI/eMMC/SD devices to auto-discover a FIT blob and embedded PEM public key
 - if `--signature-blob` or `--signature-pubkey` is missing, device scan is attempted automatically to fill missing artifact(s)
 - `--signature-alg <name>` — digest algorithm for signature verification; if omitted, tries likely digests in order: `sha256`, `sha384`, `sha512`, `sha1`, `sha224`
-- `--verbose` — enable verbose rule behavior where supported
+- verbose logging is enabled by default; use top-level `--quiet` to suppress verbose rule behavior where supported
 
 When `audit` is run without `--dev`, it scans devices and writes `./fw_env.config` for later use, then exits without running rules (unless `--size` is explicitly provided, in which case `--dev` is required).
 

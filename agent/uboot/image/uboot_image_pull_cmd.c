@@ -13,7 +13,7 @@
 static void usage(const char *prog)
 {
 	fprintf(stderr,
-		"Usage: %s --dev <device> --offset <bytes> [--insecure]\n",
+		"Usage: %s --dev <device> --offset <bytes>\n",
 		prog);
 }
 
@@ -27,7 +27,7 @@ int uboot_image_pull_main(int argc, char **argv)
 	uint64_t offset = 0;
 	bool have_offset = false;
 	bool verbose = getenv("FW_AUDIT_VERBOSE") && !strcmp(getenv("FW_AUDIT_VERBOSE"), "1");
-	bool insecure = false;
+	bool insecure = getenv("FW_AUDIT_OUTPUT_INSECURE") && !strcmp(getenv("FW_AUDIT_OUTPUT_INSECURE"), "1");
 	int opt;
 	int rc;
 
@@ -35,25 +35,20 @@ int uboot_image_pull_main(int argc, char **argv)
 
 	static const struct option long_opts[] = {
 		{ "help", no_argument, NULL, 'h' },
-		{ "verbose", no_argument, NULL, 'v' },
 		{ "dev", required_argument, NULL, 'd' },
 		{ "offset", required_argument, NULL, 'o' },
 		{ "output-tcp", required_argument, NULL, 't' },
 		{ "output-http", required_argument, NULL, 'O' },
 		{ "output-https", required_argument, NULL, 'T' },
-		{ "insecure", no_argument, NULL, 'k' },
 		{ "send-logs", no_argument, NULL, 'L' },
 		{ 0, 0, 0, 0 }
 	};
 
-	while ((opt = getopt_long(argc, argv, "hvd:o:t:O:T:kL", long_opts, NULL)) != -1) {
+	while ((opt = getopt_long(argc, argv, "hd:o:t:O:TL", long_opts, NULL)) != -1) {
 		switch (opt) {
 		case 'h':
 			usage(argv[0]);
 			return 0;
-		case 'v':
-			verbose = true;
-			break;
 		case 'd':
 			dev = optarg;
 			break;
@@ -69,9 +64,6 @@ int uboot_image_pull_main(int argc, char **argv)
 			break;
 		case 'T':
 			output_https = optarg;
-			break;
-		case 'k':
-			insecure = true;
 			break;
 		case 'L':
 			fprintf(stderr, "--send-logs is not valid with image pull\n");
