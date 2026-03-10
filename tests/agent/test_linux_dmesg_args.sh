@@ -86,4 +86,17 @@ else
 fi
 rm -f "$log"
 
+json_log="$(mktemp /tmp/test_dmesg_lifecycle_json.XXXXXX)"
+TEST_DISABLE_OUTPUT_OVERRIDE=1 run_with_output_override "$BIN" --output-format json linux dmesg --help >"$json_log" 2>&1
+rc=$?
+if [ "$rc" -eq 0 ] && grep -q 'Warning: --output-format has no effect for dmesg' "$json_log"; then
+    echo "[PASS] linux dmesg retains warning behavior with output-format set"
+    PASS_COUNT="$(expr "$PASS_COUNT" + 1)"
+else
+    echo "[FAIL] linux dmesg retains warning behavior with output-format set (rc=$rc)"
+    sed -n '1,80p' "$json_log"
+    FAIL_COUNT="$(expr "$FAIL_COUNT" + 1)"
+fi
+rm -f "$json_log"
+
 finish_tests

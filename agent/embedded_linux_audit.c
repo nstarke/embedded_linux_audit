@@ -589,6 +589,58 @@ static void usage(const char *prog)
 		prog, prog, prog, prog, prog, prog, prog, prog, prog, prog, prog);
 }
 
+static int summary_append_text(char **buf, size_t *len, size_t *cap, const char *text)
+{
+	char *tmp;
+	size_t text_len;
+	size_t need;
+	size_t new_cap;
+
+	if (!buf || !len || !cap || !text)
+		return -1;
+
+	text_len = strlen(text);
+	need = *len + text_len + 1;
+	if (need > *cap) {
+		new_cap = *cap ? *cap : 128;
+		while (new_cap < need)
+			new_cap *= 2;
+		tmp = realloc(*buf, new_cap);
+		if (!tmp)
+			return -1;
+		*buf = tmp;
+		*cap = new_cap;
+	}
+
+	memcpy(*buf + *len, text, text_len);
+	*len += text_len;
+	(*buf)[*len] = '\0';
+	return 0;
+}
+
+static char *build_command_summary(int argc, char **argv, int start_idx)
+{
+	char *summary = NULL;
+	size_t len = 0;
+	size_t cap = 0;
+
+	if (!argv || start_idx < 0 || start_idx >= argc)
+		return strdup("interactive");
+
+	for (int i = start_idx; i < argc; i++) {
+		if (summary_append_text(&summary, &len, &cap, argv[i]) != 0)
+			goto fail;
+		if (i + 1 < argc && summary_append_text(&summary, &len, &cap, " ") != 0)
+			goto fail;
+	}
+
+	return summary;
+
+fail:
+	free(summary);
+	return NULL;
+}
+
 static int embedded_linux_audit_dispatch(int argc, char **argv)
 {
 	const char *output_format = "txt";
@@ -601,6 +653,8 @@ static int embedded_linux_audit_dispatch(int argc, char **argv)
 	bool insecure = false;
 	bool output_format_explicit = false;
 	int cmd_idx = 1;
+	int ret;
+	char *command_summary;
 
 	while (cmd_idx < argc) {
 		if (!strcmp(argv[cmd_idx], "--output-format")) {
@@ -789,27 +843,42 @@ static int embedded_linux_audit_dispatch(int argc, char **argv)
 		return 0;
 	}
 
+	command_summary = build_command_summary(argc, argv, cmd_idx);
+	if (!command_summary)
+		command_summary = strdup("unknown");
+	if (command_summary)
+		(void)fw_audit_emit_lifecycle_event(output_format,
+			output_tcp,
+			output_http,
+			output_https,
+			insecure,
+			command_summary,
+			"start",
+			0);
+
 	if (!strcmp(argv[cmd_idx], "uboot")) {
 		int sub_idx = cmd_idx + 1;
 
 		if (sub_idx >= argc || !strcmp(argv[sub_idx], "-h") ||
 		    !strcmp(argv[sub_idx], "--help") || !strcmp(argv[sub_idx], "help")) {
 			usage(argv[0]);
-			return 0;
+			ret = 0;
+			goto done;
 		}
 
 		if (!strcmp(argv[sub_idx], "env"))
-			return uboot_env_scan_main(argc - sub_idx, argv + sub_idx);
+			ret = uboot_env_scan_main(argc - sub_idx, argv + sub_idx);
+		else if (!strcmp(argv[sub_idx], "image"))
+			ret = uboot_image_scan_main(argc - sub_idx, argv + sub_idx);
+		else if (!strcmp(argv[sub_idx], "audit"))
+			ret = embedded_linux_audit_scan_main(argc - sub_idx, argv + sub_idx);
+		else {
+			fprintf(stderr, "Unknown uboot subcommand: %s\n\n", argv[sub_idx]);
+			usage(argv[0]);
+			ret = 2;
+		}
 
-		if (!strcmp(argv[sub_idx], "image"))
-			return uboot_image_scan_main(argc - sub_idx, argv + sub_idx);
-
-		if (!strcmp(argv[sub_idx], "audit"))
-			return embedded_linux_audit_scan_main(argc - sub_idx, argv + sub_idx);
-
-		fprintf(stderr, "Unknown uboot subcommand: %s\n\n", argv[sub_idx]);
-		usage(argv[0]);
-		return 2;
+		goto done;
 	}
 
 	if (!strcmp(argv[cmd_idx], "linux")) {
@@ -818,39 +887,39 @@ static int embedded_linux_audit_dispatch(int argc, char **argv)
 		if (sub_idx >= argc || !strcmp(argv[sub_idx], "-h") ||
 		    !strcmp(argv[sub_idx], "--help") || !strcmp(argv[sub_idx], "help")) {
 			usage(argv[0]);
-			return 0;
+			ret = 0;
+			goto done;
 		}
 
 		if (!strcmp(argv[sub_idx], "dmesg")) {
 			if (output_format_explicit)
 				fprintf(stderr,
 					"Warning: --output-format has no effect for dmesg; remote output is always text/plain\n");
-			return linux_dmesg_scan_main(argc - sub_idx, argv + sub_idx);
+			ret = linux_dmesg_scan_main(argc - sub_idx, argv + sub_idx);
+			goto done;
 		}
 
 		if (!strcmp(argv[sub_idx], "execute-command"))
-			return linux_execute_command_scan_main(argc - sub_idx, argv + sub_idx);
-
-		if (!strcmp(argv[sub_idx], "remote-copy")) {
+			ret = linux_execute_command_scan_main(argc - sub_idx, argv + sub_idx);
+		else if (!strcmp(argv[sub_idx], "remote-copy")) {
 			if (output_format_explicit)
 				fprintf(stderr,
 					"Warning: --output-format has no effect for remote-copy; file transfer is raw bytes\n");
-			return linux_remote_copy_scan_main(argc - sub_idx, argv + sub_idx);
-		}
-
-		if (!strcmp(argv[sub_idx], "list-files")) {
+			ret = linux_remote_copy_scan_main(argc - sub_idx, argv + sub_idx);
+		} else if (!strcmp(argv[sub_idx], "list-files")) {
 			if (output_format_explicit)
 				fprintf(stderr,
 					"Warning: --output-format has no effect for list-files; output is always text/plain\n");
-			return linux_list_files_scan_main(argc - sub_idx, argv + sub_idx);
+			ret = linux_list_files_scan_main(argc - sub_idx, argv + sub_idx);
+		} else if (!strcmp(argv[sub_idx], "list-symlinks"))
+			ret = linux_list_symlinks_scan_main(argc - sub_idx, argv + sub_idx);
+		else {
+			fprintf(stderr, "Unknown linux subcommand: %s\n\n", argv[sub_idx]);
+			usage(argv[0]);
+			ret = 2;
 		}
 
-		if (!strcmp(argv[sub_idx], "list-symlinks"))
-			return linux_list_symlinks_scan_main(argc - sub_idx, argv + sub_idx);
-
-		fprintf(stderr, "Unknown linux subcommand: %s\n\n", argv[sub_idx]);
-		usage(argv[0]);
-		return 2;
+		goto done;
 	}
 
 	if (!strcmp(argv[cmd_idx], "efi")) {
@@ -859,15 +928,19 @@ static int embedded_linux_audit_dispatch(int argc, char **argv)
 		if (sub_idx >= argc || !strcmp(argv[sub_idx], "-h") ||
 		    !strcmp(argv[sub_idx], "--help") || !strcmp(argv[sub_idx], "help")) {
 			usage(argv[0]);
-			return 0;
+			ret = 0;
+			goto done;
 		}
 
 		if (!strcmp(argv[sub_idx], "orom"))
-			return efi_orom_main(argc - sub_idx, argv + sub_idx);
+			ret = efi_orom_main(argc - sub_idx, argv + sub_idx);
+		else {
+			fprintf(stderr, "Unknown efi subcommand: %s\n\n", argv[sub_idx]);
+			usage(argv[0]);
+			ret = 2;
+		}
 
-		fprintf(stderr, "Unknown efi subcommand: %s\n\n", argv[sub_idx]);
-		usage(argv[0]);
-		return 2;
+		goto done;
 	}
 
 	if (!strcmp(argv[cmd_idx], "bios")) {
@@ -876,20 +949,38 @@ static int embedded_linux_audit_dispatch(int argc, char **argv)
 		if (sub_idx >= argc || !strcmp(argv[sub_idx], "-h") ||
 		    !strcmp(argv[sub_idx], "--help") || !strcmp(argv[sub_idx], "help")) {
 			usage(argv[0]);
-			return 0;
+			ret = 0;
+			goto done;
 		}
 
 		if (!strcmp(argv[sub_idx], "orom"))
-			return bios_orom_main(argc - sub_idx, argv + sub_idx);
+			ret = bios_orom_main(argc - sub_idx, argv + sub_idx);
+		else {
+			fprintf(stderr, "Unknown bios subcommand: %s\n\n", argv[sub_idx]);
+			usage(argv[0]);
+			ret = 2;
+		}
 
-		fprintf(stderr, "Unknown bios subcommand: %s\n\n", argv[sub_idx]);
-		usage(argv[0]);
-		return 2;
+		goto done;
 	}
 
 	fprintf(stderr, "Unknown command group: %s\n\n", argv[cmd_idx]);
 	usage(argv[0]);
-	return 2;
+	ret = 2;
+
+done:
+	if (command_summary) {
+		(void)fw_audit_emit_lifecycle_event(output_format,
+			output_tcp,
+			output_http,
+			output_https,
+			insecure,
+			command_summary,
+			"complete",
+			ret);
+		free(command_summary);
+	}
+	return ret;
 }
 
 int main(int argc, char **argv)

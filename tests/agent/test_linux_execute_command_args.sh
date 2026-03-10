@@ -73,4 +73,17 @@ run_accept_case "linux execute-command with --output-http" "$BIN" --output-http 
 run_accept_case "linux execute-command with --output-https" "$BIN" --output-https https://127.0.0.1:1 linux execute-command "echo hello"
 run_accept_case "global --insecure linux execute-command" "$BIN" --insecure --output-https https://127.0.0.1:1 linux execute-command "echo hello"
 
+log="$(mktemp /tmp/test_execute_command_lifecycle.XXXXXX)"
+TEST_DISABLE_OUTPUT_OVERRIDE=1 run_with_output_override "$BIN" linux execute-command "echo hello" >"$log" 2>&1
+rc=$?
+if [ "$rc" -eq 0 ] && grep -q "log phase=start command=linux execute-command echo hello rc=0" "$log" && grep -q "log phase=complete command=linux execute-command echo hello rc=0" "$log"; then
+    echo "[PASS] linux execute-command emits lifecycle logs"
+    PASS_COUNT="$(expr "$PASS_COUNT" + 1)"
+else
+    echo "[FAIL] linux execute-command emits lifecycle logs (rc=$rc)"
+    sed -n '1,120p' "$log"
+    FAIL_COUNT="$(expr "$FAIL_COUNT" + 1)"
+fi
+rm -f "$log"
+
 finish_tests

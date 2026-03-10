@@ -38,6 +38,226 @@
 #define PATH_MAX 4096
 #endif
 
+static int append_text(char **buf, size_t *len, size_t *cap, const char *text)
+{
+	char *tmp;
+	size_t text_len;
+	size_t need;
+	size_t new_cap;
+
+	if (!buf || !len || !cap || !text)
+		return -1;
+
+	text_len = strlen(text);
+	need = *len + text_len + 1;
+	if (need > *cap) {
+		new_cap = *cap ? *cap : 256;
+		while (new_cap < need)
+			new_cap *= 2;
+		tmp = realloc(*buf, new_cap);
+		if (!tmp)
+			return -1;
+		*buf = tmp;
+		*cap = new_cap;
+	}
+
+	memcpy(*buf + *len, text, text_len);
+	*len += text_len;
+	(*buf)[*len] = '\0';
+	return 0;
+}
+
+static int append_json_escaped(char **buf, size_t *len, size_t *cap, const char *text)
+{
+	const unsigned char *p = (const unsigned char *)text;
+	char esc[7];
+
+	if (!buf || !len || !cap || !text)
+		return -1;
+
+	while (*p) {
+		switch (*p) {
+		case '\\':
+			if (append_text(buf, len, cap, "\\\\") != 0)
+				return -1;
+			break;
+		case '"':
+			if (append_text(buf, len, cap, "\\\"") != 0)
+				return -1;
+			break;
+		case '\b':
+			if (append_text(buf, len, cap, "\\b") != 0)
+				return -1;
+			break;
+		case '\f':
+			if (append_text(buf, len, cap, "\\f") != 0)
+				return -1;
+			break;
+		case '\n':
+			if (append_text(buf, len, cap, "\\n") != 0)
+				return -1;
+			break;
+		case '\r':
+			if (append_text(buf, len, cap, "\\r") != 0)
+				return -1;
+			break;
+		case '\t':
+			if (append_text(buf, len, cap, "\\t") != 0)
+				return -1;
+			break;
+		default:
+			if (*p < 0x20) {
+				int n = snprintf(esc, sizeof(esc), "\\u%04x", (unsigned int)*p);
+				if (n < 0 || (size_t)n >= sizeof(esc) || append_text(buf, len, cap, esc) != 0)
+					return -1;
+			} else {
+				char ch[2] = {(char)*p, '\0'};
+				if (append_text(buf, len, cap, ch) != 0)
+					return -1;
+			}
+			break;
+		}
+		p++;
+	}
+
+	return 0;
+}
+
+static int append_csv_field(char **buf, size_t *len, size_t *cap, const char *text)
+{
+	const char *p = text ? text : "";
+
+	if (append_text(buf, len, cap, "\"") != 0)
+		return -1;
+
+	while (*p) {
+		if (*p == '"') {
+			if (append_text(buf, len, cap, "\"\"") != 0)
+				return -1;
+		} else {
+			char ch[2] = {*p, '\0'};
+			if (append_text(buf, len, cap, ch) != 0)
+				return -1;
+		}
+		p++;
+	}
+
+	return append_text(buf, len, cap, "\"");
+}
+
+static int build_lifecycle_payload(const char *output_format,
+				   const char *command,
+				   const char *phase,
+				   int rc,
+				   char **payload_out)
+{
+	char *buf = NULL;
+	size_t len = 0;
+	size_t cap = 0;
+	char rc_buf[32];
+	const char *fmt = output_format && *output_format ? output_format : "txt";
+
+	if (!command || !phase || !payload_out)
+		return -1;
+
+	snprintf(rc_buf, sizeof(rc_buf), "%d", rc);
+
+	if (!strcmp(fmt, "json")) {
+		if (append_text(&buf, &len, &cap, "{\"record\":\"log\",\"phase\":\"") != 0 ||
+		    append_json_escaped(&buf, &len, &cap, phase) != 0 ||
+		    append_text(&buf, &len, &cap, "\",\"command\":\"") != 0 ||
+		    append_json_escaped(&buf, &len, &cap, command) != 0 ||
+		    append_text(&buf, &len, &cap, "\",\"rc\":") != 0 ||
+		    append_text(&buf, &len, &cap, rc_buf) != 0 ||
+		    append_text(&buf, &len, &cap, "}\n") != 0)
+			goto fail;
+	} else if (!strcmp(fmt, "csv")) {
+		if (append_csv_field(&buf, &len, &cap, "log") != 0 ||
+		    append_text(&buf, &len, &cap, ",") != 0 ||
+		    append_csv_field(&buf, &len, &cap, phase) != 0 ||
+		    append_text(&buf, &len, &cap, ",") != 0 ||
+		    append_csv_field(&buf, &len, &cap, command) != 0 ||
+		    append_text(&buf, &len, &cap, ",") != 0 ||
+		    append_csv_field(&buf, &len, &cap, rc_buf) != 0 ||
+		    append_text(&buf, &len, &cap, "\n") != 0)
+			goto fail;
+	} else {
+		if (append_text(&buf, &len, &cap, "log phase=") != 0 ||
+		    append_text(&buf, &len, &cap, phase) != 0 ||
+		    append_text(&buf, &len, &cap, " command=") != 0 ||
+		    append_text(&buf, &len, &cap, command) != 0 ||
+		    append_text(&buf, &len, &cap, " rc=") != 0 ||
+		    append_text(&buf, &len, &cap, rc_buf) != 0 ||
+		    append_text(&buf, &len, &cap, "\n") != 0)
+			goto fail;
+	}
+
+	*payload_out = buf;
+	return 0;
+
+fail:
+	free(buf);
+	return -1;
+}
+
+static const char *lifecycle_content_type(const char *output_format)
+{
+	if (output_format && !strcmp(output_format, "json"))
+		return "application/json; charset=utf-8";
+	if (output_format && !strcmp(output_format, "csv"))
+		return "text/csv; charset=utf-8";
+	return "text/plain; charset=utf-8";
+}
+
+int fw_audit_emit_lifecycle_event(const char *output_format,
+				  const char *output_tcp,
+				  const char *output_http,
+				  const char *output_https,
+				  bool insecure,
+				  const char *command,
+				  const char *phase,
+				  int rc)
+{
+	char *payload = NULL;
+	const char *output_uri = output_http && *output_http ? output_http : output_https;
+	char errbuf[256];
+
+	if (build_lifecycle_payload(output_format, command, phase, rc, &payload) != 0)
+		return -1;
+
+	fputs(payload, stderr);
+
+	if (output_tcp && *output_tcp) {
+		int sock = uboot_connect_tcp_ipv4(output_tcp);
+		if (sock >= 0) {
+			(void)uboot_send_all(sock, (const uint8_t *)payload, strlen(payload));
+			close(sock);
+		}
+	}
+
+	if (output_uri && *output_uri) {
+		char *upload_uri = uboot_http_build_upload_uri(output_uri, "log", NULL);
+		if (!upload_uri) {
+			fprintf(stderr, "Failed to build HTTP(S) log upload URI for %s\n", output_uri);
+		} else if (uboot_http_post(upload_uri,
+					      (const uint8_t *)payload,
+					      strlen(payload),
+					      lifecycle_content_type(output_format),
+					      insecure,
+					      false,
+					      errbuf,
+					      sizeof(errbuf)) < 0) {
+			fprintf(stderr, "Failed HTTP(S) POST log to %s: %s\n",
+				upload_uri,
+				errbuf[0] ? errbuf : "unknown error");
+		}
+		free(upload_uri);
+	}
+
+	free(payload);
+	return 0;
+}
+
 static uint64_t read_u64_from_file(const char *path)
 {
 	char buf[64];

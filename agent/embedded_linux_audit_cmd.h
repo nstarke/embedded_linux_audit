@@ -49,6 +49,14 @@ char *uboot_http_build_upload_uri(const char *base_uri, const char *upload_type,
 int uboot_http_post_log_message(const char *base_uri, const char *message,
 				bool insecure, bool verbose,
 				char *errbuf, size_t errbuf_len);
+int fw_audit_emit_lifecycle_event(const char *output_format,
+				  const char *output_tcp,
+				  const char *output_http,
+				  const char *output_https,
+				  bool insecure,
+				  const char *command,
+				  const char *phase,
+				  int rc);
 int uboot_http_get_to_file(const char *uri, const char *output_path,
 			   bool insecure, bool verbose,
 			   char *errbuf, size_t errbuf_len);
