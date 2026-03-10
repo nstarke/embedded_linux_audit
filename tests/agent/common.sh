@@ -151,20 +151,15 @@ run_with_output_override() {
     done
 
     replaced=0
-    has_remote_copy=0
     set --
     while IFS= read -r arg; do
         case "$arg" in
-            remote-copy)
-                has_remote_copy=1
-                set -- "$@" "$arg"
-                ;;
-            --output-http|--output-https)
+            --output-http|--output-https|--output-tcp)
                 set -- "$@" "$override_flag" "$override_value"
                 IFS= read -r next_arg || true
                 replaced=1
                 ;;
-            --output-http=*|--output-https=*)
+            --output-http=*|--output-https=*|--output-tcp=*)
                 set -- "$@" "$override_flag" "$override_value"
                 replaced=1
                 ;;
@@ -176,8 +171,53 @@ run_with_output_override() {
 
     rm -f "$original_args_file"
 
-    if [ "$replaced" -eq 0 ] && [ "$has_remote_copy" -eq 0 ]; then
-        set -- "$@" "$override_flag" "$override_value"
+    if [ "$replaced" -eq 0 ]; then
+        rebuilt_args_file="$(mktemp /tmp/test_args_rebuilt.XXXXXX)"
+        for arg in "$@"; do
+            append_line "$arg" >>"$rebuilt_args_file"
+        done
+
+        first_arg="$(sed -n '1p' "$rebuilt_args_file")"
+        second_arg="$(sed -n '2p' "$rebuilt_args_file")"
+        third_arg="$(sed -n '3p' "$rebuilt_args_file")"
+        fourth_arg="$(sed -n '4p' "$rebuilt_args_file")"
+
+        insertion_after=1
+        case "$second_arg:$third_arg:$fourth_arg" in
+            uboot:audit:*)
+                insertion_after=3
+                ;;
+            efi:orom:pull|efi:orom:list|bios:orom:pull|bios:orom:list)
+                insertion_after=4
+                ;;
+            uboot:image:pull|uboot:image:find-address|uboot:image:list-commands)
+                insertion_after=1
+                ;;
+            uboot:image:*)
+                insertion_after=3
+                ;;
+            *)
+                insertion_after=1
+                ;;
+        esac
+
+        set --
+        line_no=0
+        inserted=0
+        while IFS= read -r arg; do
+            line_no="$(expr "$line_no" + 1)"
+            set -- "$@" "$arg"
+            if [ "$inserted" -eq 0 ] && [ "$line_no" -eq "$insertion_after" ]; then
+                set -- "$@" "$override_flag" "$override_value"
+                inserted=1
+            fi
+        done <"$rebuilt_args_file"
+
+        if [ "$inserted" -eq 0 ]; then
+            set -- "$@" "$override_flag" "$override_value"
+        fi
+
+        rm -f "$rebuilt_args_file"
     fi
 
     "$@"
