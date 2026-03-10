@@ -164,7 +164,10 @@ rm -f "$warn_log"
 verbose_server_log="$(mktemp /tmp/test_remote_copy_verbose_server.XXXXXX)"
 verbose_log="$(mktemp /tmp/test_remote_copy_verbose.XXXXXX)"
 verbose_port_file="$(mktemp /tmp/test_remote_copy_verbose_port.XXXXXX)"
-python -c '
+python_bin="$(find_python_bin || true)"
+
+if [ -n "$python_bin" ]; then
+"$python_bin" -c '
 import http.server
 import socketserver
 import sys
@@ -216,6 +219,10 @@ else
 fi
 
 wait "$verbose_server_pid" 2>/dev/null || true
+else
+    echo "[SKIP] linux remote-copy verbose output test requires python3 or python"
+fi
+
 rm -f "$verbose_server_log" "$verbose_log" "$verbose_port_file"
 
 rm -rf "$TMP_DIR"

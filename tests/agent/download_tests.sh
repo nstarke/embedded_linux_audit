@@ -11,21 +11,32 @@ TEMP_OUTPUT_DIRECTORY=""
 ISA=""
 LIST_ISA=0
 AUTO_START=0
-
-# Remove stale temporary download directories from previous runs.
-for stale_dir in /tmp/download_tests_output.*; do
-    [ -d "$stale_dir" ] || continue
-    rm -rf -- "$stale_dir"
-done
+SKIP_REMOVE=0
 
 usage() {
-    echo "usage: $0 --webserver <url> [--isa <arch>] [--output-directory <path>] [--auto-start]"
-    echo "   or: $0 --webserver=<url> [--isa=<arch>] [--output-directory=<path>] [--auto-start]"
-    echo "   or: $0 --webserver <url> --list-isa"
+    echo "usage: $0 --webserver <url> [--isa <arch>] [--output-directory <path>] [--auto-start] [--skip-remove]"
+    echo "   or: $0 --webserver=<url> [--isa=<arch>] [--output-directory=<path>] [--auto-start] [--skip-remove]"
+    echo "   or: $0 --webserver <url> --list-isa [--skip-remove]"
 }
 
 has_printf() {
     cmd_exists printf
+}
+
+delete_cr_stream() {
+    if cmd_exists tr; then
+        tr -d '\r'
+    else
+        awk '{ gsub(/\r/, ""); print }'
+    fi
+}
+
+delete_crlf_stream() {
+    if cmd_exists tr; then
+        tr -d '\r\n'
+    else
+        awk '{ gsub(/\r/, ""); printf "%s", $0 }'
+    fi
 }
 
 cmd_exists() {
@@ -47,7 +58,7 @@ list_valid_isas_from_index_file() {
     index_file="$1"
 
     sed -n 's#.*href="/isa/\([^"]*\)".*#\1#p' "$index_file" | \
-        tr -d '\r' | sed 's/%2F/\//g' | sed 's/[[:space:]]*$//' | sed '/^$/d' | sort -u
+        delete_cr_stream | sed 's/%2F/\//g' | sed 's/[[:space:]]*$//' | sed '/^$/d' | sort -u
 }
 
 find_release_binary_url_for_isa() {
@@ -55,7 +66,7 @@ find_release_binary_url_for_isa() {
     isa="$2"
 
     sed -n "s#.*href=\"\(/isa/${isa}\)\".*#\1#p" "$index_file" | \
-        tr -d '\r' | sed 's/[[:space:]]*$//' | sed '/^$/d' | head -n 1
+        delete_cr_stream | sed 's/[[:space:]]*$//' | sed '/^$/d' | head -n 1
 }
 
 resolve_url() {
@@ -79,9 +90,9 @@ resolve_url() {
 normalize_isa_value() {
     value="$1"
     if has_printf; then
-        printf '%s' "$value" | tr -d '\r\n' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//'
+        printf '%s' "$value" | delete_crlf_stream | sed 's/^[[:space:]]*//; s/[[:space:]]*$//'
     else
-        cat <<EOF_NORMALIZE_ISA | tr -d '\r\n' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//'
+        cat <<EOF_NORMALIZE_ISA | delete_crlf_stream | sed 's/^[[:space:]]*//; s/[[:space:]]*$//'
 $value
 EOF_NORMALIZE_ISA
     fi
@@ -144,6 +155,10 @@ while [ "$#" -gt 0 ]; do
             AUTO_START=1
             shift
             ;;
+        --skip-remove)
+            SKIP_REMOVE=1
+            shift
+            ;;
         *)
             echo "error: unknown argument: $1"
             usage
@@ -156,6 +171,14 @@ if [ -z "$WEB_SERVER" ]; then
     echo "error: --webserver is required"
     usage
     exit 2
+fi
+
+if [ "$SKIP_REMOVE" -ne 1 ]; then
+    # Remove stale temporary download directories from previous runs.
+    for stale_dir in /tmp/download_tests_output.*; do
+        [ -d "$stale_dir" ] || continue
+        rm -rf -- "$stale_dir"
+    done
 fi
 
 BASE_URL="${WEB_SERVER%/}"
@@ -229,7 +252,7 @@ if [ -n "$ISA" ]; then
     ISA="$(normalize_isa_value "$ISA")"
 
     isa_valid=1
-    for valid_isa in $(list_valid_isas | tr -d '\r' | sed 's/[[:space:]]*$//' | sed '/^$/d'); do
+    for valid_isa in $(list_valid_isas | delete_cr_stream | sed 's/[[:space:]]*$//' | sed '/^$/d'); do
         if [ "$valid_isa" = "$ISA" ]; then
             isa_valid=0
             break
@@ -255,7 +278,7 @@ fi
 echo "output directory: $DEST_DIR"
 
 sed -n 's#.*href="\(/tests/[^"]*\.sh\)".*#\1#p' "$INDEX_FILE" | \
-    tr -d '\r' | sed 's/[[:space:]]*$//' | sed '/^$/d' | sort -u >"$SCRIPT_LIST_FILE"
+    delete_cr_stream | sed 's/[[:space:]]*$//' | sed '/^$/d' | sort -u >"$SCRIPT_LIST_FILE"
 
 if [ ! -s "$SCRIPT_LIST_FILE" ]; then
     echo "error: no test shell scripts found in index at $BASE_URL/"
@@ -301,7 +324,7 @@ else
     DISCOVERED_ISA=""
     DISCOVERED_BINARY=""
 
-    for candidate_isa in $(list_valid_isas | tr -d '\r' | sed 's/[[:space:]]*$//' | sed '/^$/d'); do
+    for candidate_isa in $(list_valid_isas | delete_cr_stream | sed 's/[[:space:]]*$//' | sed '/^$/d'); do
         candidate_path_rel="$(find_release_binary_url_for_isa "$INDEX_FILE" "$candidate_isa")"
         [ -n "$candidate_path_rel" ] || continue
 
@@ -313,7 +336,7 @@ else
         chmod +x "$candidate_file"
     done
 
-    for candidate_isa in $(list_valid_isas | tr -d '\r' | sed 's/[[:space:]]*$//' | sed '/^$/d'); do
+    for candidate_isa in $(list_valid_isas | delete_cr_stream | sed 's/[[:space:]]*$//' | sed '/^$/d'); do
         candidate_file="$TEMP_BINARY_DIRECTORY/embedded_linux_audit-$candidate_isa"
         [ -f "$candidate_file" ] || continue
 

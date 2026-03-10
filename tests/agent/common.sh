@@ -12,6 +12,20 @@ has_printf() {
     command_exists printf
 }
 
+find_python_bin() {
+    if command_exists python3; then
+        echo python3
+        return 0
+    fi
+
+    if command_exists python; then
+        echo python
+        return 0
+    fi
+
+    return 1
+}
+
 command_exists() {
     cmd_name="$1"
 

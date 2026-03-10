@@ -82,12 +82,7 @@ run_exact_case "linux list-symlinks --recursive" 0 "$BIN" linux list-symlinks "$
 run_accept_case "linux list-symlinks global --output-http" "$BIN" --output-http http://127.0.0.1:1/symlink-list linux list-symlinks "$TMP_DIR"
 run_accept_case "linux list-symlinks global --output-https" "$BIN" --output-https https://127.0.0.1:1/symlink-list linux list-symlinks "$TMP_DIR"
 
-python_bin=""
-if command_exists python3; then
-    python_bin="python3"
-elif command_exists python; then
-    python_bin="python"
-fi
+python_bin="$(find_python_bin || true)"
 
 if [ -n "$python_bin" ]; then
     http_req_path="$(mktemp /tmp/test_list_symlinks_http_path.XXXXXX)"

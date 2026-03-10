@@ -91,7 +91,9 @@ run_exact_case "uboot env write missing path" 2 "$BIN" uboot env write
 
 if [ "$(current_uid)" -eq 0 ]; then
     TMP_ENV_IMAGE="$(mktemp /tmp/uboot_env_parse_vars.XXXXXX.bin)"
-    python3 - "$TMP_ENV_IMAGE" <<'PY'
+    python_bin="$(find_python_bin || true)"
+    if [ -n "$python_bin" ]; then
+    "$python_bin" - "$TMP_ENV_IMAGE" <<'PY'
 import binascii
 import struct
 import sys
@@ -107,8 +109,11 @@ image = struct.pack('<I', crc) + data
 with open(path, 'wb') as f:
     f.write(image)
 PY
-    run_exact_case "uboot env read-vars synthetic image" 0 \
-        "$BIN" --output-format txt uboot env read-vars --size "$TEST_SIZE" "$TMP_ENV_IMAGE:0x10000"
+        run_exact_case "uboot env read-vars synthetic image" 0 \
+            "$BIN" --output-format txt uboot env read-vars --size "$TEST_SIZE" "$TMP_ENV_IMAGE:0x10000"
+    else
+        echo "[SKIP] uboot env read-vars synthetic image test requires python3 or python"
+    fi
     rm -f "$TMP_ENV_IMAGE"
 fi
 
