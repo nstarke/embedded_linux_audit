@@ -76,6 +76,34 @@ TMP_SUBDIR="$TMP_DIR/subdir"
 mkdir -p "$TMP_SUBDIR"
 echo "nested payload" >"$TMP_SUBDIR/nested.bin"
 ln -sf "$TMP_FILE" "$TMP_DIR/sample.link"
+
+# Prefer smaller restricted subdirectories over virtual filesystem roots so
+# remote-copy argument coverage stays fast and avoids traversing very large,
+# highly dynamic trees like /proc.
+DEV_REMOTE_COPY_DIR=""
+for candidate in /dev/shm /dev/mqueue /dev/pts /dev; do
+    if [ -d "$candidate" ]; then
+        DEV_REMOTE_COPY_DIR="$candidate"
+        break
+    fi
+done
+
+SYS_REMOTE_COPY_DIR=""
+for candidate in /sys/kernel /sys/fs /sys/module /sys; do
+    if [ -d "$candidate" ]; then
+        SYS_REMOTE_COPY_DIR="$candidate"
+        break
+    fi
+done
+
+PROC_REMOTE_COPY_DIR=""
+for candidate in /proc/sys/kernel /proc/sys /proc/fs /proc; do
+    if [ -d "$candidate" ]; then
+        PROC_REMOTE_COPY_DIR="$candidate"
+        break
+    fi
+done
+
 run_exact_case "linux remote-copy directory over tcp" 2 "$BIN" --output-tcp 127.0.0.1:9 linux remote-copy "$TMP_DIR"
 run_accept_case "linux remote-copy symlink without --allow-symlinks" "$BIN" --output-http http://127.0.0.1:1 linux remote-copy "$TMP_DIR/sample.link"
 run_accept_case "linux remote-copy directory http --allow-dev" "$BIN" --output-http http://127.0.0.1:1 linux remote-copy "$TMP_DIR" --allow-dev
@@ -92,16 +120,16 @@ run_accept_case "linux remote-copy directory http --recursive" "$BIN" --output-h
 run_accept_case "linux remote-copy directory https --recursive" "$BIN" --output-https https://127.0.0.1:1 linux remote-copy "$TMP_DIR" --recursive
 run_accept_case "linux remote-copy symlink http --allow-symlinks" "$BIN" --output-http http://127.0.0.1:1 linux remote-copy "$TMP_DIR/sample.link" --allow-symlinks
 
-if [ -d /dev ]; then
-    run_accept_case "linux remote-copy /dev directory http --allow-dev" \
-        "$BIN" --output-http http://127.0.0.1:1 linux remote-copy /dev --allow-dev
+if [ -n "$DEV_REMOTE_COPY_DIR" ]; then
+    run_accept_case "linux remote-copy restricted /dev directory http --allow-dev" \
+        "$BIN" --output-http http://127.0.0.1:1 linux remote-copy "$DEV_REMOTE_COPY_DIR" --allow-dev
 fi
 
-if [ -d /sys ]; then
+if [ -n "$SYS_REMOTE_COPY_DIR" ]; then
     run_exact_case "linux remote-copy /sys without allow flag" 2 \
         "$BIN" --output-http http://127.0.0.1:1 linux remote-copy /sys
-    run_accept_case "linux remote-copy /sys directory http --allow-sysfs" \
-        "$BIN" --output-http http://127.0.0.1:1 linux remote-copy /sys --allow-sysfs
+    run_accept_case "linux remote-copy restricted /sys directory http --allow-sysfs" \
+        "$BIN" --output-http http://127.0.0.1:1 linux remote-copy "$SYS_REMOTE_COPY_DIR" --allow-sysfs
 fi
 
 if [ -r /proc/cmdline ]; then
@@ -109,11 +137,11 @@ if [ -r /proc/cmdline ]; then
         "$BIN" --output-http http://127.0.0.1:1 linux remote-copy /proc/cmdline --allow-proc
 fi
 
-if [ -d /proc ]; then
-    run_accept_case "linux remote-copy /proc directory http --allow-proc" \
-        "$BIN" --output-http http://127.0.0.1:1 linux remote-copy /proc --allow-proc
-    run_accept_case "linux remote-copy /proc directory http --recursive --allow-proc" \
-        "$BIN" --output-http http://127.0.0.1:1 linux remote-copy /proc --recursive --allow-proc
+if [ -n "$PROC_REMOTE_COPY_DIR" ]; then
+    run_accept_case "linux remote-copy restricted /proc directory http --allow-proc" \
+        "$BIN" --output-http http://127.0.0.1:1 linux remote-copy "$PROC_REMOTE_COPY_DIR" --allow-proc
+    run_accept_case "linux remote-copy restricted /proc directory http --recursive --allow-proc" \
+        "$BIN" --output-http http://127.0.0.1:1 linux remote-copy "$PROC_REMOTE_COPY_DIR" --recursive --allow-proc
 fi
 
 run_accept_case "linux remote-copy with --output-format txt" "$BIN" --output-format txt --output-http http://127.0.0.1:1 linux remote-copy "$TMP_FILE"
