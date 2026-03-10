@@ -18,60 +18,60 @@ jobs:
         include:
           - name: arm32-le
             zig_targets: arm-linux-musleabi
-            compat_cpu: arm32
-            compat_zig_targets: arm-linux-musleabi
+            cpu_compat: arm32
+            cpu_compat_zig_targets: arm-linux-musleabi
           - name: arm32-be
             zig_targets: armeb-linux-musleabi,armeb-linux-gnueabi
-            compat_cpu: armeb
-            compat_zig_targets: armeb-linux-musleabi,armeb-linux-gnueabi
+            cpu_compat: armeb
+            cpu_compat_zig_targets: armeb-linux-musleabi,armeb-linux-gnueabi
           - name: aarch64-le
             zig_targets: aarch64-linux-musl
-            compat_cpu: aarch64
-            compat_zig_targets: aarch64-linux-musl
+            cpu_compat: aarch64
+            cpu_compat_zig_targets: aarch64-linux-musl
           - name: aarch64-be
             zig_targets: aarch64_be-linux-musl
-            compat_cpu: aarch64_be
-            compat_zig_targets: aarch64_be-linux-musl
+            cpu_compat: aarch64_be
+            cpu_compat_zig_targets: aarch64_be-linux-musl
           - name: mips-le
             zig_targets: mipsel-linux-musleabi,mipsel-linux-musleabihf
-            compat_cpu: mipsel
-            compat_zig_targets: mipsel-linux-musleabi
+            cpu_compat: mipsel
+            cpu_compat_zig_targets: mipsel-linux-musleabi
           - name: mips-be
             zig_targets: mips-linux-musleabi,mips-linux-musleabihf
-            compat_cpu: mips
-            compat_zig_targets: mips-linux-musleabi
+            cpu_compat: mips
+            cpu_compat_zig_targets: mips-linux-musleabi
           - name: mips64-le
             zig_targets: mips64el-linux-muslabi64,mips64el-linux-muslabin32,mips64el-linux-gnuabi64,mips64el-linux-gnuabin32
-            compat_cpu: mips64el
-            compat_zig_targets: mips64el-linux-muslabi64,mips64el-linux-gnuabi64
+            cpu_compat: mips64el
+            cpu_compat_zig_targets: mips64el-linux-muslabi64,mips64el-linux-gnuabi64
           - name: mips64-be
             zig_targets: mips64-linux-muslabi64,mips64-linux-muslabin32,mips64-linux-gnuabi64,mips64-linux-gnuabin32
-            compat_cpu: mips64
-            compat_zig_targets: mips64-linux-muslabi64,mips64-linux-gnuabi64
+            cpu_compat: mips64
+            cpu_compat_zig_targets: mips64-linux-muslabi64,mips64-linux-gnuabi64
           - name: powerpc-le
             zig_targets: powerpc64le-linux-musl,powerpc64le-linux-gnu
-            compat_cpu: powerpc64le
-            compat_zig_targets: powerpc64le-linux-musl,powerpc64le-linux-gnu
+            cpu_compat: powerpc64le
+            cpu_compat_zig_targets: powerpc64le-linux-musl,powerpc64le-linux-gnu
           - name: powerpc-be
             zig_targets: powerpc-linux-musleabi,powerpc-linux-musleabihf,powerpc-linux-gnueabi,powerpc-linux-gnueabihf
-            compat_cpu: powerpc
-            compat_zig_targets: powerpc-linux-musleabi,powerpc-linux-gnueabi
+            cpu_compat: powerpc
+            cpu_compat_zig_targets: powerpc-linux-musleabi,powerpc-linux-gnueabi
           - name: x86
             zig_targets: x86-linux-musl
-            compat_cpu: x86
-            compat_zig_targets: x86-linux-musl
+            cpu_compat: x86
+            cpu_compat_zig_targets: x86-linux-musl
           - name: x86_64
             zig_targets: x86_64-linux-musl
-            compat_cpu: x86_64
-            compat_zig_targets: x86_64-linux-musl
+            cpu_compat: x86_64
+            cpu_compat_zig_targets: x86_64-linux-musl
           - name: riscv32
             zig_targets: riscv32-linux-musl,riscv32-linux-gnu
-            compat_cpu: riscv32
-            compat_zig_targets: riscv32-linux-musl,riscv32-linux-gnu
+            cpu_compat: riscv32
+            cpu_compat_zig_targets: riscv32-linux-musl,riscv32-linux-gnu
           - name: riscv64
             zig_targets: riscv64-linux-musl,riscv64-linux-gnu
-            compat_cpu: riscv64
-            compat_zig_targets: riscv64-linux-musl,riscv64-linux-gnu
+            cpu_compat: riscv64
+            cpu_compat_zig_targets: riscv64-linux-musl,riscv64-linux-gnu
 
     steps:
       - name: Checkout
@@ -83,8 +83,8 @@ jobs:
         run: |
           echo "matrix.name=${{ matrix.name }}"
           echo "matrix.zig_targets=${{ matrix.zig_targets }}"
-          echo "matrix.compat_cpu=${{ matrix.compat_cpu }}"
-          echo "matrix.compat_zig_targets=${{ matrix.compat_zig_targets }}"
+          echo "matrix.cpu_compat=${{ matrix.cpu_compat }}"
+          echo "matrix.cpu_compat_zig_targets=${{ matrix.cpu_compat_zig_targets }}"
 
       - name: Install Zig
         run: |
@@ -95,7 +95,7 @@ jobs:
           echo "$PWD/zig-linux-x86_64-${ZIG_VERSION}" >> "$GITHUB_PATH"
           "$PWD/zig-linux-x86_64-${ZIG_VERSION}/zig" version
 
-      - name: Build static binaries
+      - name: Build default static binary
         run: |
           set -euo pipefail
           test -f agent/embedded_linux_audit.c
@@ -104,40 +104,63 @@ jobs:
           test -f third_party/readline/readline.h
           mkdir -p dist/${{ matrix.name }}
 
-          build_variant() {
-            local variant="$1"
-            local compat_cpu="$2"
-            local target_csv="$3"
-            local output_name="$4"
-            local built=0
-
-            IFS=',' read -ra TARGETS <<< "${target_csv}"
-            for T in "${TARGETS[@]}"; do
-              echo "Trying variant=${variant} target=${T} compat_cpu=${compat_cpu:-<none>}"
-              if make clean \
-                 && make static \
-                      ELA_USE_READLINE=0 \
-                      COMPAT_CPU="${compat_cpu}" \
-                      CMAKE_C_COMPILER="$(command -v zig)" \
-                      CMAKE_C_COMPILER_ARG1=cc \
-                      CMAKE_C_COMPILER_TARGET="${T}" \
-                      CC="zig cc -target ${T}"; then
-                cp embedded_linux_audit "dist/${{ matrix.name }}/${output_name}"
-                echo "Built ${variant} successfully with target: ${T}"
-                built=1
-                break
-              fi
-              echo "Target failed for ${variant}: ${T}"
-            done
-
-            if [ "${built}" -ne 1 ]; then
-              echo "All candidate targets failed for ${{ matrix.name }} (${variant})"
-              exit 1
+          IFS=',' read -ra TARGETS <<< "${{ matrix.zig_targets }}"
+          BUILT=0
+          for T in "${TARGETS[@]}"; do
+            echo "Trying default target: ${T}"
+            if make clean \
+               && make static \
+                    ELA_USE_READLINE=0 \
+                    CMAKE_C_COMPILER="$(command -v zig)" \
+                    CMAKE_C_COMPILER_ARG1=cc \
+                    CMAKE_C_COMPILER_TARGET="${T}" \
+                    CC="zig cc -target ${T}"; then
+              cp embedded_linux_audit "dist/${{ matrix.name }}/embedded_linux_audit-${{ matrix.name }}"
+              echo "Built default successfully with target: ${T}"
+              BUILT=1
+              break
             fi
-          }
+            echo "Default target failed: ${T}"
+          done
 
-          build_variant default "" "${{ matrix.zig_targets }}" "embedded_linux_audit-${{ matrix.name }}"
-          build_variant compat "${{ matrix.compat_cpu }}" "${{ matrix.compat_zig_targets }}" "embedded_linux_audit-${{ matrix.name }}-compat"
+          if [ "$BUILT" -ne 1 ]; then
+            echo "All candidate default targets failed for ${{ matrix.name }}"
+            exit 1
+          fi
+
+      - name: Build CPU_COMPAT static binary
+        run: |
+          set -euo pipefail
+          test -f agent/embedded_linux_audit.c
+          test -f agent/embedded_linux_audit_cmd.h
+          test -f third_party/ncurses/configure
+          test -f third_party/readline/readline.h
+          mkdir -p dist/${{ matrix.name }}
+
+          IFS=',' read -ra TARGETS <<< "${{ matrix.cpu_compat_zig_targets }}"
+          BUILT=0
+          for T in "${TARGETS[@]}"; do
+            echo "Trying CPU_COMPAT target: ${T} (CPU_COMPAT=${{ matrix.cpu_compat }})"
+            if make clean \
+               && make static \
+                    ELA_USE_READLINE=0 \
+                    COMPAT_CPU="${{ matrix.cpu_compat }}" \
+                    CMAKE_C_COMPILER="$(command -v zig)" \
+                    CMAKE_C_COMPILER_ARG1=cc \
+                    CMAKE_C_COMPILER_TARGET="${T}" \
+                    CC="zig cc -target ${T}"; then
+              cp embedded_linux_audit "dist/${{ matrix.name }}/embedded_linux_audit-${{ matrix.name }}-compat"
+              echo "Built CPU_COMPAT successfully with target: ${T}"
+              BUILT=1
+              break
+            fi
+            echo "CPU_COMPAT target failed: ${T}"
+          done
+
+          if [ "$BUILT" -ne 1 ]; then
+            echo "All candidate CPU_COMPAT targets failed for ${{ matrix.name }}"
+            exit 1
+          fi
 
       - name: Upload matrix artifact
         uses: actions/upload-artifact@v4
