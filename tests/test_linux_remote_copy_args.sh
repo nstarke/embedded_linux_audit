@@ -76,6 +76,10 @@ mkdir -p "$TMP_SUBDIR"
 echo "nested payload" >"$TMP_SUBDIR/nested.bin"
 ln -sf "$TMP_FILE" "$TMP_DIR/sample.link"
 run_exact_case "linux remote-copy directory over tcp" 2 "$BIN" linux remote-copy "$TMP_DIR" --output-tcp 127.0.0.1:9
+run_accept_case "linux remote-copy symlink without --allow-symlinks" "$BIN" linux remote-copy "$TMP_DIR/sample.link" --output-http http://127.0.0.1:1/upload
+run_accept_case "linux remote-copy directory http --allow-dev" "$BIN" linux remote-copy "$TMP_DIR" --output-http http://127.0.0.1:1/upload --allow-dev
+run_accept_case "linux remote-copy directory http --allow-sysfs" "$BIN" linux remote-copy "$TMP_DIR" --output-http http://127.0.0.1:1/upload --allow-sysfs
+run_accept_case "linux remote-copy directory http --allow-proc" "$BIN" linux remote-copy "$TMP_DIR" --output-http http://127.0.0.1:1/upload --allow-proc
 
 run_accept_case "linux remote-copy --output-tcp" "$BIN" linux remote-copy "$TMP_FILE" --output-tcp 127.0.0.1:9
 run_accept_case "linux remote-copy --output-http" "$BIN" linux remote-copy "$TMP_FILE" --output-http http://127.0.0.1:1/upload
@@ -86,9 +90,28 @@ run_accept_case "linux remote-copy directory http" "$BIN" linux remote-copy "$TM
 run_accept_case "linux remote-copy directory http --recursive" "$BIN" linux remote-copy "$TMP_DIR" --output-http http://127.0.0.1:1/upload --recursive
 run_accept_case "linux remote-copy symlink http --allow-symlinks" "$BIN" linux remote-copy "$TMP_DIR/sample.link" --output-http http://127.0.0.1:1/upload --allow-symlinks
 
+if [ -d /dev ]; then
+    run_accept_case "linux remote-copy /dev directory http --allow-dev" \
+        "$BIN" linux remote-copy /dev --output-http http://127.0.0.1:1/upload --allow-dev
+fi
+
+if [ -d /sys ]; then
+    run_exact_case "linux remote-copy /sys without allow flag" 2 \
+        "$BIN" linux remote-copy /sys --output-http http://127.0.0.1:1/upload
+    run_accept_case "linux remote-copy /sys directory http --allow-sysfs" \
+        "$BIN" linux remote-copy /sys --output-http http://127.0.0.1:1/upload --allow-sysfs
+fi
+
 if [ -r /proc/cmdline ]; then
     run_accept_case "linux remote-copy /proc/cmdline over http (non-sized stream-like file)" \
         "$BIN" linux remote-copy /proc/cmdline --output-http http://127.0.0.1:1/upload --verbose --allow-proc
+fi
+
+if [ -d /proc ]; then
+    run_accept_case "linux remote-copy /proc directory http --allow-proc" \
+        "$BIN" linux remote-copy /proc --output-http http://127.0.0.1:1/upload --allow-proc
+    run_accept_case "linux remote-copy /proc directory http --recursive --allow-proc" \
+        "$BIN" linux remote-copy /proc --output-http http://127.0.0.1:1/upload --recursive --allow-proc
 fi
 
 run_accept_case "linux remote-copy with --output-format txt" "$BIN" --output-format txt linux remote-copy "$TMP_FILE" --output-http http://127.0.0.1:1/upload

@@ -351,7 +351,7 @@ function parseArgs(argv) {
 function printHelp() {
   console.log(`Usage: node server.js [options]\n\nOptions:\n  --host HOST\n  --port PORT\n  --log-prefix PREFIX\n  --repo OWNER/NAME\n  --assets-dir DIR\n  --tests-dir DIR\n  --binary-out-dir DIR\n  --github-token TOKEN\n  --force-download\n  --clean\n  --https\n  --verbose\n  --cert PATH\n  --key PATH\n  --help`);
 }
-
+  
 function resolveProjectPath(targetPath) {
   return path.isAbsolute(targetPath) ? targetPath : path.resolve(PROJECT_ROOT, targetPath);
 }
