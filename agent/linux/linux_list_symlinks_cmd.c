@@ -199,7 +199,33 @@ out:
 	return ret;
 }
 
+static void report_symlink_error(const char *output_uri,
+				 bool insecure,
+				 const char *fmt,
+				 const char *path)
+{
+	char msg[PATH_MAX + 128];
+	char errbuf[256];
+	int n;
+
+	if (!fmt || !path)
+		return;
+
+	n = snprintf(msg, sizeof(msg), fmt, path, strerror(errno));
+	if (n < 0)
+		return;
+
+	fputs(msg, stderr);
+	if (!output_uri)
+		return;
+
+	if (uboot_http_post_log_message(output_uri, msg, insecure, false, errbuf, sizeof(errbuf)) < 0)
+		fprintf(stderr, "Failed HTTP(S) POST log to %s: %s\n", output_uri, errbuf[0] ? errbuf : "unknown error");
+}
+
 static int list_symlinks_recursive(const char *dir_path,
+				   const char *output_uri,
+				   bool insecure,
 				   const char *output_format,
 				   int output_sock,
 				   bool capture,
@@ -211,7 +237,7 @@ static int list_symlinks_recursive(const char *dir_path,
 
 	dir = opendir(dir_path);
 	if (!dir) {
-		fprintf(stderr, "Cannot open directory %s: %s\n", dir_path, strerror(errno));
+		report_symlink_error(output_uri, insecure, "Cannot open directory %s: %s\n", dir_path);
 		return -1;
 	}
 
@@ -235,14 +261,14 @@ static int list_symlinks_recursive(const char *dir_path,
 		}
 
 		if (lstat(child, &st) != 0) {
-			fprintf(stderr, "Cannot stat %s: %s\n", child, strerror(errno));
+			report_symlink_error(output_uri, insecure, "Cannot stat %s: %s\n", child);
 			continue;
 		}
 
 		if (S_ISLNK(st.st_mode)) {
 			target_len = readlink(child, target, sizeof(target) - 1);
 			if (target_len < 0) {
-				fprintf(stderr, "Cannot read symlink %s: %s\n", child, strerror(errno));
+				report_symlink_error(output_uri, insecure, "Cannot read symlink %s: %s\n", child);
 				continue;
 			}
 			target[target_len] = '\0';
@@ -255,7 +281,7 @@ static int list_symlinks_recursive(const char *dir_path,
 		}
 
 		if (S_ISDIR(st.st_mode) && recursive) {
-			if (list_symlinks_recursive(child, output_format, output_sock, capture, buf, recursive) != 0)
+			if (list_symlinks_recursive(child, output_uri, insecure, output_format, output_sock, capture, buf, recursive) != 0)
 				return -1;
 		}
 	}
@@ -367,7 +393,7 @@ int linux_list_symlinks_scan_main(int argc, char **argv)
 		}
 	}
 
-	if (list_symlinks_recursive(dir_path, output_format, output_sock, output_uri != NULL, &buf, recursive) != 0) {
+	if (list_symlinks_recursive(dir_path, output_uri, insecure, output_format, output_sock, output_uri != NULL, &buf, recursive) != 0) {
 		ret = 1;
 		goto out;
 	}

@@ -85,6 +85,50 @@ static void print_verbose_copy_summary(const char *path, uint64_t copied_files)
 		copied_files == 1 ? "" : "s");
 }
 
+static void report_remote_copy_http_error(const char *output_uri,
+					 bool insecure,
+					 bool verbose,
+					 const char *message)
+{
+	char errbuf[256];
+
+	if (!message || !*message) {
+		return;
+	}
+
+	fputs(message, stderr);
+	if (!output_uri || !*output_uri) {
+		return;
+	}
+
+	if (uboot_http_post_log_message(output_uri, message, insecure, verbose, errbuf, sizeof(errbuf)) < 0) {
+		fprintf(stderr, "Failed HTTP(S) POST log to %s: %s\n", output_uri,
+			errbuf[0] ? errbuf : "unknown error");
+	}
+}
+
+static void report_remote_copy_errno(const char *output_uri,
+				     bool insecure,
+				     bool verbose,
+				     const char *fmt,
+				     const char *path)
+{
+	char message[PATH_MAX + 128];
+	int saved_errno = errno;
+	int n;
+
+	if (!fmt || !path) {
+		return;
+	}
+
+	n = snprintf(message, sizeof(message), fmt, path, strerror(saved_errno));
+	if (n < 0) {
+		return;
+	}
+
+	report_remote_copy_http_error(output_uri, insecure, verbose, message);
+}
+
 static int send_symlink_to_http(const char *path, const char *output_uri, bool insecure, bool verbose)
 {
 	char errbuf[256];
@@ -94,14 +138,17 @@ static int send_symlink_to_http(const char *path, const char *output_uri, bool i
 
 	target_len = readlink(path, target, sizeof(target) - 1);
 	if (target_len < 0) {
-		fprintf(stderr, "Cannot read symlink %s: %s\n", path, strerror(errno));
+		report_remote_copy_errno(output_uri, insecure, verbose,
+			"Cannot read symlink %s: %s\n", path);
 		return -1;
 	}
 	target[target_len] = '\0';
 
 	upload_uri = uboot_http_build_upload_uri(output_uri, "file", path);
 	if (!upload_uri) {
-		fprintf(stderr, "Unable to build upload URI for symlink %s\n", path);
+		char message[PATH_MAX + 64];
+		snprintf(message, sizeof(message), "Unable to build upload URI for symlink %s\n", path);
+		report_remote_copy_http_error(output_uri, insecure, verbose, message);
 		return -1;
 	}
 
@@ -111,18 +158,24 @@ static int send_symlink_to_http(const char *path, const char *output_uri, bool i
 		CURL *curl = curl_easy_init();
 		char *escaped_target;
 		if (!curl) {
+			report_remote_copy_http_error(output_uri, insecure, verbose,
+				"Unable to initialize curl for symlink upload\n");
 			free(upload_uri);
 			return -1;
 		}
 		escaped_target = curl_easy_escape(curl, target, 0);
 		curl_easy_cleanup(curl);
 		if (!escaped_target) {
+			report_remote_copy_http_error(output_uri, insecure, verbose,
+				"Unable to escape symlink target for upload\n");
 			free(upload_uri);
 			return -1;
 		}
 		final_len = strlen(upload_uri) + strlen("&symlink=true&symlinkPath=") + strlen(escaped_target) + 1U;
 		final_uri = malloc(final_len);
 		if (!final_uri) {
+			report_remote_copy_http_error(output_uri, insecure, verbose,
+				"Unable to allocate upload URI for symlink\n");
 			curl_free(escaped_target);
 			free(upload_uri);
 			return -1;
@@ -141,7 +194,10 @@ static int send_symlink_to_http(const char *path, const char *output_uri, bool i
 			   verbose,
 			   errbuf,
 			   sizeof(errbuf)) < 0) {
-		fprintf(stderr, "Failed HTTP(S) POST symlink to %s: %s\n", upload_uri, errbuf[0] ? errbuf : "unknown error");
+		char message[PATH_MAX + 384];
+		snprintf(message, sizeof(message), "Failed HTTP(S) POST symlink %s to %s: %s\n",
+			path, upload_uri, errbuf[0] ? errbuf : "unknown error");
+		report_remote_copy_http_error(output_uri, insecure, verbose, message);
 		free(upload_uri);
 		return -1;
 	}
@@ -206,7 +262,8 @@ static int send_file_to_http(const char *path, const char *output_uri, bool inse
 
 	fd = open(path, O_RDONLY | O_CLOEXEC);
 	if (fd < 0) {
-		fprintf(stderr, "Cannot open %s: %s\n", path, strerror(errno));
+		report_remote_copy_errno(output_uri, insecure, verbose,
+			"Cannot open %s: %s\n", path);
 		return -1;
 	}
 
@@ -214,7 +271,8 @@ static int send_file_to_http(const char *path, const char *output_uri, bool inse
 		uint8_t chunk[4096];
 		ssize_t got = read(fd, chunk, sizeof(chunk));
 		if (got < 0) {
-			fprintf(stderr, "Read failure on %s: %s\n", path, strerror(errno));
+			report_remote_copy_errno(output_uri, insecure, verbose,
+				"Read failure on %s: %s\n", path);
 			goto out;
 		}
 		if (got == 0)
@@ -229,7 +287,9 @@ static int send_file_to_http(const char *path, const char *output_uri, bool inse
 
 			tmp = realloc(data, new_cap);
 			if (!tmp) {
-				fprintf(stderr, "Unable to grow upload buffer for %s\n", path);
+				char message[PATH_MAX + 64];
+				snprintf(message, sizeof(message), "Unable to grow upload buffer for %s\n", path);
+				report_remote_copy_http_error(output_uri, insecure, verbose, message);
 				goto out;
 			}
 			data = tmp;
@@ -242,7 +302,9 @@ static int send_file_to_http(const char *path, const char *output_uri, bool inse
 
 	upload_uri = uboot_http_build_upload_uri(output_uri, "file", path);
 	if (!upload_uri) {
-		fprintf(stderr, "Unable to build upload URI for %s\n", path);
+		char message[PATH_MAX + 64];
+		snprintf(message, sizeof(message), "Unable to build upload URI for %s\n", path);
+		report_remote_copy_http_error(output_uri, insecure, verbose, message);
 		goto out;
 	}
 
@@ -254,7 +316,10 @@ static int send_file_to_http(const char *path, const char *output_uri, bool inse
 			   verbose,
 			   errbuf,
 			   sizeof(errbuf)) < 0) {
-		fprintf(stderr, "Failed HTTP(S) POST to %s: %s\n", upload_uri, errbuf[0] ? errbuf : "unknown error");
+		char message[PATH_MAX + 384];
+		snprintf(message, sizeof(message), "Failed HTTP(S) POST file %s to %s: %s\n",
+			path, upload_uri, errbuf[0] ? errbuf : "unknown error");
+		report_remote_copy_http_error(output_uri, insecure, verbose, message);
 		goto out;
 	}
 
@@ -282,12 +347,15 @@ static int upload_path_http(const char *path,
 	struct stat st;
 
 	if (!path_is_allowed(path, allow_dev, allow_sysfs, allow_proc)) {
-		fprintf(stderr, "Refusing to copy restricted path without allow flag: %s\n", path);
+		char message[PATH_MAX + 96];
+		snprintf(message, sizeof(message), "Refusing to copy restricted path without allow flag: %s\n", path);
+		report_remote_copy_http_error(output_uri, insecure, verbose, message);
 		return -1;
 	}
 
 	if (lstat(path, &st) != 0) {
-		fprintf(stderr, "Cannot stat %s: %s\n", path, strerror(errno));
+		report_remote_copy_errno(output_uri, insecure, verbose,
+			"Cannot stat %s: %s\n", path);
 		return -1;
 	}
 
@@ -312,7 +380,8 @@ static int upload_path_http(const char *path,
 
 		dir = opendir(path);
 		if (!dir) {
-			fprintf(stderr, "Cannot open directory %s: %s\n", path, strerror(errno));
+			report_remote_copy_errno(output_uri, insecure, verbose,
+				"Cannot open directory %s: %s\n", path);
 			return -1;
 		}
 
@@ -328,16 +397,19 @@ static int upload_path_http(const char *path,
 			child_len = strlen(path) + 1 + strlen(de->d_name) + 1;
 			child = malloc(child_len);
 			if (!child) {
+				report_remote_copy_http_error(output_uri, insecure, verbose,
+					"Unable to allocate path buffer during recursive remote-copy\n");
 				rc = -1;
 				break;
 			}
 			snprintf(child, child_len, "%s/%s", path, de->d_name);
 
 			if (lstat(child, &child_st) != 0) {
-				fprintf(stderr, "Cannot stat %s: %s\n", child, strerror(errno));
+				report_remote_copy_errno(output_uri, insecure, verbose,
+					"Cannot stat %s: %s\n", child);
 				free(child);
 				rc = -1;
-				break;
+				continue;
 			}
 
 			if (S_ISDIR(child_st.st_mode) && !recursive) {
@@ -351,7 +423,7 @@ static int upload_path_http(const char *path,
 			free(child);
 			if (child_rc != 0) {
 				rc = -1;
-				break;
+				continue;
 			}
 		}
 

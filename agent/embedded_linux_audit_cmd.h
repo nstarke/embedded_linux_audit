@@ -46,6 +46,9 @@ int uboot_send_all(int sock, const uint8_t *buf, size_t len);
 char *uboot_http_uri_normalize_default_port(const char *uri, uint16_t default_port);
 int uboot_http_get_upload_mac(const char *base_uri, char *mac_buf, size_t mac_buf_len);
 char *uboot_http_build_upload_uri(const char *base_uri, const char *upload_type, const char *file_path);
+int uboot_http_post_log_message(const char *base_uri, const char *message,
+				bool insecure, bool verbose,
+				char *errbuf, size_t errbuf_len);
 int uboot_http_get_to_file(const char *uri, const char *output_path,
 			   bool insecure, bool verbose,
 			   char *errbuf, size_t errbuf_len);

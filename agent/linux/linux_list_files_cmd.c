@@ -378,7 +378,33 @@ static int emit_path(const char *path,
 	return 0;
 }
 
+static void report_list_error(const char *output_uri,
+			      bool insecure,
+			      const char *fmt,
+			      const char *path)
+{
+	char msg[PATH_MAX + 128];
+	char errbuf[256];
+	int n;
+
+	if (!fmt || !path)
+		return;
+
+	n = snprintf(msg, sizeof(msg), fmt, path, strerror(errno));
+	if (n < 0)
+		return;
+
+	fputs(msg, stderr);
+	if (!output_uri)
+		return;
+
+	if (uboot_http_post_log_message(output_uri, msg, insecure, false, errbuf, sizeof(errbuf)) < 0)
+		fprintf(stderr, "Failed HTTP(S) POST log to %s: %s\n", output_uri, errbuf[0] ? errbuf : "unknown error");
+}
+
 static int list_files_recursive(const char *dir_path,
+				const char *output_uri,
+				bool insecure,
 				int output_sock,
 				bool capture,
 				struct output_buffer *buf,
@@ -390,7 +416,7 @@ static int list_files_recursive(const char *dir_path,
 
 	dir = opendir(dir_path);
 	if (!dir) {
-		fprintf(stderr, "Cannot open directory %s: %s\n", dir_path, strerror(errno));
+		report_list_error(output_uri, insecure, "Cannot open directory %s: %s\n", dir_path);
 		return -1;
 	}
 
@@ -412,7 +438,7 @@ static int list_files_recursive(const char *dir_path,
 		}
 
 		if (lstat(child, &st) != 0) {
-			fprintf(stderr, "Cannot stat %s: %s\n", child, strerror(errno));
+			report_list_error(output_uri, insecure, "Cannot stat %s: %s\n", child);
 			continue;
 		}
 
@@ -420,7 +446,7 @@ static int list_files_recursive(const char *dir_path,
 			if (!recursive)
 				continue;
 
-			if (list_files_recursive(child, output_sock, capture, buf, recursive, filters) != 0)
+			if (list_files_recursive(child, output_uri, insecure, output_sock, capture, buf, recursive, filters) != 0)
 				return -1;
 			continue;
 		}
@@ -574,7 +600,7 @@ int linux_list_files_scan_main(int argc, char **argv)
 		}
 	}
 
-	if (list_files_recursive(dir_path, output_sock, output_uri != NULL, &buf, recursive, &filters) != 0) {
+	if (list_files_recursive(dir_path, output_uri, insecure, output_sock, output_uri != NULL, &buf, recursive, &filters) != 0) {
 		ret = 1;
 		goto out;
 	}

@@ -474,6 +474,41 @@ char *uboot_http_build_upload_uri(const char *base_uri, const char *upload_type,
 	return out;
 }
 
+int uboot_http_post_log_message(const char *base_uri, const char *message,
+				bool insecure, bool verbose,
+				char *errbuf, size_t errbuf_len)
+{
+	char *upload_uri;
+	int rc;
+
+	if (errbuf && errbuf_len)
+		errbuf[0] = '\0';
+
+	if (!base_uri || !*base_uri || !message || !*message) {
+		if (errbuf && errbuf_len)
+			snprintf(errbuf, errbuf_len, "log upload requires base URI and message");
+		return -1;
+	}
+
+	upload_uri = uboot_http_build_upload_uri(base_uri, "log", NULL);
+	if (!upload_uri) {
+		if (errbuf && errbuf_len)
+			snprintf(errbuf, errbuf_len, "failed to build log upload URI");
+		return -1;
+	}
+
+	rc = uboot_http_post(upload_uri,
+		(const uint8_t *)message,
+		strlen(message),
+		"text/plain; charset=utf-8",
+		insecure,
+		verbose,
+		errbuf,
+		errbuf_len);
+	free(upload_uri);
+	return rc;
+}
+
 int uboot_http_post(const char *uri, const uint8_t *data, size_t len,
 		 const char *content_type, bool insecure, bool verbose,
 		 char *errbuf, size_t errbuf_len)
