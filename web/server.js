@@ -565,11 +565,34 @@ async function main() {
   return 0;
 }
 
-main().then((code) => {
-  if (code !== 0) {
-    process.exit(code);
-  }
-}).catch((err) => {
-  console.error(err.stack || err.message);
-  process.exit(1);
-});
+module.exports = {
+  RELEASE_STATE_FILE,
+  PROJECT_ROOT,
+  WEB_ROOT,
+  VALID_UPLOAD_TYPES,
+  VALID_CONTENT_TYPES,
+  isValidMacAddress,
+  normalizeContentType,
+  logPathForContentType,
+  augmentJsonPayload,
+  resolveProjectPath,
+  isWithinRoot,
+  getClientIp,
+  sanitizeUploadPath,
+  writeUploadFile,
+  createApp,
+  parseArgs,
+  printHelp,
+  main
+};
+
+if (require.main === module) {
+  main().then((code) => {
+    if (code !== 0) {
+      process.exit(code);
+    }
+  }).catch((err) => {
+    console.error(err.stack || err.message);
+    process.exit(1);
+  });
+}
