@@ -1,0 +1,5 @@
+# Interactive/script coverage for linux dmesg
+linux dmesg --help
+ela linux dmesg
+embedded_linux_audit --quiet linux dmesg
+ela --output-format json linux dmesg

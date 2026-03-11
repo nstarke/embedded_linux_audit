@@ -15,14 +15,19 @@ print_section "api GET route coverage"
 SCRIPT_BODY="$(printf '#!/bin/sh\necho test-one')"
 
 run_curl_body_contains_case "GET / includes release binaries" GET "$TEST_WEB_BASE_URL/" 200 "embedded_linux_audit-arm64"
-run_curl_body_contains_case "GET / includes agent test scripts" GET "$TEST_WEB_BASE_URL/" 200 "tests/agent/test_one.sh"
+run_curl_body_contains_case "GET / includes agent shell test scripts" GET "$TEST_WEB_BASE_URL/" 200 "tests/agent/shell/test_one.sh"
+run_curl_body_contains_case "GET / includes agent argument scripts" GET "$TEST_WEB_BASE_URL/" 200 "tests/agent/scripts/test_linux_dmesg_args.ela"
 run_curl_body_contains_case "GET / includes command scripts" GET "$TEST_WEB_BASE_URL/" 200 "scripts/sample-script.txt"
-run_curl_case "GET /tests/agent/test_one.sh" GET "$TEST_WEB_BASE_URL/tests/agent/test_one.sh" 200 "$SCRIPT_BODY"
-run_curl_case "GET /tests/agent/..%2Fescape rejects invalid segment" GET "$TEST_WEB_BASE_URL/tests/agent/..%2Fescape" 400 "invalid path"
+run_curl_case "GET /tests/agent/shell/test_one.sh" GET "$TEST_WEB_BASE_URL/tests/agent/shell/test_one.sh" 200 "$SCRIPT_BODY"
+run_curl_body_contains_case "GET /tests/agent/scripts/test_linux_dmesg_args.ela" GET "$TEST_WEB_BASE_URL/tests/agent/scripts/test_linux_dmesg_args.ela" 200 "linux dmesg"
+run_curl_case "GET /tests/agent/invalid/test_one.sh rejects invalid type" GET "$TEST_WEB_BASE_URL/tests/agent/invalid/test_one.sh" 400 "invalid type"
+run_curl_case "GET /tests/agent/shell/..%2Fescape rejects invalid segment" GET "$TEST_WEB_BASE_URL/tests/agent/shell/..%2Fescape" 400 "invalid path"
 run_curl_case "GET /tests/api/test_two.sh returns 404" GET "$TEST_WEB_BASE_URL/tests/api/test_two.sh" 404 "not found"
-run_curl_case "GET /tests/agent/missing.sh returns 404" GET "$TEST_WEB_BASE_URL/tests/agent/missing.sh" 404 "not found"
-run_curl_case "GET /tests/agent/not_a_file returns 400" GET "$TEST_WEB_BASE_URL/tests/agent/not_a_file" 400 "invalid path"
-run_curl_case "GET /tests/agent/test_one rejects missing .sh suffix" GET "$TEST_WEB_BASE_URL/tests/agent/test_one" 400 "invalid path"
+run_curl_case "GET /tests/agent/shell/missing.sh returns 404" GET "$TEST_WEB_BASE_URL/tests/agent/shell/missing.sh" 404 "not found"
+run_curl_case "GET /tests/agent/shell/not_a_file returns 400" GET "$TEST_WEB_BASE_URL/tests/agent/shell/not_a_file" 400 "invalid path"
+run_curl_case "GET /tests/agent/shell/test_one rejects missing .sh suffix" GET "$TEST_WEB_BASE_URL/tests/agent/shell/test_one" 400 "invalid path"
+run_curl_case "GET /tests/agent/scripts/test_linux_dmesg_args.sh rejects wrong suffix" GET "$TEST_WEB_BASE_URL/tests/agent/scripts/test_linux_dmesg_args.sh" 400 "invalid path"
+run_curl_case "GET /tests/agent/scripts/..%2F..%2Fescape blocks traversal" GET "$TEST_WEB_BASE_URL/tests/agent/scripts/..%2F..%2Fescape" 400 "invalid path"
 
 run_curl_case "GET /uboot-env/fw_env.txt" GET "$TEST_WEB_BASE_URL/uboot-env/fw_env.txt" 200 "bootdelay=3"
 run_curl_case "GET /uboot-env/..%2F..%2Fescape blocked" GET "$TEST_WEB_BASE_URL/uboot-env/..%2F..%2Fescape" 404 "not found"
@@ -75,7 +80,8 @@ while [ "$i" -lt 50 ]; do
     i=$(expr "$i" + 1)
 done
 
-run_curl_body_contains_case "GET /tests/agent/download_tests.sh falls back to repo tests dir" GET "http://127.0.0.1:5312/tests/agent/download_tests.sh" 200 "usage: \$0 --webserver <url>"
+run_curl_body_contains_case "GET /tests/agent/shell/download_tests.sh falls back to repo tests dir" GET "http://127.0.0.1:5312/tests/agent/shell/download_tests.sh" 200 "usage: \$0 --webserver <url>"
+run_curl_body_contains_case "GET /tests/agent/scripts/test_linux_dmesg_args.ela falls back to repo tests dir" GET "http://127.0.0.1:5312/tests/agent/scripts/test_linux_dmesg_args.ela" 200 "linux dmesg"
 
 kill "$FALLBACK_PID" 2>/dev/null || true
 wait "$FALLBACK_PID" 2>/dev/null || true

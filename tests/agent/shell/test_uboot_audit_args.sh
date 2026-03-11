@@ -4,7 +4,7 @@ set -u
 
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
-BIN="/tmp/embedded_linux_audit"
+BIN="${BIN:-/tmp/embedded_linux_audit}"
 
 TEST_OUTPUT_HTTP="${TEST_OUTPUT_HTTP:-}"
 

@@ -1,0 +1,4 @@
+# Interactive/script coverage for linux grep
+linux grep --help
+ela linux grep --search needle --path /tmp
+embedded_linux_audit --output-format json linux grep --search needle --path /tmp --recursive

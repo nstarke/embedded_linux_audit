@@ -2,10 +2,28 @@ const { listBinaryEntries } = require('./shared');
 
 module.exports = function registerRootRoute(app, deps) {
   const { testsDir, scriptsDir, fsp, verboseRequestLog, verboseResponseLog } = deps;
-  const configuredAgentTestsDir = deps.path.join(testsDir, 'agent', 'shell');
-  const repoAgentTestsDir = deps.path.resolve(__dirname, '..', '..', '..', 'tests', 'agent', 'shell');
+  const configuredAgentTestDirs = {
+    shell: deps.path.join(testsDir, 'agent', 'shell'),
+    scripts: deps.path.join(testsDir, 'agent', 'scripts')
+  };
+  const repoAgentTestDirs = {
+    shell: deps.path.resolve(__dirname, '..', '..', '..', 'tests', 'agent', 'shell'),
+    scripts: deps.path.resolve(__dirname, '..', '..', '..', 'tests', 'agent', 'scripts')
+  };
+  const agentTestTypeMeta = {
+    shell: {
+      suffix: '.sh',
+      labelPrefix: 'tests/agent/shell/'
+    },
+    scripts: {
+      suffix: '.ela',
+      labelPrefix: 'tests/agent/scripts/'
+    }
+  };
 
-  function getAgentTestDirs() {
+  function getAgentTestDirs(type) {
+    const configuredAgentTestsDir = configuredAgentTestDirs[type];
+    const repoAgentTestsDir = repoAgentTestDirs[type];
     const dirs = [configuredAgentTestsDir];
     if (repoAgentTestsDir !== configuredAgentTestsDir) {
       dirs.push(repoAgentTestsDir);
@@ -13,23 +31,28 @@ module.exports = function registerRootRoute(app, deps) {
     return dirs;
   }
 
-  async function listAgentTestEntries(dirs) {
-    const byName = new Map();
+  async function listAgentTestEntries() {
+    const entries = [];
 
-    for (const dir of dirs) {
-      const entries = await fsp.readdir(dir, { withFileTypes: true }).catch(() => []);
-      for (const entry of entries) {
-        if (!entry.isFile() || !entry.name.endsWith('.sh') || byName.has(entry.name)) {
-          continue;
+    for (const [type, meta] of Object.entries(agentTestTypeMeta)) {
+      const byName = new Map();
+      for (const dir of getAgentTestDirs(type)) {
+        const dirEntries = await fsp.readdir(dir, { withFileTypes: true }).catch(() => []);
+        for (const entry of dirEntries) {
+          if (!entry.isFile() || !entry.name.endsWith(meta.suffix) || byName.has(entry.name)) {
+            continue;
+          }
+          byName.set(entry.name, {
+            name: entry.name,
+            pathLabel: `${meta.labelPrefix}${entry.name}`,
+            url: `/tests/agent/${encodeURIComponent(type)}/${encodeURIComponent(entry.name)}`
+          });
         }
-        byName.set(entry.name, {
-          name: entry.name,
-          url: `/tests/agent/${encodeURIComponent(entry.name)}`
-        });
       }
+      entries.push(...byName.values());
     }
 
-    return Array.from(byName.values()).sort((a, b) => a.name.localeCompare(b.name));
+    return entries.sort((a, b) => a.pathLabel.localeCompare(b.pathLabel));
   }
 
   async function listScriptEntries(dir) {
@@ -55,8 +78,8 @@ module.exports = function registerRootRoute(app, deps) {
   app.get('/', async (req, res) => {
     verboseRequestLog(req);
     const binaryEntries = await listBinaryEntries(deps.assetsDir, fsp, deps.releaseStateFile);
-    const agentTestDirs = getAgentTestDirs();
-    const testEntries = await listAgentTestEntries(agentTestDirs);
+    const agentTestDirs = Object.keys(agentTestTypeMeta).flatMap((type) => getAgentTestDirs(type));
+    const testEntries = await listAgentTestEntries();
     const scriptEntries = await listScriptEntries(scriptsDir);
 
     const assetItems = binaryEntries.length
@@ -64,8 +87,8 @@ module.exports = function registerRootRoute(app, deps) {
       : '      <li><em>No binaries downloaded.</em></li>';
 
     const testItems = testEntries.length
-      ? testEntries.map(({ name, url }) => `      <li><a href="${escapeHtml(url)}">tests/agent/shell/${escapeHtml(name)}</a></li>`).join('\n')
-      : '      <li><em>No agent test shell scripts found.</em></li>';
+      ? testEntries.map(({ pathLabel, url }) => `      <li><a href="${escapeHtml(url)}">${escapeHtml(pathLabel)}</a></li>`).join('\n')
+      : '      <li><em>No agent test shell or script files found.</em></li>';
 
     const scriptItems = scriptEntries.length
       ? scriptEntries.map(({ name, url }) => `      <li><a href="${escapeHtml(url)}">scripts/${escapeHtml(name)}</a></li>`).join('\n')

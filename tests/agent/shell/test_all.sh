@@ -32,10 +32,12 @@ done
 rc=0
 
 for test_script in \
+    "$SCRIPT_DIR/test_efi_dump_vars_args.sh" \
     "$SCRIPT_DIR/test_linux_dmesg_args.sh" \
     "$SCRIPT_DIR/test_linux_download_file_args.sh" \
     "$SCRIPT_DIR/test_linux_execute_command_args.sh" \
     "$SCRIPT_DIR/test_linux_grep_args.sh" \
+    "$SCRIPT_DIR/test_scripts.sh" \
     "$SCRIPT_DIR/test_linux_list_files_args.sh" \
     "$SCRIPT_DIR/test_linux_list_symlinks_args.sh" \
     "$SCRIPT_DIR/test_linux_remote_copy_args.sh" \

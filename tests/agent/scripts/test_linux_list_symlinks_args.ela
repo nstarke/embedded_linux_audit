@@ -1,0 +1,5 @@
+# Interactive/script coverage for linux list-symlinks
+linux list-symlinks --help
+ela linux list-symlinks /tmp
+embedded_linux_audit linux list-symlinks /tmp --recursive
+ela --output-format json linux list-symlinks /tmp
