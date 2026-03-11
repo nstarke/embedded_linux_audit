@@ -10,6 +10,7 @@
 #include <string.h>
 #include <termios.h>
 #include <fcntl.h>
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
 
@@ -84,6 +85,13 @@ static const char *const *interactive_completion_candidates;
 static int embedded_linux_audit_dispatch(int argc, char **argv);
 static int execute_script_commands(const char *prog, const char *script_source);
 static bool is_http_script_source(const char *value);
+static bool local_script_source_exists(const char *value);
+static const char *script_basename(const char *path);
+static char *script_url_percent_encode(const char *text);
+static int create_temp_script_path(char *dir_path, size_t dir_path_len,
+				      char *file_path, size_t file_path_len,
+				      const char *script_source);
+static char *build_script_fallback_uri(const char *output_uri, const char *script_source);
 static char *script_trim(char *s);
 static bool command_should_emit_lifecycle_events(int argc, char **argv, int cmd_idx, const char *script_path);
 
@@ -996,6 +1004,132 @@ static bool is_http_script_source(const char *value)
 	return !strncmp(value, "http://", 7) || !strncmp(value, "https://", 8);
 }
 
+static bool local_script_source_exists(const char *value)
+{
+	struct stat st;
+
+	if (!value || !*value)
+		return false;
+
+	return stat(value, &st) == 0 && S_ISREG(st.st_mode);
+}
+
+static const char *script_basename(const char *path)
+{
+	const char *base;
+
+	if (!path || !*path)
+		return NULL;
+
+	base = strrchr(path, '/');
+	return base ? base + 1 : path;
+}
+
+static char *script_url_percent_encode(const char *text)
+{
+	static const char hex[] = "0123456789ABCDEF";
+	const unsigned char *p;
+	char *out;
+	size_t out_len = 0;
+	size_t text_len;
+
+	if (!text)
+		return NULL;
+
+	text_len = strlen(text);
+	out = malloc(text_len * 3 + 1);
+	if (!out)
+		return NULL;
+
+	for (p = (const unsigned char *)text; *p; p++) {
+		if (isalnum(*p) || *p == '-' || *p == '_' || *p == '.' || *p == '~') {
+			out[out_len++] = (char)*p;
+		} else {
+			out[out_len++] = '%';
+			out[out_len++] = hex[*p >> 4];
+			out[out_len++] = hex[*p & 0x0F];
+		}
+	}
+	out[out_len] = '\0';
+	return out;
+}
+
+static int create_temp_script_path(char *dir_path, size_t dir_path_len,
+				      char *file_path, size_t file_path_len,
+				      const char *script_source)
+{
+	const char *script_name;
+	int n;
+
+	if (!dir_path || dir_path_len == 0 || !file_path || file_path_len == 0)
+		return -1;
+
+	script_name = script_basename(script_source);
+	if (!script_name || !*script_name)
+		script_name = "script.txt";
+
+	snprintf(dir_path, dir_path_len, "/tmp/embedded_linux_audit_script.XXXXXX");
+	if (!mkdtemp(dir_path))
+		return -1;
+
+	n = snprintf(file_path, file_path_len, "%s/%s", dir_path, script_name);
+	if (n < 0 || (size_t)n >= file_path_len) {
+		rmdir(dir_path);
+		dir_path[0] = '\0';
+		return -1;
+	}
+
+	return 0;
+}
+
+static char *build_script_fallback_uri(const char *output_uri, const char *script_source)
+{
+	const char *scheme_end;
+	const char *authority;
+	const char *authority_end;
+	const char *script_name;
+	char *escaped_script_name;
+	char *uri;
+	size_t prefix_len;
+	size_t route_len;
+	size_t escaped_len;
+
+	if (!output_uri || !*output_uri || !script_source || !*script_source)
+		return NULL;
+
+	scheme_end = strstr(output_uri, "://");
+	if (!scheme_end)
+		return NULL;
+
+	authority = scheme_end + 3;
+	authority_end = authority;
+	while (*authority_end && *authority_end != '/' && *authority_end != '?' && *authority_end != '#')
+		authority_end++;
+
+	script_name = script_basename(script_source);
+	if (!script_name || !*script_name)
+		return NULL;
+
+	escaped_script_name = script_url_percent_encode(script_name);
+	if (!escaped_script_name)
+		return NULL;
+
+	prefix_len = (size_t)(authority_end - output_uri);
+	route_len = strlen("/scripts/");
+	escaped_len = strlen(escaped_script_name);
+	uri = malloc(prefix_len + route_len + escaped_len + 1);
+	if (!uri) {
+		free(escaped_script_name);
+		return NULL;
+	}
+
+	memcpy(uri, output_uri, prefix_len);
+	memcpy(uri + prefix_len, "/scripts/", route_len);
+	memcpy(uri + prefix_len + route_len, escaped_script_name, escaped_len + 1);
+	free(escaped_script_name);
+	return uri;
+}
+
 static char *script_trim(char *s)
 {
 	char *end;
@@ -1022,9 +1156,12 @@ static int execute_script_commands(const char *prog, const char *script_source)
 {
 	FILE *fp = NULL;
 	char line[4096];
+	char script_dir[PATH_MAX];
 	char script_path[PATH_MAX];
 	char errbuf[256];
+	char *fallback_uri = NULL;
 	const char *effective_path = script_source;
+	const char *output_uri;
 	bool downloaded = false;
 	bool insecure;
 	unsigned long lineno = 0;
@@ -1032,22 +1169,25 @@ static int execute_script_commands(const char *prog, const char *script_source)
 
 	if (!prog || !script_source || !*script_source)
 		return 2;
+	script_dir[0] = '\0';
 
 	insecure = getenv("FW_AUDIT_OUTPUT_INSECURE") &&
 		!strcmp(getenv("FW_AUDIT_OUTPUT_INSECURE"), "1");
+	output_uri = getenv("FW_AUDIT_OUTPUT_HTTP");
+	if ((!output_uri || !*output_uri) && getenv("FW_AUDIT_OUTPUT_HTTPS") && *getenv("FW_AUDIT_OUTPUT_HTTPS"))
+		output_uri = getenv("FW_AUDIT_OUTPUT_HTTPS");
 
 	if (is_http_script_source(script_source)) {
-		int tmp_fd;
-
-		snprintf(script_path, sizeof(script_path), "/tmp/embedded_linux_audit_script.XXXXXX");
-		tmp_fd = mkstemp(script_path);
-		if (tmp_fd < 0) {
+		if (create_temp_script_path(script_dir,
+					 sizeof(script_dir),
+					 script_path,
+					 sizeof(script_path),
+					 script_source) < 0) {
 			fprintf(stderr, "Failed to create temp file for script %s: %s\n",
 				script_source,
 				strerror(errno));
 			return 2;
 		}
-		close(tmp_fd);
 
 		if (uboot_http_get_to_file(script_source,
 					  script_path,
@@ -1059,6 +1199,49 @@ static int execute_script_commands(const char *prog, const char *script_source)
 				script_source,
 				errbuf[0] ? errbuf : "unknown error");
 			unlink(script_path);
+			rmdir(script_dir);
+			script_dir[0] = '\0';
+			return 2;
+		}
+
+		effective_path = script_path;
+		downloaded = true;
+	} else if (!local_script_source_exists(script_source) && output_uri && *output_uri) {
+		fallback_uri = build_script_fallback_uri(output_uri, script_source);
+		if (!fallback_uri) {
+			fprintf(stderr,
+				"Cannot resolve fallback script URI for %s using %s\n",
+				script_source,
+				output_uri);
+			return 2;
+		}
+
+		if (create_temp_script_path(script_dir,
+					 sizeof(script_dir),
+					 script_path,
+					 sizeof(script_path),
+					 script_source) < 0) {
+			fprintf(stderr, "Failed to create temp file for script %s: %s\n",
+				script_source,
+				strerror(errno));
+			free(fallback_uri);
+			return 2;
+		}
+
+		if (uboot_http_get_to_file(fallback_uri,
+					  script_path,
+					  insecure,
+					  false,
+					  errbuf,
+					  sizeof(errbuf)) < 0) {
+			fprintf(stderr,
+				"Cannot open script %s: %s\n",
+				script_source,
+				errbuf[0] ? errbuf : "not found");
+			unlink(script_path);
+			rmdir(script_dir);
+			script_dir[0] = '\0';
+			free(fallback_uri);
 			return 2;
 		}
 
@@ -1142,8 +1325,12 @@ static int execute_script_commands(const char *prog, const char *script_source)
 out:
 	if (fp)
 		fclose(fp);
-	if (downloaded)
+	if (downloaded) {
 		unlink(script_path);
+		if (script_dir[0])
+			rmdir(script_dir);
+	}
+	free(fallback_uri);
 	return last_rc;
 }
 
