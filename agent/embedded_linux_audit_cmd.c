@@ -20,6 +20,11 @@
 #include <sys/utsname.h>
 #include <unistd.h>
 #include <curl/curl.h>
+#include <openssl/err.h>
+#include <openssl/pem.h>
+#include <openssl/ssl.h>
+#include <openssl/x509.h>
+#include <openssl/x509_vfy.h>
 
 #ifdef __linux__
 #include <linux/if_arp.h>
@@ -251,6 +256,96 @@ static int connect_tcp_host_port(const char *host, uint16_t port)
 	}
 
 	return sock;
+}
+
+static int connect_tcp_host_port_any(const char *host, uint16_t port)
+{
+	struct addrinfo hints;
+	struct addrinfo *res = NULL;
+	struct addrinfo *ai;
+	char portbuf[8];
+	int sock = -1;
+	int rc;
+
+	if (!host || !*host || !port)
+		return -1;
+
+	memset(&hints, 0, sizeof(hints));
+	hints.ai_family = AF_UNSPEC;
+	hints.ai_socktype = SOCK_STREAM;
+	snprintf(portbuf, sizeof(portbuf), "%u", (unsigned int)port);
+	rc = getaddrinfo(host, portbuf, &hints, &res);
+	if (rc != 0 || !res)
+		return -1;
+
+	for (ai = res; ai; ai = ai->ai_next) {
+		sock = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
+		if (sock < 0)
+			continue;
+		if (connect(sock, ai->ai_addr, ai->ai_addrlen) == 0)
+			break;
+		close(sock);
+		sock = -1;
+	}
+
+	freeaddrinfo(res);
+	return sock;
+}
+
+static int ssl_ctx_add_embedded_ca_store(X509_STORE *store, char *errbuf, size_t errbuf_len)
+{
+	BIO *bio;
+	bool loaded_any = false;
+
+	if (!store) {
+		if (errbuf && errbuf_len)
+			snprintf(errbuf, errbuf_len, "failed to access OpenSSL certificate store");
+		return -1;
+	}
+
+	if (uboot_default_ca_bundle_pem_len == 0) {
+		if (errbuf && errbuf_len)
+			snprintf(errbuf, errbuf_len, "embedded CA bundle is empty");
+		return -1;
+	}
+
+	bio = BIO_new_mem_buf((const void *)uboot_default_ca_bundle_pem,
+			     (int)uboot_default_ca_bundle_pem_len);
+	if (!bio) {
+		if (errbuf && errbuf_len)
+			snprintf(errbuf, errbuf_len, "failed to create OpenSSL BIO for embedded CA bundle");
+		return -1;
+	}
+
+	for (;;) {
+		X509 *cert = PEM_read_bio_X509_AUX(bio, NULL, NULL, NULL);
+		if (!cert)
+			break;
+		loaded_any = true;
+		if (X509_STORE_add_cert(store, cert) != 1) {
+			unsigned long ssl_err = ERR_peek_last_error();
+			if (ERR_GET_REASON(ssl_err) != X509_R_CERT_ALREADY_IN_HASH_TABLE) {
+				if (errbuf && errbuf_len)
+					snprintf(errbuf, errbuf_len, "failed to add embedded CA certificate to OpenSSL store");
+				X509_free(cert);
+				BIO_free(bio);
+				return -1;
+			}
+			ERR_clear_error();
+		}
+		X509_free(cert);
+	}
+
+	BIO_free(bio);
+	if (!loaded_any) {
+		if (errbuf && errbuf_len)
+			snprintf(errbuf, errbuf_len, "embedded CA bundle did not contain any readable certificates");
+		ERR_clear_error();
+		return -1;
+	}
+
+	ERR_clear_error();
+	return 0;
 }
 
 static int read_http_status_and_headers(int sock, int *status_out)
@@ -908,6 +1003,339 @@ static size_t curl_write_to_fp(void *ptr, size_t size, size_t nmemb, void *userd
 	return fwrite(ptr, size, nmemb, fp);
 }
 
+struct curl_ssl_ctx_error_data {
+	char *errbuf;
+	size_t errbuf_len;
+};
+
+static CURLcode curl_ssl_ctx_load_embedded_ca(CURL *curl, void *sslctx, void *parm)
+{
+	struct curl_ssl_ctx_error_data *err = (struct curl_ssl_ctx_error_data *)parm;
+	SSL_CTX *ctx = (SSL_CTX *)sslctx;
+	X509_STORE *store;
+
+	(void)curl;
+
+	if (!ctx) {
+		if (err && err->errbuf && err->errbuf_len)
+			snprintf(err->errbuf, err->errbuf_len, "libcurl did not provide an SSL_CTX");
+		return CURLE_SSL_CERTPROBLEM;
+	}
+
+	store = SSL_CTX_get_cert_store(ctx);
+	if (ssl_ctx_add_embedded_ca_store(store,
+				      err ? err->errbuf : NULL,
+				      err ? err->errbuf_len : 0) < 0)
+		return CURLE_SSL_CERTPROBLEM;
+
+	return CURLE_OK;
+}
+
+static int ssl_connect_with_embedded_ca(const struct parsed_http_uri *parsed,
+					 SSL_CTX **ctx_out,
+					 SSL **ssl_out,
+					 int *sock_out,
+					 char *errbuf,
+					 size_t errbuf_len)
+{
+	SSL_CTX *ctx = NULL;
+	SSL *ssl = NULL;
+	X509_VERIFY_PARAM *vpm;
+	int sock = -1;
+
+	if (!parsed || !ctx_out || !ssl_out || !sock_out)
+		return -1;
+
+	if (OPENSSL_init_ssl(0, NULL) != 1) {
+		if (errbuf && errbuf_len)
+			snprintf(errbuf, errbuf_len, "failed to initialize OpenSSL");
+		return -1;
+	}
+
+	ctx = SSL_CTX_new(TLS_client_method());
+	if (!ctx) {
+		if (errbuf && errbuf_len)
+			snprintf(errbuf, errbuf_len, "failed to create OpenSSL TLS context");
+		goto fail;
+	}
+
+	SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, NULL);
+	if (ssl_ctx_add_embedded_ca_store(SSL_CTX_get_cert_store(ctx), errbuf, errbuf_len) < 0)
+		goto fail;
+
+	sock = connect_tcp_host_port_any(parsed->host, parsed->port);
+	if (sock < 0) {
+		if (errbuf && errbuf_len)
+			snprintf(errbuf, errbuf_len, "failed to connect to %s:%u", parsed->host, (unsigned int)parsed->port);
+		goto fail;
+	}
+
+	ssl = SSL_new(ctx);
+	if (!ssl) {
+		if (errbuf && errbuf_len)
+			snprintf(errbuf, errbuf_len, "failed to create OpenSSL SSL session");
+		goto fail;
+	}
+
+	if (SSL_set_tlsext_host_name(ssl, parsed->host) != 1) {
+		if (errbuf && errbuf_len)
+			snprintf(errbuf, errbuf_len, "failed to set TLS SNI hostname");
+		goto fail;
+	}
+
+	vpm = SSL_get0_param(ssl);
+	X509_VERIFY_PARAM_set_hostflags(vpm, 0);
+	if (X509_VERIFY_PARAM_set1_host(vpm, parsed->host, 0) != 1) {
+		if (errbuf && errbuf_len)
+			snprintf(errbuf, errbuf_len, "failed to set TLS certificate hostname verification");
+		goto fail;
+	}
+
+	SSL_set_fd(ssl, sock);
+	if (SSL_connect(ssl) != 1) {
+		if (errbuf && errbuf_len)
+			snprintf(errbuf, errbuf_len, "TLS handshake failed");
+		goto fail;
+	}
+
+	if (SSL_get_verify_result(ssl) != X509_V_OK) {
+		if (errbuf && errbuf_len)
+			snprintf(errbuf, errbuf_len, "TLS peer certificate verification failed");
+		goto fail;
+	}
+
+	*ctx_out = ctx;
+	*ssl_out = ssl;
+	*sock_out = sock;
+	return 0;
+
+fail:
+	if (ssl)
+		SSL_free(ssl);
+	if (sock >= 0)
+		close(sock);
+	if (ctx)
+		SSL_CTX_free(ctx);
+	return -1;
+}
+
+static int ssl_write_all(SSL *ssl, const uint8_t *buf, size_t len)
+{
+	while (len) {
+		int n = SSL_write(ssl, buf, (int)len);
+		if (n <= 0)
+			return -1;
+		buf += (size_t)n;
+		len -= (size_t)n;
+	}
+	return 0;
+}
+
+static int ssl_read_headers(SSL *ssl, char **headers_out)
+{
+	char *headers = NULL;
+	size_t len = 0;
+	size_t cap = 0;
+	char ch;
+
+	while (1) {
+		int n = SSL_read(ssl, &ch, 1);
+		if (n <= 0)
+			goto fail;
+		if (append_bytes(&headers, &len, &cap, &ch, 1) != 0)
+			goto fail;
+		if (len >= 4 && !memcmp(headers + len - 4, "\r\n\r\n", 4))
+			break;
+	}
+
+	*headers_out = headers;
+	return 0;
+
+fail:
+	free(headers);
+	return -1;
+}
+
+static int parse_status_code_from_headers(const char *headers)
+{
+	int status = 0;
+	if (!headers)
+		return -1;
+	if (sscanf(headers, "HTTP/%*u.%*u %d", &status) != 1)
+		return -1;
+	return status;
+}
+
+static bool headers_have_chunked_encoding(const char *headers)
+{
+	return headers && strstr(headers, "\nTransfer-Encoding: chunked\r") != NULL;
+}
+
+static int ssl_readline(SSL *ssl, char *buf, size_t buf_sz)
+{
+	size_t len = 0;
+	char ch;
+	if (!buf || buf_sz < 2)
+		return -1;
+	while (len + 1 < buf_sz) {
+		int n = SSL_read(ssl, &ch, 1);
+		if (n <= 0)
+			return -1;
+		buf[len++] = ch;
+		if (ch == '\n')
+			break;
+	}
+	buf[len] = '\0';
+	return (int)len;
+}
+
+static int ssl_copy_response_body_to_file(SSL *ssl, const char *headers, FILE *fp)
+{
+	char buf[4096];
+	if (headers_have_chunked_encoding(headers)) {
+		for (;;) {
+			char line[128];
+			unsigned long chunk_len;
+			char *end;
+			if (ssl_readline(ssl, line, sizeof(line)) < 0)
+				return -1;
+			chunk_len = strtoul(line, &end, 16);
+			if (end == line)
+				return -1;
+			if (chunk_len == 0) {
+				if (ssl_readline(ssl, line, sizeof(line)) < 0)
+					return -1;
+				break;
+			}
+			while (chunk_len) {
+				int want = (int)(chunk_len > sizeof(buf) ? sizeof(buf) : chunk_len);
+				int n = SSL_read(ssl, buf, want);
+				if (n <= 0)
+					return -1;
+				if (fwrite(buf, 1, (size_t)n, fp) != (size_t)n)
+					return -1;
+				chunk_len -= (unsigned long)n;
+			}
+			if (SSL_read(ssl, buf, 2) != 2)
+				return -1;
+		}
+		return 0;
+	}
+
+	for (;;) {
+		int n = SSL_read(ssl, buf, sizeof(buf));
+		if (n < 0)
+			return -1;
+		if (n == 0)
+			break;
+		if (fwrite(buf, 1, (size_t)n, fp) != (size_t)n)
+			return -1;
+	}
+	return 0;
+}
+
+static int simple_https_get_to_file(const char *uri,
+				    const char *output_path,
+				    bool verbose,
+				    char *errbuf,
+				    size_t errbuf_len)
+{
+	struct parsed_http_uri parsed;
+	SSL_CTX *ctx = NULL;
+	SSL *ssl = NULL;
+	int sock = -1;
+	FILE *fp = NULL;
+	char *headers = NULL;
+	char *request = NULL;
+	size_t request_len = 0;
+	size_t request_cap = 0;
+	int status;
+
+	if (parse_http_uri(uri, &parsed) != 0 || !parsed.https) {
+		if (errbuf && errbuf_len)
+			snprintf(errbuf, errbuf_len, "unsupported or invalid HTTPS URI");
+		return -1;
+	}
+
+	if (ssl_connect_with_embedded_ca(&parsed, &ctx, &ssl, &sock, errbuf, errbuf_len) < 0)
+		return -1;
+
+	fp = fopen(output_path, "wb");
+	if (!fp) {
+		if (errbuf && errbuf_len)
+			snprintf(errbuf, errbuf_len, "cannot open output file %s: %s", output_path, strerror(errno));
+		goto fail;
+	}
+
+	if (append_text(&request, &request_len, &request_cap, "GET ") != 0 ||
+	    append_text(&request, &request_len, &request_cap, parsed.path) != 0 ||
+	    append_text(&request, &request_len, &request_cap, " HTTP/1.1\r\nHost: ") != 0 ||
+	    append_text(&request, &request_len, &request_cap, parsed.host) != 0 ||
+	    append_text(&request, &request_len, &request_cap, "\r\nConnection: close\r\nAccept-Encoding: identity\r\n\r\n") != 0) {
+		if (errbuf && errbuf_len)
+			snprintf(errbuf, errbuf_len, "failed to build HTTPS request");
+		goto fail;
+	}
+
+	if (verbose)
+		fprintf(stderr, "HTTPS GET request uri=%s -> file=%s insecure=false (openssl)\n", uri, output_path);
+
+	if (ssl_write_all(ssl, (const uint8_t *)request, request_len) != 0) {
+		if (errbuf && errbuf_len)
+			snprintf(errbuf, errbuf_len, "failed to send HTTPS request");
+		goto fail;
+	}
+
+	if (ssl_read_headers(ssl, &headers) != 0) {
+		if (errbuf && errbuf_len)
+			snprintf(errbuf, errbuf_len, "failed to read HTTPS response headers");
+		goto fail;
+	}
+
+	status = parse_status_code_from_headers(headers);
+	if (status < 200 || status >= 300) {
+		if (errbuf && errbuf_len)
+			snprintf(errbuf, errbuf_len, "HTTP status %d", status);
+		goto fail;
+	}
+
+	if (ssl_copy_response_body_to_file(ssl, headers, fp) != 0) {
+		if (errbuf && errbuf_len)
+			snprintf(errbuf, errbuf_len, "failed while reading HTTPS response body");
+		goto fail;
+	}
+
+	free(headers);
+	free(request);
+	SSL_shutdown(ssl);
+	SSL_free(ssl);
+	close(sock);
+	SSL_CTX_free(ctx);
+	if (fclose(fp) != 0) {
+		if (errbuf && errbuf_len)
+			snprintf(errbuf, errbuf_len, "failed to finalize output file %s", output_path);
+		unlink(output_path);
+		return -1;
+	}
+	return 0;
+
+fail:
+	free(headers);
+	free(request);
+	if (fp)
+		fclose(fp);
+	if (ssl) {
+		SSL_shutdown(ssl);
+		SSL_free(ssl);
+	}
+	if (sock >= 0)
+		close(sock);
+	if (ctx)
+		SSL_CTX_free(ctx);
+	unlink(output_path);
+	return -1;
+}
+
 char *uboot_http_uri_normalize_default_port(const char *uri, uint16_t default_port)
 {
 	const char *scheme_end;
@@ -1343,12 +1771,12 @@ int uboot_http_post(const char *uri, const uint8_t *data, size_t len,
 	CURLcode rc;
 	long http_code = 0;
 	struct curl_slist *headers = NULL;
-	struct curl_blob ca_blob;
 	char header_line[256];
 	static bool curl_global_ready;
 	bool is_https = false;
 	char *normalized_uri = NULL;
 	const char *effective_uri = uri;
+	struct curl_ssl_ctx_error_data ssl_ctx_err = { errbuf, errbuf_len };
 
 	if (errbuf && errbuf_len)
 		errbuf[0] = '\0';
@@ -1425,10 +1853,9 @@ int uboot_http_post(const char *uri, const uint8_t *data, size_t len,
 			curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
 			curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
 		} else {
-			ca_blob.data = (void *)uboot_default_ca_bundle_pem;
-			ca_blob.len = uboot_default_ca_bundle_pem_len;
-			ca_blob.flags = CURL_BLOB_COPY;
-			rc = curl_easy_setopt(curl, CURLOPT_CAINFO_BLOB, &ca_blob);
+			rc = curl_easy_setopt(curl, CURLOPT_SSL_CTX_FUNCTION, curl_ssl_ctx_load_embedded_ca);
+			if (rc == CURLE_OK)
+				rc = curl_easy_setopt(curl, CURLOPT_SSL_CTX_DATA, &ssl_ctx_err);
 			if (rc != CURLE_OK) {
 				if (errbuf && errbuf_len)
 					snprintf(errbuf, errbuf_len, "failed to configure HTTPS CA bundle: %s",
@@ -1483,12 +1910,12 @@ int uboot_http_get_to_file(const char *uri, const char *output_path,
 	CURL *curl;
 	CURLcode rc;
 	long http_code = 0;
-	struct curl_blob ca_blob;
 	static bool curl_global_ready;
 	bool is_https;
 	char *normalized_uri = NULL;
 	const char *effective_uri = uri;
 	FILE *fp = NULL;
+	struct curl_ssl_ctx_error_data ssl_ctx_err = { errbuf, errbuf_len };
 
 	if (errbuf && errbuf_len)
 		errbuf[0] = '\0';
@@ -1501,6 +1928,8 @@ int uboot_http_get_to_file(const char *uri, const char *output_path,
 
 	if (!strncmp(uri, "http://", 7))
 		return simple_http_get_to_file(uri, output_path, verbose, errbuf, errbuf_len);
+	if (!insecure && !strncmp(uri, "https://", 8))
+		return simple_https_get_to_file(uri, output_path, verbose, errbuf, errbuf_len);
 
 	is_https = !strncmp(uri, "https://", 8);
 	if (!strncmp(uri, "http://", 7)) {
@@ -1567,10 +1996,9 @@ int uboot_http_get_to_file(const char *uri, const char *output_path,
 			curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
 			curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
 		} else {
-			ca_blob.data = (void *)uboot_default_ca_bundle_pem;
-			ca_blob.len = uboot_default_ca_bundle_pem_len;
-			ca_blob.flags = CURL_BLOB_COPY;
-			rc = curl_easy_setopt(curl, CURLOPT_CAINFO_BLOB, &ca_blob);
+			rc = curl_easy_setopt(curl, CURLOPT_SSL_CTX_FUNCTION, curl_ssl_ctx_load_embedded_ca);
+			if (rc == CURLE_OK)
+				rc = curl_easy_setopt(curl, CURLOPT_SSL_CTX_DATA, &ssl_ctx_err);
 			if (rc != CURLE_OK) {
 				if (errbuf && errbuf_len)
 					snprintf(errbuf, errbuf_len, "failed to configure HTTPS CA bundle: %s",
