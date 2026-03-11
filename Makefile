@@ -142,6 +142,18 @@ CURL_CMAKE_ARGS += -DHAVE_ATOMIC=0 -DHAVE_STDATOMIC_H=0
 ZLIB_EXTRA_CFLAGS += -D__STDC_NO_ATOMICS__=1
 endif
 
+JSONC_CMAKE_ARGS := $(CMAKE_CC_ARGS)
+ifneq ($(strip $(COMPAT_CFLAGS)),)
+JSONC_CMAKE_ARGS += -DCMAKE_C_FLAGS="$(COMPAT_CFLAGS)"
+endif
+ifneq ($(filter $(COMPAT_CPU),arm32 armeb powerpc powerpchf),)
+# Be explicit that json-c should not enable its optional threaded refcount path
+# for older 32-bit ARM/PowerPC compatibility builds. Its feature probes can
+# otherwise conclude that __sync atomics are available even when the generated
+# instructions are not safe on the oldest CPUs we target.
+JSONC_CMAKE_ARGS += -DENABLE_THREADING=OFF
+endif
+
 LIBCSV_DIR    := third_party/libcsv
 LIBCSV_SRC    := $(LIBCSV_DIR)/libcsv.c
 LIBCSV_CFLAGS := -I$(LIBCSV_DIR)
@@ -225,7 +237,7 @@ SRC    := agent/embedded_linux_audit.c agent/uboot/env/uboot_env_cmd.c agent/ubo
 	  agent/uboot/audit-rules/uboot_validate_secureboot_rule.c \
 	  $(LIBCSV_SRC) $(GENERATED_CA_SRC)
 
-ifneq ($(filter $(COMPAT_CPU),arm32 armeb),)
+ifneq ($(filter $(COMPAT_CPU),arm32 armeb powerpc powerpchf),)
 SRC += compat/legacy_sync_builtins.c
 endif
 
@@ -238,7 +250,7 @@ env: $(TARGET)
 image: $(TARGET)
 
 $(JSONC_LIB):
-	cmake -S $(JSONC_DIR) -B $(JSONC_BUILD) $(CMAKE_CC_ARGS) -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DBUILD_STATIC_LIBS=ON -DBUILD_TESTING=OFF -DBUILD_APPS=OFF
+	cmake -S $(JSONC_DIR) -B $(JSONC_BUILD) $(JSONC_CMAKE_ARGS) -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DBUILD_STATIC_LIBS=ON -DBUILD_TESTING=OFF -DBUILD_APPS=OFF
 	cmake --build $(JSONC_BUILD) --parallel $(JOBS) --target json-c
 
 $(LIBUBOOTENV_LIB): $(ZLIB_LIB)
