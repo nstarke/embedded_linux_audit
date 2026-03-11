@@ -41,9 +41,14 @@ cat >"$script_file" <<'EOF_SCRIPT'
 linux execute-command "echo hello"
 linux execute-command "printf second"
 EOF_SCRIPT
+script_file_with_alias="$(mktemp /tmp/ela-script-alias.XXXXXX)"
+cat >"$script_file_with_alias" <<'EOF_SCRIPT'
+ela --output-format json linux execute-command "echo hello"
+embedded_linux_audit --quiet linux execute-command "printf second"
+EOF_SCRIPT
 missing_script="/tmp/ela-missing-script-$$.txt"
 
-trap 'rm -f "$script_file"' EXIT INT TERM
+trap 'rm -f "$script_file" "$script_file_with_alias"' EXIT INT TERM
 
 run_exact_case "linux execute-command --help" 0 "$BIN" linux execute-command --help
 run_exact_case "linux execute-command no args" 2 "$BIN" linux execute-command
@@ -52,6 +57,7 @@ run_exact_case "top-level --script missing value" 2 "$BIN" --script
 run_exact_case "top-level --script cannot be combined with direct command" 2 "$BIN" --script "$script_file" linux execute-command "echo hello"
 run_exact_case "top-level --script missing file" 2 "$BIN" --script "$missing_script"
 run_accept_case "top-level --script local file" "$BIN" --script "$script_file"
+run_accept_case "top-level --script local file with ela aliases" "$BIN" --script "$script_file_with_alias"
 run_exact_case "linux execute-command invalid global --output-http" 2 "$BIN" --output-http ftp://127.0.0.1:1 linux execute-command "echo hello"
 run_exact_case "linux execute-command invalid global --output-http" 2 "$BIN" --output-http http://127.0.0.1:1 linux execute-command "echo hello"
 run_exact_case "linux execute-command both global http+https" 2 "$BIN" --output-http http://127.0.0.1:1 --output-http https://127.0.0.1:1 linux execute-command "echo hello"

@@ -1076,6 +1076,8 @@ static int execute_script_commands(const char *prog, const char *script_source)
 	while (fgets(line, sizeof(line), fp)) {
 		char **argv = NULL;
 		char **dispatch_argv = NULL;
+		int dispatch_argc;
+		int script_cmd_idx = 0;
 		char *trimmed;
 		int argc = 0;
 		int rc;
@@ -1102,7 +1104,23 @@ static int execute_script_commands(const char *prog, const char *script_source)
 			continue;
 		}
 
-		dispatch_argv = calloc((size_t)argc + 2, sizeof(*dispatch_argv));
+		if (!strcmp(argv[0], "ela") || !strcmp(argv[0], "embedded_linux_audit"))
+			script_cmd_idx = 1;
+
+		if (script_cmd_idx >= argc) {
+			fprintf(stderr,
+				"Script line %lu in %s must include a command after %s\n",
+				lineno,
+				effective_path,
+				argv[0]);
+			interactive_free_argv(argv, argc);
+			last_rc = 2;
+			goto out;
+		}
+
+		dispatch_argc = argc + 1 - script_cmd_idx;
+
+		dispatch_argv = calloc((size_t)dispatch_argc + 1, sizeof(*dispatch_argv));
 		if (!dispatch_argv) {
 			fprintf(stderr, "Out of memory while preparing script line %lu\n", lineno);
 			interactive_free_argv(argv, argc);
@@ -1111,10 +1129,10 @@ static int execute_script_commands(const char *prog, const char *script_source)
 		}
 
 		dispatch_argv[0] = (char *)prog;
-		for (int i = 0; i < argc; i++)
-			dispatch_argv[i + 1] = argv[i];
+		for (int i = script_cmd_idx; i < argc; i++)
+			dispatch_argv[i - script_cmd_idx + 1] = argv[i];
 
-		last_rc = embedded_linux_audit_dispatch(argc + 1, dispatch_argv);
+		last_rc = embedded_linux_audit_dispatch(dispatch_argc, dispatch_argv);
 		free(dispatch_argv);
 		interactive_free_argv(argv, argc);
 		if (last_rc != 0)
