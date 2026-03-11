@@ -2,11 +2,16 @@
 
 EFI utilities for dumping variables and working with PCI sysfs option ROM nodes.
 
+Documents in this directory:
+
+- [`embedded_linux_audit efi`](index.md)
+- [`embedded_linux_audit efi dump-vars`](dump-vars.md)
+
 ## `efi dump-vars`
 
 Enumerate EFI variables available through efivarfs/libefivar and emit them in the selected top-level `--output-format`.
 
-For full `dump-vars` details, see [EFI vars command reference](efi-vars-command.md).
+For full `dump-vars` details, see [EFI vars command reference](dump-vars.md).
 
 - supported output formats: `txt`, `csv`, and `json`
 - when top-level `--output-http` or `--output-http` is configured, results are POSTed to `/:mac/upload/efi-vars`

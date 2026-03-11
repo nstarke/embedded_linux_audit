@@ -1,22 +1,6 @@
 # Documentation Index
 
-- [Build and Release Notes](build.md)
-- [Output Formats and Remote Output](output-formats-and-remote-output.md)
-- [`embedded_linux_audit --script` Feature](script-feature.md)
-- [`embedded_linux_audit uboot env` Command](env-command.md)
-- [`embedded_linux_audit uboot image` Command](image-command.md)
-- [`embedded_linux_audit uboot audit` Command](audit-command.md)
-- [`embedded_linux_audit linux dmesg` Command](dmesg-command.md)
-- [`embedded_linux_audit linux download-file` Command](download-file-command.md)
-- [`embedded_linux_audit linux execute-command` Command](execute-command-command.md)
-- [`embedded_linux_audit linux grep` Command](grep-command.md)
-- [`embedded_linux_audit linux list-files` Command](list-files-command.md)
-- [`embedded_linux_audit linux list-symlinks` Command](list-symlinks-command.md)
-- [`embedded_linux_audit linux remote-copy` Command](remote-copy-command.md)
-- [`embedded_linux_audit efi dump-vars` Command](efi-vars-command.md)
-- [`embedded_linux_audit efi orom` Command](efi-command.md)
-- [`embedded_linux_audit bios orom` Command](bios-command.md)
-- [Audit Rules Reference](audit-rules.md)
-- [Tests](tests.md)
-- [API Helper Server](api-helper-server.md)
-- [Notes and Cautions](notes-and-cautions.md)
+Repository documentation is organized into two top-level sections that mirror the repository structure:
+
+- [Agent documentation](agent/index.md)
+- [API documentation](api/index.md)

@@ -49,7 +49,7 @@ make clean && make static ELA_USE_READLINE=0 COMPAT_CPU=powerpc \
   CC='zig cc -target powerpc-linux-musleabi'
 ```
 
-See [docs/build.md](docs/build.md) for the full build matrix and supported
+See [docs/agent/getting-started/build.md](docs/agent/getting-started/build.md) for the full build matrix and supported
 compatibility profiles.
 
 ## Documentation
@@ -84,7 +84,7 @@ Common options include:
 - `--force-download` to refresh cached release binaries
 - `--verbose` to enable per-request console logging
 
-For more detail, see [docs/api-helper-server.md](docs/api-helper-server.md).
+For more detail, see [docs/api/agent/helper-server.md](docs/api/agent/helper-server.md).
 
 ## Licensing
 
