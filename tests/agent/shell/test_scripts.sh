@@ -161,5 +161,7 @@ run_accept_case "script remote_test_linux_dmesg_args.ela via HTTP URL" \
 start_remote_api_server
 run_accept_case "script fallback_test_linux_dmesg_args.ela via --output-http /scripts route fallback" \
     "$BIN" --output-http "http://127.0.0.1:5321/upload" --script "fallback_test_linux_dmesg_args.ela"
+run_accept_case "script nested/path/fallback_test_linux_dmesg_args.ela uses basename for --output-http /scripts route fallback" \
+    "$BIN" --output-http "http://127.0.0.1:5321/upload" --script "nested/path/fallback_test_linux_dmesg_args.ela"
 
 finish_tests
