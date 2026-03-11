@@ -49,8 +49,8 @@ ZIG_DIR="${ROOT_DIR}/.tools/zig-linux-x86_64-${ZIG_VERSION}"
 ZIG_BIN="${ZIG_DIR}/zig"
 
 TARGETS_TABLE='
-arm32-le|arm-linux-musleabi|arm32|arm-linux-musleabi
-arm32-be|armeb-linux-musleabi,armeb-linux-gnueabi|armeb|armeb-linux-musleabi,armeb-linux-gnueabi
+arm32-le|arm-linux-musleabi||
+arm32-be|armeb-linux-musleabi,armeb-linux-gnueabi||
 aarch64-le|aarch64-linux-musl|aarch64|aarch64-linux-musl
 aarch64-be|aarch64_be-linux-musl|aarch64_be|aarch64_be-linux-musl
 mips-le|mipsel-linux-musleabi,mipsel-linux-musleabihf|mipsel|mipsel-linux-musleabi
@@ -282,18 +282,23 @@ build_target() {
       echo "All candidate default targets failed for ${name}" >&2
     fi
 
-    if build_one_variant \
-      "compat" \
-      "${name}" \
-      "${cpu_compat_zig_targets}" \
-      "${cpu_compat}" \
-      "${compat_jobs}" \
-      "${DIST_DIR}/${name}/embedded_linux_audit-${name}-compat" \
-      "${repo_copy}"
-    then
-      compat_ok=1
+    if [[ -n "${cpu_compat}" && -n "${cpu_compat_zig_targets}" ]]; then
+      if build_one_variant \
+        "compat" \
+        "${name}" \
+        "${cpu_compat_zig_targets}" \
+        "${cpu_compat}" \
+        "${compat_jobs}" \
+        "${DIST_DIR}/${name}/embedded_linux_audit-${name}-compat" \
+        "${repo_copy}"
+      then
+        compat_ok=1
+      else
+        echo "All candidate compat targets failed for ${name}" >&2
+      fi
     else
-      echo "All candidate compat targets failed for ${name}" >&2
+      echo "Skipping compat build for ${name}"
+      compat_ok=1
     fi
 
     write_status "${status_file}" "${name}" "${default_ok}" "${compat_ok}"

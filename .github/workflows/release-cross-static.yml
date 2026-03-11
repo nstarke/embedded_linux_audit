@@ -18,12 +18,8 @@ jobs:
         include:
           - name: arm32-le
             zig_targets: arm-linux-musleabi
-            cpu_compat: arm32
-            cpu_compat_zig_targets: arm-linux-musleabi
           - name: arm32-be
             zig_targets: armeb-linux-musleabi,armeb-linux-gnueabi
-            cpu_compat: armeb
-            cpu_compat_zig_targets: armeb-linux-musleabi,armeb-linux-gnueabi
           - name: aarch64-le
             zig_targets: aarch64-linux-musl
             cpu_compat: aarch64
@@ -140,6 +136,7 @@ jobs:
           fi
 
       - name: Build CPU_COMPAT static binary
+        if: ${{ matrix.name != 'arm32-le' && matrix.name != 'arm32-be' }}
         run: |
           set -euo pipefail
           export CFLAGS=
@@ -185,6 +182,7 @@ jobs:
           path: |
             dist/${{ matrix.name }}/embedded_linux_audit-${{ matrix.name }}
             dist/${{ matrix.name }}/embedded_linux_audit-${{ matrix.name }}-compat
+          if-no-files-found: ignore
 
   publish-release-assets:
     name: Publish release assets
