@@ -23,7 +23,7 @@ const RELEASE_STATE_FILE = '.release_state.json';
 
 function findProjectRoot(startDir) {
   const markers = [
-    ['tests', 'agent', 'download_tests.sh'],
+    ['tests', 'agent', 'shell', 'download_tests.sh'],
     ['api', 'agent', 'package.json'],
     ['Makefile']
   ];

@@ -39,8 +39,8 @@ if (serverModule.resolveProjectPath('tests') !== path.join(repoRoot, 'tests')) {
   fail(`expected resolveProjectPath('tests') to resolve under repo root, got: ${serverModule.resolveProjectPath('tests')}`);
 }
 
-if (!fs.existsSync(serverModule.resolveProjectPath('tests/agent/download_tests.sh'))) {
-  fail(`expected download_tests.sh to exist at resolved path, got: ${serverModule.resolveProjectPath('tests/agent/download_tests.sh')}`);
+if (!fs.existsSync(serverModule.resolveProjectPath('tests/agent/shell/download_tests.sh'))) {
+  fail(`expected download_tests.sh to exist at resolved path, got: ${serverModule.resolveProjectPath('tests/agent/shell/download_tests.sh')}`);
 }
 
 let help = '';

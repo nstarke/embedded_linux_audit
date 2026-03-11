@@ -2,8 +2,8 @@ const { listBinaryEntries } = require('./shared');
 
 module.exports = function registerRootRoute(app, deps) {
   const { testsDir, scriptsDir, fsp, verboseRequestLog, verboseResponseLog } = deps;
-  const configuredAgentTestsDir = deps.path.join(testsDir, 'agent');
-  const repoAgentTestsDir = deps.path.resolve(__dirname, '..', '..', '..', 'tests', 'agent');
+  const configuredAgentTestsDir = deps.path.join(testsDir, 'agent', 'shell');
+  const repoAgentTestsDir = deps.path.resolve(__dirname, '..', '..', '..', 'tests', 'agent', 'shell');
 
   function getAgentTestDirs() {
     const dirs = [configuredAgentTestsDir];
@@ -64,7 +64,7 @@ module.exports = function registerRootRoute(app, deps) {
       : '      <li><em>No binaries downloaded.</em></li>';
 
     const testItems = testEntries.length
-      ? testEntries.map(({ name, url }) => `      <li><a href="${escapeHtml(url)}">tests/agent/${escapeHtml(name)}</a></li>`).join('\n')
+      ? testEntries.map(({ name, url }) => `      <li><a href="${escapeHtml(url)}">tests/agent/shell/${escapeHtml(name)}</a></li>`).join('\n')
       : '      <li><em>No agent test shell scripts found.</em></li>';
 
     const scriptItems = scriptEntries.length

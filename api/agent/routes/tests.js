@@ -2,8 +2,8 @@ const { isSafeSinglePathSegment } = require('./shared');
 
 module.exports = function registerTestsRoute(app, deps) {
   const { testsDir, fsp, isWithinRoot, verboseRequestLog, verboseResponseLog } = deps;
-  const configuredAgentTestsDir = deps.path.join(testsDir, 'agent');
-  const repoAgentTestsDir = deps.path.resolve(__dirname, '..', '..', '..', 'tests', 'agent');
+  const configuredAgentTestsDir = deps.path.join(testsDir, 'agent', 'shell');
+  const repoAgentTestsDir = deps.path.resolve(__dirname, '..', '..', '..', 'tests', 'agent', 'shell');
 
   function getAgentTestDirs() {
     const dirs = [configuredAgentTestsDir];

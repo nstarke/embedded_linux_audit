@@ -30,7 +30,7 @@ done
 
 export TEST_OUTPUT_HTTP
 
-# shellcheck source=tests/agent/common.sh
+# shellcheck source=tests/agent/shell/common.sh
 . "$SCRIPT_DIR/common.sh"
 
 require_binary "$BIN"
