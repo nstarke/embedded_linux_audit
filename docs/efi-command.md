@@ -6,6 +6,8 @@ EFI utilities for dumping variables and working with PCI sysfs option ROM nodes.
 
 Enumerate EFI variables available through efivarfs/libefivar and emit them in the selected top-level `--output-format`.
 
+For full `dump-vars` details, see [EFI vars command reference](efi-vars-command.md).
+
 - supported output formats: `txt`, `csv`, and `json`
 - when top-level `--output-http` or `--output-https` is configured, results are POSTed to `/:mac/upload/efi-vars`
 - when top-level `--output-tcp` is configured, formatted records are streamed over TCP as they are emitted

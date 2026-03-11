@@ -7,7 +7,8 @@
 - **Environment discovery** (`embedded_linux_audit uboot env`): scans flash/block devices for valid U-Boot environment candidates and can emit `fw_env.config` entries.
 - **Image discovery/extraction** (`embedded_linux_audit uboot image`): scans for likely U-Boot image headers, resolves load addresses, and can pull image bytes.
 - **Rule-based auditing** (`embedded_linux_audit uboot audit`): runs compiled rules against selected bytes to validate security and configuration expectations.
-- **Linux utilities** (`embedded_linux_audit linux dmesg`, `embedded_linux_audit linux remote-copy`): collect kernel logs and transfer files.
+- **Linux utilities** (`embedded_linux_audit linux dmesg`, `embedded_linux_audit linux download-file`, `embedded_linux_audit linux execute-command`, `embedded_linux_audit linux grep`, `embedded_linux_audit linux list-files`, `embedded_linux_audit linux list-symlinks`, `embedded_linux_audit linux remote-copy`): collect logs, fetch files, execute commands, search directories, enumerate files/symlinks, and transfer files.
+- **EFI utilities** (`embedded_linux_audit efi dump-vars`, `embedded_linux_audit efi orom`): dump EFI variables and work with EFI PCI option ROMs.
 
 Running `embedded_linux_audit` with no arguments starts an interactive shell that exposes the same command groups/subcommands, supports tab completion when built with readline, supports up/down command history navigation, and provides a `set` helper for configuring `ELA_API_URL` and `ELA_API_INSECURE` in the current process.
 
