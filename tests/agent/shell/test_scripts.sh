@@ -14,6 +14,58 @@ TEST_OUTPUT_HTTP="${TEST_OUTPUT_HTTP:-}"
 require_binary "$BIN"
 print_section "interactive script file coverage"
 
+REMOTE_HTTP_SERVER_PID=""
+REMOTE_HTTP_SERVER_TMPDIR=""
+
+cleanup_remote_http_server() {
+    if [ -n "$REMOTE_HTTP_SERVER_PID" ]; then
+        kill "$REMOTE_HTTP_SERVER_PID" 2>/dev/null || true
+        wait "$REMOTE_HTTP_SERVER_PID" 2>/dev/null || true
+        REMOTE_HTTP_SERVER_PID=""
+    fi
+
+    if [ -n "$REMOTE_HTTP_SERVER_TMPDIR" ] && [ -d "$REMOTE_HTTP_SERVER_TMPDIR" ]; then
+        rm -rf "$REMOTE_HTTP_SERVER_TMPDIR"
+        REMOTE_HTTP_SERVER_TMPDIR=""
+    fi
+}
+
+start_remote_http_server() {
+    python_bin="$(find_python_bin)" || {
+        echo "error: python or python3 is required for remote script HTTP test"
+        exit 1
+    }
+
+    REMOTE_HTTP_SERVER_TMPDIR="$(mktemp -d /tmp/ela_remote_script.XXXXXX)"
+    cp "$SCRIPTS_DIR/test_linux_dmesg_args.ela" "$REMOTE_HTTP_SERVER_TMPDIR/remote_test_linux_dmesg_args.ela"
+
+    REMOTE_HTTP_SERVER_LOG="$REMOTE_HTTP_SERVER_TMPDIR/http.log"
+    "$python_bin" -m http.server 5320 --bind 127.0.0.1 --directory "$REMOTE_HTTP_SERVER_TMPDIR" >"$REMOTE_HTTP_SERVER_LOG" 2>&1 &
+    REMOTE_HTTP_SERVER_PID=$!
+
+    i=0
+    while [ "$i" -lt 50 ]; do
+        if ! kill -0 "$REMOTE_HTTP_SERVER_PID" 2>/dev/null; then
+            echo "error: remote HTTP test server exited unexpectedly"
+            sed -n '1,120p' "$REMOTE_HTTP_SERVER_LOG" 2>/dev/null || true
+            exit 1
+        fi
+
+        if curl -fsS "http://127.0.0.1:5320/remote_test_linux_dmesg_args.ela" >/dev/null 2>&1; then
+            return 0
+        fi
+
+        sleep 0.1
+        i=$(expr "$i" + 1)
+    done
+
+    echo "error: timed out waiting for remote HTTP test server"
+    sed -n '1,120p' "$REMOTE_HTTP_SERVER_LOG" 2>/dev/null || true
+    exit 1
+}
+
+trap 'cleanup_remote_http_server' EXIT INT TERM
+
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --output-http)
@@ -53,5 +105,9 @@ for test_script in \
 do
     run_accept_case "script $(basename "$test_script")" "$BIN" --script "$test_script"
 done
+
+start_remote_http_server
+run_accept_case "script remote_test_linux_dmesg_args.ela via HTTP URL" \
+    "$BIN" --script "http://127.0.0.1:5320/remote_test_linux_dmesg_args.ela"
 
 finish_tests
