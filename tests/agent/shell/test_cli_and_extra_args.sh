@@ -49,6 +49,13 @@ run_exact_case "top-level invalid --output-http URI" 2 "$BIN" --output-http ftp:
 run_exact_case "top-level unknown command group" 2 "$BIN" unknown-group
 run_exact_case "top-level rejects --script with direct command" 2 "$BIN" --script /tmp/nonexistent-script.ela linux dmesg
 run_exact_case "top-level missing local script path" 2 "$BIN" --script /tmp/nonexistent-script.ela
+run_accept_case "top-level ELA_API_URL http" env ELA_API_URL=http://127.0.0.1:1/upload "$BIN" linux dmesg --help
+run_accept_case "top-level ELA_API_URL https + ELA_API_INSECURE=true" env ELA_API_URL=https://127.0.0.1:1/upload ELA_API_INSECURE=true "$BIN" linux dmesg --help
+run_exact_case "top-level invalid ELA_API_URL" 2 env ELA_API_URL=ftp://127.0.0.1:1/upload "$BIN" linux dmesg --help
+run_accept_case "top-level ELA_OUTPUT_FORMAT json" env ELA_OUTPUT_FORMAT=json "$BIN" linux dmesg --help
+run_exact_case "top-level invalid ELA_OUTPUT_FORMAT" 2 env ELA_OUTPUT_FORMAT=xml "$BIN" linux dmesg --help
+run_accept_case "top-level ELA_QUIET true" env ELA_QUIET=true "$BIN" linux dmesg --help
+run_exact_case "top-level invalid ELA_OUTPUT_TCP" 2 env ELA_OUTPUT_TCP=invalid-target "$BIN" linux dmesg --help
 
 TMP_SCRIPT="$(mktemp /tmp/ela-top-level-script.XXXXXX)"
 cat >"$TMP_SCRIPT" <<'EOF_SCRIPT'
@@ -58,6 +65,7 @@ embedded_linux_audit linux execute-command --help # inline comment should be ign
 ela linux download-file --help # inline comment should be ignored
 EOF_SCRIPT
 run_exact_case "top-level --script accepts whole-line and inline comments" 0 "$BIN" --script "$TMP_SCRIPT"
+run_accept_case "top-level ELA_SCRIPT local file" env ELA_SCRIPT="$TMP_SCRIPT" "$BIN"
 rm -f "$TMP_SCRIPT"
 
 run_exact_case "linux ssh client --help" 0 "$BIN" linux ssh client --help

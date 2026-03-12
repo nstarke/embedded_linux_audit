@@ -1,0 +1,27 @@
+# Interactive/script coverage for top-level CLI and extra parser combinations
+help
+ela --help
+embedded_linux_audit --output-format json --help
+
+set ELA_API_URL http://127.0.0.1:1/upload
+set ELA_API_INSECURE true
+set ELA_OUTPUT_FORMAT json
+set ELA_QUIET true
+set ELA_OUTPUT_TCP 127.0.0.1:9
+set ELA_SCRIPT ./tests/agent/scripts/linux/test_linux_dmesg_args.ela
+
+# whole-line comment should be ignored
+linux dmesg --help # inline comment should be ignored
+embedded_linux_audit linux execute-command --help # inline comment should be ignored
+ela linux download-file --help # inline comment should be ignored
+
+linux ssh client --help
+ela linux ssh copy --help
+embedded_linux_audit linux ssh tunnel --help
+linux ssh copy 127.0.0.1 --local-path /tmp/src --remote-path /tmp/dst --port 2022
+
+uboot env parse-vars --size 0x10000
+ela uboot env --parse-vars --size 0x10000
+
+embedded_linux_audit --output-http http://127.0.0.1:1/image uboot image pull --dev /dev/null --offset 0x0 --help
+uboot audit --dev /dev/null --offset 0x0 --size 0x10000 --signature-alg sha512 --help
