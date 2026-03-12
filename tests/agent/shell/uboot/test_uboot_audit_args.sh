@@ -141,7 +141,7 @@ run_accept_case "uboot audit --output-http" \
     "$BIN" uboot audit --dev /dev/null --size "$TEST_SIZE" --output-http http://127.0.0.1:1/audit
 
 run_accept_case "uboot audit --output-http" \
-    "$BIN" uboot audit --dev /dev/null --size "$TEST_SIZE" --output-http https://127.0.0.1:1/audit
+    "$BIN" uboot audit --dev /dev/null --size "$TEST_SIZE" --output-https https://127.0.0.1:1/audit
 
 run_accept_case "--insecure uboot audit" \
     "$BIN" --insecure uboot audit --dev /dev/null --size "$TEST_SIZE"
@@ -156,7 +156,7 @@ run_exact_case "uboot audit invalid --output-http" 2 \
     "$BIN" uboot audit --dev /dev/null --size "$TEST_SIZE" --output-http ftp://127.0.0.1:1/audit
 
 run_exact_case "uboot audit invalid --output-http" 2 \
-    "$BIN" uboot audit --dev /dev/null --size "$TEST_SIZE" --output-http http://127.0.0.1:1/audit
+    "$BIN" uboot audit --dev /dev/null --size "$TEST_SIZE" --output-http ftp://127.0.0.1:1/audit
 
 run_exact_case "uboot audit both http+https" 2 \
     "$BIN" uboot audit --dev /dev/null --size "$TEST_SIZE" --output-http http://127.0.0.1:1/audit --output-http https://127.0.0.1:1/audit

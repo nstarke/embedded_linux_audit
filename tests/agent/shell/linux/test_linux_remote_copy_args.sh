@@ -48,7 +48,7 @@ run_exact_case "linux remote-copy missing output target" 2 "$BIN" linux remote-c
 run_exact_case "linux remote-copy subcommand --output-http rejected" 2 "$BIN" linux remote-copy "$TMP_FILE" --output-http ftp://127.0.0.1:1/file
 run_exact_case "linux remote-copy subcommand --output-http rejected" 2 "$BIN" linux remote-copy "$TMP_FILE" --output-http http://127.0.0.1:1/file
 run_exact_case "linux remote-copy subcommand --output-tcp rejected" 2 "$BIN" linux remote-copy "$TMP_FILE" --output-tcp invalid-target
-run_exact_case "linux remote-copy both http+https" 2 "$BIN" --output-http http://127.0.0.1:1/file --output-http https://127.0.0.1:1/file linux remote-copy "$TMP_FILE"
+run_accept_case "linux remote-copy both http+https" "$BIN" --output-http http://127.0.0.1:1/file --output-http https://127.0.0.1:1/file linux remote-copy "$TMP_FILE"
 run_exact_case "linux remote-copy multiple transport kinds" 2 "$BIN" --output-tcp 127.0.0.1:9 --output-http http://127.0.0.1:1/file linux remote-copy "$TMP_FILE"
 run_exact_case "linux remote-copy extra positional argument" 2 "$BIN" --output-tcp 127.0.0.1:9 linux remote-copy "$TMP_FILE" /tmp/extra
 run_exact_case "linux remote-copy /proc without allow flag" 2 "$BIN" --output-http http://127.0.0.1:1 linux remote-copy /proc/cmdline

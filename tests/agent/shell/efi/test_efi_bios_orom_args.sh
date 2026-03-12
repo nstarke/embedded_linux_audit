@@ -54,7 +54,7 @@ run_exact_case "efi orom pull missing output target" 2 "$BIN" efi orom pull
 run_exact_case "bios orom pull missing output target" 2 "$BIN" bios orom pull
 
 run_exact_case "efi orom pull invalid --output-http" 2 "$BIN" efi orom pull --output-http ftp://127.0.0.1:1/orom
-run_exact_case "bios orom pull invalid --output-http" 2 "$BIN" bios orom pull --output-http http://127.0.0.1:1/orom
+run_exact_case "bios orom pull invalid --output-http" 2 "$BIN" bios orom pull --output-http ftp://127.0.0.1:1/orom
 run_exact_case "efi orom pull both http+https" 2 "$BIN" efi orom pull --output-http http://127.0.0.1:1/orom --output-http https://127.0.0.1:1/orom
 run_exact_case "bios orom pull both http+https" 2 "$BIN" bios orom pull --output-http http://127.0.0.1:1/orom --output-http https://127.0.0.1:1/orom
 run_exact_case "efi orom pull extra positional arg" 2 "$BIN" efi orom pull extra
@@ -228,7 +228,7 @@ PY
         http_req_body="$(mktemp /tmp/test_orom_http_body.XXXXXX)"
         http_server_log="$(mktemp /tmp/test_orom_http_server.XXXXXX)"
 
-        REQUEST_PATH_FILE="$http_req_path" REQUEST_TYPE_FILE="$http_req_type" REQUEST_BODY_FILE="$http_req_body" \
+        REQUEST_PATH_FILE="$http_req_path" REQUEST_TYPE_FILE="$http_req_type" REQUEST_BODY_FILE="$http_req_body" NEEDLE="$no_result_message" \
             "$python_bin" - <<'PY' >"$http_server_log" 2>&1 &
 import http.server
 import os
@@ -255,7 +255,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.send_response(200)
         self.end_headers()
         self.wfile.write(b'ok\n')
-        if body.find(os.environ.get('NEEDLE', '').encode()) != -1:
+        needle = os.environ.get('NEEDLE', '')
+        if needle and body.find(needle.encode()) != -1:
             threading.Thread(target=self.server.shutdown, daemon=True).start()
 
     def log_message(self, format, *args):

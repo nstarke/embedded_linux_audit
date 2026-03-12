@@ -142,7 +142,7 @@ static char *url_percent_encode(const char *text)
 		return NULL;
 
 	while (*p) {
-		if (isalnum(*p) || *p == '-' || *p == '_' || *p == '.' || *p == '~' || *p == '/') {
+		if (isalnum(*p) || *p == '-' || *p == '_' || *p == '.' || *p == '~') {
 			if (append_bytes(&out, &len, &cap, (const char *)p, 1) != 0)
 				goto fail;
 		} else {
