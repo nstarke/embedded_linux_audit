@@ -61,6 +61,14 @@ static bool buffer_has_newline(const char *buf, size_t len)
 static const char *audit_http_content_type(enum uboot_output_format fmt);
 static int flush_output_http_buffer(void);
 
+static bool audit_rule_may_need_signature_artifacts(const char *rule_filter)
+{
+	if (!rule_filter || !*rule_filter)
+		return true;
+
+	return !strcmp(rule_filter, "uboot_validate_secureboot");
+}
+
 static enum uboot_output_format detect_output_format(void)
 {
 	const char *fmt = getenv("FW_AUDIT_OUTPUT_FORMAT");
@@ -645,7 +653,7 @@ static void usage(const char *prog)
 		"  --size <n>      Number of bytes to read for audit (default: 0x10000)\n"
 		"  --signature-blob <path>   Blob file used for signature verification rules\n"
 		"  --signature-pubkey <path> Public key PEM file for signature verification rules\n"
-		"  --scan-signature-devices  Force device scan for FIT blob and PEM pubkey (default if paths missing)\n"
+		"  --scan-signature-devices  Force device scan for FIT blob and PEM pubkey\n"
 		"  --scan-signature-blob <glob>   Auto-select first readable blob path matching glob\n"
 		"  --scan-signature-pubkey <glob> Auto-select first readable pubkey path matching glob\n"
 		"  --signature-alg <name>    Digest algorithm (if omitted: tries sha256, sha384, sha512, sha1, sha224)\n",
@@ -1068,7 +1076,9 @@ int embedded_linux_audit_scan_main(int argc, char **argv)
 		}
 	}
 
-	if (!signature_blob_path || !signature_pubkey_path || scan_signature_devices) {
+	if (scan_signature_devices ||
+	    ((!signature_blob_path || !signature_pubkey_path) &&
+	     audit_rule_may_need_signature_artifacts(rule_filter))) {
 		int found_count = auto_scan_signature_artifacts(&scanned_blob_path, &scanned_pubkey_path);
 		if (found_count < 0) {
 			err_printf("Warning: signature artifact device scan failed\n");
