@@ -3,5 +3,5 @@ uboot audit --help
 ela uboot audit --help
 embedded_linux_audit uboot audit --help
 uboot audit --list-rules
-ela uboot audit --dev /dev/null --size 0x10000
+ela uboot audit --rule uboot_validate_crc32 --dev /dev/null --size 0x10000
 embedded_linux_audit --output-format json uboot audit --rule uboot_validate_crc32 --dev /dev/null --size 0x10000
