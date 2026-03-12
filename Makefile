@@ -206,6 +206,14 @@ LIBSSH_CMAKE_ARGS := $(CMAKE_CC_ARGS)
 ifneq ($(strip $(LIBSSH_EXTRA_CFLAGS)),)
 LIBSSH_CMAKE_ARGS += -DCMAKE_C_FLAGS="$(LIBSSH_EXTRA_CFLAGS)"
 endif
+ifneq (,$(findstring musl,$(CMAKE_C_COMPILER_TARGET)))
+# libssh unconditionally adds -D_GNU_SOURCE to its targets. On Zig musl cross
+# builds that makes misc.c select GNU strerror_r semantics even though musl
+# provides the POSIX int-returning variant, which then fails to compile. Use a
+# compiler launcher to drop the incompatible define (and a few noisy/problematic
+# warning flags) only for libssh without modifying the submodule sources.
+LIBSSH_CMAKE_ARGS += -DCMAKE_C_COMPILER_LAUNCHER=python3\;$(abspath tools/libssh_cc_launcher.py)
+endif
 ifneq ($(strip $(CMAKE_C_COMPILER_TARGET)),)
 # libssh's FIPS_mode() probe can mis-detect availability when cross-compiling
 # against our bundled OpenSSL 3.x, which then breaks the actual compile because
@@ -221,6 +229,9 @@ ifneq ($(findstring zig cc,$(CC)),)
 LIBSSH_EXTRA_CFLAGS += -Wno-strict-prototypes
 LIBSSH_CMAKE_ARGS := $(CMAKE_CC_ARGS)
 LIBSSH_CMAKE_ARGS += -DCMAKE_C_FLAGS="$(LIBSSH_EXTRA_CFLAGS)"
+ifneq (,$(findstring musl,$(CMAKE_C_COMPILER_TARGET)))
+LIBSSH_CMAKE_ARGS += -DCMAKE_C_COMPILER_LAUNCHER=python3\;$(abspath tools/libssh_cc_launcher.py)
+endif
 ifneq ($(strip $(CMAKE_C_COMPILER_TARGET)),)
 LIBSSH_CMAKE_ARGS += -DHAVE_OPENSSL_FIPS_MODE=0
 endif
@@ -253,7 +264,9 @@ CURL_LIB      := $(CURL_BUILD)/lib/libcurl.a
 CURL_CFLAGS   := -I$(CURL_DIR)/include
 LIBSSH_DIR    := third_party/libssh
 LIBSSH_BUILD  := $(LIBSSH_DIR)/build-$(CC_TAG)
-LIBSSH_LIB    := $(LIBSSH_BUILD)/static/libssh.a
+# libssh's CMakeLists places the ssh-static archive under src/ on non-MSVC
+# builds because OUTPUT_SUFFIX is empty in that case.
+LIBSSH_LIB    := $(LIBSSH_BUILD)/src/libssh.a
 LIBSSH_CFLAGS := -I$(LIBSSH_DIR)/include -I$(LIBSSH_BUILD)/include -I$(LIBSSH_BUILD)
 WOLFSSL_DIR   := third_party/wolfssl
 WOLFSSL_BUILD := $(WOLFSSL_DIR)/build-$(CC_TAG)
@@ -366,7 +379,6 @@ $(CURL_LIB): $(OPENSSL_SSL_LIB)
 
 $(LIBSSH_LIB): $(OPENSSL_SSL_LIB) $(ZLIB_LIB)
 	cmake -S $(LIBSSH_DIR) -B $(LIBSSH_BUILD) $(LIBSSH_CMAKE_ARGS) -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DBUILD_STATIC_LIB=ON -DWITH_EXAMPLES=OFF -DUNIT_TESTING=OFF -DCLIENT_TESTING=OFF -DSERVER_TESTING=OFF -DWITH_SERVER=OFF -DWITH_GSSAPI=OFF -DWITH_NACL=OFF -DWITH_ZLIB=ON -DZLIB_INCLUDE_DIR="$(abspath $(ZLIB_DIR))" -DZLIB_LIBRARY="$(abspath $(ZLIB_LIB))" -DOPENSSL_ROOT_DIR="$(abspath $(OPENSSL_INSTALL))" -DOPENSSL_INCLUDE_DIR="$(abspath $(OPENSSL_INSTALL))/include" -DOPENSSL_CRYPTO_LIBRARY="$(abspath $(OPENSSL_LIB))"
-	python3 -c 'from pathlib import Path; build = Path("$(LIBSSH_BUILD)"); paths = [Path("src/CMakeFiles/ssh-static.dir/flags.make"), Path("src/CMakeFiles/ssh.dir/flags.make")]; [p.write_text(p.read_text().replace("-Werror=strict-prototypes", "-Wno-error=strict-prototypes").replace("-Wstrict-prototypes", "-Wno-strict-prototypes")) for p in (build / rel for rel in paths) if p.exists()]'
 	cmake --build $(LIBSSH_BUILD) --parallel $(JOBS) --target ssh-static
 
 $(OPENSSL_LIB): $(OPENSSL_SSL_LIB)
