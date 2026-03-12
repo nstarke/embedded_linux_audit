@@ -1,5 +1,7 @@
 # Interactive/script coverage for efi dump-vars
 efi dump-vars --help
-ela efi dump-vars
-embedded_linux_audit --output-format json efi dump-vars
+ela efi dump-vars --help
+embedded_linux_audit efi dump-vars --help
+efi dump-vars
 ela --output-tcp 127.0.0.1:9 efi dump-vars
+embedded_linux_audit --output-format json efi dump-vars

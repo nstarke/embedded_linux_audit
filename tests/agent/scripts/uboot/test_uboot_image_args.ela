@@ -1,5 +1,7 @@
 # Interactive/script coverage for uboot image
 uboot image --help
-ela uboot image
-embedded_linux_audit uboot image find-address --dev /dev/null --offset 0x0 --send-logs --output-tcp 127.0.0.1:9
-ela uboot image list-commands --dev /dev/null --offset 0x0 --send-logs --output-tcp 127.0.0.1:9
+ela uboot image --help
+embedded_linux_audit uboot image --help
+uboot image
+ela uboot image find-address --dev /dev/null --offset 0x0 --send-logs --output-tcp 127.0.0.1:9
+embedded_linux_audit uboot image list-commands --dev /dev/null --offset 0x0 --send-logs --output-tcp 127.0.0.1:9

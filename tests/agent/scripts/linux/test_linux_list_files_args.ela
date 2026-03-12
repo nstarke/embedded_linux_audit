@@ -1,5 +1,7 @@
 # Interactive/script coverage for linux list-files
 linux list-files --help
-ela linux list-files /tmp
-embedded_linux_audit linux list-files /tmp --recursive
-ela --output-format json linux list-files /tmp --suid-only
+ela linux list-files --help
+embedded_linux_audit linux list-files --help
+linux list-files /tmp
+ela linux list-files /tmp --recursive
+embedded_linux_audit --output-format json linux list-files /tmp --suid-only

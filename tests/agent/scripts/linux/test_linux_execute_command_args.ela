@@ -1,4 +1,7 @@
 # Interactive/script coverage for linux execute-command
 linux execute-command --help
-ela linux execute-command "echo hello from script"
-embedded_linux_audit --output-format json linux execute-command "printf second"
+ela linux execute-command --help
+embedded_linux_audit linux execute-command --help
+linux execute-command "echo hello from script"
+ela linux execute-command "printf second from ela"
+embedded_linux_audit --output-format json linux execute-command "printf third"

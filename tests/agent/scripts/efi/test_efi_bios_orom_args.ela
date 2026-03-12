@@ -1,7 +1,13 @@
 # Interactive/script coverage for efi/bios orom
 efi dump-vars --help
 ela efi dump-vars
+embedded_linux_audit efi dump-vars
+efi orom --help
+ela efi orom --help
 embedded_linux_audit efi orom --help
+bios orom --help
 ela bios orom --help
-embedded_linux_audit efi orom list --output-tcp 127.0.0.1:9
+embedded_linux_audit bios orom --help
+efi orom list
 ela bios orom list --output-http http://127.0.0.1:1/orom
+embedded_linux_audit efi orom list --output-tcp 127.0.0.1:9
