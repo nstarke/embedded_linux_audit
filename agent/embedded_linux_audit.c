@@ -1185,7 +1185,6 @@ static int execute_script_commands(const char *prog, const char *script_source)
 	bool downloaded = false;
 	bool insecure;
 	unsigned long lineno = 0;
-	int last_rc = 0;
 	int final_rc = 0;
 
 	if (!prog || !script_source || !*script_source)
@@ -1273,7 +1272,7 @@ static int execute_script_commands(const char *prog, const char *script_source)
 	fp = fopen(effective_path, "r");
 	if (!fp) {
 		fprintf(stderr, "Cannot open script %s: %s\n", effective_path, strerror(errno));
-		last_rc = 2;
+		final_rc = 2;
 		goto out;
 	}
 
@@ -1294,17 +1293,33 @@ static int execute_script_commands(const char *prog, const char *script_source)
 		rc = interactive_parse_line(trimmed, &argv, &argc);
 		if (rc == -1) {
 			fprintf(stderr, "Out of memory while parsing script line %lu\n", lineno);
-			last_rc = 2;
+			final_rc = 2;
 			goto out;
 		}
 		if (rc != 0) {
 			fprintf(stderr, "Failed parsing script line %lu in %s\n", lineno, effective_path);
-			last_rc = rc;
+			final_rc = rc;
 			interactive_free_argv(argv, argc);
 			goto out;
 		}
 		if (argc == 0) {
 			interactive_free_argv(argv, argc);
+			continue;
+		}
+
+		if (!strcmp(argv[0], "help")) {
+			usage(prog);
+			interactive_free_argv(argv, argc);
+			continue;
+		}
+
+		if (!strcmp(argv[0], "set")) {
+			rc = interactive_set_command(argc, argv);
+			interactive_free_argv(argv, argc);
+			if (rc != 0) {
+				final_rc = rc;
+				goto out;
+			}
 			continue;
 		}
 
@@ -1318,7 +1333,7 @@ static int execute_script_commands(const char *prog, const char *script_source)
 				effective_path,
 				argv[0]);
 			interactive_free_argv(argv, argc);
-			last_rc = 2;
+			final_rc = 2;
 			goto out;
 		}
 
@@ -1328,7 +1343,7 @@ static int execute_script_commands(const char *prog, const char *script_source)
 		if (!dispatch_argv) {
 			fprintf(stderr, "Out of memory while preparing script line %lu\n", lineno);
 			interactive_free_argv(argv, argc);
-			last_rc = 2;
+			final_rc = 2;
 			goto out;
 		}
 
@@ -1336,7 +1351,7 @@ static int execute_script_commands(const char *prog, const char *script_source)
 		for (int i = script_cmd_idx; i < argc; i++)
 			dispatch_argv[i - script_cmd_idx + 1] = argv[i];
 
-		last_rc = embedded_linux_audit_dispatch(dispatch_argc, dispatch_argv);
+		(void)embedded_linux_audit_dispatch(dispatch_argc, dispatch_argv);
 		free(dispatch_argv);
 		interactive_free_argv(argv, argc);
 
@@ -1360,7 +1375,6 @@ out:
 			rmdir(script_dir);
 	}
 	free(fallback_uri);
-	final_rc = last_rc;
 	return final_rc;
 }
 
