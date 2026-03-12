@@ -13,6 +13,31 @@ TEST_SCRIPTS_DIR="$REPO_ROOT/tests/agent/scripts"
 RELEASE_BUILD_SCRIPT="$REPO_ROOT/tests/compile_release_binaries_locally.sh"
 SUPPORTED_ISAS="arm32-le arm32-be aarch64-le aarch64-be mips-le mips-be mips64-le mips64-be powerpc-le powerpc-be x86 x86_64 riscv32 riscv64"
 
+scrub_sensitive_stream() {
+    while IFS= read -r line || [ -n "$line" ]; do
+        lower_line="$(printf '%s' "$line" | tr '[:upper:]' '[:lower:]')"
+        case "$lower_line" in
+            *efi-var*|*efi_vars*|*efivars*)
+                printf '[REDACTED EFI VARS]\n'
+                continue
+                ;;
+        esac
+
+        printf '%s\n' "$line" | sed -E \
+            -e 's/(([Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Aa][Ss][Ss][Ww][Dd]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll][Ss]?|[Aa][Pp][Ii][_-]?[Kk][Ee][Yy]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Tt][Oo][Kk][Ee][Nn])[[:space:]]*[:=][[:space:]]*)[^[:space:],;"}]+/\1<REDACTED>/g' \
+            -e 's/(([?&]([Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Aa][Ss][Ss][Ww][Dd]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll][Ss]?|[Aa][Pp][Ii][_-]?[Kk][Ee][Yy]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Tt][Oo][Kk][Ee][Nn]))=)[^&[:space:]]+/\1<REDACTED>/g' \
+            -e 's/(("([Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Aa][Ss][Ss][Ww][Dd]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll][Ss]?|[Aa][Pp][Ii][_-]?[Kk][Ee][Yy]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Tt][Oo][Kk][Ee][Nn])"[[:space:]]*:[[:space:]]*")[^"]+)/\1<REDACTED>/g'
+    done
+}
+
+print_file_scrubbed() {
+    path="$1"
+
+    if [ -f "$path" ]; then
+        scrub_sensitive_stream <"$path"
+    fi
+}
+
 isa_has_compat_binary() {
     case "$1" in
         aarch64-le|aarch64-be|mips-le|mips-be|mips64-le|mips64-be|powerpc-le|powerpc-be|x86|x86_64|riscv32|riscv64)
@@ -222,9 +247,14 @@ run_qemu_binary_tests() {
 
     for script_file in "$rootfs_dir"/tests/agent/scripts/*.ela; do
         script_path="/tests/agent/scripts/$(basename "$script_file")"
+        script_log="$(mktemp /tmp/ela-qemu-script-log.${isa}.XXXXXX)"
         echo
         echo "===== Running $(basename "$script_file") ====="
-        if ! run_qemu_script_in_chroot "$qemu_mode" "$(basename "$qemu_runner")" "$rootfs_dir" "$script_path" "$@"; then
+        run_qemu_script_in_chroot "$qemu_mode" "$(basename "$qemu_runner")" "$rootfs_dir" "$script_path" "$@" >"$script_log" 2>&1
+        script_rc=$?
+        print_file_scrubbed "$script_log"
+        rm -f "$script_log"
+        if [ "$script_rc" -ne 0 ]; then
             rc=1
         fi
     done
