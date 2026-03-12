@@ -70,6 +70,10 @@ ifneq (,$(findstring zig cc,$(CC)))
 LDFLAGS += -Wl,--no-gc-sections
 endif
 
+ifneq ($(filter static,$(MAKECMDGOALS)),)
+LDFLAGS += -static
+endif
+
 empty :=
 space := $(empty) $(empty)
 compat_tag = $(if $(strip $(COMPAT_CPU)),$(COMPAT_CPU),default)
@@ -291,8 +295,10 @@ READLINE_HISTORY_LIB := $(READLINE_DIR)/libhistory.a
 READLINE_BUILD_CFLAGS ?= -O2 -Wno-incompatible-pointer-types
 LIBEFIVAR_HOST_CFLAGS ?= -O2 -std=gnu11 -funsigned-char -fvisibility=hidden
 LIBEFIVAR_HOST_CPPFLAGS ?= -I$(abspath $(LIBEFIVAR_DIR))/src/include -DEFIVAR_BUILD_ENVIRONMENT
-LIBEFIVAR_HOST_LDFLAGS ?= $(LIBEFIVAR_HOST_CFLAGS)
 GENERATED_DIR := generated
+LIBEFIVAR_HOST_LDFLAGS ?= $(LIBEFIVAR_HOST_CFLAGS)
+LIBEFIVAR_LINK_LIB := $(GENERATED_DIR)/libefivar-link-$(CC_TAG).a
+LIBEFIVAR_REPACK_DIR := $(GENERATED_DIR)/libefivar-repack-$(CC_TAG)
 DEFAULT_CA_BUNDLE_PEM := $(GENERATED_DIR)/cacert.pem
 CA_BUNDLE_URL ?= https://curl.se/ca/cacert.pem
 CA_BUNDLE_PEM ?= $(DEFAULT_CA_BUNDLE_PEM)
@@ -421,6 +427,16 @@ endif
 $(GENERATED_CA_SRC): tools/embed_ca_bundle.py $(CA_BUNDLE_PEM)
 	python3 tools/embed_ca_bundle.py --input "$(CA_BUNDLE_PEM)" --output "$@"
 
+$(LIBEFIVAR_LINK_LIB): $(LIBEFIVAR_BUILD_STAMP) | $(GENERATED_DIR)
+	rm -rf "$(LIBEFIVAR_REPACK_DIR)"
+	mkdir -p "$(LIBEFIVAR_REPACK_DIR)"
+	cd "$(LIBEFIVAR_REPACK_DIR)" && ar x "$(abspath $(LIBEFIVAR_LIB))"
+	for obj in "$(LIBEFIVAR_REPACK_DIR)"/*.o; do \
+		objcopy --redefine-sym crc32=efivar_crc32 "$$obj"; \
+	done
+	rm -f "$@"
+	ar rcs "$@" "$(LIBEFIVAR_REPACK_DIR)"/*.o
+
 $(NCURSES_BUILD_STAMP):
 	cd $(NCURSES_DIR) && $(MAKE) distclean >/dev/null 2>&1 || true
 	cd $(NCURSES_DIR) && ./configure --without-shared --without-cxx --without-cxx-binding --without-ada --without-tests --without-progs --without-manpages --with-normal --with-termlib CC='$(CC)' CFLAGS='$(CFLAGS)'
@@ -433,8 +449,8 @@ $(READLINE_BUILD_STAMP):
 	$(MAKE) -C $(READLINE_DIR) -j$(JOBS) libreadline.a libhistory.a
 	touch $@
 
-TARGET_DEPS := $(SRC) $(ZLIB_LIB) $(LIBUBOOTENV_LIB) $(LIBEFIVAR_BUILD_STAMP) $(JSONC_LIB) $(CURL_LIB) $(LIBSSH_LIB) $(OPENSSL_SSL_LIB) $(OPENSSL_LIB) $(READLINE_DEPS)
-TARGET_LIBS := $(LIBUBOOTENV_LIB) $(LIBEFIVAR_LIB) $(ZLIB_LIB) $(JSONC_LIB) $(CURL_LIB) $(LIBSSH_LIB) $(OPENSSL_SSL_LIB) $(OPENSSL_LIB)
+TARGET_DEPS := $(SRC) $(ZLIB_LIB) $(LIBUBOOTENV_LIB) $(LIBEFIVAR_BUILD_STAMP) $(LIBEFIVAR_LINK_LIB) $(JSONC_LIB) $(CURL_LIB) $(LIBSSH_LIB) $(OPENSSL_SSL_LIB) $(OPENSSL_LIB) $(READLINE_DEPS)
+TARGET_LIBS := $(LIBUBOOTENV_LIB) $(LIBEFIVAR_LINK_LIB) $(ZLIB_LIB) $(JSONC_LIB) $(CURL_LIB) $(LIBSSH_LIB) $(OPENSSL_SSL_LIB) $(OPENSSL_LIB)
 ifeq ($(ELA_ENABLE_WOLFSSL),1)
 TARGET_DEPS += $(WOLFSSL_LIB)
 TARGET_LIBS += $(WOLFSSL_LIB)
@@ -443,7 +459,6 @@ endif
 $(TARGET): $(TARGET_DEPS)
 	$(CC) $(CFLAGS) -o $@ $(SRC) $(TARGET_LIBS) $(LDFLAGS) $(LDLIBS)
 
-static: LDFLAGS += -static
 static: all
 
 test:
