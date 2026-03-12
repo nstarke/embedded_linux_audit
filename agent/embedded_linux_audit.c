@@ -1360,6 +1360,7 @@ out:
 			rmdir(script_dir);
 	}
 	free(fallback_uri);
+	final_rc = last_rc;
 	return final_rc;
 }
 
