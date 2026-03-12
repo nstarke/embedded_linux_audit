@@ -25,6 +25,7 @@
 #define FIT_MAX_TOTAL_SIZE (64U * 1024U * 1024U)
 #define AUTO_SCAN_STEP 0x1000ULL
 #define DEFAULT_AUDIT_SIZE 0x10000ULL
+#define AUTO_SCAN_MAX_BYTES (64ULL * 1024ULL * 1024ULL)
 
 static uint32_t read_be32_local(const uint8_t *p)
 {
@@ -368,6 +369,7 @@ static int find_fit_blob_in_device(const char *dev, uint64_t *off_out, uint32_t 
 {
 	uint8_t hdr[64];
 	uint64_t dev_size;
+	uint64_t scan_limit;
 	uint64_t off;
 	int fd;
 
@@ -384,7 +386,11 @@ static int find_fit_blob_in_device(const char *dev, uint64_t *off_out, uint32_t 
 		return -1;
 	}
 
-	for (off = 0; off + sizeof(hdr) <= dev_size; off += AUTO_SCAN_STEP) {
+	scan_limit = dev_size;
+	if (scan_limit > AUTO_SCAN_MAX_BYTES)
+		scan_limit = AUTO_SCAN_MAX_BYTES;
+
+	for (off = 0; off + sizeof(hdr) <= scan_limit; off += AUTO_SCAN_STEP) {
 		if (pread(fd, hdr, sizeof(hdr), (off_t)off) != (ssize_t)sizeof(hdr))
 			break;
 		if (memcmp(hdr, "\xD0\x0D\xFE\xED", 4))
@@ -442,6 +448,7 @@ static int find_pubkey_pem_in_device(const char *dev, char **pem_out)
 	char *carry = NULL;
 	size_t carry_len = 0;
 	uint64_t dev_size;
+	uint64_t scan_limit;
 	uint64_t off;
 	int fd;
 
@@ -458,7 +465,11 @@ static int find_pubkey_pem_in_device(const char *dev, char **pem_out)
 		return -1;
 	}
 
-	for (off = 0; off < dev_size; off += sizeof(chunk)) {
+	scan_limit = dev_size;
+	if (scan_limit > AUTO_SCAN_MAX_BYTES)
+		scan_limit = AUTO_SCAN_MAX_BYTES;
+
+	for (off = 0; off < scan_limit; off += sizeof(chunk)) {
 		ssize_t n = pread(fd, chunk, sizeof(chunk), (off_t)off);
 		char *combined;
 		size_t combined_len;

@@ -416,7 +416,7 @@ static int read_http_status_and_headers(int sock, int *status_out)
 	return 0;
 }
 
-static int simple_http_post(const char *uri,
+static int __attribute__((unused)) simple_http_post(const char *uri,
 			    const uint8_t *data,
 			    size_t len,
 			    const char *content_type,
