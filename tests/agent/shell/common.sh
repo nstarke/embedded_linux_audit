@@ -282,6 +282,10 @@ require_binary() {
     fi
 
     ela_ensure_command python3 >/dev/null 2>&1 || true
+
+    if command_exists zig || "$bin" --help 2>/dev/null | grep -qi 'zig'; then
+        ela_ensure_command llvm-objcopy >/dev/null 2>&1 || true
+    fi
 }
 
 run_exact_case() {

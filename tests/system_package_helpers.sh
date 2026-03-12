@@ -81,6 +81,12 @@ ela_command_package_name() {
                 *) return 1 ;;
             esac
             ;;
+        llvm-objcopy)
+            case "$ela_manager" in
+                apt|dnf|yum|zypper|pacman|apk) echo llvm ;;
+                *) return 1 ;;
+            esac
+            ;;
         perl) echo perl ;;
         autoconf) echo autoconf ;;
         python3|python)

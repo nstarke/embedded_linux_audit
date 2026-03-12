@@ -3,6 +3,10 @@
 set -u
 
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+
+# shellcheck source=tests/system_package_helpers.sh
+. "$REPO_ROOT/tests/system_package_helpers.sh"
 
 TEST_OUTPUT_HTTP="${TEST_OUTPUT_HTTP:-}"
 
@@ -30,6 +34,10 @@ while [ "$#" -gt 0 ]; do
 done
 
 rc=0
+
+if command -v zig >/dev/null 2>&1; then
+    ela_ensure_command llvm-objcopy >/dev/null 2>&1 || true
+fi
 
 for test_script in \
     "$SCRIPT_DIR/efi/test_efi_dump_vars_args.sh" \

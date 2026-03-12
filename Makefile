@@ -32,6 +32,14 @@ endif
 ZIG_CACHE_DIR := $(abspath $(TOOLS_CACHE_DIR))/zig/$(ZIG_VERSION)/$(ZIG_HOST_TRIPLE)
 ZIG_BIN := $(if $(ZIG_IN_PATH),$(ZIG_IN_PATH),$(ZIG_CACHE_DIR)/zig)
 NEEDS_ZIG := $(if $(findstring zig cc,$(CC)),1,$(if $(filter zig,$(notdir $(CMAKE_C_COMPILER))),1,))
+LLVM_OBJCOPY_IN_PATH := $(strip $(shell command -v llvm-objcopy 2>/dev/null))
+LLVM_OBJCOPY_BIN := $(if $(LLVM_OBJCOPY_IN_PATH),$(LLVM_OBJCOPY_IN_PATH),llvm-objcopy)
+
+ifeq ($(NEEDS_ZIG),1)
+OBJCOPY ?= $(LLVM_OBJCOPY_BIN)
+else
+OBJCOPY ?= objcopy
+endif
 
 ifeq ($(NEEDS_ZIG),1)
 CC := $(patsubst zig %,$(ZIG_BIN) %,$(CC))
@@ -242,6 +250,7 @@ endif
 
 LIBSSH_EXTRA_CFLAGS := $(COMPAT_CFLAGS)
 LIBSSH_CMAKE_ARGS := $(CMAKE_CC_ARGS)
+LIBSSH_EXTRA_CFLAGS += -DOPENSSL_ENGINE_STUBS
 ifneq ($(strip $(LIBSSH_EXTRA_CFLAGS)),)
 LIBSSH_CMAKE_ARGS += -DCMAKE_C_FLAGS="$(LIBSSH_EXTRA_CFLAGS)"
 endif
@@ -381,7 +390,7 @@ ifneq ($(filter $(COMPAT_CPU),arm32 armeb powerpc powerpchf),)
 SRC += compat/legacy_sync_builtins.c
 endif
 
-.PHONY: all env image static test clean check-autoconf check-zig
+.PHONY: all env image static test clean check-autoconf check-zig check-llvm-objcopy
 
 check-zig:
 	@if [ "$(NEEDS_ZIG)" != "1" ]; then \
@@ -426,6 +435,62 @@ check-zig:
 	mv "$$extracted_root" "$(ZIG_CACHE_DIR)"; \
 	rm -rf "$$extract_dir"; \
 	rm -f "$$archive_path"
+
+check-llvm-objcopy:
+	@if [ "$(NEEDS_ZIG)" != "1" ]; then \
+		exit 0; \
+	fi; \
+	if command -v "$(LLVM_OBJCOPY_BIN)" >/dev/null 2>&1; then \
+		exit 0; \
+	fi; \
+	echo "llvm-objcopy not found; attempting to install it"; \
+	manager=""; \
+	package=""; \
+	if command -v apt-get >/dev/null 2>&1; then \
+		manager="apt-get"; \
+		package="llvm"; \
+	elif command -v dnf >/dev/null 2>&1; then \
+		manager="dnf"; \
+		package="llvm"; \
+	elif command -v yum >/dev/null 2>&1; then \
+		manager="yum"; \
+		package="llvm"; \
+	elif command -v zypper >/dev/null 2>&1; then \
+		manager="zypper"; \
+		package="llvm"; \
+	elif command -v pacman >/dev/null 2>&1; then \
+		manager="pacman"; \
+		package="llvm"; \
+	elif command -v apk >/dev/null 2>&1; then \
+		manager="apk"; \
+		package="llvm"; \
+	else \
+		echo "error: llvm-objcopy is required for Zig cross-builds and no supported package manager was detected"; \
+		exit 1; \
+	fi; \
+	runner=""; \
+	if [ "$$(id -u)" -eq 0 ]; then \
+		runner=""; \
+	elif command -v sudo >/dev/null 2>&1; then \
+		runner="sudo"; \
+	elif command -v doas >/dev/null 2>&1; then \
+		runner="doas"; \
+	else \
+		echo "error: need root privileges (or sudo/doas) to install $$package"; \
+		exit 1; \
+	fi; \
+	case "$$manager" in \
+		apt-get) $${runner:+$$runner }apt-get update && $${runner:+$$runner }apt-get install -y "$$package" ;; \
+		dnf) $${runner:+$$runner }dnf install -y "$$package" ;; \
+		yum) $${runner:+$$runner }yum install -y "$$package" ;; \
+		zypper) $${runner:+$$runner }zypper --non-interactive install "$$package" ;; \
+		pacman) $${runner:+$$runner }pacman -Sy --noconfirm "$$package" ;; \
+		apk) $${runner:+$$runner }apk add --no-cache "$$package" ;; \
+		esac; \
+	if ! command -v "$(LLVM_OBJCOPY_BIN)" >/dev/null 2>&1; then \
+		echo "error: installed $$package but llvm-objcopy is still unavailable"; \
+		exit 1; \
+	fi
 
 check-autoconf:
 	@command -v $(AUTOCONF) >/dev/null 2>&1 || { \
@@ -508,12 +573,12 @@ endif
 $(GENERATED_CA_SRC): tools/embed_ca_bundle.py $(CA_BUNDLE_PEM)
 	python3 tools/embed_ca_bundle.py --input "$(CA_BUNDLE_PEM)" --output "$@"
 
-$(LIBEFIVAR_LINK_LIB): $(LIBEFIVAR_BUILD_STAMP) | $(GENERATED_DIR)
+$(LIBEFIVAR_LINK_LIB): $(LIBEFIVAR_BUILD_STAMP) | $(GENERATED_DIR) check-llvm-objcopy
 	rm -rf "$(LIBEFIVAR_REPACK_DIR)"
 	mkdir -p "$(LIBEFIVAR_REPACK_DIR)"
 	cd "$(LIBEFIVAR_REPACK_DIR)" && ar x "$(abspath $(LIBEFIVAR_LIB))"
 	for obj in "$(LIBEFIVAR_REPACK_DIR)"/*.o; do \
-		objcopy --redefine-sym crc32=efivar_crc32 "$$obj"; \
+		$(OBJCOPY) --redefine-sym crc32=efivar_crc32 "$$obj"; \
 	done
 	rm -f "$@"
 	ar rcs "$@" "$(LIBEFIVAR_REPACK_DIR)"/*.o
@@ -550,6 +615,11 @@ test:
 clean:
 	rm -f $(TARGET)
 	rm -rf $(GENERATED_DIR)
+	rm -f $(LIBEFIVAR_DIR)/.ela-build-*
+	rm -f $(NCURSES_DIR)/.ela-build-*
+	rm -f $(READLINE_DIR)/.ela-build-*
+	rm -f generated/libefivar-link-*.a
+	rm -rf generated/libefivar-repack-*
 	rm -rf $(JSONC_DIR)/build*
 	rm -rf $(LIBUBOOTENV_DIR)/build*
 	-$(MAKE) -C $(LIBEFIVAR_DIR)/src TOPDIR='$(abspath $(LIBEFIVAR_DIR))' clean >/dev/null 2>&1 || true
