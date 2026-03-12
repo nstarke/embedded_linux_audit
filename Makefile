@@ -7,6 +7,8 @@ AUTOCONF ?= autoconf
 TOOLS_CACHE_DIR ?= .cache/tools
 ZIG_VERSION ?= 0.14.0
 
+.DEFAULT_GOAL := all
+
 HOST_OS := $(shell uname -s | tr '[:upper:]' '[:lower:]')
 HOST_ARCH := $(shell uname -m)
 ZIG_IN_PATH := $(strip $(shell command -v zig 2>/dev/null))
