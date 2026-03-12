@@ -27,7 +27,7 @@ third_party/wolfssl/configure.ac
 "
 
 usage() {
-    echo "Usage: $0 [--clean] [-j jobs] [isa ...]" >&2
+    echo "Usage: $0 [--clean] [-j jobs|--jobs jobs|--jobs=jobs] [isa ...]" >&2
     exit 1
 }
 
@@ -350,6 +350,16 @@ while [ "$#" -gt 0 ]; do
     case "$1" in
         --clean)
             clean_only=1
+            shift
+            ;;
+        --jobs)
+            [ "$#" -ge 2 ] || usage
+            jobs_arg="$2"
+            shift 2
+            ;;
+        --jobs=*)
+            jobs_arg="${1#--jobs=}"
+            [ -n "$jobs_arg" ] || usage
             shift
             ;;
         -j)

@@ -105,14 +105,14 @@ ensure_release_binaries() {
         require_file "$RELEASE_BUILD_SCRIPT"
         build_jobs="$(cpu_jobs_for_build)"
         if [ -n "$requested_isa" ]; then
-            echo "Release binary missing for $requested_isa; compiling via tests/compile_release_binaries_locally.sh -j$build_jobs $requested_isa"
-            if ! /bin/sh "$RELEASE_BUILD_SCRIPT" -j"$build_jobs" "$requested_isa"; then
+            echo "Release binary missing for $requested_isa; compiling via tests/compile_release_binaries_locally.sh --jobs=$build_jobs $requested_isa"
+            if ! /bin/sh "$RELEASE_BUILD_SCRIPT" --jobs="$build_jobs" "$requested_isa"; then
                 echo "error: failed to compile release binary for $requested_isa" >&2
                 exit 1
             fi
         else
-            echo "Release binaries missing; compiling all ISAs via tests/compile_release_binaries_locally.sh -j$build_jobs"
-            if ! /bin/sh "$RELEASE_BUILD_SCRIPT" -j"$build_jobs"; then
+            echo "Release binaries missing; compiling all ISAs via tests/compile_release_binaries_locally.sh --jobs=$build_jobs"
+            if ! /bin/sh "$RELEASE_BUILD_SCRIPT" --jobs="$build_jobs"; then
                 echo "error: failed to compile release binaries" >&2
                 exit 1
             fi
