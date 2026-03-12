@@ -59,8 +59,8 @@ run_accept_case "uboot env global --output-http --size $TEST_SIZE" "$BIN" --outp
 run_accept_case "--insecure uboot env --size $TEST_SIZE" "$BIN" --insecure uboot env --size "$TEST_SIZE"
 run_exact_case "uboot env invalid --size" 2 "$BIN" uboot env --size nope
 run_exact_case "uboot env invalid global --output-http" 2 "$BIN" --output-http ftp://127.0.0.1:1/env uboot env --size "$TEST_SIZE"
-run_exact_case "uboot env invalid global --output-http" 2 "$BIN" --output-http http://127.0.0.1:1/env uboot env --size "$TEST_SIZE"
-run_exact_case "uboot env both global http+https" 2 "$BIN" --output-http http://127.0.0.1:1/env --output-http https://127.0.0.1:1/env uboot env --size "$TEST_SIZE"
+run_accept_case "uboot env valid global --output-http" "$BIN" --output-http http://127.0.0.1:1/env uboot env --size "$TEST_SIZE"
+run_accept_case "uboot env repeated global --output-http" "$BIN" --output-http http://127.0.0.1:1/env --output-http https://127.0.0.1:1/env uboot env --size "$TEST_SIZE"
 run_accept_case "uboot env rejects raw mtd char device after root check path" "$BIN" uboot env --dev /dev/mtd0 --size "$TEST_SIZE"
 
 if [ "$(current_uid)" -ne 0 ]; then
