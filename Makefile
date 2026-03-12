@@ -3,6 +3,7 @@ CFLAGS  ?= -O2 -Wall -Wextra
 LDFLAGS ?=
 LDLIBS  ?=
 JOBS    ?= 4
+AUTOCONF ?= autoconf
 
 COMPAT_CPU ?=
 COMPAT_CFLAGS :=
@@ -296,7 +297,14 @@ ifneq ($(filter $(COMPAT_CPU),arm32 armeb powerpc powerpchf),)
 SRC += compat/legacy_sync_builtins.c
 endif
 
-.PHONY: all env image static test clean
+.PHONY: all env image static test clean check-autoconf
+
+check-autoconf:
+	@command -v $(AUTOCONF) >/dev/null 2>&1 || { \
+		echo "error: autoconf is required for some third_party dependency builds."; \
+		echo "hint: install autoconf and rerun make."; \
+		exit 1; \
+	}
 
 all: $(TARGET)
 
@@ -328,7 +336,7 @@ $(CURL_LIB): $(OPENSSL_SSL_LIB)
 
 $(OPENSSL_LIB): $(OPENSSL_SSL_LIB)
 
-$(WOLFSSL_LIB):
+$(WOLFSSL_LIB): check-autoconf
 	mkdir -p $(WOLFSSL_BUILD)
 	cd $(WOLFSSL_DIR) && ./autogen.sh
 	cd $(WOLFSSL_BUILD) && $(abspath $(WOLFSSL_DIR))/configure \
