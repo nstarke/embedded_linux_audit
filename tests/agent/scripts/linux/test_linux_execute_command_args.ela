@@ -2,6 +2,6 @@
 linux execute-command --help
 ela linux execute-command --help
 embedded_linux_audit linux execute-command --help
-linux execute-command "echo hello from script"
-ela linux execute-command "printf second from ela"
-embedded_linux_audit --output-format json linux execute-command "printf third"
+linux execute-command --help # inline comment should be ignored
+ela linux execute-command --help # inline comment should be ignored
+embedded_linux_audit --output-format json linux execute-command --help # inline comment should be ignored

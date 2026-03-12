@@ -500,12 +500,18 @@ static int interactive_parse_line(const char *line, char ***argv_out, int *argc_
 
 		while (*p && isspace((unsigned char)*p))
 			p++;
+		if (*p == '#')
+			break;
 		if (!*p || *p == '\n')
 			break;
 
 		start = p;
 		while (*p && (!isspace((unsigned char)*p) || quote)) {
 			char ch = *p++;
+			if (!quote && ch == '#') {
+				p--;
+				break;
+			}
 			if (!quote && (ch == '\'' || ch == '"')) {
 				quote = ch;
 				continue;
@@ -556,6 +562,9 @@ static int interactive_parse_line(const char *line, char ***argv_out, int *argc_
 			argv[argc++] = arg;
 			argv[argc] = NULL;
 		}
+
+		if (*p == '#')
+			break;
 	}
 
 	*argv_out = argv;

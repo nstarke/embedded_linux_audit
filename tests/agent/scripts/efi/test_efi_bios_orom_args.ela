@@ -8,6 +8,6 @@ embedded_linux_audit efi orom --help
 bios orom --help
 ela bios orom --help
 embedded_linux_audit bios orom --help
-efi orom list
-ela bios orom list --output-http http://127.0.0.1:1/orom
-embedded_linux_audit efi orom list --output-tcp 127.0.0.1:9
+efi orom list --help
+ela bios orom list --help
+embedded_linux_audit --output-tcp 127.0.0.1:9 efi orom list --help

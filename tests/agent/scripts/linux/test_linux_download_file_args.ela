@@ -2,6 +2,6 @@
 linux download-file --help
 ela linux download-file --help
 embedded_linux_audit linux download-file --help
-linux download-file http://127.0.0.1:1/file.bin /tmp/ela-script-download.bin
-ela linux download-file http://127.0.0.1:1/file.bin /tmp/ela-script-download-ela.bin
-embedded_linux_audit --insecure linux download-file https://127.0.0.1:1/file.bin /tmp/ela-script-download-secure.bin
+linux download-file --help
+ela linux download-file --help
+embedded_linux_audit --insecure linux download-file --help

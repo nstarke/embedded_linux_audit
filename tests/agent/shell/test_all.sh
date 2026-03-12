@@ -40,6 +40,7 @@ if command -v zig >/dev/null 2>&1; then
 fi
 
 for test_script in \
+    "$SCRIPT_DIR/test_cli_and_extra_args.sh" \
     "$SCRIPT_DIR/efi/test_efi_dump_vars_args.sh" \
     "$SCRIPT_DIR/linux/test_linux_dmesg_args.sh" \
     "$SCRIPT_DIR/linux/test_linux_download_file_args.sh" \

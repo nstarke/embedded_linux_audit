@@ -1,0 +1,29 @@
+# Expanded parser coverage for accepted command/argument combinations.
+help
+ela --help
+embedded_linux_audit --output-format json --help
+
+linux grep --search needle --path /tmp --recursive --help # comment ignored
+linux list-files --recursive --suid-only --permissions 0600 --user 0 --group 0 / --help
+ela linux list-files --permissions u+rw,go-rwx / --help
+embedded_linux_audit linux list-symlinks --recursive / --help
+linux remote-copy --recursive --allow-dev --allow-sysfs --allow-proc --allow-symlinks /tmp --help
+
+linux ssh client --port 2022 --help
+ela linux ssh copy --local-path /tmp/source.bin --remote-path /tmp/dest.bin --recursive --port 2022 --help
+embedded_linux_audit linux ssh tunnel --port 2022 --help
+
+uboot env parse-vars --size 0x10000 --help
+ela uboot env --parse-vars --size 0x10000 --help
+embedded_linux_audit uboot env --output-config=/tmp/fw_env.config --size 0x10000 --help
+
+uboot image --allow-text BootROM --skip-remove --skip-mtd --skip-ubi --skip-sd --skip-emmc --help
+ela uboot image pull --dev /dev/null --offset 0x0 --help
+embedded_linux_audit uboot image find-address --dev /dev/null --offset 0x0 --help
+uboot image list-commands --dev /dev/null --offset 0x0 --help
+
+uboot audit --dev /dev/null --offset 0x0 --size 0x10000 --signature-blob /tmp/blob.fit --signature-pubkey /tmp/key.pem --scan-signature-blob /tmp/*.fit --scan-signature-pubkey /tmp/*.pem --scan-signature-devices --signature-alg sha512 --rule uboot_validate_crc32 --help
+
+efi orom pull --output-tcp 127.0.0.1:9 --help
+bios orom list --output-http http://127.0.0.1:1/orom --help
+efi dump-vars --help # inline comment should be ignored

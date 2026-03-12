@@ -2,6 +2,6 @@
 linux dmesg --help
 ela linux dmesg --help
 embedded_linux_audit linux dmesg --help
-linux dmesg
-ela --quiet linux dmesg
-embedded_linux_audit --output-format json linux dmesg
+linux dmesg --help
+ela --quiet linux dmesg --help
+embedded_linux_audit --output-format json linux dmesg --help

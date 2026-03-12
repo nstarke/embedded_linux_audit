@@ -1,0 +1,77 @@
+#!/bin/sh
+
+set -u
+
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname "$0")" && pwd)"
+SHELL_TEST_ROOT="$SCRIPT_DIR"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+BIN="${BIN:-/tmp/embedded_linux_audit}"
+
+TEST_OUTPUT_HTTP="${TEST_OUTPUT_HTTP:-}"
+
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --output-http)
+            if [ "$#" -lt 2 ]; then
+                echo "error: --output-http requires a value"
+                exit 2
+            fi
+            TEST_OUTPUT_HTTP="$2"
+            shift 2
+            ;;
+        --output-http=*)
+            TEST_OUTPUT_HTTP="${1#*=}"
+            shift
+            ;;
+        *)
+            echo "error: unknown argument: $1"
+            exit 2
+            ;;
+    esac
+done
+
+export TEST_OUTPUT_HTTP
+
+# shellcheck source=tests/agent/shell/common.sh
+. "$SHELL_TEST_ROOT/common.sh"
+
+require_binary "$BIN"
+print_section "top-level CLI and uncovered extra argument coverage"
+
+run_exact_case "top-level --help" 0 "$BIN" --help
+run_exact_case "top-level help" 0 "$BIN" help
+run_exact_case "top-level invalid --output-format" 2 "$BIN" --output-format yaml linux dmesg
+run_exact_case "top-level missing --output-format value" 2 "$BIN" --output-format
+run_exact_case "top-level missing --output-tcp value" 2 "$BIN" --output-tcp
+run_exact_case "top-level missing --output-http value" 2 "$BIN" --output-http
+run_exact_case "top-level missing --script value" 2 "$BIN" --script
+run_exact_case "top-level invalid --output-http URI" 2 "$BIN" --output-http ftp://127.0.0.1:1 linux dmesg
+run_exact_case "top-level unknown command group" 2 "$BIN" unknown-group
+run_exact_case "top-level rejects --script with direct command" 2 "$BIN" --script /tmp/nonexistent-script.ela linux dmesg
+run_exact_case "top-level missing local script path" 2 "$BIN" --script /tmp/nonexistent-script.ela
+
+TMP_SCRIPT="$(mktemp /tmp/ela-top-level-script.XXXXXX)"
+cat >"$TMP_SCRIPT" <<'EOF_SCRIPT'
+# whole-line comment should be ignored
+linux dmesg --help # inline comment should be ignored
+embedded_linux_audit linux execute-command --help # inline comment should be ignored
+ela linux download-file --help # inline comment should be ignored
+EOF_SCRIPT
+run_exact_case "top-level --script accepts whole-line and inline comments" 0 "$BIN" --script "$TMP_SCRIPT"
+rm -f "$TMP_SCRIPT"
+
+run_exact_case "linux ssh client --help" 0 "$BIN" linux ssh client --help
+run_exact_case "linux ssh copy --help" 0 "$BIN" linux ssh copy --help
+run_exact_case "linux ssh tunnel --help" 0 "$BIN" linux ssh tunnel --help
+run_exact_case "linux ssh copy extra arg after required args" 2 "$BIN" linux ssh copy 127.0.0.1 --local-path /tmp/src --remote-path /tmp/dst extra
+run_accept_case "linux ssh copy --port" "$BIN" linux ssh copy 127.0.0.1 --local-path /tmp/src --remote-path /tmp/dst --port 2022
+
+run_accept_case "uboot env parse-vars alias --size" "$BIN" uboot env parse-vars --size "$TEST_SIZE"
+run_accept_case "uboot env legacy --parse-vars flag --size" "$BIN" uboot env --parse-vars --size "$TEST_SIZE"
+
+run_exact_case "uboot image pull extra global parser coverage via --help" 0 \
+    "$BIN" --output-http http://127.0.0.1:1/image uboot image pull --dev /dev/null --offset 0x0 --help
+run_exact_case "uboot audit extra parser coverage via --help" 0 \
+    "$BIN" uboot audit --dev /dev/null --offset 0x0 --size "$TEST_SIZE" --signature-alg sha512 --help
+
+finish_tests

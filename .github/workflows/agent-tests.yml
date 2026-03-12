@@ -20,6 +20,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          token: ${{ github.token }}
           submodules: recursive
           ref: ${{ github.event_name == 'workflow_run' && (github.event.workflow_run.head_branch || github.event.workflow_run.head_sha) || github.sha }}
 
@@ -51,6 +52,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          token: ${{ github.token }}
           submodules: recursive
           ref: ${{ github.event_name == 'workflow_run' && (github.event.workflow_run.head_branch || github.event.workflow_run.head_sha) || github.sha }}
 
@@ -95,6 +97,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          token: ${{ github.token }}
           submodules: recursive
           ref: ${{ github.event_name == 'workflow_run' && (github.event.workflow_run.head_branch || github.event.workflow_run.head_sha) || github.sha }}
 
@@ -142,6 +145,7 @@ jobs:
       - name: Run qemu ISA tests
         env:
           ELA_QEMU_RUN_AS_ROOT: 1
+          ELA_QEMU_REQUIRE_RELEASE_BINARIES: ${{ github.event_name == 'workflow_run' && '1' || '0' }}
         run: |
           set -euo pipefail
           bash tests/agent/qemu/test_all.sh

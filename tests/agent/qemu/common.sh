@@ -150,6 +150,18 @@ ensure_release_binaries() {
     done
 
     if [ "$missing" -eq 1 ]; then
+        case "${ELA_QEMU_REQUIRE_RELEASE_BINARIES:-0}" in
+            1|true|TRUE|yes|YES)
+                if [ -n "$requested_isa" ]; then
+                    echo "error: required prebuilt release binary missing for $requested_isa in $RELEASE_BINARIES_DIR" >&2
+                else
+                    echo "error: required prebuilt release binaries missing in $RELEASE_BINARIES_DIR" >&2
+                fi
+                echo "hint: download artifacts from the release build workflow into $RELEASE_BINARIES_DIR" >&2
+                exit 1
+                ;;
+        esac
+
         require_file "$RELEASE_BUILD_SCRIPT"
         build_jobs="$(cpu_jobs_for_build)"
         if [ -n "$requested_isa" ]; then
