@@ -34,8 +34,12 @@ static int build_lifecycle_payload(const char *output_format,
 	now = time(NULL);
 	if (gmtime_r(&now, &tm_now) == NULL)
 		return -1;
-	if (strftime(ts_buf, sizeof(ts_buf), "%Y-%m-%dT%H:%M:%SZ", &tm_now) == 0)
-		return -1;
+	/* Use snprintf instead of strftime to avoid a crash in strftime on
+	 * arm32-be under QEMU 8.x user-mode emulation. */
+	snprintf(ts_buf, sizeof(ts_buf), "%04d-%02d-%02dT%02d:%02d:%02dZ",
+		 (int)(tm_now.tm_year + 1900), (int)(tm_now.tm_mon + 1),
+		 (int)tm_now.tm_mday, (int)tm_now.tm_hour,
+		 (int)tm_now.tm_min, (int)tm_now.tm_sec);
 
 	if (!strcmp(fmt, "json")) {
 		if (append_text(&buf, &len, &cap, "{\"record\":\"log\",\"agent_timestamp\":\"") != 0 ||
@@ -116,7 +120,9 @@ int ela_emit_lifecycle_event(const char *output_format,
 	if (build_lifecycle_payload(output_format, command, phase, rc, &payload) != 0)
 		return -1;
 
-	fputs(payload, stderr);
+	/* Use write() instead of fputs() to avoid FILE* mutex locking
+	 * (LDREX/STREX) which is unreliable on arm32-be under QEMU 8.x. */
+	(void)write(STDERR_FILENO, payload, strlen(payload));
 
 	if (output_tcp && *output_tcp) {
 		int sock = ela_connect_tcp_ipv4(output_tcp);
