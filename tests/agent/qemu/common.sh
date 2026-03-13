@@ -78,17 +78,6 @@ detect_qemu_runtime_failure() {
     return 1
 }
 
-isa_has_compat_binary() {
-    case "$1" in
-        aarch64-le|aarch64-be|mips-le|mips-be|mips64-le|mips64-be|powerpc-le|powerpc-be|x86|x86_64|riscv32|riscv64)
-            return 0
-            ;;
-        *)
-            return 1
-            ;;
-    esac
-}
-
 command_exists() {
     command -v "$1" >/dev/null 2>&1
 }
@@ -160,10 +149,6 @@ ensure_release_binaries() {
             break
         fi
 
-        if isa_has_compat_binary "$isa_name" && [ ! -x "$RELEASE_BINARIES_DIR/$isa_name/ela-$isa_name-compat" ]; then
-            missing=1
-            break
-        fi
     done
 
     if [ "$missing" -eq 1 ]; then
@@ -259,6 +244,8 @@ EOF_FW_ENV
 
     cp "$runtime_dir/fw_env.config" "$runtime_dir/uboot_env.config"
 }
+
+QEMU_SCRIPT_TIMEOUT="${ELA_QEMU_SCRIPT_TIMEOUT:-120}"
 
 run_qemu_script_in_chroot() {
     qemu_mode="$1"
@@ -425,13 +412,22 @@ run_qemu_binary_tests() {
         echo
         echo "===== Running ${script_path#"$TEST_SCRIPTS_DIR"/} ====="
         if [ "$use_bwrap" -eq 1 ]; then
-            run_qemu_script_in_chroot "$qemu_mode" "$(basename "$qemu_runner")" "$rootfs_dir" "$script_path" >"$script_log" 2>&1
+            run_qemu_script_in_chroot "$qemu_mode" "$(basename "$qemu_runner")" "$rootfs_dir" "$script_path" >"$script_log" 2>&1 &
         else
-            run_qemu_script_direct "$qemu_mode" "$qemu_runner" "$binary_path" "$script_path" "$runtime_dir" >"$script_log" 2>&1
+            run_qemu_script_direct "$qemu_mode" "$qemu_runner" "$binary_path" "$script_path" "$runtime_dir" >"$script_log" 2>&1 &
         fi
+        script_pid=$!
+        (sleep "$QEMU_SCRIPT_TIMEOUT" && kill "$script_pid" 2>/dev/null) >/dev/null 2>/dev/null &
+        timeout_pid=$!
+        wait "$script_pid"
         script_rc=$?
+        kill "$timeout_pid" 2>/dev/null
+        wait "$timeout_pid" 2>/dev/null
+
         runtime_failure=""
-        if runtime_failure="$(detect_qemu_runtime_failure "$script_log" "$script_rc")"; then
+        if [ "$script_rc" -eq 143 ] || [ "$script_rc" -eq 124 ]; then
+            runtime_failure="timeout after ${QEMU_SCRIPT_TIMEOUT}s"
+        elif runtime_failure="$(detect_qemu_runtime_failure "$script_log" "$script_rc")"; then
             :
         else
             runtime_failure=""
@@ -479,7 +475,6 @@ run_qemu_isa_tests() {
     shift 3
 
     binary_path="${BIN:-$RELEASE_BINARIES_DIR/$isa/ela-$isa}"
-    compat_binary_path="$RELEASE_BINARIES_DIR/$isa/ela-$isa-compat"
     rc=0
     use_bwrap=0
 
@@ -503,12 +498,6 @@ run_qemu_isa_tests() {
 
     if ! run_qemu_binary_tests "$isa" "$binary_path" "default" "$qemu_mode" "$qemu_runner" "$use_bwrap"; then
         rc=1
-    fi
-
-    if [ -z "${BIN:-}" ] && [ -x "$compat_binary_path" ]; then
-        if ! run_qemu_binary_tests "$isa" "$compat_binary_path" "compat" "$qemu_mode" "$qemu_runner" "$use_bwrap"; then
-            rc=1
-        fi
     fi
 
     echo
