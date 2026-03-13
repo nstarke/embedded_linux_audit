@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT License - Copyright (c) 2026 Nicholas Starke
+// SPDX-License-Identifier: GPL-3.0-or-later - Copyright (c) 2026 Nicholas Starke
 
 #ifndef SHELL_INTERACTIVE_H
 #define SHELL_INTERACTIVE_H

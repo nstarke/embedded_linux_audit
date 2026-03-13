@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT License - Copyright (c) 2026 Nicholas Starke
+// SPDX-License-Identifier: GPL-3.0-or-later - Copyright (c) 2026 Nicholas Starke
 //
 // This file has been split into the following modules:
 //   agent/util/str_util.c      - String/buffer utilities

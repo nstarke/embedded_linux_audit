@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT License - Copyright (c) 2026 Nicholas Starke
+// SPDX-License-Identifier: GPL-3.0-or-later - Copyright (c) 2026 Nicholas Starke
 
 #ifndef NET_TCP_UTIL_H
 #define NET_TCP_UTIL_H

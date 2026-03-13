@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT License - Copyright (c) 2026 Nicholas Starke
+// SPDX-License-Identifier: GPL-3.0-or-later - Copyright (c) 2026 Nicholas Starke
 
 #ifndef OROM_PULL_CMD_COMMON_H
 #define OROM_PULL_CMD_COMMON_H

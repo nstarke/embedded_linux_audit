@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT License - Copyright (c) 2026 Nicholas Starke
+// SPDX-License-Identifier: GPL-3.0-or-later - Copyright (c) 2026 Nicholas Starke
 
 #ifndef UTIL_ISA_UTIL_H
 #define UTIL_ISA_UTIL_H
