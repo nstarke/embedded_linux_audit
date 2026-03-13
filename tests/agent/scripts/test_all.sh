@@ -11,9 +11,14 @@ BIN="${BIN:-/tmp/embedded_linux_audit}"
 require_binary "$BIN"
 print_section "agent script coverage"
 
-find "$SCRIPT_DIR" -type f -name '*.ela' | sort | while IFS= read -r test_script; do
+test_list="$(mktemp /tmp/agent_script_tests.XXXXXX)"
+trap 'rm -f "$test_list"' EXIT HUP INT TERM
+
+find "$SCRIPT_DIR" -type f -name '*.ela' | sort >"$test_list"
+
+while IFS= read -r test_script; do
     relative_name="${test_script#"$SCRIPT_DIR"/}"
     run_accept_case "script $relative_name" "$BIN" --script "$test_script"
-done
+done <"$test_list"
 
 finish_tests

@@ -210,6 +210,24 @@ EOF_HOSTS
     cat >"$rootfs_dir/isa.env" <<EOF_ISA
 FW_AUDIT_TEST_ISA=$isa
 EOF_ISA
+
+    cat >"$rootfs_dir/fw_env.config" <<EOF_FW_ENV
+/dev/null 0x0 0x1000
+EOF_FW_ENV
+
+    cp "$rootfs_dir/fw_env.config" "$rootfs_dir/uboot_env.config"
+}
+
+create_qemu_script_runtime_dir() {
+    runtime_dir="$1"
+
+    mkdir -p "$runtime_dir"
+
+    cat >"$runtime_dir/fw_env.config" <<EOF_FW_ENV
+/dev/null 0x0 0x1000
+EOF_FW_ENV
+
+    cp "$runtime_dir/fw_env.config" "$runtime_dir/uboot_env.config"
 }
 
 run_qemu_script_in_chroot() {
@@ -271,22 +289,27 @@ run_qemu_script_direct() {
     qemu_runner="$2"
     binary_path="$3"
     script_path="$4"
+    runtime_dir="$5"
 
     if [ "$qemu_mode" = "static" ]; then
         if should_run_qemu_as_root; then
             sudo -n env HOME=/tmp TMPDIR=/tmp FW_AUDIT_TEST_ISA="${FW_AUDIT_TEST_ISA:-}" \
-                "$qemu_runner" "$binary_path" --script "$script_path"
+                /bin/sh -c 'cd "$1" && exec "$2" "$3" --script "$4"' \
+                /bin/sh "$runtime_dir" "$qemu_runner" "$binary_path" "$script_path"
         else
             HOME=/tmp TMPDIR=/tmp FW_AUDIT_TEST_ISA="${FW_AUDIT_TEST_ISA:-}" \
-                "$qemu_runner" "$binary_path" --script "$script_path"
+                /bin/sh -c 'cd "$1" && exec "$2" "$3" --script "$4"' \
+                /bin/sh "$runtime_dir" "$qemu_runner" "$binary_path" "$script_path"
         fi
     else
         if should_run_qemu_as_root; then
             sudo -n env HOME=/tmp TMPDIR=/tmp FW_AUDIT_TEST_ISA="${FW_AUDIT_TEST_ISA:-}" \
-                "$binary_path" --script "$script_path"
+                /bin/sh -c 'cd "$1" && exec "$2" --script "$3"' \
+                /bin/sh "$runtime_dir" "$binary_path" "$script_path"
         else
             HOME=/tmp TMPDIR=/tmp FW_AUDIT_TEST_ISA="${FW_AUDIT_TEST_ISA:-}" \
-                "$binary_path" --script "$script_path"
+                /bin/sh -c 'cd "$1" && exec "$2" --script "$3"' \
+                /bin/sh "$runtime_dir" "$binary_path" "$script_path"
         fi
     fi
 }
@@ -301,10 +324,14 @@ run_qemu_binary_tests() {
 
     rc=0
     rootfs_dir=""
+    runtime_dir=""
 
     cleanup_qemu_binary_wrapper() {
         if [ -n "${rootfs_dir:-}" ]; then
             rm -rf "$rootfs_dir"
+        fi
+        if [ -n "${runtime_dir:-}" ]; then
+            rm -rf "$runtime_dir"
         fi
     }
 
@@ -317,6 +344,9 @@ run_qemu_binary_tests() {
         else
             create_chroot_tree "$rootfs_dir" "$isa" "$binary_path"
         fi
+    else
+        runtime_dir="$(mktemp -d /tmp/ela-qemu-runtime-${isa}.XXXXXX)"
+        create_qemu_script_runtime_dir "$runtime_dir"
     fi
 
     echo "Running agent script coverage for ISA '$isa' ($binary_label) via $qemu_mode:$qemu_runner"
@@ -367,7 +397,7 @@ run_qemu_binary_tests() {
         if [ "$use_bwrap" -eq 1 ]; then
             run_qemu_script_in_chroot "$qemu_mode" "$(basename "$qemu_runner")" "$rootfs_dir" "$script_path" >"$script_log" 2>&1
         else
-            run_qemu_script_direct "$qemu_mode" "$qemu_runner" "$binary_path" "$script_path" >"$script_log" 2>&1
+            run_qemu_script_direct "$qemu_mode" "$qemu_runner" "$binary_path" "$script_path" "$runtime_dir" >"$script_log" 2>&1
         fi
         script_rc=$?
         if [ "$script_rc" -eq 0 ]; then
