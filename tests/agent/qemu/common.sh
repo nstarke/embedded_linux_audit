@@ -392,6 +392,13 @@ run_qemu_binary_tests() {
                     echo "Skipping SSH script coverage under QEMU; it depends on a reachable/authenticating SSH server and can hang in CI."
                     continue
                     ;;
+                "$rootfs_dir/tests/agent/scripts/uboot/test_uboot_env_args.ela" | \
+                "$rootfs_dir/tests/agent/scripts/uboot/test_uboot_image_args.ela")
+                    echo
+                    echo "===== Skipping ${script_file#"$rootfs_dir/tests/agent/scripts"/} ====="
+                    echo "Skipping uboot env/image scan under QEMU; host block devices exposed via bwrap cause multi-GB scans that time out."
+                    continue
+                    ;;
             esac
         else
             case "$script_file" in
@@ -399,6 +406,13 @@ run_qemu_binary_tests() {
                     echo
                     echo "===== Skipping ${script_file#"$TEST_SCRIPTS_DIR"/} ====="
                     echo "Skipping SSH script coverage under QEMU; it depends on a reachable/authenticating SSH server and can hang in CI."
+                    continue
+                    ;;
+                "$TEST_SCRIPTS_DIR/uboot/test_uboot_env_args.ela" | \
+                "$TEST_SCRIPTS_DIR/uboot/test_uboot_image_args.ela")
+                    echo
+                    echo "===== Skipping ${script_file#"$TEST_SCRIPTS_DIR"/} ====="
+                    echo "Skipping uboot env/image scan under QEMU; host block devices exposed via bwrap cause multi-GB scans that time out."
                     continue
                     ;;
             esac
