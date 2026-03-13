@@ -32,7 +32,14 @@ usage() {
 }
 
 clean_outputs() {
-    rm -rf "$DEST_RELEASE_DIR"
+    if [ "$#" -eq 0 ]; then
+        rm -rf "$DEST_RELEASE_DIR"
+        return 0
+    fi
+
+    for isa in "$@"; do
+        rm -rf "$DEST_RELEASE_DIR/$isa"
+    done
 }
 
 require_command() {
@@ -329,7 +336,7 @@ while [ "$#" -gt 0 ]; do
 done
 
 if [ "$clean_before_build" -eq 1 ]; then
-    clean_outputs
+    clean_outputs "$@"
 fi
 
 ensure_required_submodules
