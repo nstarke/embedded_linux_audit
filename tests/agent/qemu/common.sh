@@ -468,6 +468,83 @@ run_qemu_binary_tests() {
     return "$rc"
 }
 
+SHELL_TESTS_DIR="$REPO_ROOT/tests/agent/shell"
+QEMU_SHELL_TEST_TIMEOUT="${ELA_QEMU_SHELL_TEST_TIMEOUT:-120}"
+
+run_qemu_shell_tests() {
+    isa="$1"
+    binary_path="$2"
+    binary_label="$3"
+    qemu_mode="$4"
+    qemu_runner="$5"
+
+    rc=0
+    bin_wrapper="$(mktemp /tmp/ela-qemu-bin-wrapper.${isa}.XXXXXX)"
+
+    if [ "$qemu_mode" = "static" ]; then
+        printf '#!/bin/sh\nexec "%s" "%s" "$@"\n' "$qemu_runner" "$binary_path" >"$bin_wrapper"
+    else
+        printf '#!/bin/sh\nexec "%s" "$@"\n' "$binary_path" >"$bin_wrapper"
+    fi
+    chmod +x "$bin_wrapper"
+
+    echo "Running shell test coverage for ISA '$isa' ($binary_label) via $qemu_mode:$qemu_runner"
+
+    shell_test_list="$(mktemp /tmp/ela-qemu-shell-test-list.${isa}.XXXXXX)"
+    find "$SHELL_TESTS_DIR" -type f -name '*.sh' | sort >"$shell_test_list"
+
+    while IFS= read -r test_script; do
+        case "$test_script" in
+            "$SHELL_TESTS_DIR/common.sh" | \
+            "$SHELL_TESTS_DIR/test_all.sh" | \
+            "$SHELL_TESTS_DIR/test_scripts.sh" | \
+            "$SHELL_TESTS_DIR/download_tests.sh")
+                continue
+                ;;
+            "$SHELL_TESTS_DIR/linux/test_linux_ssh_args.sh")
+                echo
+                echo "===== Skipping linux/test_linux_ssh_args.sh ====="
+                echo "Skipping SSH shell test coverage under QEMU; it depends on a reachable/authenticating SSH server and can hang in CI."
+                continue
+                ;;
+        esac
+
+        test_log="$(mktemp /tmp/ela-qemu-shell-test-log.${isa}.XXXXXX)"
+        rel_path="${test_script#"$SHELL_TESTS_DIR"/}"
+        echo
+        echo "===== Running shell/$rel_path ====="
+
+        BIN="$bin_wrapper" /bin/sh "$test_script" >"$test_log" 2>&1 &
+        test_pid=$!
+        (sleep "$QEMU_SHELL_TEST_TIMEOUT" && kill "$test_pid" 2>/dev/null) >/dev/null 2>/dev/null &
+        timeout_pid=$!
+        wait "$test_pid"
+        test_rc=$?
+        kill "$timeout_pid" 2>/dev/null
+        wait "$timeout_pid" 2>/dev/null
+
+        cat "$test_log"
+
+        sub_passes="$(sed -n 's/^Passed: //p' "$test_log" | tail -n 1)"
+        sub_fails="$(sed -n 's/^Failed: //p' "$test_log" | tail -n 1)"
+        if [ -n "$sub_passes" ]; then
+            PASS_COUNT="$(expr "$PASS_COUNT" + "$sub_passes")"
+        fi
+        if [ -n "$sub_fails" ]; then
+            FAIL_COUNT="$(expr "$FAIL_COUNT" + "$sub_fails")"
+        fi
+
+        if [ "$test_rc" -ne 0 ]; then
+            rc=1
+        fi
+
+        rm -f "$test_log"
+    done <"$shell_test_list"
+
+    rm -f "$shell_test_list" "$bin_wrapper"
+    return "$rc"
+}
+
 run_qemu_isa_tests() {
     isa="$1"
     qemu_static_cmd="$2"
@@ -497,6 +574,10 @@ run_qemu_isa_tests() {
     fi
 
     if ! run_qemu_binary_tests "$isa" "$binary_path" "default" "$qemu_mode" "$qemu_runner" "$use_bwrap"; then
+        rc=1
+    fi
+
+    if ! run_qemu_shell_tests "$isa" "$binary_path" "default" "$qemu_mode" "$qemu_runner"; then
         rc=1
     fi
 
