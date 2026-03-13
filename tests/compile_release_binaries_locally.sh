@@ -405,6 +405,11 @@ require_command libtool
 require_command aclocal
 require_command autoconf
 
+if ! ela_ensure_libltdl; then
+    echo "error: libltdl development headers (ltdl.h) are required" >&2
+    exit 1
+fi
+
 require_command python3
 require_command bash
 require_command make

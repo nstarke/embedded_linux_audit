@@ -222,6 +222,41 @@ ela_ensure_command() {
     fi
 }
 
+ela_libltdl_package_name() {
+    ela_manager="$1"
+    case "$ela_manager" in
+        apt)     echo libltdl-dev ;;
+        dnf|yum) echo libtool-ltdl-devel ;;
+        zypper)  echo libltdl-devel ;;
+        pacman)  echo libtool ;;
+        apk)     echo libtool-dev ;;
+        *) return 1 ;;
+    esac
+}
+
+ela_ensure_libltdl() {
+    # Check for ltdl.h in common include paths
+    for ela_inc in /usr/include /usr/local/include /usr/include/x86_64-linux-gnu; do
+        if [ -f "$ela_inc/ltdl.h" ]; then
+            return 0
+        fi
+    done
+
+    ela_manager="$(ela_detect_package_manager || true)"
+    if [ -z "$ela_manager" ]; then
+        echo "error: libltdl headers not found and could not determine system package manager" >&2
+        return 1
+    fi
+
+    ela_package="$(ela_libltdl_package_name "$ela_manager" || true)"
+    if [ -z "$ela_package" ]; then
+        echo "error: libltdl headers not found and no package mapping is defined for package manager '$ela_manager'" >&2
+        return 1
+    fi
+
+    ela_install_packages "$ela_manager" "$ela_package" || return 1
+}
+
 ela_ensure_any_command() {
     for ela_command in "$@"; do
         if ela_command_exists "$ela_command"; then

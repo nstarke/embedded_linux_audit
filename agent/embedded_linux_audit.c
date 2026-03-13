@@ -1831,12 +1831,8 @@ static int embedded_linux_audit_dispatch(int argc, char **argv)
 			ret = linux_list_files_scan_main(argc - sub_idx, argv + sub_idx);
 		} else if (!strcmp(argv[sub_idx], "list-symlinks"))
 			ret = linux_list_symlinks_scan_main(argc - sub_idx, argv + sub_idx);
-		else if (!strcmp(argv[sub_idx], "tpm2")) {
-			if (output_format_explicit)
-				fprintf(stderr,
-					"Warning: --output-format has no effect for tpm2; output is controlled by the delegated tpm2 tool\n");
+		else if (!strcmp(argv[sub_idx], "tpm2"))
 			ret = linux_tpm2_scan_main(argc - sub_idx, argv + sub_idx);
-		}
 		else {
 			fprintf(stderr, "Unknown linux subcommand: %s\n\n", argv[sub_idx]);
 			usage(argv[0]);
