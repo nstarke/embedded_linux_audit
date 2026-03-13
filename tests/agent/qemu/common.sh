@@ -565,9 +565,48 @@ run_qemu_isa_tests() {
     qemu_binfmt_cmd="$3"
     shift 3
 
+    clean_release_binary=0
+
     binary_path="${BIN:-$RELEASE_BINARIES_DIR/$isa/ela-$isa}"
     rc=0
     use_bwrap=0
+
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            --clean)
+                clean_release_binary=1
+                shift
+                ;;
+            --help|-h)
+                echo "Usage: $0 [--clean]" >&2
+                exit 1
+                ;;
+            --)
+                shift
+                break
+                ;;
+            -*)
+                echo "error: unsupported argument: $1" >&2
+                echo "Usage: $0 [--clean]" >&2
+                exit 1
+                ;;
+            *)
+                echo "error: unexpected argument: $1" >&2
+                echo "Usage: $0 [--clean]" >&2
+                exit 1
+                ;;
+        esac
+    done
+
+    if [ "$clean_release_binary" -eq 1 ]; then
+        require_file "$RELEASE_BUILD_SCRIPT"
+        build_jobs="$(cpu_jobs_for_build)"
+        echo "Rebuilding release binary for $isa via tests/compile_release_binaries_locally.sh --clean --jobs=$build_jobs $isa"
+        if ! /bin/sh "$RELEASE_BUILD_SCRIPT" --clean --jobs="$build_jobs" "$isa"; then
+            echo "error: failed to rebuild release binary for $isa" >&2
+            exit 1
+        fi
+    fi
 
     ensure_release_binaries "$isa"
     require_file "$binary_path"
