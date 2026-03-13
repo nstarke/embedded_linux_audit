@@ -8,6 +8,8 @@ SCRIPT_DIR="$(CDPATH= cd -- "$(dirname "$0")" && pwd)"
 . "$SCRIPT_DIR/common.sh"
 
 rc=0
+pass_count=0
+fail_count=0
 
 for test_script in \
     "$SCRIPT_DIR/arm32-le.sh" \
@@ -30,7 +32,14 @@ do
     /bin/sh "$test_script" "$@"
     if [ "$?" -ne 0 ]; then
         rc=1
+        fail_count="$(expr "$fail_count" + 1)"
+    else
+        pass_count="$(expr "$pass_count" + 1)"
     fi
 done
+
+echo
+echo "Sub-tests passed: $pass_count"
+echo "Sub-tests failed: $fail_count"
 
 exit "$rc"

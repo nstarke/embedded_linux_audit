@@ -11,6 +11,8 @@ BIN="${BIN:-/tmp/embedded_linux_audit}"
 require_binary "$BIN"
 print_section "agent script coverage"
 
+echo "Tracking per-script sub-test results"
+
 test_list="$(mktemp /tmp/agent_script_tests.XXXXXX)"
 trap 'rm -f "$test_list"' EXIT HUP INT TERM
 

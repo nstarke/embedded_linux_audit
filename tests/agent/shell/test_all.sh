@@ -34,6 +34,8 @@ while [ "$#" -gt 0 ]; do
 done
 
 rc=0
+pass_count=0
+fail_count=0
 
 if command -v zig >/dev/null 2>&1; then
     ela_ensure_command llvm-objcopy >/dev/null 2>&1 || true
@@ -67,7 +69,14 @@ do
 
     if [ "$?" -ne 0 ]; then
         rc=1
+        fail_count="$(expr "$fail_count" + 1)"
+    else
+        pass_count="$(expr "$pass_count" + 1)"
     fi
 done
+
+echo
+echo "Sub-tests passed: $pass_count"
+echo "Sub-tests failed: $fail_count"
 
 exit "$rc"
