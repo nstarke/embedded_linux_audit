@@ -557,7 +557,11 @@ $(WOLFSSL_LIB): check-autoconf
 		|| [ "$(WOLFSSL_DIR)/aclocal.m4" -nt "$(WOLFSSL_DIR)/configure" ] \
 		|| grep -qE '^[[:space:]]*(LT_PREREQ|LT_INIT)\(' "$(WOLFSSL_DIR)/configure"; then \
 		$(MAKE) check-autoreconf; \
-		cd $(WOLFSSL_DIR) && WARNINGS=all autoreconf --install --force -I m4; \
+		cd $(WOLFSSL_DIR) && \
+			ACLOCAL='aclocal -I m4' \
+			ACLOCAL_PATH="$(abspath $(WOLFSSL_DIR))/m4$${ACLOCAL_PATH:+:$${ACLOCAL_PATH}}" \
+			WARNINGS=all \
+			sh ./autogen.sh; \
 	fi
 	cd $(WOLFSSL_BUILD) && $(abspath $(WOLFSSL_DIR))/configure \
 		CC="$(CC)" CFLAGS="$(COMPAT_CFLAGS)" \
