@@ -1,0 +1,63 @@
+name: Publish Release Assets
+
+'on':
+  workflow_run:
+    workflows:
+      - Agent Tests
+    types:
+      - completed
+
+permissions:
+  contents: write
+
+jobs:
+  publish-release-assets:
+    name: publish/release-assets
+    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'workflow_run' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download publishable release assets
+        id: download_assets
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ github.event.workflow_run.id }}
+          name: publish-release-assets
+          path: release-assets
+
+      - name: Download publishable release metadata
+        id: download_metadata
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ github.event.workflow_run.id }}
+          name: publish-release-metadata
+          path: release-metadata
+
+      - name: Resolve release tag
+        id: release_tag
+        run: |
+          set -euo pipefail
+          if [ ! -f release-metadata/tag.txt ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          tag="$(cat release-metadata/tag.txt)"
+          if [ -z "$tag" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Upload assets to release
+        if: ${{ steps.release_tag.outputs.skip != 'true' }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.release_tag.outputs.tag }}
+          files: |
+            release-assets/**/ela-*
