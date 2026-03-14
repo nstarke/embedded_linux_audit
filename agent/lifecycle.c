@@ -94,6 +94,48 @@ static const char *lifecycle_content_type(const char *output_format)
 	return "text/plain; charset=utf-8";
 }
 
+static int write_text_lifecycle_event(const char *command,
+				      const char *phase,
+				      int rc,
+				      char *payload_buf,
+				      size_t payload_buf_size,
+				      size_t *payload_len_out)
+{
+	char ts_buf[64];
+	char rc_buf[32];
+	time_t now;
+	struct tm tm_now;
+	int payload_len;
+
+	if (!command || !phase || !payload_buf || !payload_len_out || payload_buf_size == 0)
+		return -1;
+
+	now = time(NULL);
+	if (gmtime_r(&now, &tm_now) == NULL)
+		return -1;
+
+	/* Avoid strftime/fputs on arm32-be under QEMU user-mode emulation. */
+	snprintf(ts_buf, sizeof(ts_buf), "%04d-%02d-%02dT%02d:%02d:%02dZ",
+		 (int)(tm_now.tm_year + 1900), (int)(tm_now.tm_mon + 1),
+		 (int)tm_now.tm_mday, (int)tm_now.tm_hour,
+		 (int)tm_now.tm_min, (int)tm_now.tm_sec);
+	snprintf(rc_buf, sizeof(rc_buf), "%d", rc);
+
+	payload_len = snprintf(payload_buf,
+			       payload_buf_size,
+			       "log agent_timestamp=%s phase=%s command=%s rc=%s\n",
+			       ts_buf,
+			       phase,
+			       command,
+			       rc_buf);
+	if (payload_len < 0 || (size_t)payload_len >= payload_buf_size)
+		return -1;
+
+	*payload_len_out = (size_t)payload_len;
+	(void)write(STDERR_FILENO, payload_buf, *payload_len_out);
+	return 0;
+}
+
 bool ela_lifecycle_logging_enabled(void)
 {
 	const char *ela_debug = getenv("ELA_DEBUG");
@@ -111,23 +153,36 @@ int ela_emit_lifecycle_event(const char *output_format,
 				  int rc)
 {
 	char *payload = NULL;
+	char text_payload[4096];
+	const char *fmt = output_format && *output_format ? output_format : "txt";
+	const uint8_t *payload_bytes = NULL;
+	size_t payload_len = 0;
 	const char *output_uri = output_http && *output_http ? output_http : output_https;
 	char errbuf[256];
 
 	if (!ela_lifecycle_logging_enabled())
 		return 0;
 
-	if (build_lifecycle_payload(output_format, command, phase, rc, &payload) != 0)
-		return -1;
-
-	/* Use write() instead of fputs() to avoid FILE* mutex locking
-	 * (LDREX/STREX) which is unreliable on arm32-be under QEMU 8.x. */
-	(void)write(STDERR_FILENO, payload, strlen(payload));
+	if (!strcmp(fmt, "txt")) {
+		if (write_text_lifecycle_event(command,
+					       phase,
+					       rc,
+					       text_payload,
+					       sizeof(text_payload),
+					       &payload_len) != 0)
+			return -1;
+		payload_bytes = (const uint8_t *)text_payload;
+	} else {
+		if (build_lifecycle_payload(output_format, command, phase, rc, &payload) != 0)
+			return -1;
+		payload_len = strlen(payload);
+		payload_bytes = (const uint8_t *)payload;
+	}
 
 	if (output_tcp && *output_tcp) {
 		int sock = ela_connect_tcp_ipv4(output_tcp);
 		if (sock >= 0) {
-			(void)ela_send_all(sock, (const uint8_t *)payload, strlen(payload));
+			(void)ela_send_all(sock, payload_bytes, payload_len);
 			close(sock);
 		}
 	}
@@ -137,8 +192,8 @@ int ela_emit_lifecycle_event(const char *output_format,
 		if (!upload_uri) {
 			fprintf(stderr, "Failed to build HTTP(S) log upload URI for %s\n", output_uri);
 		} else if (ela_http_post(upload_uri,
-					      (const uint8_t *)payload,
-					      strlen(payload),
+					      payload_bytes,
+					      payload_len,
 					      lifecycle_content_type(output_format),
 					      insecure,
 					      false,
