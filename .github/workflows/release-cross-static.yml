@@ -1,6 +1,9 @@
 name: Release Cross Static Builds
 
 on:
+  push:
+    branches:
+      - main
   release:
     types: [published]
   workflow_dispatch:
