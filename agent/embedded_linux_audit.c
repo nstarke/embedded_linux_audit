@@ -174,7 +174,6 @@ int embedded_linux_audit_dispatch(int argc, char **argv)
 	int cmd_idx = 1;
 	int ret;
 	char *command_summary;
-	const char *isa;
 	bool emit_lifecycle_events;
 	char errbuf[256];
 

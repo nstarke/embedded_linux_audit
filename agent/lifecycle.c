@@ -159,7 +159,8 @@ static int write_text_lifecycle_event(const char *command,
 		return -1;
 
 	*payload_len_out = (size_t)payload_len;
-	(void)write(STDERR_FILENO, payload_buf, *payload_len_out);
+	if (write(STDERR_FILENO, payload_buf, *payload_len_out) < 0)
+		return -1;
 	return 0;
 }
 

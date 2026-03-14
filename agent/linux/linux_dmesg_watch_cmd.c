@@ -3,9 +3,10 @@
 #include "embedded_linux_audit_cmd.h"
 #include "net/http_client.h"
 #include "net/tcp_util.h"
-#include "util/str_util.h"
 
+#include <csv.h>
 #include <errno.h>
+#include <json.h>
 #include <signal.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -68,7 +69,6 @@ static void emit_watch_line(const char *line, const char *fmt)
 {
 	char *buf = NULL;
 	size_t len = 0;
-	size_t cap = 0;
 	char errbuf[256];
 	size_t line_len = strlen(line);
 	char *stripped = NULL;
@@ -85,21 +85,58 @@ static void emit_watch_line(const char *line, const char *fmt)
 	msg = stripped ? stripped : line;
 
 	if (!strcmp(fmt, "json")) {
-		if (append_text(&buf, &len, &cap, "{\"record\":\"dmesg\",\"message\":\"") != 0 ||
-		    append_json_escaped(&buf, &len, &cap, msg) != 0 ||
-		    append_text(&buf, &len, &cap, "\"}\n") != 0)
+		json_object *obj;
+		const char *js;
+		size_t js_len;
+
+		obj = json_object_new_object();
+		if (!obj)
 			goto done;
+		json_object_object_add(obj, "record",  json_object_new_string("dmesg"));
+		json_object_object_add(obj, "message", json_object_new_string(msg));
+		js = json_object_to_json_string_ext(obj, JSON_C_TO_STRING_PLAIN);
+		js_len = strlen(js);
+		buf = malloc(js_len + 2U);
+		if (buf) {
+			memcpy(buf, js, js_len);
+			buf[js_len] = '\n';
+			buf[js_len + 1] = '\0';
+			len = js_len + 1U;
+		}
+		json_object_put(obj);
 	} else if (!strcmp(fmt, "csv")) {
-		if (append_text(&buf, &len, &cap, "dmesg,") != 0 ||
-		    append_csv_field(&buf, &len, &cap, msg) != 0 ||
-		    append_text(&buf, &len, &cap, "\n") != 0)
+		size_t msg_len = strlen(msg);
+		size_t field_sz = (msg_len * 2U) + 3U;
+		char *field = malloc(field_sz);
+		size_t written;
+
+		if (!field)
 			goto done;
+		written = csv_write(field, field_sz, msg, msg_len);
+		/* "dmesg," + escaped field + "\n\0" */
+		buf = malloc(6U + written + 2U);
+		if (!buf) {
+			free(field);
+			goto done;
+		}
+		memcpy(buf, "dmesg,", 6);
+		memcpy(buf + 6, field, written);
+		buf[6 + written] = '\n';
+		buf[6 + written + 1] = '\0';
+		len = 6U + written + 1U;
+		free(field);
 	} else {
 		/* txt: pass through with guaranteed newline */
-		if (append_text(&buf, &len, &cap, line) != 0)
+		bool need_nl = line_len == 0 || line[line_len - 1] != '\n';
+
+		buf = malloc(line_len + (need_nl ? 2U : 1U));
+		if (!buf)
 			goto done;
-		if (len == 0 || buf[len - 1] != '\n')
-			(void)append_text(&buf, &len, &cap, "\n");
+		memcpy(buf, line, line_len);
+		if (need_nl)
+			buf[line_len] = '\n';
+		buf[line_len + (need_nl ? 1U : 0U)] = '\0';
+		len = line_len + (need_nl ? 1U : 0U);
 	}
 
 	if (!buf || len == 0)
@@ -221,7 +258,8 @@ static pid_t read_pid_file(void)
 	fp = fopen(WATCH_PID_FILE, "r");
 	if (!fp)
 		return -1;
-	(void)fscanf(fp, "%ld", &pid);
+	if (fscanf(fp, "%ld", &pid) != 1)
+		pid = -1;
 	fclose(fp);
 	return (pid > 0) ? (pid_t)pid : -1;
 }
