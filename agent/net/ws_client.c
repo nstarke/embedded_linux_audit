@@ -14,6 +14,7 @@
 #include <sys/select.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <json.h>
 
 #ifdef __linux__
 #include <ifaddrs.h>
@@ -217,10 +218,11 @@ void ela_ws_close_parent_fd(const struct ela_ws_conn *ws)
 
 static void send_heartbeat_ack(CURL *curl)
 {
-	char msg[160];
 	char date_str[64];
 	time_t t = time(NULL);
 	struct tm *tm_info;
+	struct json_object *obj;
+	const char *js;
 	size_t sent = 0;
 
 	tm_info = localtime(&t);
@@ -228,11 +230,20 @@ static void send_heartbeat_ack(CURL *curl)
 		strftime(date_str, sizeof(date_str),
 			 "%a %b %d %H:%M:%S %Z %Y", tm_info);
 	else
-		snprintf(date_str, sizeof(date_str), "unknown");
+		strncpy(date_str, "unknown", sizeof(date_str));
 
-	snprintf(msg, sizeof(msg),
-		 "{\"_type\":\"heartbeat_ack\",\"date\":\"%s\"}", date_str);
-	curl_ws_send(curl, msg, strlen(msg), &sent, 0, CURLWS_TEXT);
+	obj = json_object_new_object();
+	if (!obj)
+		return;
+
+	json_object_object_add(obj, "_type", json_object_new_string("heartbeat_ack"));
+	json_object_object_add(obj, "date",  json_object_new_string(date_str));
+
+	js = json_object_to_json_string_ext(obj, JSON_C_TO_STRING_PLAIN | JSON_C_TO_STRING_NOSLASHESCAPE);
+	if (js)
+		curl_ws_send(curl, js, strlen(js), &sent, 0, CURLWS_TEXT);
+
+	json_object_put(obj);
 }
 
 /* -------------------------------------------------------------------------

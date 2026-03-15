@@ -140,7 +140,9 @@ static void interactive_usage(const char *prog)
 	       "  %s> linux dmesg\n"
 	       "  %s> linux execute-command \"uname -a\"\n"
 	       "  %s> uboot env --size 0x10000\n",
-	       prog, prog, prog, prog, prog, prog, prog, prog, prog, prog, prog);
+	       prog, prog, prog, prog,
+	       prog, prog, prog, prog,
+	       prog, prog, prog);
 }
 
 static void print_set_values(void)

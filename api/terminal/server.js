@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later - Copyright (c) 2026 Nicholas Starke
+// SPDX-License-Identifier: MIT - Copyright (c) 2026 Nicholas Starke
 'use strict';
 
 const http = require('http');
