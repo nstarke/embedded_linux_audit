@@ -690,7 +690,8 @@ static void usage(const char *prog)
 		"  pull: read image from --dev at --offset and stream bytes to a remote destination\n"
 		"  find-address: print image load address from header/FIT data\n"
 		"  list-commands: best-effort extraction of command names from image bytes\n",
-		prog, prog, prog, prog, prog);
+		prog, prog, prog, prog,
+		prog);
 }
 
 int uboot_image_scan_main(int argc, char **argv)

@@ -1,0 +1,48 @@
+# embedded_linux_audit Agent Helper API
+#
+# Installation:
+#   cp systemd/ela-agent.service /etc/systemd/system/ela-agent.service
+#   systemctl daemon-reload
+#   systemctl enable --now ela-agent
+#
+# The service expects:
+#   - Node.js installed at /usr/bin/node (node >= 18)
+#   - API files deployed to /opt/ela/api/agent/
+#   - A dedicated 'ela' system user (create with: useradd -r -s /sbin/nologin ela)
+#
+# To enforce bearer token authentication, create /opt/ela/api/ela.key with one
+# token per line, then enable the --validate-key variant of ExecStart below.
+
+[Unit]
+Description=embedded_linux_audit Agent Helper API
+Documentation=file:///opt/ela/docs/api/agent/helper-server.md
+After=network.target
+
+[Service]
+Type=simple
+User=ela
+Group=ela
+WorkingDirectory=/opt/ela/api/agent
+
+# Standard startup (no authentication enforcement)
+ExecStart=/usr/bin/node server.js
+
+# Uncomment to enforce API key authentication (requires /opt/ela/api/ela.key):
+# ExecStart=/usr/bin/node server.js --validate-key
+
+Restart=on-failure
+RestartSec=5s
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ela-agent
+
+# Harden the service
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/ela/api/agent/data
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

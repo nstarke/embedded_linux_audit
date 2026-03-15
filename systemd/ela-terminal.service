@@ -1,0 +1,70 @@
+# embedded_linux_audit WebSocket Terminal Server
+#
+# The node process runs inside a named tmux session so that any authenticated
+# user on the host can attach to the interactive TUI without restarting the
+# service.
+#
+# To attach to the TUI from any shell on the host:
+#   tmux -S /run/ela-terminal/tmux.sock attach -t ela-terminal
+#
+# Within the TUI active session, use /detach to return to the session list
+# and /name <alias> to label a device.  All other input is forwarded to the
+# agent's interactive loop.
+#
+# Installation:
+#   cp systemd/ela-terminal.service /etc/systemd/system/ela-terminal.service
+#   systemctl daemon-reload
+#   systemctl enable --now ela-terminal
+#
+# The service expects:
+#   - Node.js installed at /usr/bin/node (node >= 18)
+#   - tmux installed at /usr/bin/tmux
+#   - API files deployed to /opt/ela/api/terminal/
+#   - A dedicated 'ela' system user (create with: useradd -r -s /sbin/nologin ela)
+#
+# To enforce bearer token authentication, create /opt/ela/api/ela.key with one
+# token per line, then enable the --validate-key variant of ExecStart below.
+
+[Unit]
+Description=embedded_linux_audit WebSocket Terminal Server
+Documentation=file:///opt/ela/docs/api/terminal/index.md
+After=network.target
+
+[Service]
+Type=forking
+User=ela
+Group=ela
+WorkingDirectory=/opt/ela/api/terminal
+
+# systemd creates /run/ela-terminal/ owned by ela:ela with mode 0755.
+# UMask=0111 causes tmux to create the socket with mode 0666 so that
+# any user on the host can attach without elevated privileges.
+RuntimeDirectory=ela-terminal
+RuntimeDirectoryMode=0755
+UMask=0111
+
+# Standard startup (no authentication enforcement).
+# The tmux session is named 'ela-terminal'; the socket is placed in
+# /run/ela-terminal/ so it survives service restarts without path changes.
+ExecStart=/usr/bin/tmux -S /run/ela-terminal/tmux.sock \
+    new-session -d -s ela-terminal \
+    /usr/bin/node /opt/ela/api/terminal/server.js
+
+# Uncomment to enforce API key authentication (requires /opt/ela/api/ela.key):
+# ExecStart=/usr/bin/tmux -S /run/ela-terminal/tmux.sock \
+#     new-session -d -s ela-terminal \
+#     /usr/bin/node /opt/ela/api/terminal/server.js --validate-key
+
+# Ensure the socket is world-accessible regardless of tmux's internal umask
+# handling.  Runs after Type=forking confirms the tmux server is up.
+ExecStartPost=/bin/chmod 0666 /run/ela-terminal/tmux.sock
+
+# Cleanly close all sessions before the tmux server exits.
+ExecStop=/usr/bin/tmux -S /run/ela-terminal/tmux.sock kill-server
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ela-terminal
+
+[Install]
+WantedBy=multi-user.target
