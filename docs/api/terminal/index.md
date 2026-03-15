@@ -13,6 +13,8 @@ the server.
 
 ## Starting the server
 
+### Development / manual
+
 ```sh
 cd api/terminal
 npm install          # first time only
@@ -24,6 +26,25 @@ The port can be overridden with the `ELA_TERMINAL_PORT` environment variable:
 ```sh
 ELA_TERMINAL_PORT=9090 npm start
 ```
+
+### Production (systemd)
+
+The included `systemd/ela-terminal.service` unit runs the server inside a
+named tmux session so that any user on the host can attach to the TUI without
+restarting the service:
+
+```sh
+# Install and start
+cp systemd/ela-terminal.service /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now ela-terminal
+
+# Attach to the TUI from any shell on the host
+tmux -S /run/ela-terminal/tmux.sock attach -t ela-terminal
+```
+
+The tmux socket lives at `/run/ela-terminal/tmux.sock` and is created with
+mode `0666` so all users can attach without `sudo`.
 
 ### With API key enforcement
 
@@ -97,7 +118,7 @@ After attaching, the operator sees a prompt and can type commands that are
 sent to the agent's interactive loop:
 
 ```
-Attached to router1 (11-22-33-44-55-66)  (type 'detach' + Enter to return)
+Attached to router1 (11-22-33-44-55-66)  (type '/detach' + Enter to return)
 ────────────────────────────────────────────────────────────
 router1 (11-22-33-44-55-66)> linux dmesg
 ...
@@ -108,21 +129,21 @@ The prompt is `alias (mac)>` when an alias is set, or `(mac)>` otherwise.
 
 ### Session commands
 
-These commands are handled locally by the terminal server and are not
-forwarded to the agent:
+Commands prefixed with `/` are handled locally by the terminal server and are
+not forwarded to the agent.  Any line that does not start with `/` is sent
+verbatim to the agent's interactive loop (e.g. `linux dmesg`,
+`uboot env --size 0x20000`, `set ELA_OUTPUT_FORMAT json`).
 
 | Command | Description |
 |---------|-------------|
-| `detach` | Return to the session list without closing the agent connection |
-| `name <alias>` | Assign a human-readable alias to the device |
-
-All other input is sent verbatim to the agent's interactive loop (e.g.
-`linux dmesg`, `uboot env --size 0x20000`, `set ELA_OUTPUT_FORMAT json`).
+| `/help` | Show available session commands |
+| `/name <alias>` | Assign a human-readable alias to the device |
+| `/detach` | Return to the session list without closing the agent connection |
 
 ### Naming a device
 
 ```
-(aa-bb-cc-dd-ee-ff)> name production-router
+(aa-bb-cc-dd-ee-ff)> /name production-router
 [device named: production-router]
 production-router (aa-bb-cc-dd-ee-ff)>
 ```
@@ -132,7 +153,7 @@ both the session list and the active-session prompt.
 
 ### Detaching
 
-Type `detach` and press Enter to return to the session list.  The agent
+Type `/detach` and press Enter to return to the session list.  The agent
 connection stays open; output generated while detached is buffered (up to 500
 lines) and flushed when the session is re-attached.
 

@@ -202,7 +202,7 @@ const tui = {
     const label = entry.alias ? `${entry.alias} (${mac})` : mac;
     process.stdout.write(ANSI.clear);
     process.stdout.write(
-      `${ANSI.bold}Attached to ${label}${ANSI.reset}  (type 'detach' + Enter to return)\r\n` +
+      `${ANSI.bold}Attached to ${label}${ANSI.reset}  (type '/detach' + Enter to return)\r\n` +
       '─'.repeat(60) + '\r\n'
     );
 
@@ -264,15 +264,27 @@ const tui = {
       this.lineBuffer = '';
       process.stdout.write('\r\n');
 
-      if (line === 'detach') {
+      if (line === '/help') {
+        process.stdout.write(
+          '[terminal commands]\r\n' +
+          '  /help            show this help\r\n' +
+          '  /name <alias>    assign an alias to this device\r\n' +
+          '  /detach          return to the session list\r\n' +
+          '[all other input is forwarded to the agent]\r\n'
+        );
+        if (entry) this.prompt(entry);
+        return;
+      }
+
+      if (line === '/detach') {
         this.detach();
         return;
       }
 
-      if (line.startsWith('name ') || line === 'name') {
-        const alias = line.slice(5).trim();
+      if (line.startsWith('/name ') || line === '/name') {
+        const alias = line.slice(6).trim();
         if (!alias) {
-          process.stdout.write('[usage: name <alias>]\r\n');
+          process.stdout.write('[usage: /name <alias>]\r\n');
         } else if (entry) {
           entry.alias = alias;
           process.stdout.write(`[device named: ${alias}]\r\n`);

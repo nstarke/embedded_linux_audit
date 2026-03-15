@@ -142,6 +142,7 @@ int ela_ws_connect(const char *base_url, int insecure,
 	/* CONNECT_ONLY=1 performs the HTTP WebSocket upgrade then returns,
 	 * leaving the socket ready for curl_ws_recv / curl_ws_send. */
 	curl_easy_setopt(curl, CURLOPT_CONNECT_ONLY, 1L);
+	curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);
 
 	{
 		const char *key = ela_api_key_get();
