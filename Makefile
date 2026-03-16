@@ -191,6 +191,25 @@ CURL_CMAKE_ARGS += -DHAVE_POSIX_STRERROR_R=1 -DHAVE_GLIBC_STRERROR_R=0
 endif
 endif
 
+# When building curl for 32-bit powerpc with wolfSSL, curl's cmake detects
+# sizeof(long)=4 and emits "#define SIZEOF_LONG 4" in curl_config.h, but does
+# not check sizeof(long long) so SIZEOF_LONG_LONG is never defined.  curl_setup.h
+# includes curl_config.h before any wolfSSL headers; wolfSSL's types.h then sees
+# SIZEOF_LONG=4 with no SIZEOF_LONG_LONG and none of the CTC_SETTINGS enum
+# branches match, triggering "#error bad math long / long long settings".
+# Pre-define SIZEOF_LONG_LONG=8 via CMAKE_C_FLAGS to supply the missing value.
+CURL_EXTRA_CFLAGS :=
+ifeq ($(ELA_ENABLE_WOLFSSL),1)
+ifneq (,$(findstring powerpc,$(CMAKE_C_COMPILER_TARGET)))
+ifeq (,$(findstring powerpc64,$(CMAKE_C_COMPILER_TARGET)))
+CURL_EXTRA_CFLAGS += -DSIZEOF_LONG_LONG=8
+endif
+endif
+endif
+ifneq ($(strip $(CURL_EXTRA_CFLAGS)),)
+CURL_CMAKE_ARGS += -DCMAKE_C_FLAGS="$(CURL_EXTRA_CFLAGS)"
+endif
+
 JSONC_CMAKE_ARGS := $(CMAKE_CC_ARGS)
 
 LIBSSH_EXTRA_CFLAGS :=
