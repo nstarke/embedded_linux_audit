@@ -24,6 +24,13 @@ module.exports = function registerTestsRoute(app, deps) {
 
   async function sendAgentTest(req, res, type, requestedPath) {
     verboseRequestLog(req);
+
+    if (typeof type !== 'string' || typeof requestedPath !== 'string') {
+      res.status(400).type('text').send('invalid request\n');
+      verboseResponseLog(req, 400, 16);
+      return;
+    }
+
     const expectedSuffix = type === 'shell' ? '.sh' : '.ela';
 
     if (!validAgentTestTypes.has(type)) {
@@ -32,9 +39,7 @@ module.exports = function registerTestsRoute(app, deps) {
       return;
     }
 
-    const pathIsValid = isSafeRelativePath(requestedPath);
-
-    if (!pathIsValid || !requestedPath.endsWith(expectedSuffix)) {
+    if (!isSafeRelativePath(requestedPath) || !requestedPath.endsWith(expectedSuffix)) {
       res.status(400).type('text').send('invalid path\n');
       verboseResponseLog(req, 400, 13);
       return;
@@ -50,7 +55,11 @@ module.exports = function registerTestsRoute(app, deps) {
         if (!stat.isFile()) {
           continue;
         }
-        res.sendFile(candidate);
+        res.sendFile(candidate, (err) => {
+          if (err && !res.headersSent) {
+            res.status(500).type('text').send('internal error\n');
+          }
+        });
         return;
       } catch {
         // Try the next known agent test directory.
@@ -62,12 +71,25 @@ module.exports = function registerTestsRoute(app, deps) {
   }
 
   app.get('/tests/agent/:type/:scriptName', async (req, res) => {
-    await sendAgentTest(req, res, req.params.type, req.params.scriptName);
+    try {
+      await sendAgentTest(req, res, req.params.type, req.params.scriptName);
+    } catch (err) {
+      if (!res.headersSent) {
+        res.status(500).type('text').send('internal error\n');
+      }
+    }
   });
 
   app.get(/^\/tests\/agent\/([^/]+)\/(.+)$/, async (req, res) => {
-    const [type, scriptPath] = req.params;
-    await sendAgentTest(req, res, type, scriptPath);
+    try {
+      const type = typeof req.params[0] === 'string' ? req.params[0] : '';
+      const scriptPath = typeof req.params[1] === 'string' ? req.params[1] : '';
+      await sendAgentTest(req, res, type, scriptPath);
+    } catch (err) {
+      if (!res.headersSent) {
+        res.status(500).type('text').send('internal error\n');
+      }
+    }
   });
 
   app.get('/tests/*', (req, res) => {
