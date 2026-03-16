@@ -12,10 +12,11 @@ ISA=""
 LIST_ISA=0
 AUTO_START=0
 SKIP_REMOVE=0
+DISABLE_REDACTION=0
 
 usage() {
-    echo "usage: $0 --webserver <url> [--isa <arch>] [--output-directory <path>] [--auto-start] [--skip-remove]"
-    echo "   or: $0 --webserver=<url> [--isa=<arch>] [--output-directory=<path>] [--auto-start] [--skip-remove]"
+    echo "usage: $0 --webserver <url> [--isa <arch>] [--output-directory <path>] [--auto-start] [--skip-remove] [--disable-redaction]"
+    echo "   or: $0 --webserver=<url> [--isa=<arch>] [--output-directory=<path>] [--auto-start] [--skip-remove] [--disable-redaction]"
     echo "   or: $0 --webserver <url> --list-isa [--skip-remove]"
 }
 
@@ -159,6 +160,10 @@ while [ "$#" -gt 0 ]; do
             SKIP_REMOVE=1
             shift
             ;;
+        --disable-redaction)
+            DISABLE_REDACTION=1
+            shift
+            ;;
         *)
             echo "error: unknown argument: $1"
             usage
@@ -292,19 +297,37 @@ fi
 
 while IFS= read -r rel_path; do
     script_url="$(resolve_url "$BASE_URL" "$rel_path")"
-    script_file="$(basename "$rel_path")"
 
-    if [ "$script_file" = "$SCRIPT_NAME" ]; then
+    # Preserve the subdirectory structure under tests/agent/shell/ so that
+    # test_all.sh can find scripts at $SCRIPT_DIR/efi/foo.sh etc.
+    case "$rel_path" in
+        /tests/agent/shell/*)
+            script_rel="${rel_path#/tests/agent/shell/}"
+            ;;
+        *)
+            script_rel="$(basename "$rel_path")"
+            ;;
+    esac
+
+    if [ "$(basename "$script_rel")" = "$SCRIPT_NAME" ]; then
         continue
     fi
 
-    dest="$DEST_DIR/$script_file"
+    dest="$DEST_DIR/$script_rel"
+    mkdir -p "$(dirname "$dest")"
 
     echo "downloading $script_url -> $dest"
 
     fetch_to_file "$script_url" "$dest"
     chmod +x "$dest"
 done <"$SCRIPT_LIST_FILE"
+
+# Download the shared redaction helper used by common.sh.
+_cr_url="$BASE_URL/tests/common_redaction.sh"
+_cr_dest="$DEST_DIR/common_redaction.sh"
+echo "downloading $_cr_url -> $_cr_dest"
+fetch_to_file "$_cr_url" "$_cr_dest" || echo "warning: could not download common_redaction.sh"
+unset _cr_url _cr_dest
 
 AUDIT_BINARY_DEST="/tmp/embedded_linux_audit"
 
@@ -389,5 +412,5 @@ if [ "$AUTO_START" -eq 1 ]; then
     esac
 
     echo "auto-start: running $TEST_ALL_SCRIPT $AUTO_OUTPUT_FLAG $WEB_SERVER"
-    /bin/sh "$TEST_ALL_SCRIPT" "$AUTO_OUTPUT_FLAG" "$WEB_SERVER"
+    ELA_DISABLE_REDACTION="$DISABLE_REDACTION" /bin/sh "$TEST_ALL_SCRIPT" "$AUTO_OUTPUT_FLAG" "$WEB_SERVER"
 fi

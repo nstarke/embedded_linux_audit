@@ -92,6 +92,23 @@ module.exports = function registerTestsRoute(app, deps) {
     }
   });
 
+  // Serve the shared redaction helper needed by common.sh when running standalone.
+  app.get('/tests/common_redaction.sh', async (req, res) => {
+    verboseRequestLog(req);
+    const helperPath = deps.path.resolve(__dirname, '..', '..', '..', 'tests', 'common_redaction.sh');
+    try {
+      await fsp.access(helperPath);
+      res.sendFile(helperPath, (err) => {
+        if (err && !res.headersSent) {
+          res.status(500).type('text').send('internal error\n');
+        }
+      });
+    } catch {
+      res.status(404).type('text').send('not found\n');
+      verboseResponseLog(req, 404, 10);
+    }
+  });
+
   app.get('/tests/*', (req, res) => {
     verboseRequestLog(req);
     res.status(404).type('text').send('not found\n');

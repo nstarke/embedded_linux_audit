@@ -1,5 +1,10 @@
 #!/bin/sh
 
+if [ "${ELA_DISABLE_REDACTION:-0}" = "1" ]; then
+    scrub_sensitive_stream() { cat; }
+    return 0 2>/dev/null || true
+fi
+
 scrub_sensitive_stream() {
 	_in_pem_block=0
 	while IFS= read -r line || [ -n "$line" ]; do

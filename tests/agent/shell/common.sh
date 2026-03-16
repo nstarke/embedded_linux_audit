@@ -5,8 +5,15 @@ set -u
 SCRIPT_DIR="${SHELL_TEST_ROOT:-$(CDPATH= cd -- "$(dirname "$0")" && pwd)}"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 
+# When running standalone (downloaded to a temp directory), common_redaction.sh
+# is placed alongside this file by download_tests.sh.  Fall back to the repo
+# path when running from a checkout.
 # shellcheck source=tests/common_redaction.sh
-. "$REPO_ROOT/tests/common_redaction.sh"
+if [ -f "$SCRIPT_DIR/common_redaction.sh" ]; then
+    . "$SCRIPT_DIR/common_redaction.sh"
+else
+    . "$REPO_ROOT/tests/common_redaction.sh"
+fi
 
 PASS_COUNT=0
 FAIL_COUNT=0
