@@ -11,6 +11,7 @@ module.exports = function registerUploadRoute(app, deps) {
     writeUploadFile,
     augmentJsonPayload,
     logPathForContentType,
+    persistUpload,
     isValidMacAddress,
     verboseRequestLog,
     verboseResponseLog,
@@ -251,6 +252,19 @@ module.exports = function registerUploadRoute(app, deps) {
         );
       }
     }
+
+    await persistUpload({
+      macAddress,
+      uploadType,
+      contentType: normalizedContentType,
+      srcIp,
+      apiTimestamp: timestamp,
+      requestFilePath,
+      isSymlink: wantsSymlink,
+      symlinkPath: wantsSymlink ? symlinkPath : null,
+      payload,
+      payloadToPersist: normalizedContentType === 'application/octet-stream' ? payload : payloadToLog,
+    });
 
     res.type('text').send('ok\n');
     verboseResponseLog(req, 200, 3);

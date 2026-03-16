@@ -19,6 +19,9 @@ const registerIsaRoute = require('./routes/isa');
 const registerAssetRoute = require('./routes/assets');
 const registerUploadRoute = require('./routes/upload');
 const auth = require('../auth');
+const { getAgentServiceConfig } = require('../lib/config');
+const { initializeDatabase, runMigrations, closeDatabase } = require('../lib/db');
+const { persistUpload } = require('../lib/db/persistUpload');
 
 const RELEASE_STATE_FILE = '.release_state.json';
 
@@ -335,14 +338,15 @@ function parseArgs(argv) {
   const defaultVerbose = ['verbose', 'silly'].includes(npmLogLevel);
   const defaultClean = npmBoolean('npm_config_clean');
   const defaultForceDownload = npmBoolean('npm_config_force_download');
+  const serviceDefaults = getAgentServiceConfig();
   const defaults = {
-    host: '0.0.0.0',
-    port: 5000,
-    logPrefix: 'post_requests',
-    dataDir: 'api/agent/data',
-    repo: 'nstarke/embedded_linux_audit',
-    assetsDir: null,
-    testsDir: 'tests',
+    host: serviceDefaults.host,
+    port: serviceDefaults.port,
+    logPrefix: serviceDefaults.logPrefix,
+    dataDir: serviceDefaults.dataDir,
+    repo: serviceDefaults.repo,
+    assetsDir: serviceDefaults.assetsDir,
+    testsDir: serviceDefaults.testsDir,
     githubToken: process.env.GITHUB_TOKEN || '',
     forceDownload: defaultForceDownload,
     clean: defaultClean,
@@ -351,6 +355,7 @@ function parseArgs(argv) {
     cert: 'tools/certs/localhost.crt',
     key: 'tools/certs/localhost.key',
     validateKey: false,
+    skipAssetSync: String(process.env.ELA_AGENT_SKIP_ASSET_SYNC || '').toLowerCase() === 'true',
   };
 
   const args = { ...defaults };
@@ -372,6 +377,7 @@ function parseArgs(argv) {
       case '--cert': args.cert = argv[++i]; break;
       case '--key': args.key = argv[++i]; break;
       case '--validate-key': args.validateKey = true; break;
+      case '--skip-asset-sync': args.skipAssetSync = true; break;
       case '--help':
         printHelp();
         process.exit(0);
@@ -389,7 +395,7 @@ function parseArgs(argv) {
 }
 
 function printHelp() {
-  console.log(`Usage: node server.js [options]\n\nOptions:\n  --host HOST\n  --port PORT\n  --log-prefix PREFIX\n  --data-dir DIR\n  --repo OWNER/NAME\n  --assets-dir DIR\n  --tests-dir DIR\n  --github-token TOKEN\n  --force-download\n  --clean\n  --https\n  --verbose\n  --cert PATH\n  --key PATH\n  --validate-key   Require Authorization: Bearer token (reads from ela.key)\n  --help`);
+  console.log(`Usage: node server.js [options]\n\nOptions:\n  --host HOST\n  --port PORT\n  --log-prefix PREFIX\n  --data-dir DIR\n  --repo OWNER/NAME\n  --assets-dir DIR\n  --tests-dir DIR\n  --github-token TOKEN\n  --force-download\n  --clean\n  --https\n  --verbose\n  --cert PATH\n  --key PATH\n  --validate-key   Require Authorization: Bearer token (reads from ela.key)\n  --skip-asset-sync  Skip GitHub release asset refresh during startup\n  --help`);
 }
   
 function resolveProjectPath(targetPath) {
@@ -482,6 +488,7 @@ function createApp({ logPrefix, assetsDir, dataDir, testsDir, verbose }) {
     writeUploadFile,
     augmentJsonPayload,
     logPathForContentType,
+    persistUpload,
     isValidMacAddress,
     isWithinRoot,
     getClientIp,
@@ -515,6 +522,14 @@ async function main() {
     return 1;
   }
 
+  try {
+    await initializeDatabase();
+    await runMigrations();
+  } catch (err) {
+    console.error(`Failed to initialize database: ${err.message}`);
+    return 1;
+  }
+
   const logPrefix = resolveProjectPath(args.logPrefix);
   const startupTimestamp = `${Date.now()}`;
   const dataRootDir = resolveProjectPath(args.dataDir);
@@ -538,40 +553,44 @@ async function main() {
     fsp.mkdir(defaultAssetsDir, { recursive: true })
   ]);
 
-  try {
-    const latestRelease = await getLatestRelease(args.repo, token);
-    const latestReleaseId = releaseIdentity(latestRelease);
-    const cachedReleaseId = await loadCachedReleaseIdentity(assetsDir);
-    const isNewRelease = Boolean(latestReleaseId) && latestReleaseId !== cachedReleaseId;
+  if (args.skipAssetSync) {
+    console.log(`Skipping release asset sync; serving assets from ${assetsDir}`);
+  } else {
+    try {
+      const latestRelease = await getLatestRelease(args.repo, token);
+      const latestReleaseId = releaseIdentity(latestRelease);
+      const cachedReleaseId = await loadCachedReleaseIdentity(assetsDir);
+      const isNewRelease = Boolean(latestReleaseId) && latestReleaseId !== cachedReleaseId;
 
-    let result;
-    if (args.forceDownload) {
-      console.log('Force download enabled; refreshing release binaries');
-      await clearDownloadedAssets(assetsDir);
-      result = await downloadReleaseAssets(latestRelease, assetsDir, token, true);
-      if (latestReleaseId) {
+      let result;
+      if (args.forceDownload) {
+        console.log('Force download enabled; refreshing release binaries');
+        await clearDownloadedAssets(assetsDir);
+        result = await downloadReleaseAssets(latestRelease, assetsDir, token, true);
+        if (latestReleaseId) {
+          await saveCachedReleaseIdentity(assetsDir, latestReleaseId);
+        }
+      } else if (isNewRelease) {
+        console.log(`New release detected (${cachedReleaseId || '<none>'} -> ${latestReleaseId}); refreshing binaries`);
+        await clearDownloadedAssets(assetsDir);
+        result = await downloadReleaseAssets(latestRelease, assetsDir, token, true);
         await saveCachedReleaseIdentity(assetsDir, latestReleaseId);
+      } else {
+        console.log('No new release detected; keeping existing binaries');
+        result = await downloadReleaseAssets(latestRelease, assetsDir, token, false);
+        if (latestReleaseId && cachedReleaseId !== latestReleaseId) {
+          await saveCachedReleaseIdentity(assetsDir, latestReleaseId);
+        }
       }
-    } else if (isNewRelease) {
-      console.log(`New release detected (${cachedReleaseId || '<none>'} -> ${latestReleaseId}); refreshing binaries`);
-      await clearDownloadedAssets(assetsDir);
-      result = await downloadReleaseAssets(latestRelease, assetsDir, token, true);
-      await saveCachedReleaseIdentity(assetsDir, latestReleaseId);
-    } else {
-      console.log('No new release detected; keeping existing binaries');
-      result = await downloadReleaseAssets(latestRelease, assetsDir, token, false);
-      if (latestReleaseId && cachedReleaseId !== latestReleaseId) {
-        await saveCachedReleaseIdentity(assetsDir, latestReleaseId);
-      }
-    }
 
-    console.log(`Downloaded ${result.downloaded.length} release asset(s) from ${args.repo} into ${assetsDir}`);
-    if (result.skippedExisting.length) {
-      console.log(`Skipped ${result.skippedExisting.length} existing release asset(s) in ${assetsDir} (use --force-download to replace them)`);
+      console.log(`Downloaded ${result.downloaded.length} release asset(s) from ${args.repo} into ${assetsDir}`);
+      if (result.skippedExisting.length) {
+        console.log(`Skipped ${result.skippedExisting.length} existing release asset(s) in ${assetsDir} (use --force-download to replace them)`);
+      }
+    } catch (err) {
+      console.error(`Failed to fetch/download release assets from ${args.repo}: ${err.message}`);
+      return 1;
     }
-  } catch (err) {
-    console.error(`Failed to fetch/download release assets from ${args.repo}: ${err.message}`);
-    return 1;
   }
 
   const app = createApp({ logPrefix, assetsDir, dataDir, testsDir, verbose: args.verbose });
@@ -602,7 +621,10 @@ async function main() {
   console.log('GET / shows index of downloaded release binaries, test shell scripts, and command scripts');
 
   process.on('SIGINT', () => {
-    server.close(() => process.exit(0));
+    server.close(async () => {
+      await closeDatabase().catch(() => {});
+      process.exit(0);
+    });
   });
 
   return 0;

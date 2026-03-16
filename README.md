@@ -88,7 +88,8 @@ API keys are also read from the `ELA_API_KEY` environment variable or `/tmp/ela.
 A Node.js HTTP(S) server that acts as a collection point for agent data and a distribution server for binaries and test scripts.
 
 - Accepts `POST /:mac/upload/:type` for command output, dmesg, file contents, EFI variables, option ROM data, U-Boot images, and environment dumps
-- Stores data under timestamped per-device directories in `api/agent/data/`
+- Normalizes uploads into a PostgreSQL schema and stores raw payloads alongside relational records
+- Optionally keeps runtime file artifacts under timestamped per-device directories in `api/agent/data/`
 - Serves release binaries (with optional auto-download from GitHub), test scripts, and U-Boot environment files
 - Optional bearer token authentication (`--validate-key`)
 - Optional HTTPS with self-signed certificate (`--https`)
@@ -114,6 +115,21 @@ See [docs/api/terminal/index.md](docs/api/terminal/index.md).
 An example nginx configuration that exposes both server components behind a single frontend — HTTP on port 80 and HTTPS on port 443 — routing `/terminal/<mac>` to the WebSocket terminal server and everything else to the agent helper API.
 
 See [docs/api/nginx.md](docs/api/nginx.md).
+
+## Docker Deployment
+
+The repository now includes a containerized deployment path with PostgreSQL, the agent API, the terminal WebSocket API, and nginx fronting both services.
+
+```bash
+docker compose up --build
+```
+
+The default stack exposes:
+
+- `http://localhost/` → agent helper API
+- `http://localhost/terminal/<mac>` → terminal WebSocket endpoint
+
+The agent API container runs database migrations automatically on startup. Compose defaults target the bundled PostgreSQL container using the `ela`/`ela` credentials defined in `docker-compose.yml`.
 
 ## Portable static release builds
 

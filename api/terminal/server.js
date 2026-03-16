@@ -6,12 +6,14 @@ const path = require('path');
 const readline = require('readline');
 const { WebSocketServer } = require('ws');
 const auth = require('../auth');
+const { getTerminalServiceConfig } = require('../lib/config');
 
 /* -------------------------------------------------------------------------
  * Configuration
  * ---------------------------------------------------------------------- */
 
-const PORT = parseInt(process.env.ELA_TERMINAL_PORT || '8080', 10);
+const terminalConfig = getTerminalServiceConfig();
+const PORT = terminalConfig.port;
 const HEARTBEAT_INTERVAL_MS = 30000;
 const VALIDATE_KEY = process.argv.includes('--validate-key');
 
@@ -358,7 +360,7 @@ function cleanup() {
 process.on('SIGINT', () => { cleanup(); process.exit(0); });
 process.on('SIGTERM', () => { cleanup(); process.exit(0); });
 
-if (!auth.init(path.join(__dirname, '..', 'ela.key'), VALIDATE_KEY)) {
+if (!auth.init(terminalConfig.keyPath, VALIDATE_KEY)) {
   process.stderr.write(
     'error: --validate-key is set but ela.key is missing or contains no valid tokens\n'
   );
