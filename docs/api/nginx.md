@@ -27,34 +27,40 @@ or `http://` URLs.
 ## Prerequisites
 
 On a fresh nginx install (Debian/Ubuntu), the default site at
-`/etc/nginx/sites-enabled/default` is the `default_server` for port 80.
-While it is active, requests to the server by IP address will be handled by
-that config instead of this one, resulting in nginx's own 404 page.
-
-Remove it before deploying:
+`/etc/nginx/sites-enabled/default` also claims `default_server` for ports 80
+and 443.  Remove it before deploying `ela.conf`, otherwise nginx will reject
+the `default_server` directive with a config-test error:
 
 ```sh
 sudo rm /etc/nginx/sites-enabled/default
 sudo nginx -t && sudo systemctl reload nginx
 ```
 
+Once the default site is removed, `ela.conf`'s `default_server` directive
+ensures requests by IP address (e.g. `ws://192.168.1.100`) are handled
+correctly without needing to add every IP to `server_name`.
+
 ## Installation
 
 ```sh
-# Copy the config
-cp nginx/ela.conf /etc/nginx/sites-available/ela
-ln -s /etc/nginx/sites-available/ela /etc/nginx/sites-enabled/ela
+# Install nginx config (removes the conflicting default site automatically)
+sudo nginx/install.sh
 
-# Place your TLS certificate and key
-cp your.crt /etc/ssl/certs/ela.example.com.crt
-cp your.key /etc/ssl/private/ela.example.com.key
-
-# Test and reload
-nginx -t && systemctl reload nginx
+# Place your TLS certificate and key (for wss:// only)
+sudo cp your.crt /etc/ssl/certs/ela.example.com.crt
+sudo cp your.key /etc/ssl/private/ela.example.com.key
+sudo nginx -t && sudo systemctl reload nginx
 ```
 
+The install script removes `/etc/nginx/sites-enabled/default` before enabling
+`ela.conf`.  This is required: the Ubuntu default site also declares
+`default_server` for port 80, and because `default` sorts before `ela`
+alphabetically, it would win and intercept all IP-based requests — returning
+400 for WebSocket upgrades — even with the correct ela config in place.
+
 Edit `ela.conf` to replace `ela.example.com` with your actual hostname before
-deploying.
+deploying (optional — the `_` wildcard in `server_name` already handles
+IP-based access without a hostname).
 
 ## TLS
 
