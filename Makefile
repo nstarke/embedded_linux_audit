@@ -129,6 +129,15 @@ ifneq (,$(findstring mips64,$(CMAKE_C_COMPILER_TARGET)))
 # the portable C implementation for MIPS64 targets.
 WOLFSSL_EXTRA_CONFIGURE_FLAGS += --disable-sp-asm
 endif
+ifneq (,$(findstring powerpc,$(CMAKE_C_COMPILER_TARGET)))
+ifeq (,$(findstring powerpc64,$(CMAKE_C_COMPILER_TARGET)))
+# wolfSSL auto-enables ppc32-asm for 32-bit powerpc targets, but many embedded
+# PowerPC CPUs (e.g. PPC603, PPC750, 4xx) do not implement the SPE or other
+# extension instructions that the asm uses, causing an "Illegal instruction"
+# crash at runtime.  Disable it to use the portable C implementation.
+WOLFSSL_EXTRA_CONFIGURE_FLAGS += --disable-ppc32-asm
+endif
+endif
 endif
 
 # For 32-bit powerpc, autoconf cannot run test programs during cross-compilation
