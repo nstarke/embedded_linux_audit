@@ -288,13 +288,13 @@ TPM2_TSS_MU_LIB := $(TPM2_TSS_BUILD)/src/tss2-mu/.libs/libtss2-mu.a
 TPM2_TSS_SYS_LIB := $(TPM2_TSS_BUILD)/src/tss2-sys/.libs/libtss2-sys.a
 TPM2_TSS_ESYS_LIB := $(TPM2_TSS_BUILD)/src/tss2-esys/.libs/libtss2-esys.a
 TPM2_TSS_TCTI_DEVICE_LIB := $(TPM2_TSS_BUILD)/src/tss2-tcti/.libs/libtss2-tcti-device.a
-TPM2_TSS_BUILD_CFLAGS ?= -O2
+TPM2_TSS_BUILD_CFLAGS ?= -O2 -Wno-unused-variable
 TPM2_TSS_ZIG_GLOBAL_CACHE := $(abspath .cache/zig-global)
 WOLFSSL_DIR     := third_party/wolfssl
 WOLFSSL_BUILD   := $(WOLFSSL_DIR)/build-$(CC_TAG)
 WOLFSSL_INSTALL := $(WOLFSSL_BUILD)/install
 WOLFSSL_LIB     := $(WOLFSSL_BUILD)/src/.libs/libwolfssl.a
-WOLFSSL_CFLAGS  := -I$(WOLFSSL_DIR) -I$(WOLFSSL_BUILD)
+WOLFSSL_CFLAGS  := -I$(WOLFSSL_INSTALL)/include -I$(WOLFSSL_DIR) -I$(WOLFSSL_BUILD)
 OPENSSL_DIR   := third_party/openssl
 OPENSSL_BUILD := $(OPENSSL_DIR)/build-$(CC_TAG)
 OPENSSL_INSTALL := $(OPENSSL_BUILD)/install
@@ -354,6 +354,10 @@ CFLAGS += $(LIBSSH_CFLAGS)
 ifeq ($(ELA_ENABLE_WOLFSSL),1)
 CFLAGS += $(WOLFSSL_CFLAGS)
 CFLAGS += -DELA_HAS_WOLFSSL=1
+# Suppress -Wmacro-redefined: wolfSSL's OpenSSL-compat layer and the real OpenSSL
+# headers both define SSL_VERIFY_PEER, SSL_ERROR_NONE, etc., which is expected
+# when both are present in the same binary (wolfSSL for TLS, OpenSSL for libssh).
+CFLAGS += -Wno-macro-redefined
 endif
 ifeq ($(ELA_ENABLE_TPM2),1)
 CFLAGS += $(TPM2_TSS_CFLAGS)
