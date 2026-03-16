@@ -207,8 +207,17 @@ endif
 # SIZEOF_LONG=4 with no SIZEOF_LONG_LONG and none of the CTC_SETTINGS enum
 # branches match, triggering "#error bad math long / long long settings".
 # Pre-define SIZEOF_LONG_LONG=8 via CMAKE_C_FLAGS to supply the missing value.
+#
+# When building curl with wolfSSL, also explicitly define OPENSSL_EXTRA so that
+# curl's wolfssl.c can see all the OpenSSL-compat function declarations in
+# wolfssl/ssl.h (wolfSSL_CTX_set_cert_store, wolfSSL_CTX_get_cert_store,
+# wolfSSL_CTX_set1_curves_list, SSL_CTX_set_cipher_list, etc.).  wolfSSL is
+# built with --enable-opensslextra so the implementations are present in
+# libwolfssl.a; this flag makes the declarations visible without relying on the
+# installed options.h being picked up before settings.h processes its guards.
 CURL_EXTRA_CFLAGS :=
 ifeq ($(ELA_ENABLE_WOLFSSL),1)
+CURL_EXTRA_CFLAGS += -DOPENSSL_EXTRA
 ifneq (,$(findstring powerpc,$(CMAKE_C_COMPILER_TARGET)))
 ifeq (,$(findstring powerpc64,$(CMAKE_C_COMPILER_TARGET)))
 CURL_EXTRA_CFLAGS += -DSIZEOF_LONG_LONG=8
