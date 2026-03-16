@@ -131,6 +131,21 @@ WOLFSSL_EXTRA_CONFIGURE_FLAGS += --disable-sp-asm
 endif
 endif
 
+# For 32-bit powerpc, autoconf cannot run test programs during cross-compilation
+# and may fall back to the 64-bit host's sizeof(long)=8.  The resulting wolfSSL
+# headers then embed SIZEOF_LONG=8, but zig cc (targeting 32-bit powerpc) sees
+# sizeof(long)=4 and wolfSSL's compile-time assertion fires with
+# "bad math long / long long settings".  Pre-seed the correct values via
+# autoconf cache variables passed as trailing arguments to configure.
+WOLFSSL_CONFIGURE_SIZEOF_ARGS :=
+ifneq ($(strip $(CMAKE_C_COMPILER_TARGET)),)
+ifneq (,$(findstring powerpc,$(CMAKE_C_COMPILER_TARGET)))
+ifeq (,$(findstring powerpc64,$(CMAKE_C_COMPILER_TARGET)))
+WOLFSSL_CONFIGURE_SIZEOF_ARGS := ac_cv_sizeof_long=4 ac_cv_sizeof_long_long=8
+endif
+endif
+endif
+
 # Some bundled wolfSSL configure scripts in our pinned submodule revision reject
 # libtool-style --enable-static/--disable-shared toggles even though we only
 # consume the static archive. The build still produces src/.libs/libwolfssl.a
@@ -576,14 +591,16 @@ $(WOLFSSL_LIB): check-autoconf
 		$(WOLFSSL_CONFIGURE_HOST_ARG) \
 		$(WOLFSSL_EXTRA_CONFIGURE_FLAGS) \
 		$(WOLFSSL_LIBRARY_CONFIGURE_FLAGS) \
+		--enable-opensslextra \
 		--disable-benchmark --disable-examples \
 		--disable-crypttests --disable-dtls --disable-oldtls --disable-tls13 \
-		--disable-tls13 --enable-sni \
+		--enable-sni \
 		--disable-arc4 --disable-des3 --disable-anon \
 		--disable-psk --disable-srp --disable-srtp --disable-scrypt \
 		--disable-aria --disable-camellia --disable-blake2 \
 		--disable-crl \
-		--prefix="$(abspath $(WOLFSSL_BUILD))/install"
+		--prefix="$(abspath $(WOLFSSL_BUILD))/install" \
+		$(WOLFSSL_CONFIGURE_SIZEOF_ARGS)
 	$(MAKE) -C $(WOLFSSL_BUILD) -j$(JOBS)
 	$(MAKE) -C $(WOLFSSL_BUILD) install
 
