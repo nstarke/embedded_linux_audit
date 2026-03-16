@@ -178,6 +178,9 @@ int ela_ws_connect(const char *base_url, int insecure,
 			fprintf(stderr,
 				"ws: server returned 401 Unauthorized\n"
 				"  Set a bearer token via --api-key, ELA_API_KEY, or /tmp/ela.key\n");
+		else if (http_code > 0)
+			fprintf(stderr, "ws: connect to %s failed: HTTP %ld\n",
+				full_url, http_code);
 		else
 			fprintf(stderr, "ws: connect to %s failed: %s\n",
 				full_url, curl_easy_strerror(rc));
