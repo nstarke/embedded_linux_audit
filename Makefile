@@ -149,20 +149,20 @@ endif
 # curl SSL backend: wolfSSL for powerpc/ppc targets (OpenSSL triggers illegal
 # instructions on powerpc), OpenSSL everywhere else.
 ifeq ($(ELA_ENABLE_WOLFSSL),1)
-CURL_CMAKE_SSL_ARGS := \
+CURL_CMAKE_SSL_ARGS = \
 	-DCURL_USE_WOLFSSL=ON \
 	-DCURL_USE_OPENSSL=OFF \
 	-DWOLFSSL_INCLUDE_DIR="$(abspath $(WOLFSSL_INSTALL)/include)" \
 	-DWOLFSSL_LIBRARY="$(abspath $(WOLFSSL_INSTALL)/lib/libwolfssl.a)"
-CURL_SSL_DEP := $(WOLFSSL_LIB)
+CURL_SSL_DEP = $(WOLFSSL_LIB)
 else
-CURL_CMAKE_SSL_ARGS := \
+CURL_CMAKE_SSL_ARGS = \
 	-DCURL_USE_OPENSSL=ON \
 	-DOPENSSL_ROOT_DIR="$(abspath $(OPENSSL_INSTALL))" \
 	-DOPENSSL_INCLUDE_DIR="$(abspath $(OPENSSL_INSTALL))/include" \
 	-DOPENSSL_SSL_LIBRARY="$(abspath $(OPENSSL_SSL_LIB))" \
 	-DOPENSSL_CRYPTO_LIBRARY="$(abspath $(OPENSSL_LIB))"
-CURL_SSL_DEP := $(OPENSSL_SSL_LIB)
+CURL_SSL_DEP = $(OPENSSL_SSL_LIB)
 endif
 
 CURL_CMAKE_ARGS := $(CMAKE_CC_ARGS)

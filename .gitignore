@@ -12,3 +12,4 @@ logs
 .build-release-static
 .cache
 package-lock.json
+.claude
