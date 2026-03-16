@@ -105,7 +105,7 @@ The agent connects using the public URL:
 ./embedded_linux_audit --insecure transfer --remote wss://ela.example.com
 ```
 
-The agent appends `/terminal/<mac>` to the URL automatically.
+The agent always appends `/terminal/<mac>` to the base URL before connecting.
 
 ## Authorization header forwarding
 
