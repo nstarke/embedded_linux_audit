@@ -5,8 +5,6 @@ set -u
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 
-# shellcheck source=tests/system_package_helpers.sh
-. "$REPO_ROOT/tests/system_package_helpers.sh"
 
 TEST_OUTPUT_HTTP="${TEST_OUTPUT_HTTP:-}"
 
