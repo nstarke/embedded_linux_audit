@@ -11,3 +11,4 @@ logs
 .tools
 .build-release-static
 .cache
+package-lock.json
