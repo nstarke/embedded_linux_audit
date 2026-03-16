@@ -131,6 +131,21 @@ WOLFSSL_EXTRA_CONFIGURE_FLAGS += --disable-sp-asm
 endif
 endif
 
+# For 32-bit powerpc, autoconf cannot run test programs during cross-compilation
+# and may fall back to the 64-bit host's sizeof(long)=8.  The resulting wolfSSL
+# headers then embed SIZEOF_LONG=8, but zig cc (targeting 32-bit powerpc) sees
+# sizeof(long)=4 and wolfSSL's compile-time assertion fires with
+# "bad math long / long long settings".  Pre-seed the correct values via
+# autoconf cache variables passed as trailing arguments to configure.
+WOLFSSL_CONFIGURE_SIZEOF_ARGS :=
+ifneq ($(strip $(CMAKE_C_COMPILER_TARGET)),)
+ifneq (,$(findstring powerpc,$(CMAKE_C_COMPILER_TARGET)))
+ifeq (,$(findstring powerpc64,$(CMAKE_C_COMPILER_TARGET)))
+WOLFSSL_CONFIGURE_SIZEOF_ARGS := ac_cv_sizeof_long=4 ac_cv_sizeof_long_long=8
+endif
+endif
+endif
+
 # Some bundled wolfSSL configure scripts in our pinned submodule revision reject
 # libtool-style --enable-static/--disable-shared toggles even though we only
 # consume the static archive. The build still produces src/.libs/libwolfssl.a
@@ -146,6 +161,25 @@ TPM2_TSS_CONFIGURE_HOST_ARG := --host=$(CMAKE_C_COMPILER_TARGET)
 TPM2_TSS_CONFIGURE_BUILD_ARG := --build=$(shell cc -dumpmachine 2>/dev/null || gcc -dumpmachine 2>/dev/null || echo unknown-build)
 endif
 
+# curl SSL backend: wolfSSL for powerpc/ppc targets (OpenSSL triggers illegal
+# instructions on powerpc), OpenSSL everywhere else.
+ifeq ($(ELA_ENABLE_WOLFSSL),1)
+CURL_CMAKE_SSL_ARGS = \
+	-DCURL_USE_WOLFSSL=ON \
+	-DCURL_USE_OPENSSL=OFF \
+	-DWOLFSSL_INCLUDE_DIR="$(abspath $(WOLFSSL_INSTALL)/include)" \
+	-DWOLFSSL_LIBRARY="$(abspath $(WOLFSSL_INSTALL)/lib/libwolfssl.a)"
+CURL_SSL_DEP = $(WOLFSSL_LIB)
+else
+CURL_CMAKE_SSL_ARGS = \
+	-DCURL_USE_OPENSSL=ON \
+	-DOPENSSL_ROOT_DIR="$(abspath $(OPENSSL_INSTALL))" \
+	-DOPENSSL_INCLUDE_DIR="$(abspath $(OPENSSL_INSTALL))/include" \
+	-DOPENSSL_SSL_LIBRARY="$(abspath $(OPENSSL_SSL_LIB))" \
+	-DOPENSSL_CRYPTO_LIBRARY="$(abspath $(OPENSSL_LIB))"
+CURL_SSL_DEP = $(OPENSSL_SSL_LIB)
+endif
+
 CURL_CMAKE_ARGS := $(CMAKE_CC_ARGS)
 ifneq ($(strip $(CMAKE_C_COMPILER_TARGET)),)
 # curl's CMake feature probes are fragile for cross targets under zig cc.
@@ -155,6 +189,25 @@ ifneq (,$(findstring linux,$(CMAKE_C_COMPILER_TARGET)))
 # when cross-compiling these Zig Linux targets and then trips a hard preprocessor error.
 CURL_CMAKE_ARGS += -DHAVE_POSIX_STRERROR_R=1 -DHAVE_GLIBC_STRERROR_R=0
 endif
+endif
+
+# When building curl for 32-bit powerpc with wolfSSL, curl's cmake detects
+# sizeof(long)=4 and emits "#define SIZEOF_LONG 4" in curl_config.h, but does
+# not check sizeof(long long) so SIZEOF_LONG_LONG is never defined.  curl_setup.h
+# includes curl_config.h before any wolfSSL headers; wolfSSL's types.h then sees
+# SIZEOF_LONG=4 with no SIZEOF_LONG_LONG and none of the CTC_SETTINGS enum
+# branches match, triggering "#error bad math long / long long settings".
+# Pre-define SIZEOF_LONG_LONG=8 via CMAKE_C_FLAGS to supply the missing value.
+CURL_EXTRA_CFLAGS :=
+ifeq ($(ELA_ENABLE_WOLFSSL),1)
+ifneq (,$(findstring powerpc,$(CMAKE_C_COMPILER_TARGET)))
+ifeq (,$(findstring powerpc64,$(CMAKE_C_COMPILER_TARGET)))
+CURL_EXTRA_CFLAGS += -DSIZEOF_LONG_LONG=8
+endif
+endif
+endif
+ifneq ($(strip $(CURL_EXTRA_CFLAGS)),)
+CURL_CMAKE_ARGS += -DCMAKE_C_FLAGS="$(CURL_EXTRA_CFLAGS)"
 endif
 
 JSONC_CMAKE_ARGS := $(CMAKE_CC_ARGS)
@@ -235,12 +288,13 @@ TPM2_TSS_MU_LIB := $(TPM2_TSS_BUILD)/src/tss2-mu/.libs/libtss2-mu.a
 TPM2_TSS_SYS_LIB := $(TPM2_TSS_BUILD)/src/tss2-sys/.libs/libtss2-sys.a
 TPM2_TSS_ESYS_LIB := $(TPM2_TSS_BUILD)/src/tss2-esys/.libs/libtss2-esys.a
 TPM2_TSS_TCTI_DEVICE_LIB := $(TPM2_TSS_BUILD)/src/tss2-tcti/.libs/libtss2-tcti-device.a
-TPM2_TSS_BUILD_CFLAGS ?= -O2
+TPM2_TSS_BUILD_CFLAGS ?= -O2 -Wno-unused-variable
 TPM2_TSS_ZIG_GLOBAL_CACHE := $(abspath .cache/zig-global)
-WOLFSSL_DIR   := third_party/wolfssl
-WOLFSSL_BUILD := $(WOLFSSL_DIR)/build-$(CC_TAG)
-WOLFSSL_LIB   := $(WOLFSSL_BUILD)/src/.libs/libwolfssl.a
-WOLFSSL_CFLAGS := -I$(WOLFSSL_DIR) -I$(WOLFSSL_BUILD)
+WOLFSSL_DIR     := third_party/wolfssl
+WOLFSSL_BUILD   := $(WOLFSSL_DIR)/build-$(CC_TAG)
+WOLFSSL_INSTALL := $(WOLFSSL_BUILD)/install
+WOLFSSL_LIB     := $(WOLFSSL_BUILD)/src/.libs/libwolfssl.a
+WOLFSSL_CFLAGS  := -I$(WOLFSSL_DIR) -I$(WOLFSSL_BUILD)
 OPENSSL_DIR   := third_party/openssl
 OPENSSL_BUILD := $(OPENSSL_DIR)/build-$(CC_TAG)
 OPENSSL_INSTALL := $(OPENSSL_BUILD)/install
@@ -300,6 +354,13 @@ CFLAGS += $(LIBSSH_CFLAGS)
 ifeq ($(ELA_ENABLE_WOLFSSL),1)
 CFLAGS += $(WOLFSSL_CFLAGS)
 CFLAGS += -DELA_HAS_WOLFSSL=1
+# Suppress -Wmacro-redefined: wolfSSL's OpenSSL-compat layer and the real OpenSSL
+# headers both define SSL_VERIFY_PEER, SSL_ERROR_NONE, etc., which is expected
+# when both are present in the same binary (wolfSSL for TLS, OpenSSL for libssh).
+CFLAGS += -Wno-macro-redefined
+# Suppress "No configuration for wolfSSL detected" and "harden options" warnings
+# that fire when wolfSSL headers are included outside of the wolfSSL build tree.
+CFLAGS += -DWOLFSSL_CUSTOM_CONFIG -DWC_NO_HARDEN
 endif
 ifeq ($(ELA_ENABLE_TPM2),1)
 CFLAGS += $(TPM2_TSS_CFLAGS)
@@ -471,8 +532,8 @@ $(ZLIB_LIB):
 	cmake -S $(ZLIB_DIR) -B $(ZLIB_BUILD) $(ZLIB_CMAKE_ARGS) -DCMAKE_BUILD_TYPE=Release -DZLIB_BUILD_SHARED=OFF -DZLIB_BUILD_STATIC=ON -DZLIB_BUILD_TESTING=OFF -DZLIB_INSTALL=OFF
 	cmake --build $(ZLIB_BUILD) --parallel $(JOBS) --target zlibstatic
 
-$(CURL_LIB): $(OPENSSL_SSL_LIB)
-	cmake -S $(CURL_DIR) -B $(CURL_BUILD) $(CURL_CMAKE_ARGS) -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DBUILD_CURL_EXE=OFF -DBUILD_LIBCURL_DOCS=OFF -DBUILD_MISC_DOCS=OFF -DBUILD_TESTING=OFF -DCURL_USE_OPENSSL=ON -DOPENSSL_ROOT_DIR="$(abspath $(OPENSSL_INSTALL))" -DOPENSSL_INCLUDE_DIR="$(abspath $(OPENSSL_INSTALL))/include" -DOPENSSL_SSL_LIBRARY="$(abspath $(OPENSSL_SSL_LIB))" -DOPENSSL_CRYPTO_LIBRARY="$(abspath $(OPENSSL_LIB))" -DCURL_ZLIB=OFF -DUSE_LIBIDN2=OFF -DUSE_NGHTTP2=OFF -DCURL_BROTLI=OFF -DCURL_ZSTD=OFF -DENABLE_ARES=OFF -DENABLE_THREADED_RESOLVER=OFF -DCURL_USE_LIBPSL=OFF -DCURL_USE_LIBSSH2=OFF -DUSE_ECH=OFF -DUSE_NTLM=OFF -DUSE_OPENLDAP=OFF -DUSE_LIBRTMP=OFF -DUSE_WEBSOCKETS=ON -DCURL_DISABLE_NETRC=ON -DHTTP_ONLY=ON -DCURL_DISABLE_PROXY=ON -DCURL_DISABLE_ALTSVC=ON -DCURL_DISABLE_HSTS=ON -DCURL_DISABLE_MIME=ON -DCURL_DISABLE_PROGRESS_METER=ON -DCURL_DISABLE_GETOPTIONS=ON -DCURL_DISABLE_SOCKETPAIR=ON -DCURL_DISABLE_BINDLOCAL=ON -DCURL_DISABLE_DOH=ON -DCURL_DISABLE_HTTP_AUTH=ON -DCURL_DISABLE_AWS=ON -DCURL_DISABLE_SHUFFLE_DNS=ON -DCURL_DISABLE_HEADERS_API=ON -DCURL_DISABLE_LIBCURL_OPTION=ON -DCURL_DISABLE_OPENSSL_AUTO_LOAD_CONFIG=ON -DCURL_DISABLE_PARSEDATE=ON -DCURL_DISABLE_SRP=ON
+$(CURL_LIB): $(CURL_SSL_DEP)
+	cmake -S $(CURL_DIR) -B $(CURL_BUILD) $(CURL_CMAKE_ARGS) -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DBUILD_CURL_EXE=OFF -DBUILD_LIBCURL_DOCS=OFF -DBUILD_MISC_DOCS=OFF -DBUILD_TESTING=OFF $(CURL_CMAKE_SSL_ARGS) -DCURL_ZLIB=OFF -DUSE_LIBIDN2=OFF -DUSE_NGHTTP2=OFF -DCURL_BROTLI=OFF -DCURL_ZSTD=OFF -DENABLE_ARES=OFF -DENABLE_THREADED_RESOLVER=OFF -DCURL_USE_LIBPSL=OFF -DCURL_USE_LIBSSH2=OFF -DUSE_ECH=OFF -DUSE_NTLM=OFF -DUSE_OPENLDAP=OFF -DUSE_LIBRTMP=OFF -DUSE_WEBSOCKETS=ON -DCURL_DISABLE_NETRC=ON -DHTTP_ONLY=ON -DCURL_DISABLE_PROXY=ON -DCURL_DISABLE_ALTSVC=ON -DCURL_DISABLE_HSTS=ON -DCURL_DISABLE_MIME=ON -DCURL_DISABLE_PROGRESS_METER=ON -DCURL_DISABLE_GETOPTIONS=ON -DCURL_DISABLE_SOCKETPAIR=ON -DCURL_DISABLE_BINDLOCAL=ON -DCURL_DISABLE_DOH=ON -DCURL_DISABLE_HTTP_AUTH=ON -DCURL_DISABLE_AWS=ON -DCURL_DISABLE_SHUFFLE_DNS=ON -DCURL_DISABLE_HEADERS_API=ON -DCURL_DISABLE_LIBCURL_OPTION=ON -DCURL_DISABLE_OPENSSL_AUTO_LOAD_CONFIG=ON -DCURL_DISABLE_PARSEDATE=ON -DCURL_DISABLE_SRP=ON
 	cmake --build $(CURL_BUILD) --parallel $(JOBS) --target libcurl_static
 
 $(LIBSSH_LIB): $(OPENSSL_SSL_LIB) $(ZLIB_LIB)
@@ -556,15 +617,18 @@ $(WOLFSSL_LIB): check-autoconf
 		$(WOLFSSL_CONFIGURE_HOST_ARG) \
 		$(WOLFSSL_EXTRA_CONFIGURE_FLAGS) \
 		$(WOLFSSL_LIBRARY_CONFIGURE_FLAGS) \
+		--enable-opensslextra \
 		--disable-benchmark --disable-examples \
 		--disable-crypttests --disable-dtls --disable-oldtls --disable-tls13 \
-		--disable-tls13 --enable-sni \
+		--enable-sni \
 		--disable-arc4 --disable-des3 --disable-anon \
 		--disable-psk --disable-srp --disable-srtp --disable-scrypt \
 		--disable-aria --disable-camellia --disable-blake2 \
 		--disable-crl \
-		--prefix="$(abspath $(WOLFSSL_BUILD))/install"
+		--prefix="$(abspath $(WOLFSSL_BUILD))/install" \
+		$(WOLFSSL_CONFIGURE_SIZEOF_ARGS)
 	$(MAKE) -C $(WOLFSSL_BUILD) -j$(JOBS)
+	$(MAKE) -C $(WOLFSSL_BUILD) install
 
 $(OPENSSL_SSL_LIB):
 	mkdir -p $(OPENSSL_BUILD)

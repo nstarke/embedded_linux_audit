@@ -1,77 +1,139 @@
 # embedded_linux_audit
 
+[![Build](https://github.com/nstarke/embedded_linux_audit/actions/workflows/release-cross-static.yml/badge.svg?branch=main)](https://github.com/nstarke/embedded_linux_audit/actions/workflows/release-cross-static.yml)
+[![Agent Tests](https://github.com/nstarke/embedded_linux_audit/actions/workflows/agent-tests.yml/badge.svg?branch=main)](https://github.com/nstarke/embedded_linux_audit/actions/workflows/agent-tests.yml)
+
 ![embedded_linux_audit logo](images/logo.png)
 
-`embedded_linux_audit` is a Linux host-side C utility for U-Boot discovery and validation workflows on embedded systems. It focuses on three tasks:
+`embedded_linux_audit` (`ela`) is a static C binary for security assessment of embedded Linux devices. It runs directly on the target — no runtime dependencies, no package manager, no installation required — and covers U-Boot analysis, Linux system introspection, EFI/BIOS option ROM inspection, TPM 2.0 interrogation, and remote exfiltration of collected data.
 
-- **Environment discovery** (`embedded_linux_audit uboot env`): scans flash/block devices for valid U-Boot environment candidates and can emit `fw_env.config` entries.
-- **Image discovery/extraction** (`embedded_linux_audit uboot image`): scans for likely U-Boot image headers, resolves load addresses, and can pull image bytes.
-- **Rule-based auditing** (`embedded_linux_audit uboot audit`): runs compiled rules against selected bytes to validate security and configuration expectations.
-- **Linux utilities** (`embedded_linux_audit linux dmesg`, `embedded_linux_audit linux download-file`, `embedded_linux_audit linux execute-command`, `embedded_linux_audit linux grep`, `embedded_linux_audit linux list-files`, `embedded_linux_audit linux list-symlinks`, `embedded_linux_audit linux remote-copy`): collect logs, fetch files, execute commands, search directories, enumerate files/symlinks, and transfer files.
-- **EFI utilities** (`embedded_linux_audit efi dump-vars`, `embedded_linux_audit efi orom`): dump EFI variables and work with EFI PCI option ROMs.
+## Command groups
 
-Running `embedded_linux_audit` with no arguments starts an interactive shell that exposes the same command groups/subcommands, supports tab completion when built with readline, supports up/down command history navigation, and provides a `set` helper for configuring `ELA_API_URL` and `ELA_API_INSECURE` in the current process.
+### `uboot` — Boot environment and image analysis
 
-## How it works
+| Subcommand | Description |
+|---|---|
+| `uboot env` | Scan MTD/UBI/block devices for U-Boot environment partitions; emit `fw_env.config` entries and raw variable dumps |
+| `uboot image` | Detect uImage and FIT headers on flash/block devices; resolve load addresses and extract image bytes |
+| `uboot audit` | Run compiled security rules against U-Boot environment data to check Secure Boot posture, environment write-protection, and command-line integrity |
 
-At runtime, `embedded_linux_audit` probes MTD/UBI and block devices (including SD/eMMC patterns), applies U-Boot-aware parsers/validators (CRC, FIT/uImage structure checks, rule engines), and produces human-readable or machine-readable output (`txt`, `csv`, `json`).
+### `linux` — Operating system introspection
 
-This makes it useful for field diagnostics, incident response, and recovery validation where you need a single tool to identify environments/images and assess boot-policy risk.
+| Subcommand | Description |
+|---|---|
+| `linux dmesg` | Capture the kernel ring buffer; `dmesg watch` for continuous streaming |
+| `linux execute-command` | Run an arbitrary shell command and collect output |
+| `linux list-files` | Enumerate files under a path (optionally recursive) |
+| `linux list-symlinks` | Enumerate symbolic links under a path (optionally recursive) |
+| `linux grep` | Search file contents under a directory for a pattern |
+| `linux download-file` | Fetch a file from an HTTP(S) URL to a local path |
+| `linux remote-copy` | Upload a local file to a remote HTTP(S) endpoint |
+| `linux ssh client` | Open an interactive SSH session (via libssh) |
+| `linux ssh copy` | Transfer files over SFTP |
+| `linux ssh tunnel` | Establish a reverse SSH tunnel |
+| `linux ssh socks` | Set up a SOCKS proxy over SSH |
 
-## Portable static GitHub release builds
+### `efi` — EFI/UEFI inspection
 
-GitHub Releases are produced by a cross-build workflow (`.github/workflows/release-cross-static.yml`) that compiles **fully static** binaries across many architectures using **Zig + musl** targets. Release artifacts are uploaded as per-architecture `ela-*` binaries.
+| Subcommand | Description |
+|---|---|
+| `efi dump-vars` | Enumerate all EFI runtime variables with attributes and decoded values |
+| `efi orom` | List and extract EFI PCI option ROMs |
 
-Why this matters:
+### `bios` — Legacy BIOS inspection
 
-- No target-side dependency installation required for common use cases.
-- Better portability across minimal/older Linux environments.
-- Easier drop-in usage for triage and recovery workflows.
+| Subcommand | Description |
+|---|---|
+| `bios orom` | List and extract legacy PCI option ROMs |
 
-See [docs/agent/getting-started/build.md](docs/agent/getting-started/build.md) for the full build matrix.
+### `tpm2` — TPM 2.0 interrogation
 
-## Documentation
+| Subcommand | Description |
+|---|---|
+| `tpm2 getcap` | Query TPM capabilities and properties |
+| `tpm2 pcrread` | Read PCR values |
+| `tpm2 nvreadpublic` | Read NV index metadata |
+| `tpm2 createprimary` | Create a primary object and serialize the context |
 
-The full usage and reference material has moved to the `docs/` folder:
+### `transfer` — Remote terminal and data exfiltration
 
-- [Documentation index](docs/index.md)
+| Subcommand | Description |
+|---|---|
+| `transfer --remote <host:port>` | Connect to a TCP listener, transfer the agent binary, and drop into an interactive session |
+| `transfer --remote ws[s]://...` | Connect over WebSocket (plain or TLS) to the ELA terminal server and start an interactive session |
 
-## Companion API
+## Interactive shell
 
-This repository also includes a companion Node.js helper API in [`api/agent/`](api/agent/) for local collection and test workflows. The helper server is useful when you want a lightweight HTTP/HTTPS endpoint for agent uploads and a simple way to serve downloaded release binaries and agent test scripts.
+Running `ela` with no arguments starts a REPL that exposes all command groups above, supports tab completion (when built with readline), maintains command history, and provides a `set` built-in for configuring per-session environment variables (`ELA_API_URL`, `ELA_OUTPUT_FORMAT`, `ELA_QUIET`, etc.).
 
-Key capabilities:
+## Global flags
 
-- Accepts uploads for command output, `dmesg`, file contents, file lists, symlink lists, option ROM data, U-Boot images, and U-Boot environment data.
-- Validates upload content types and stores runtime data under timestamped directories in `api/agent/data/`.
-- Adds timestamp and source IP metadata to JSON command uploads.
-- Serves a simple index at `GET /` plus helper routes for release binaries, agent test scripts, ISA assets, and U-Boot environment files.
-- Can automatically download and cache the latest GitHub release binaries for `embedded_linux_audit`.
+| Flag | Description |
+|---|---|
+| `--output-format <txt\|csv\|json>` | Output encoding (default: `txt`) |
+| `--output-tcp <ip:port>` | Stream command output to a TCP listener |
+| `--output-http <url>` | POST command output to an HTTP(S) endpoint |
+| `--script <path\|url>` | Execute commands from a local or remote script file |
+| `--remote <target>` | Connect to a reverse-shell/WebSocket terminal before starting |
+| `--api-key <key>` | Bearer token for API server authentication |
+| `--insecure` | Disable TLS certificate and hostname verification |
+| `--quiet` | Suppress informational output |
 
-To start the companion API:
+API keys are also read from the `ELA_API_KEY` environment variable or `/tmp/ela.key`.
+
+## Companion server components
+
+### Agent helper API (`api/agent/`)
+
+A Node.js HTTP(S) server that acts as a collection point for agent data and a distribution server for binaries and test scripts.
+
+- Accepts `POST /:mac/upload/:type` for command output, dmesg, file contents, EFI variables, option ROM data, U-Boot images, and environment dumps
+- Stores data under timestamped per-device directories in `api/agent/data/`
+- Serves release binaries (with optional auto-download from GitHub), test scripts, and U-Boot environment files
+- Optional bearer token authentication (`--validate-key`)
+- Optional HTTPS with self-signed certificate (`--https`)
 
 ```bash
 cd api/agent && npm install && npm start -- --host 0.0.0.0 --port 5000
 ```
 
-Common options include:
+See [docs/api/agent/helper-server.md](docs/api/agent/helper-server.md) for full options.
 
-- `--https` to enable HTTPS with a self-signed localhost certificate
-- `--data-dir` to change the runtime storage location
-- `--clean` to remove previous runtime upload data before startup
-- `--force-download` to refresh cached release binaries
-- `--verbose` to enable per-request console logging
+### WebSocket terminal server (`api/terminal/`)
 
-For more detail, see [docs/api/agent/helper-server.md](docs/api/agent/helper-server.md).
+A Node.js WebSocket server with a terminal TUI for managing multiple simultaneous agent sessions. Each agent that connects via `transfer --remote ws://...` appears as a named session the operator can attach to, send commands to, and detach from without dropping the connection.
+
+```bash
+cd api/terminal && npm install && npm start
+```
+
+See [docs/api/terminal/index.md](docs/api/terminal/index.md).
+
+### nginx reverse proxy (`nginx/ela.conf`)
+
+An example nginx configuration that exposes both server components behind a single frontend — HTTP on port 80 and HTTPS on port 443 — routing `/terminal/<mac>` to the WebSocket terminal server and everything else to the agent helper API.
+
+See [docs/api/nginx.md](docs/api/nginx.md).
+
+## Portable static release builds
+
+GitHub Releases contain fully static binaries for the following architectures, compiled via Zig + musl cross-compilation:
+
+`x86_64` · `x86` · `arm32-le` · `arm32-be` · `aarch64-le` · `aarch64-be` · `mips-le` · `mips-be` · `mips64-le` · `mips64-be` · `powerpc-le` · `powerpc64-be` · `powerpc-be` · `riscv32` · `riscv64`
+
+No target-side dependencies. Drop the binary on the device and run it.
+
+See [docs/agent/getting-started/build.md](docs/agent/getting-started/build.md) for the full build matrix and local build instructions.
+
+## Documentation
+
+- [Documentation index](docs/index.md)
+- [Manual assessment checklist](docs/manual-checklist.md)
 
 ## Licensing
 
-This repository is split-license:
+- The `embedded_linux_audit` agent and associated build/test material: **GPL-3.0-or-later** ([COPYING](COPYING))
+- The helper API under `api/` and other non-agent files: **MIT** ([LICENSE.api](LICENSE.api))
+- Third-party code under `third_party/`: each component's own license
 
-- The `embedded_linux_audit` agent and its associated build/test material are
-  licensed under **GPL-3.0-or-later**. See [COPYING](COPYING).
-- The helper API under `api/agent/` and other non-agent repository files are
-  licensed under **MIT** unless noted otherwise. See [LICENSE.api](LICENSE.api).
-- Third-party code under `third_party/` remains under its own licenses.
-
-See [LICENSE](LICENSE) for the repository licensing breakdown.
+See [LICENSE](LICENSE) for the full breakdown.

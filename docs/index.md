@@ -4,3 +4,4 @@ Repository documentation is organized into two top-level sections that mirror th
 
 - [Agent documentation](agent/index.md)
 - [API documentation](api/index.md)
+- [Manual assessment checklist](manual-checklist.md)

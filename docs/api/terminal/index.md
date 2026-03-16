@@ -122,15 +122,20 @@ manage `ela.key`.
 The agent connects using the `transfer --remote` subcommand:
 
 ```sh
-# Plain WebSocket (no TLS)
+# Plain WebSocket — direct to server (no nginx)
 ./embedded_linux_audit transfer --remote ws://server:8080
 
-# Secure WebSocket (TLS, via nginx or another TLS terminator)
-./embedded_linux_audit transfer --remote wss://ela.example.com/api/terminal
+# Plain WebSocket — via nginx on port 80
+./embedded_linux_audit transfer --remote ws://ela.example.com
+
+# Secure WebSocket — via nginx on port 443
+./embedded_linux_audit transfer --remote wss://ela.example.com
 
 # Skip TLS certificate verification (self-signed certs, testing only)
-./embedded_linux_audit --insecure transfer --remote wss://ela.example.com/api/terminal
+./embedded_linux_audit --insecure transfer --remote wss://ela.example.com
 ```
+
+The agent always appends `/terminal/<mac>` to the base URL before connecting.
 
 The agent appends its MAC address to the URL path
 (`/terminal/<mac>`), which the server uses as the session identifier.  If a

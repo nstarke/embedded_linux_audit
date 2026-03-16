@@ -75,17 +75,16 @@ int ela_is_ws_url(const char *url)
 }
 
 /*
- * Build the full WebSocket URL with MAC address:
- *   ws://host:port              ->  ws://host:port/terminal/<mac>
- *   ws://host:port/terminal     ->  ws://host:port/terminal/<mac>
- *   ws://host:port/other/path   ->  ws://host:port/other/path/<mac>
+ * Build the full WebSocket URL with MAC address.
+ * The base URL is always treated as a root; /terminal/<mac> is appended:
+ *   ws://host:port          ->  ws://host:port/terminal/<mac>
+ *   ws://host:port/         ->  ws://host:port/terminal/<mac>
+ *   wss://host/base         ->  wss://host/base/terminal/<mac>
  */
 static int build_ws_url(const char *base_url, const char *mac,
 			 char *out, size_t out_sz)
 {
 	size_t scheme_len;
-	const char *after_scheme;
-	const char *path_sep;
 	char stripped[512];
 	size_t slen;
 	int n;
@@ -99,13 +98,7 @@ static int build_ws_url(const char *base_url, const char *mac,
 	while (slen > scheme_len && stripped[slen - 1] == '/')
 		stripped[--slen] = '\0';
 
-	after_scheme = stripped + scheme_len;
-	path_sep     = strchr(after_scheme, '/');
-
-	if (path_sep)
-		n = snprintf(out, out_sz, "%s/%s", stripped, mac);
-	else
-		n = snprintf(out, out_sz, "%s/terminal/%s", stripped, mac);
+	n = snprintf(out, out_sz, "%s/terminal/%s", stripped, mac);
 
 	return (n > 0 && (size_t)n < out_sz) ? 0 : -1;
 }

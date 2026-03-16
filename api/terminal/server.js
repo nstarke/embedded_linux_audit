@@ -61,8 +61,12 @@ const httpServer = http.createServer((req, res) => {
 
 const wss = new WebSocketServer({
   server: httpServer,
-  path: '/terminal',
   verifyClient(info, done) {
+    const url = info.req.url || '';
+    if (!url.startsWith('/terminal/')) {
+      done(false, 404, 'Not Found');
+      return;
+    }
     if (auth.checkBearer(info.req.headers['authorization'])) {
       done(true);
     } else {
