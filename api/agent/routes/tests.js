@@ -1,4 +1,4 @@
-const { isSafeRelativePath, isSafeSinglePathSegment } = require('./shared');
+const { isSafeRelativePath } = require('./shared');
 
 module.exports = function registerTestsRoute(app, deps) {
   const { testsDir, fsp, isWithinRoot, verboseRequestLog, verboseResponseLog } = deps;
@@ -32,9 +32,7 @@ module.exports = function registerTestsRoute(app, deps) {
       return;
     }
 
-    const pathIsValid = type === 'shell'
-      ? isSafeSinglePathSegment(requestedPath)
-      : isSafeRelativePath(requestedPath);
+    const pathIsValid = isSafeRelativePath(requestedPath);
 
     if (!pathIsValid || !requestedPath.endsWith(expectedSuffix)) {
       res.status(400).type('text').send('invalid path\n');
