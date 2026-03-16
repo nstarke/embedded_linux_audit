@@ -134,7 +134,10 @@ int ela_ws_connect(const char *base_url, int insecure,
 	curl_easy_setopt(curl, CURLOPT_URL, full_url);
 	/* CONNECT_ONLY=1 performs the HTTP WebSocket upgrade then returns,
 	 * leaving the socket ready for curl_ws_recv / curl_ws_send. */
-	curl_easy_setopt(curl, CURLOPT_CONNECT_ONLY, 1L);
+	/* 2L = WebSocket connect-only: do the HTTP upgrade handshake then stop,
+	 * leaving the socket for use with curl_ws_recv / curl_ws_send.
+	 * (1L would stop after TCP+TLS without doing the WebSocket upgrade.) */
+	curl_easy_setopt(curl, CURLOPT_CONNECT_ONLY, 2L);
 	curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);
 
 	{
