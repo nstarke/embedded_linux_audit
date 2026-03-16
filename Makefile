@@ -294,7 +294,7 @@ WOLFSSL_DIR     := third_party/wolfssl
 WOLFSSL_BUILD   := $(WOLFSSL_DIR)/build-$(CC_TAG)
 WOLFSSL_INSTALL := $(WOLFSSL_BUILD)/install
 WOLFSSL_LIB     := $(WOLFSSL_BUILD)/src/.libs/libwolfssl.a
-WOLFSSL_CFLAGS  := -I$(WOLFSSL_INSTALL)/include -I$(WOLFSSL_DIR) -I$(WOLFSSL_BUILD)
+WOLFSSL_CFLAGS  := -I$(WOLFSSL_DIR) -I$(WOLFSSL_BUILD)
 OPENSSL_DIR   := third_party/openssl
 OPENSSL_BUILD := $(OPENSSL_DIR)/build-$(CC_TAG)
 OPENSSL_INSTALL := $(OPENSSL_BUILD)/install
@@ -358,6 +358,9 @@ CFLAGS += -DELA_HAS_WOLFSSL=1
 # headers both define SSL_VERIFY_PEER, SSL_ERROR_NONE, etc., which is expected
 # when both are present in the same binary (wolfSSL for TLS, OpenSSL for libssh).
 CFLAGS += -Wno-macro-redefined
+# Suppress "No configuration for wolfSSL detected" and "harden options" warnings
+# that fire when wolfSSL headers are included outside of the wolfSSL build tree.
+CFLAGS += -DWOLFSSL_CUSTOM_CONFIG -DWC_NO_HARDEN
 endif
 ifeq ($(ELA_ENABLE_TPM2),1)
 CFLAGS += $(TPM2_TSS_CFLAGS)
