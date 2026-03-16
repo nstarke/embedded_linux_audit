@@ -1,8 +1,8 @@
 # embedded_linux_audit WebSocket Terminal Server
 #
-# The node process runs inside a named tmux session so that any authenticated
-# user on the host can attach to the interactive TUI without restarting the
-# service.
+# The node process runs inside a named tmux session so that any member of the
+# 'ela' Unix group can attach to the interactive TUI without restarting the
+# service.  Add operators with: usermod -aG ela <username>
 #
 # To attach to the TUI from any shell on the host:
 #   tmux -S /run/ela-terminal/tmux.sock attach -t ela-terminal
@@ -36,12 +36,21 @@ User=ela
 Group=ela
 WorkingDirectory=/opt/ela/api/terminal
 
-# systemd creates /run/ela-terminal/ owned by ela:ela with mode 0755.
+# systemd creates /run/ela-terminal/ owned by ela:ela.
+# Mode 1755 (sticky bit + rwxr-xr-x): the sticky bit satisfies tmux's
+# security check, which requires the socket directory to be either owned by
+# the connecting user or have the sticky bit set — without it, any user
+# other than 'ela' receives "access not allowed" even if the socket is 0666.
 # UMask=0111 causes tmux to create the socket with mode 0666 so that
 # any user on the host can attach without elevated privileges.
 RuntimeDirectory=ela-terminal
-RuntimeDirectoryMode=0755
+RuntimeDirectoryMode=1755
 UMask=0111
+
+# Ensure /run/ela-terminal exists with the sticky bit even if RuntimeDirectory
+# handling is skipped (e.g. running outside a fully-featured PID-1 systemd).
+ExecStartPre=/bin/mkdir -p /run/ela-terminal
+ExecStartPre=/bin/chmod 1755 /run/ela-terminal
 
 # Standard startup (no authentication enforcement).
 # The tmux session is named 'ela-terminal'; the socket is placed in
@@ -58,6 +67,10 @@ ExecStart=/usr/bin/tmux -S /run/ela-terminal/tmux.sock \
 # Ensure the socket is world-accessible regardless of tmux's internal umask
 # handling.  Runs after Type=forking confirms the tmux server is up.
 ExecStartPost=/bin/chmod 0666 /run/ela-terminal/tmux.sock
+
+# Grant tmux server-access to every member of the 'ela' group (tmux >= 3.2).
+# Add operators with: usermod -aG ela <username>  (then restart the service).
+ExecStartPost=/bin/bash /opt/ela/scripts/grant-tmux-access.sh
 
 # Cleanly close all sessions before the tmux server exits.
 ExecStop=/usr/bin/tmux -S /run/ela-terminal/tmux.sock kill-server

@@ -46,6 +46,55 @@ tmux -S /run/ela-terminal/tmux.sock attach -t ela-terminal
 The tmux socket lives at `/run/ela-terminal/tmux.sock` and is created with
 mode `0666` so all users can attach without `sudo`.
 
+### Connecting to the tmux session
+
+Once the service is running, any user on the host can attach to the live TUI
+without restarting or reconfiguring the service:
+
+```sh
+tmux -S /run/ela-terminal/tmux.sock attach -t ela-terminal
+```
+
+#### Granting access — "access not allowed"
+
+tmux uses `getpeereid()` on the Unix socket to verify that the connecting
+client's UID matches the server's UID.  Because the server process runs as
+the `ela` service account, any other user receives:
+
+```
+access not allowed
+```
+
+This is independent of socket or directory permissions.
+
+The service uses `tmux server-access` (tmux ≥ 3.2) to grant access to every
+member of the `ela` Unix group at startup.  To allow a user to attach, add
+them to the group and restart the service:
+
+```sh
+sudo usermod -aG ela <username>
+sudo systemctl restart ela-terminal
+```
+
+After that, `ela-attach` works without `sudo` for any member of the `ela`
+group.
+
+#### Detaching and re-attaching
+
+To **detach** from the session and return to your shell without stopping the
+server, press `Ctrl-b d` (the standard tmux detach key sequence), or type
+`/detach` at the TUI prompt and press Enter.  Either method leaves the server
+running and all agent connections intact.
+
+If you close the terminal window or your SSH session drops, the tmux session
+keeps running inside the service — simply re-attach with the command above.
+
+To **list active tmux sessions** without attaching:
+
+```sh
+tmux -S /run/ela-terminal/tmux.sock list-sessions
+```
+
 ### With API key enforcement
 
 Start with `--validate-key` to require a bearer token on every incoming
