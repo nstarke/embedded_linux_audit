@@ -238,7 +238,7 @@ build_with_targets() {
     for target in "$@"; do
         echo "Trying target: $target"
         if [ "$clean_before_build" -eq 1 ]; then
-            if ! make clean; then
+            if ! make -C "$REPO_ROOT" clean; then
                 build_ok=0
                 echo "Clean failed before target: $target"
                 continue
@@ -246,7 +246,7 @@ build_with_targets() {
         fi
 
         build_ok=1
-        make static \
+        make -C "$REPO_ROOT" static \
             JOBS="$jobs_arg" \
             ELA_USE_READLINE=0 \
             CMAKE_C_COMPILER="$(command -v zig)" \
