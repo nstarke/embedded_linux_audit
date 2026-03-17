@@ -29,12 +29,11 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: npm
 
       - name: Install JS test dependencies
         run: |
           set -euo pipefail
-          npm ci
+          npm install
 
       - name: Run agent API Jest tests
         run: |
@@ -57,12 +56,11 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: npm
 
       - name: Install JS test dependencies
         run: |
           set -euo pipefail
-          npm ci
+          npm install
 
       - name: Run terminal API Jest tests
         run: |
