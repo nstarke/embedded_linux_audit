@@ -231,8 +231,10 @@ verbatim to the agent's interactive loop (e.g. `linux dmesg`,
 production-router (aa-bb-cc-dd-ee-ff)>
 ```
 
-Aliases are persisted to `api/terminal/ela-aliases.json` and reloaded
-automatically on server startup, so they survive server restarts.  To clear an
+Aliases are persisted to PostgreSQL and reloaded automatically on server
+startup, so they survive server restarts. Existing
+`api/terminal/ela-aliases.json` entries are imported on startup for migration
+compatibility. To clear an
 alias, run `/name` with no argument:
 
 ```

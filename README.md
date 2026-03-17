@@ -88,7 +88,8 @@ API keys are also read from the `ELA_API_KEY` environment variable or `/tmp/ela.
 A Node.js HTTP(S) server that acts as a collection point for agent data and a distribution server for binaries and test scripts.
 
 - Accepts `POST /:mac/upload/:type` for command output, dmesg, file contents, EFI variables, option ROM data, U-Boot images, and environment dumps
-- Stores data under timestamped per-device directories in `api/agent/data/`
+- Normalizes uploads into a PostgreSQL schema and stores raw payloads alongside relational records
+- Optionally keeps runtime file artifacts under timestamped per-device directories in `api/agent/data/`
 - Serves release binaries (with optional auto-download from GitHub), test scripts, and U-Boot environment files
 - Optional bearer token authentication (`--validate-key`)
 - Optional HTTPS with self-signed certificate (`--https`)
@@ -97,11 +98,20 @@ A Node.js HTTP(S) server that acts as a collection point for agent data and a di
 cd api/agent && npm install && npm start -- --host 0.0.0.0 --port 5000
 ```
 
+To reuse the latest timestamped artifact directory instead of creating a new one on startup:
+
+```bash
+cd api/agent && npm start -- --reuse-last-data-dir
+```
+
 See [docs/api/agent/helper-server.md](docs/api/agent/helper-server.md) for full options.
 
 ### WebSocket terminal server (`api/terminal/`)
 
 A Node.js WebSocket server with a terminal TUI for managing multiple simultaneous agent sessions. Each agent that connects via `transfer --remote ws://...` appears as a named session the operator can attach to, send commands to, and detach from without dropping the connection.
+
+- Persists terminal connection events in PostgreSQL
+- Stores operator-assigned device aliases in PostgreSQL and maps them to upload records by MAC address
 
 ```bash
 cd api/terminal && npm install && npm start
@@ -114,6 +124,23 @@ See [docs/api/terminal/index.md](docs/api/terminal/index.md).
 An example nginx configuration that exposes both server components behind a single frontend — HTTP on port 80 and HTTPS on port 443 — routing `/terminal/<mac>` to the WebSocket terminal server and everything else to the agent helper API.
 
 See [docs/api/nginx.md](docs/api/nginx.md).
+
+## Docker Deployment
+
+The repository now includes a containerized deployment path with PostgreSQL, the agent API, the terminal WebSocket API, and nginx fronting both services.
+
+```bash
+docker compose up --build
+```
+
+The default stack exposes:
+
+- `http://localhost/` → agent helper API
+- `http://localhost/terminal/<mac>` → terminal WebSocket endpoint
+
+The agent API container runs database migrations automatically on startup. Compose defaults target the bundled PostgreSQL container using the `ela`/`ela` credentials defined in `docker-compose.yml`.
+
+For operational details, see [docs/api/docker-operations.md](/home/nick/Documents/git/embedded_linux_audit/docs/api/docker-operations.md).
 
 ## Portable static release builds
 

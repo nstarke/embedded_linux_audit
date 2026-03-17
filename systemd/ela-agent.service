@@ -25,10 +25,10 @@ Group=ela
 WorkingDirectory=/opt/ela/api/agent
 
 # Standard startup (no authentication enforcement)
-ExecStart=/usr/bin/node server.js
+ExecStart=/usr/bin/node server.js --reuse-last-data-dir
 
 # Uncomment to enforce API key authentication (requires /opt/ela/api/ela.key):
-# ExecStart=/usr/bin/node server.js --validate-key
+# ExecStart=/usr/bin/node server.js --reuse-last-data-dir --validate-key
 
 Restart=on-failure
 RestartSec=5s

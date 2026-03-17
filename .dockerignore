@@ -1,0 +1,11 @@
+.git
+.github
+third_party
+api/agent/node_modules
+api/terminal/node_modules
+api/agent/data
+tmp
+build
+dist
+coverage
+*.log

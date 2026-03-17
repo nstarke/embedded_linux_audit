@@ -7,7 +7,9 @@
   "scripts": {
     "start": "node server.js",
     "start:secure": "node server.js --validate-key",
-    "dev": "node server.js"
+    "dev": "node server.js",
+    "migrate": "node ../lib/db/migrate.js",
+    "test:unit": "node ../../node_modules/jest/bin/jest.js --runInBand ../../tests/unit/api/agent ../../tests/unit/api/lib"
   },
   "engines": {
     "node": ">=18"
@@ -15,6 +17,9 @@
   "license": "MIT",
   "dependencies": {
     "express": "^4.21.2",
-    "mime-types": "^2.1.35"
+    "mime-types": "^2.1.35",
+    "pg": "^8.13.3",
+    "sequelize": "^6.37.5",
+    "umzug": "^3.8.2"
   }
 }

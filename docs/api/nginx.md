@@ -1,114 +1,107 @@
-# nginx Reverse Proxy Configuration
+# nginx Frontend Configuration
 
-The example configuration in `nginx/ela.conf` exposes both the agent helper
-API and the WebSocket terminal server behind a single frontend.
+The default deployment path now runs nginx inside Docker Compose using
+`nginx/docker.conf`. The legacy host-nginx example in `nginx/ela.conf` is still
+kept as a reference for non-container deployments, but `nginx/install.sh` now
+installs and starts the full Dockerized stack instead of copying a host nginx
+site file.
 
-## Architecture
+## Docker Architecture
 
 ```
 Internet
-    ├── HTTP  / WS  (port 80)  ──┐
-    └── HTTPS / WSS (port 443) ──┤
-                                  ▼
-                            nginx  (ela.example.com)
-                              ├── /terminal/<mac>  ──► ws://127.0.0.1:8080
-                              └── /*               ──► http://127.0.0.1:5000
+    ├── HTTP  / WS  (port 80)  ──► nginx container
+    └── HTTPS / WSS (port 443) ──►     ├── /terminal/<mac>  ──► terminal-api:8080
+                                        └── /*               ──► agent-api:5000
 ```
 
-`/terminal/<mac>` is routed to the WebSocket terminal server.  Everything
-else is passed to the agent API at its native web root — no path prefix
-stripping is needed, so agent API routes work at the same paths they use
-when accessed directly.
+`/terminal/<mac>` is routed to the WebSocket terminal server. Everything else
+is passed to the agent API at its native web root.
 
-Both HTTP and HTTPS are served independently.  HTTP is not redirected to
-HTTPS so that agents on networks without TLS can still connect using `ws://`
-or `http://` URLs.
+Both HTTP (port 80) and HTTPS (port 443) are served independently — plain HTTP
+is never redirected to HTTPS so that agents on networks without TLS can
+still connect.
 
 ## Prerequisites
 
-On a fresh nginx install (Debian/Ubuntu), the default site at
-`/etc/nginx/sites-enabled/default` also claims `default_server` for ports 80
-and 443.  Remove it before deploying `ela.conf`, otherwise nginx will reject
-the `default_server` directive with a config-test error:
+- Docker Engine with Compose support
+- Access to the Docker daemon
+- Free listeners on TCP ports `80` and `443`
+- `openssl` on the host (only needed when not supplying your own cert)
+- `docker-proxy` with `cap_net_bind_service` (see below)
+
+## Privileged port capability
+
+Docker binds host ports through `docker-proxy`, which must hold
+`cap_net_bind_service` to use ports below 1024 (80 and 443).
+`install.sh` applies this automatically, but you can set or verify it
+manually:
 
 ```sh
-sudo rm /etc/nginx/sites-enabled/default
-sudo nginx -t && sudo systemctl reload nginx
+# Grant the capability
+sudo setcap cap_net_bind_service=+ep $(command -v docker-proxy)
+
+# Verify
+getcap $(command -v docker-proxy)
+# → /usr/bin/docker-proxy cap_net_bind_service=+ep
 ```
 
-Once the default site is removed, `ela.conf`'s `default_server` directive
-ensures requests by IP address (e.g. `ws://192.168.1.100`) are handled
-correctly without needing to add every IP to `server_name`.
+The capability must be re-applied after Docker is upgraded since package
+upgrades replace the binary.
 
 ## Installation
 
 ```sh
-# Install nginx config (removes the conflicting default site automatically)
-sudo nginx/install.sh
-
-# Place your TLS certificate and key (for wss:// only)
-sudo cp your.crt /etc/ssl/certs/ela.example.com.crt
-sudo cp your.key /etc/ssl/private/ela.example.com.key
-sudo nginx -t && sudo systemctl reload nginx
+./nginx/install.sh ela.example.com
 ```
 
-The install script removes `/etc/nginx/sites-enabled/default` before enabling
-`ela.conf`.  This is required: the Ubuntu default site also declares
-`default_server` for port 80, and because `default` sorts before `ela`
-alphabetically, it would win and intercept all IP-based requests — returning
-400 for WebSocket upgrades — even with the correct ela config in place.
+If `--cert` and `--key` are not supplied, a 10-year self-signed certificate is
+generated automatically and stored in `nginx/ssl/` (gitignored). On subsequent
+runs the existing cert is reused; delete `nginx/ssl/` to force regeneration.
 
-Edit `ela.conf` to replace `ela.example.com` with your actual hostname before
-deploying (optional — the `_` wildcard in `server_name` already handles
-IP-based access without a hostname).
+To supply your own certificate:
 
-## TLS
+```sh
+./nginx/install.sh ela.example.com --cert /path/to/ela.crt --key /path/to/ela.key
+```
 
-The config enables TLSv1.2 and TLSv1.3 with strong ciphers.  It also sets:
+Common options:
 
-- `Strict-Transport-Security` (HSTS, 2 years, includeSubDomains)
-- `X-Content-Type-Options: nosniff`
-- `X-Frame-Options: SAMEORIGIN`
+- `./nginx/install.sh ela.example.com --env-file /path/to/ela.env`
+- `./nginx/install.sh ela.example.com --no-build`
+- `./nginx/install.sh ela.example.com --foreground`
 
-Use a certificate from a trusted CA (e.g. Let's Encrypt) for production.  For
-testing with a self-signed certificate, run the agent with `--insecure`.
+The installer runs `docker compose up` against the repository's
+[docker-compose.yml](/home/nick/Documents/git/embedded_linux_audit/docker-compose.yml)
+and starts:
+
+- `postgres`
+- `agent-api`
+- `terminal-api`
+- `nginx`
+
+It also generates a temporary nginx config for Compose by replacing
+`example.com` in [nginx/docker.conf](/home/nick/Documents/git/embedded_linux_audit/nginx/docker.conf)
+with the `HOSTNAME` argument using `sed`.
 
 ## Agent API
 
-All agent API routes are served at the web root, identical to direct access:
+All agent API routes are served at the web root:
 
 ```
-GET  https://ela.example.com/                              →  http://127.0.0.1:5000/
-GET  https://ela.example.com/tests/agent/shell/download_tests.sh  →  http://127.0.0.1:5000/tests/agent/shell/download_tests.sh
-POST https://ela.example.com/upload                        →  http://127.0.0.1:5000/upload
+GET  http://localhost/                                     →  agent-api:5000/
+GET  http://localhost/tests/agent/shell/download_tests.sh →  agent-api:5000/tests/agent/shell/download_tests.sh
+POST http://localhost/upload                              →  agent-api:5000/upload
 ```
 
-`client_max_body_size` is set to 200 MB to accommodate large binary uploads
-(e.g. U-Boot images, option ROMs).
+`client_max_body_size` remains `200m` in the bundled Docker nginx config.
 
 ## Terminal WebSocket endpoint (`/terminal/<mac>`)
-
-WebSocket upgrade headers are forwarded:
-
-```nginx
-proxy_set_header Upgrade    $http_upgrade;
-proxy_set_header Connection "upgrade";
-```
-
-`proxy_read_timeout` is set to `120s` — four times the 30-second heartbeat
-interval — so idle sessions are not closed by nginx between heartbeats.
 
 The agent connects using the public URL:
 
 ```sh
-# Plain WebSocket (port 80)
-./embedded_linux_audit transfer --remote ws://ela.example.com
-
-# Secure WebSocket (port 443)
-./embedded_linux_audit transfer --remote wss://ela.example.com
-
-# Skip TLS certificate verification (self-signed certs, testing only)
-./embedded_linux_audit --insecure transfer --remote wss://ela.example.com
+./embedded_linux_audit transfer --remote ws://localhost
 ```
 
 The agent always appends `/terminal/<mac>` to the base URL before connecting.
@@ -123,19 +116,8 @@ This passes the `Authorization: Bearer <token>` header from the agent through
 to both backends.  Each backend validates it independently against its own
 `ela.key`.  See [API Key Authentication — server side](auth.md).
 
-## Starting the backends
+## Legacy Host nginx
 
-```sh
-# Agent helper API (port 5000)
-cd api/agent && npm start
-
-# Terminal server (port 8080)
-cd api/terminal && npm start
-```
-
-With API key enforcement:
-
-```sh
-cd api/agent   && npm run start:secure
-cd api/terminal && npm run start:secure
-```
+If you need a non-container deployment, `nginx/ela.conf` is still available as
+a reference reverse-proxy config for host-installed nginx in front of
+host-installed agent and terminal services.

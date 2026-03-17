@@ -623,6 +623,8 @@ int linux_list_files_scan_main(int argc, char **argv)
 			ret = 1;
 			goto out;
 		}
+
+		fprintf(stderr, "HTTP POST completed successfully: %s\n", upload_uri);
 	}
 
 out:

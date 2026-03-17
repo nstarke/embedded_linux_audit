@@ -10,45 +10,30 @@ const path = require('path');
 const crypto = require('crypto');
 const mime = require('mime-types');
 const { execFileSync } = require('child_process');
-const express = require('express');
-const registerRootRoute = require('./routes/root');
-const registerScriptsRoute = require('./routes/scripts');
-const registerTestsRoute = require('./routes/tests');
-const registerUbootEnvRoute = require('./routes/ubootEnv');
-const registerIsaRoute = require('./routes/isa');
-const registerAssetRoute = require('./routes/assets');
-const registerUploadRoute = require('./routes/upload');
 const auth = require('../auth');
+const { getAgentServiceConfig } = require('../lib/config');
+const { initializeDatabase, runMigrations, closeDatabase } = require('../lib/db');
+const { persistUpload } = require('../lib/db/persistUpload');
+const { createApp } = require('./app');
+const {
+  findProjectRoot,
+  isValidMacAddress,
+  normalizeContentType,
+  logPathForContentType,
+  augmentJsonPayload,
+  resolveProjectPath,
+  selectStartupDataDir,
+  isWithinRoot,
+  getClientIp,
+  sanitizeUploadPath,
+  writeUploadFile,
+} = require('./serverUtils');
 
 const RELEASE_STATE_FILE = '.release_state.json';
 
-function findProjectRoot(startDir) {
-  const markers = [
-    ['tests', 'agent', 'shell', 'download_tests.sh'],
-    ['api', 'agent', 'package.json'],
-    ['Makefile']
-  ];
-
-  let current = path.resolve(startDir);
-  while (true) {
-    const hasAllMarkers = markers.every((segments) => fs.existsSync(path.join(current, ...segments)));
-    if (hasAllMarkers) {
-      return current;
-    }
-
-    const parent = path.dirname(current);
-    if (parent === current) {
-      break;
-    }
-    current = parent;
-  }
-
-  return path.resolve(startDir, '..', '..');
-}
-
 const PROJECT_ROOT = findProjectRoot(__dirname);
 const WEB_ROOT = __dirname;
-const VALID_UPLOAD_TYPES = new Set(['cmd', 'dmesg', 'efi-vars', 'file', 'file-list', 'log', 'logs', 'orom', 'symlink-list', 'uboot-image', 'uboot-environment']);
+const VALID_UPLOAD_TYPES = new Set(['arch', 'cmd', 'dmesg', 'efi-vars', 'file', 'file-list', 'grep', 'log', 'logs', 'orom', 'symlink-list', 'uboot-image', 'uboot-environment']);
 const VALID_CONTENT_TYPES = {
   'text/plain': 'text_plain',
   'text/csv': 'text_csv',
@@ -56,61 +41,6 @@ const VALID_CONTENT_TYPES = {
   'application/x-ndjson': 'application_x_ndjson',
   'application/octet-stream': 'application_octet_stream'
 };
-
-function isValidMacAddress(value) {
-  return /^([0-9a-f]{2}:){5}[0-9a-f]{2}$/i.test(String(value || ''));
-}
-
-function normalizeContentType(contentTypeHeader = '') {
-  return contentTypeHeader.split(';', 1)[0].trim().toLowerCase();
-}
-
-function logPathForContentType(logPrefix, contentTypeHeader) {
-  const contentType = normalizeContentType(contentTypeHeader);
-  const suffix = VALID_CONTENT_TYPES[contentType];
-  const dir = path.dirname(logPrefix);
-  const base = path.basename(logPrefix);
-  return path.join(dir, `${base}.${suffix || 'unknown'}.log`);
-}
-
-function augmentJsonPayload(payloadBuffer, timestamp, srcIp) {
-  const text = payloadBuffer.toString('utf8');
-  const stripped = text.trim();
-  if (!stripped) {
-    return payloadBuffer;
-  }
-
-  const lines = text.split(/\r?\n/);
-  if (lines.filter((line) => line.trim()).length > 1) {
-    const outLines = [];
-    let changed = false;
-    for (const line of lines) {
-      if (!line.trim()) {
-        continue;
-      }
-      const obj = JSON.parse(line);
-      if (obj === null || Array.isArray(obj) || typeof obj !== 'object') {
-        return payloadBuffer;
-      }
-      obj.api_timestamp = timestamp;
-      obj.src_ip = srcIp;
-      outLines.push(JSON.stringify(obj));
-      changed = true;
-    }
-    if (changed) {
-      return Buffer.from(`${outLines.join('\n')}\n`, 'utf8');
-    }
-    return payloadBuffer;
-  }
-
-  const obj = JSON.parse(stripped);
-  if (obj === null || Array.isArray(obj) || typeof obj !== 'object') {
-    return payloadBuffer;
-  }
-  obj.api_timestamp = timestamp;
-  obj.src_ip = srcIp;
-  return Buffer.from(`${JSON.stringify(obj)}\n`, 'utf8');
-}
 
 function githubJsonGet(url, token) {
   return new Promise((resolve, reject) => {
@@ -335,14 +265,15 @@ function parseArgs(argv) {
   const defaultVerbose = ['verbose', 'silly'].includes(npmLogLevel);
   const defaultClean = npmBoolean('npm_config_clean');
   const defaultForceDownload = npmBoolean('npm_config_force_download');
+  const serviceDefaults = getAgentServiceConfig();
   const defaults = {
-    host: '0.0.0.0',
-    port: 5000,
-    logPrefix: 'post_requests',
-    dataDir: 'api/agent/data',
-    repo: 'nstarke/embedded_linux_audit',
-    assetsDir: null,
-    testsDir: 'tests',
+    host: serviceDefaults.host,
+    port: serviceDefaults.port,
+    logPrefix: serviceDefaults.logPrefix,
+    dataDir: serviceDefaults.dataDir,
+    repo: serviceDefaults.repo,
+    assetsDir: serviceDefaults.assetsDir,
+    testsDir: serviceDefaults.testsDir,
     githubToken: process.env.GITHUB_TOKEN || '',
     forceDownload: defaultForceDownload,
     clean: defaultClean,
@@ -351,6 +282,7 @@ function parseArgs(argv) {
     cert: 'tools/certs/localhost.crt',
     key: 'tools/certs/localhost.key',
     validateKey: false,
+    skipAssetSync: String(process.env.ELA_AGENT_SKIP_ASSET_SYNC || '').toLowerCase() === 'true',
   };
 
   const args = { ...defaults };
@@ -372,6 +304,8 @@ function parseArgs(argv) {
       case '--cert': args.cert = argv[++i]; break;
       case '--key': args.key = argv[++i]; break;
       case '--validate-key': args.validateKey = true; break;
+      case '--skip-asset-sync': args.skipAssetSync = true; break;
+      case '--reuse-last-data-dir': args.reuseLastDataDir = true; break;
       case '--help':
         printHelp();
         process.exit(0);
@@ -389,117 +323,9 @@ function parseArgs(argv) {
 }
 
 function printHelp() {
-  console.log(`Usage: node server.js [options]\n\nOptions:\n  --host HOST\n  --port PORT\n  --log-prefix PREFIX\n  --data-dir DIR\n  --repo OWNER/NAME\n  --assets-dir DIR\n  --tests-dir DIR\n  --github-token TOKEN\n  --force-download\n  --clean\n  --https\n  --verbose\n  --cert PATH\n  --key PATH\n  --validate-key   Require Authorization: Bearer token (reads from ela.key)\n  --help`);
+  console.log(`Usage: node server.js [options]\n\nOptions:\n  --host HOST\n  --port PORT\n  --log-prefix PREFIX\n  --data-dir DIR\n  --repo OWNER/NAME\n  --assets-dir DIR\n  --tests-dir DIR\n  --github-token TOKEN\n  --force-download\n  --clean\n  --https\n  --verbose\n  --cert PATH\n  --key PATH\n  --validate-key   Require Authorization: Bearer token (reads from ela.key)\n  --skip-asset-sync  Skip GitHub release asset refresh during startup\n  --reuse-last-data-dir  Reuse the latest timestamped data directory instead of creating a new one\n  --help`);
 }
   
-function resolveProjectPath(targetPath) {
-  return path.isAbsolute(targetPath) ? targetPath : path.resolve(PROJECT_ROOT, targetPath);
-}
-
-function isWithinRoot(candidatePath, rootPath) {
-  const resolvedCandidate = path.resolve(candidatePath);
-  const resolvedRoot = path.resolve(rootPath);
-  return resolvedCandidate === resolvedRoot || resolvedCandidate.startsWith(`${resolvedRoot}${path.sep}`);
-}
-
-function getClientIp(req) {
-  return (req.ip || req.socket?.remoteAddress || '').replace(/^::ffff:/, '');
-}
-
-function sanitizeUploadPath(filePath) {
-  if (!filePath || typeof filePath !== 'string') {
-    return null;
-  }
-
-  const normalized = path.posix.normalize(filePath.replace(/\\/g, '/'));
-  const trimmed = normalized.replace(/^\/+/, '');
-  if (!trimmed || trimmed === '.' || trimmed.startsWith('../') || trimmed.includes('/../')) {
-    return null;
-  }
-  return trimmed;
-}
-
-async function writeUploadFile(baseDir, relativePath, payload) {
-  const dest = path.resolve(baseDir, relativePath);
-  if (!isWithinRoot(dest, baseDir)) {
-    throw new Error('invalid path');
-  }
-  await fsp.mkdir(path.dirname(dest), { recursive: true });
-  await fsp.writeFile(dest, payload);
-  return dest;
-}
-
-function createApp({ logPrefix, assetsDir, dataDir, testsDir, verbose }) {
-  const app = express();
-  app.use(express.raw({ type: '*/*', limit: '100mb' }));
-  app.use(auth.middleware);
-  const envDir = path.join(dataDir, 'env');
-  const scriptsDir = path.join(testsDir, 'scripts');
-
-  function verboseRequestLog(req) {
-    if (!verbose) {
-      return;
-    }
-    console.log(`[${new Date().toISOString()}] ${getClientIp(req)} ${req.method} ${req.originalUrl}`);
-  }
-
-  function verboseResponseLog(req, status, size) {
-    if (!verbose) {
-      return;
-    }
-    console.log(`[${new Date().toISOString()}] ${getClientIp(req)} ${req.method} ${req.originalUrl} -> ${status} (${size} bytes)`);
-  }
-
-  if (verbose) {
-    app.use((req, res, next) => {
-      console.log(`[${new Date().toISOString()}] ${getClientIp(req)} ${req.method} ${req.originalUrl}`);
-
-      res.on('finish', () => {
-        const contentLength = res.getHeader('content-length');
-        const size = Number.isFinite(Number(contentLength)) ? Number(contentLength) : 0;
-        console.log(`[${new Date().toISOString()}] ${getClientIp(req)} ${req.method} ${req.originalUrl} -> ${res.statusCode} (${size} bytes)`);
-      });
-
-      next();
-    });
-  }
-
-  const routeDeps = {
-    path,
-    fsp,
-    mime,
-    crypto,
-    assetsDir,
-    testsDir,
-    scriptsDir,
-    envDir,
-    dataDir,
-    releaseStateFile: RELEASE_STATE_FILE,
-    validUploadTypes: VALID_UPLOAD_TYPES,
-    validContentTypes: VALID_CONTENT_TYPES,
-    normalizeContentType,
-    sanitizeUploadPath,
-    writeUploadFile,
-    augmentJsonPayload,
-    logPathForContentType,
-    isValidMacAddress,
-    isWithinRoot,
-    getClientIp,
-    verboseRequestLog: () => {},
-    verboseResponseLog: () => {}
-  };
-
-  registerRootRoute(app, routeDeps);
-  registerScriptsRoute(app, routeDeps);
-  registerTestsRoute(app, routeDeps);
-  registerUbootEnvRoute(app, routeDeps);
-  registerIsaRoute(app, routeDeps);
-  registerUploadRoute(app, routeDeps);
-  registerAssetRoute(app, routeDeps);
-
-  return app;
-}
-
 async function main() {
   let args;
   try {
@@ -515,17 +341,27 @@ async function main() {
     return 1;
   }
 
-  const logPrefix = resolveProjectPath(args.logPrefix);
-  const startupTimestamp = `${Date.now()}`;
-  const dataRootDir = resolveProjectPath(args.dataDir);
-  const dataDir = path.join(dataRootDir, startupTimestamp);
+  try {
+    await initializeDatabase();
+    await runMigrations();
+  } catch (err) {
+    console.error(`Failed to initialize database: ${err.message}`);
+    return 1;
+  }
+
+  const logPrefix = resolveProjectPath(PROJECT_ROOT, args.logPrefix);
+  const dataRootDir = resolveProjectPath(PROJECT_ROOT, args.dataDir);
+  const startupDataDir = await selectStartupDataDir(dataRootDir, {
+    reuseLastTimestampDir: Boolean(args.reuseLastDataDir),
+  });
+  const dataDir = startupDataDir.dataDir;
   const defaultAssetsDir = path.join(dataRootDir, 'release_binaries');
   const assetsDir = args.assetsDir
     ? (path.isAbsolute(args.assetsDir)
       ? args.assetsDir
       : path.resolve(dataDir, args.assetsDir))
     : defaultAssetsDir;
-  const testsDir = resolveProjectPath(args.testsDir);
+  const testsDir = resolveProjectPath(PROJECT_ROOT, args.testsDir);
   const token = args.githubToken || null;
 
   if (args.clean) {
@@ -538,49 +374,68 @@ async function main() {
     fsp.mkdir(defaultAssetsDir, { recursive: true })
   ]);
 
-  try {
-    const latestRelease = await getLatestRelease(args.repo, token);
-    const latestReleaseId = releaseIdentity(latestRelease);
-    const cachedReleaseId = await loadCachedReleaseIdentity(assetsDir);
-    const isNewRelease = Boolean(latestReleaseId) && latestReleaseId !== cachedReleaseId;
-
-    let result;
-    if (args.forceDownload) {
-      console.log('Force download enabled; refreshing release binaries');
-      await clearDownloadedAssets(assetsDir);
-      result = await downloadReleaseAssets(latestRelease, assetsDir, token, true);
-      if (latestReleaseId) {
-        await saveCachedReleaseIdentity(assetsDir, latestReleaseId);
-      }
-    } else if (isNewRelease) {
-      console.log(`New release detected (${cachedReleaseId || '<none>'} -> ${latestReleaseId}); refreshing binaries`);
-      await clearDownloadedAssets(assetsDir);
-      result = await downloadReleaseAssets(latestRelease, assetsDir, token, true);
-      await saveCachedReleaseIdentity(assetsDir, latestReleaseId);
-    } else {
-      console.log('No new release detected; keeping existing binaries');
-      result = await downloadReleaseAssets(latestRelease, assetsDir, token, false);
-      if (latestReleaseId && cachedReleaseId !== latestReleaseId) {
-        await saveCachedReleaseIdentity(assetsDir, latestReleaseId);
-      }
-    }
-
-    console.log(`Downloaded ${result.downloaded.length} release asset(s) from ${args.repo} into ${assetsDir}`);
-    if (result.skippedExisting.length) {
-      console.log(`Skipped ${result.skippedExisting.length} existing release asset(s) in ${assetsDir} (use --force-download to replace them)`);
-    }
-  } catch (err) {
-    console.error(`Failed to fetch/download release assets from ${args.repo}: ${err.message}`);
-    return 1;
+  if (args.reuseLastDataDir) {
+    const action = startupDataDir.reusedExisting ? 'Reusing' : 'Created';
+    console.log(`${action} startup data directory ${dataDir}`);
   }
 
-  const app = createApp({ logPrefix, assetsDir, dataDir, testsDir, verbose: args.verbose });
+  if (args.skipAssetSync) {
+    console.log(`Skipping release asset sync; serving assets from ${assetsDir}`);
+  } else {
+    try {
+      const latestRelease = await getLatestRelease(args.repo, token);
+      const latestReleaseId = releaseIdentity(latestRelease);
+      const cachedReleaseId = await loadCachedReleaseIdentity(assetsDir);
+      const isNewRelease = Boolean(latestReleaseId) && latestReleaseId !== cachedReleaseId;
+
+      let result;
+      if (args.forceDownload) {
+        console.log('Force download enabled; refreshing release binaries');
+        await clearDownloadedAssets(assetsDir);
+        result = await downloadReleaseAssets(latestRelease, assetsDir, token, true);
+        if (latestReleaseId) {
+          await saveCachedReleaseIdentity(assetsDir, latestReleaseId);
+        }
+      } else if (isNewRelease) {
+        console.log(`New release detected (${cachedReleaseId || '<none>'} -> ${latestReleaseId}); refreshing binaries`);
+        await clearDownloadedAssets(assetsDir);
+        result = await downloadReleaseAssets(latestRelease, assetsDir, token, true);
+        await saveCachedReleaseIdentity(assetsDir, latestReleaseId);
+      } else {
+        console.log('No new release detected; keeping existing binaries');
+        result = await downloadReleaseAssets(latestRelease, assetsDir, token, false);
+        if (latestReleaseId && cachedReleaseId !== latestReleaseId) {
+          await saveCachedReleaseIdentity(assetsDir, latestReleaseId);
+        }
+      }
+
+      console.log(`Downloaded ${result.downloaded.length} release asset(s) from ${args.repo} into ${assetsDir}`);
+      if (result.skippedExisting.length) {
+        console.log(`Skipped ${result.skippedExisting.length} existing release asset(s) in ${assetsDir} (use --force-download to replace them)`);
+      }
+    } catch (err) {
+      console.error(`Failed to fetch/download release assets from ${args.repo}: ${err.message}`);
+      return 1;
+    }
+  }
+
+  const app = createApp({
+    logPrefix,
+    assetsDir,
+    dataDir,
+    testsDir,
+    verbose: args.verbose,
+    releaseStateFile: RELEASE_STATE_FILE,
+    validUploadTypes: VALID_UPLOAD_TYPES,
+    validContentTypes: VALID_CONTENT_TYPES,
+    persistUpload,
+  });
   let server;
   let scheme = 'http';
 
   if (args.https) {
-    const certPath = resolveProjectPath(args.cert);
-    const keyPath = resolveProjectPath(args.key);
+    const certPath = resolveProjectPath(PROJECT_ROOT, args.cert);
+    const keyPath = resolveProjectPath(PROJECT_ROOT, args.key);
     ensureSelfSignedCert(certPath, keyPath);
     server = https.createServer({
       cert: fs.readFileSync(certPath),
@@ -602,7 +457,10 @@ async function main() {
   console.log('GET / shows index of downloaded release binaries, test shell scripts, and command scripts');
 
   process.on('SIGINT', () => {
-    server.close(() => process.exit(0));
+    server.close(async () => {
+      await closeDatabase().catch(() => {});
+      process.exit(0);
+    });
   });
 
   return 0;
