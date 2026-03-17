@@ -18,6 +18,7 @@ RUN npm install --omit=dev
 RUN chmod +x /app/api/terminal/entrypoint.sh
 
 ENV NODE_ENV=production \
+    ELA_TERMINAL_HOST=0.0.0.0 \
     ELA_TERMINAL_PORT=8080
 
 EXPOSE 8080

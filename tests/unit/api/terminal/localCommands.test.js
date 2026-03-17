@@ -1,8 +1,30 @@
 'use strict';
 
-const { executeLocalSessionCommand } = require('../../../../api/terminal/localCommands');
+const {
+  SESSION_COMMAND_HELP,
+  executeLocalSessionCommand,
+} = require('../../../../api/terminal/localCommands');
 
 describe('local terminal commands', () => {
+  test('handles help locally for the attached session', async () => {
+    const writeOutput = jest.fn();
+    const cancelRemoteInput = jest.fn();
+
+    const handled = await executeLocalSessionCommand({
+      cmd: '/help',
+      activeMac: 'aa:bb',
+      sessionEntry: {},
+      setDeviceAlias: jest.fn(),
+      onDetach: jest.fn(),
+      writeOutput,
+      cancelRemoteInput,
+    });
+
+    expect(handled).toBe(true);
+    expect(cancelRemoteInput).toHaveBeenCalled();
+    expect(writeOutput).toHaveBeenCalledWith(`\r\n${SESSION_COMMAND_HELP.join('\r\n')}\r\n`);
+  });
+
   test('handles detach locally', async () => {
     const onDetach = jest.fn();
     const writeOutput = jest.fn();
@@ -88,25 +110,17 @@ describe('local terminal commands', () => {
     expect(writeOutput).toHaveBeenCalledWith('\r\n[passthrough mode enabled; launched linux execute-command sh]\r\n');
   });
 
-  test('handles exit-all by broadcasting exit to all sessions', async () => {
-    const a = { ws: { OPEN: 1, readyState: 1, send: jest.fn() } };
-    const b = { ws: { OPEN: 1, readyState: 1, send: jest.fn() } };
-    const onDetach = jest.fn();
-
+  test('does not intercept /exit in an attached session', async () => {
     const handled = await executeLocalSessionCommand({
-      cmd: '/exit-all',
+      cmd: '/exit',
       activeMac: 'aa:bb',
-      sessionEntry: a,
-      sessions: [a, b],
+      sessionEntry: { ws: { OPEN: 1, readyState: 1, send: jest.fn() } },
       setDeviceAlias: jest.fn(),
-      onDetach,
+      onDetach: jest.fn(),
       writeOutput: jest.fn(),
       cancelRemoteInput: jest.fn(),
     });
 
-    expect(handled).toBe(true);
-    expect(a.ws.send).toHaveBeenCalledWith('exit\n');
-    expect(b.ws.send).toHaveBeenCalledWith('exit\n');
-    expect(onDetach).toHaveBeenCalled();
+    expect(handled).toBe(false);
   });
 });

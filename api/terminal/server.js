@@ -15,8 +15,9 @@ const {
 } = require('../lib/db/deviceRegistry');
 const { loadLegacyAliases } = require('./legacyAliases');
 const { createSessionRegistry } = require('./sessionRegistry');
-const { isAffirmativeResponse, parseListCommand } = require('./listCommands');
+const { formatListCommandHelp, isAffirmativeResponse, parseListCommand } = require('./listCommands');
 const { executeLocalSessionCommand } = require('./localCommands');
+const { createTerminalHttpHandler } = require('./httpRoutes');
 const { startSessionUpdate, handleUpdateMessage } = require('./updateManager');
 const {
   PASSTHROUGH_EXIT_HINT,
@@ -26,6 +27,7 @@ const {
 } = require('./sessionInput');
 
 const terminalConfig = getTerminalServiceConfig();
+const HOST = terminalConfig.host;
 const PORT = terminalConfig.port;
 const HEARTBEAT_INTERVAL_MS = 30000;
 const LEGACY_ALIASES_FILE = `${__dirname}/ela-aliases.json`;
@@ -68,10 +70,7 @@ function exitGracefully() {
     .finally(() => process.exit(0));
 }
 
-const httpServer = http.createServer((req, res) => {
-  res.writeHead(404);
-  res.end();
-});
+const httpServer = http.createServer(createTerminalHttpHandler());
 
 function onUpdateStateTransition(entry, message) {
   if (tui.state === TUI_STATE.ACTIVE_SESSION && tui.activeMac === entry.mac) {
@@ -381,6 +380,12 @@ const tui = {
   _executeListCommand(cmd) {
     const parsed = parseListCommand(cmd);
 
+    if (parsed.type === 'help') {
+      this._statusMsg = formatListCommandHelp();
+      this.render();
+      return;
+    }
+
     if (parsed.type === 'update') {
       const macs = sessionRegistry.listMacs();
       if (macs.length === 0) {
@@ -396,6 +401,32 @@ const tui = {
         }
       }
       this._statusMsg = `update: initiated for ${started} session(s)`;
+      this.render();
+      return;
+    }
+
+    if (parsed.type === 'exit') {
+      const macs = sessionRegistry.listMacs();
+      if (macs.length === 0) {
+        this._statusMsg = 'exit: no connected sessions';
+        this.render();
+        return;
+      }
+
+      this._confirmPrompt = `[confirm: run "exit" on ${macs.length} node(s)? y/N]`;
+      this._confirmValue = '';
+      this._confirmAction = () => {
+        let started = 0;
+        for (const mac of sessionRegistry.listMacs()) {
+          const entry = sessionRegistry.getSession(mac);
+          if (entry && entry.ws.readyState === entry.ws.OPEN) {
+            entry.ws.send('exit\n');
+            started += 1;
+          }
+        }
+        this._statusMsg = `exit: launched on ${started} node(s)`;
+        this.render();
+      };
       this.render();
       return;
     }
@@ -625,8 +656,9 @@ async function main() {
   await runMigrations();
   await importLegacyAliases();
 
-  httpServer.listen(PORT, () => {
+  httpServer.listen(PORT, HOST, () => {
     setupInput();
+    process.stdout.write(`ELA terminal API listening on ws://${HOST}:${PORT}\n`);
     tui.render();
   });
 }

@@ -126,6 +126,7 @@ timestamp on every boot.
 
 Important terminal API variables:
 
+- `ELA_TERMINAL_HOST`
 - `ELA_TERMINAL_PORT`
 - `ELA_KEY_PATH`
 

@@ -101,6 +101,7 @@ function getAgentServiceConfig() {
 
 function getTerminalServiceConfig() {
   return {
+    host: process.env.ELA_TERMINAL_HOST || '0.0.0.0',
     port: parseInteger(process.env.ELA_TERMINAL_PORT, 8080),
     keyPath: process.env.ELA_KEY_PATH || path.join(__dirname, '..', '..', 'ela.key'),
   };

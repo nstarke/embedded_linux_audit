@@ -1,13 +1,17 @@
 'use strict';
 
 const {
+  formatListCommandHelp,
+  LIST_COMMAND_HELP,
   isAffirmativeResponse,
   parseListCommand,
 } = require('../../../../api/terminal/listCommands');
 
 describe('terminal list command helpers', () => {
-  test('parses update, shell, cmd, and set batch commands', () => {
+  test('parses help, update, exit, shell, cmd, and set batch commands', () => {
+    expect(parseListCommand('help')).toEqual({ type: 'help' });
     expect(parseListCommand('update')).toEqual({ type: 'update' });
+    expect(parseListCommand('exit')).toEqual({ type: 'exit' });
     expect(parseListCommand('shell uname -a')).toEqual({
       type: 'shell-all',
       command: 'uname -a',
@@ -28,6 +32,13 @@ describe('terminal list command helpers', () => {
     expect(parseListCommand('set ELA_API_URL')).toEqual({ type: 'invalid-set' });
     expect(parseListCommand('')).toEqual({ type: 'empty' });
     expect(parseListCommand('unknown')).toEqual({ type: 'unknown', raw: 'unknown' });
+  });
+
+  test('exports top-level help text for supported commands', () => {
+    expect(LIST_COMMAND_HELP).toContain('/help                          show commands available in the top-level session list');
+    expect(LIST_COMMAND_HELP).toContain('/exit                          run exit on all connected nodes after confirmation');
+    expect(formatListCommandHelp()).toContain('Top-level commands:\r\n  /help');
+    expect(formatListCommandHelp()).toContain('\r\n  /exit                          run exit on all connected nodes after confirmation');
   });
 
   test('accepts only y/yes confirmation responses', () => {
