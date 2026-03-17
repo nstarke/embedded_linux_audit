@@ -14,7 +14,7 @@
  * All string fields are NUL-terminated; empty string means "not set".
  */
 struct ela_conf {
-	char remote[512];       /* --remote  ws[s]://host[:port]            */
+	char remote[512];       /* --remote  [ws[s]://]host[:port]          */
 	char output_http[512];  /* --output-http  http[s]://host[:port]/... */
 	char output_format[16]; /* --output-format  txt | csv | json        */
 	int  insecure;          /* --insecure  0 or 1                       */
@@ -29,9 +29,8 @@ void ela_conf_save(const struct ela_conf *conf);
 /*
  * Re-read conf-tracked env vars (ELA_OUTPUT_HTTP / ELA_API_URL,
  * ELA_OUTPUT_FORMAT, ELA_API_INSECURE, ELA_OUTPUT_INSECURE) and persist
- * them to /tmp/.ela.conf, preserving any fields not covered by env vars
- * (e.g. `remote`).  Call this after any runtime `set` that changes one of
- * these variables.
+ * them to /tmp/.ela.conf.  Call this after any runtime `set` that changes
+ * one of these variables.
  */
 void ela_conf_update_from_env(void);
 

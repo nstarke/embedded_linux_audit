@@ -271,6 +271,12 @@ require_binary() {
         exit 1
     fi
 
+    # Reset any persisted config from previous runs so tests start from a
+    # known state.  /tmp/.ela.conf survives between test scripts and can
+    # cause later scripts to inherit --remote or --output-http values saved
+    # by earlier tests, producing wrong exit codes or hangs.
+    rm -f /tmp/.ela.conf
+
     ela_ensure_command python3 >/dev/null 2>&1 || true
 
     if command_exists zig || "$bin" --help 2>/dev/null | grep -qi 'zig'; then
