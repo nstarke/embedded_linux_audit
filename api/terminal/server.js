@@ -17,6 +17,12 @@ const { loadLegacyAliases } = require('./legacyAliases');
 const { createSessionRegistry } = require('./sessionRegistry');
 const { executeLocalSessionCommand } = require('./localCommands');
 const { startSessionUpdate, handleUpdateMessage } = require('./updateManager');
+const {
+  PASSTHROUGH_EXIT_HINT,
+  PASSTHROUGH_EXIT_SEQUENCE,
+  remoteInputForKeypress,
+  shouldEnterPassthrough,
+} = require('./sessionInput');
 
 const terminalConfig = getTerminalServiceConfig();
 const PORT = terminalConfig.port;
@@ -249,6 +255,10 @@ const tui = {
 
   detach() {
     this.state = TUI_STATE.SESSION_LIST;
+    const entry = this.activeMac ? sessionRegistry.getSession(this.activeMac) : null;
+    if (entry) {
+      entry.inputMode = 'line';
+    }
     this.activeMac = null;
     const count = sessionRegistry.size;
     if (this.cursor >= count) {
@@ -352,12 +362,26 @@ const tui = {
   },
 
   async _handleSessionKey(key, name, ctrl) {
+    const entry = sessionRegistry.getSession(this.activeMac);
+    if (entry && entry.inputMode === 'passthrough') {
+      if (key === PASSTHROUGH_EXIT_SEQUENCE || (ctrl && name === ']')) {
+        entry.inputMode = 'line';
+        this._localCmdBuf = '';
+        process.stdout.write(`\r\n[passthrough mode disabled; '/detach' is available again]\r\n`);
+        return;
+      }
+
+      const remoteInput = remoteInputForKeypress(key, name);
+      if (remoteInput && entry.ws.readyState === entry.ws.OPEN) {
+        entry.ws.send(remoteInput);
+      }
+      return;
+    }
+
     if (ctrl && name === 'c') {
       exitGracefully();
       return;
     }
-
-    const entry = sessionRegistry.getSession(this.activeMac);
 
     if (this._localCmdBuf === undefined) {
       this._localCmdBuf = '';
@@ -391,6 +415,11 @@ const tui = {
         return;
       }
 
+      if (entry && shouldEnterPassthrough(cmd)) {
+        entry.inputMode = 'passthrough';
+        process.stdout.write(`\r\n[passthrough mode enabled; press ${PASSTHROUGH_EXIT_HINT} to return to line mode]\r\n`);
+      }
+
       if (entry && entry.ws.readyState === entry.ws.OPEN) {
         entry.ws.send('\n');
       }
@@ -421,11 +450,10 @@ const tui = {
       return;
     }
 
-    if (name === 'tab') { entry.ws.send('\t'); return; }
-    if (name === 'up') { entry.ws.send('\x1b[A'); return; }
-    if (name === 'down') { entry.ws.send('\x1b[B'); return; }
-    if (name === 'left') { entry.ws.send('\x1b[D'); return; }
-    if (name === 'right') { entry.ws.send('\x1b[C'); }
+    const remoteInput = remoteInputForKeypress(key, name);
+    if (remoteInput) {
+      entry.ws.send(remoteInput);
+    }
   },
 };
 

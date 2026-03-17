@@ -13,6 +13,7 @@ function createSessionRegistry({
       mac,
       alias,
       connectionId,
+      inputMode: 'line',
       lastHeartbeat: null,
       heartbeatTimer: null,
       outputBuffer: [],
