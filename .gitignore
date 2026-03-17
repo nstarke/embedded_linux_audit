@@ -1,4 +1,6 @@
 certs
+nginx/ssl/
+nginx/docker.generated.conf
 embedded_linux_audit
 generated/
 __pycache__

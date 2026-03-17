@@ -3,11 +3,15 @@
 #
 # What this script does:
 #   1. Verifies Docker and Docker Compose are available
-#   2. Optionally uses a caller-provided compose env file
+#   2. Ensures TLS cert/key are available (provided or auto-generated self-signed)
 #   3. Builds and starts the PostgreSQL, agent API, terminal API, and nginx containers
+#
+# Both HTTP (port 80/WS) and HTTPS (port 443/WSS) are always served.
+# HTTP is never redirected to HTTPS — agents without TLS can still connect.
 #
 # Run from anywhere inside a repository checkout:
 #   ./nginx/install.sh example.com
+#   ./nginx/install.sh example.com --cert /path/to/ela.crt --key /path/to/ela.key
 #   ./nginx/install.sh example.com --env-file /path/to/ela.env
 #   ./nginx/install.sh example.com --no-build
 #   ./nginx/install.sh example.com --foreground
@@ -16,33 +20,57 @@ set -eu
 
 usage() {
     cat <<'EOF'
-Usage: nginx/install.sh [options]
+Usage: nginx/install.sh HOSTNAME [options]
 
 Positional arguments:
-  HOSTNAME         Replace example.com in the nginx config template
+  HOSTNAME         Hostname substituted into the nginx config (e.g. ela.example.com)
 
 Options:
+  --cert PATH      TLS certificate file (PEM); auto-generated self-signed if omitted
+  --key  PATH      TLS private key file  (PEM); required when --cert is given
   --env-file PATH  Pass an env file to docker compose
   --no-build       Skip image builds and start with existing images
   --foreground     Run docker compose up in the foreground
   --pull           Pull newer base images before starting
   --help           Show this help text
+
+Both HTTP (port 80 / WS) and HTTPS (port 443 / WSS) are always enabled.
+HTTP is not redirected to HTTPS.
 EOF
 }
 
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)"
 COMPOSE_FILE="$REPO_ROOT/docker-compose.yml"
-NGINX_TEMPLATE="$REPO_ROOT/nginx/docker.conf"
+NGINX_TLS_TEMPLATE="$REPO_ROOT/nginx/docker-tls.conf"
 GENERATED_NGINX_CONF="$REPO_ROOT/nginx/docker.generated.conf"
+SSL_DIR="$REPO_ROOT/nginx/ssl"
 BUILD=1
 DETACH=1
 PULL=0
 ENV_FILE=""
 HOSTNAME=""
+TLS_CERT=""
+TLS_KEY=""
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
+        --cert)
+            shift
+            if [ "$#" -eq 0 ]; then
+                echo "error: --cert requires a path" >&2
+                exit 1
+            fi
+            TLS_CERT="$1"
+            ;;
+        --key)
+            shift
+            if [ "$#" -eq 0 ]; then
+                echo "error: --key requires a path" >&2
+                exit 1
+            fi
+            TLS_KEY="$1"
+            ;;
         --env-file)
             shift
             if [ "$#" -eq 0 ]; then
@@ -86,14 +114,32 @@ if [ ! -f "$COMPOSE_FILE" ]; then
     exit 1
 fi
 
-if [ ! -f "$NGINX_TEMPLATE" ]; then
-    echo "error: $NGINX_TEMPLATE not found" >&2
+if [ ! -f "$NGINX_TLS_TEMPLATE" ]; then
+    echo "error: $NGINX_TLS_TEMPLATE not found" >&2
     exit 1
 fi
 
 if [ -z "$HOSTNAME" ]; then
     echo "error: HOSTNAME is required" >&2
     usage >&2
+    exit 1
+fi
+
+# Validate explicit TLS arguments if provided
+if [ -n "$TLS_CERT" ] && [ -z "$TLS_KEY" ]; then
+    echo "error: --cert requires --key" >&2
+    exit 1
+fi
+if [ -n "$TLS_KEY" ] && [ -z "$TLS_CERT" ]; then
+    echo "error: --key requires --cert" >&2
+    exit 1
+fi
+if [ -n "$TLS_CERT" ] && [ ! -f "$TLS_CERT" ]; then
+    echo "error: cert file not found: $TLS_CERT" >&2
+    exit 1
+fi
+if [ -n "$TLS_KEY" ] && [ ! -f "$TLS_KEY" ]; then
+    echo "error: key file not found: $TLS_KEY" >&2
     exit 1
 fi
 
@@ -112,7 +158,57 @@ if [ -n "$ENV_FILE" ] && [ ! -f "$ENV_FILE" ]; then
     exit 1
 fi
 
-sed "s/example\\.com/$HOSTNAME/g" "$NGINX_TEMPLATE" > "$GENERATED_NGINX_CONF"
+# ---------------------------------------------------------------------------
+# Data directory
+# ---------------------------------------------------------------------------
+ELA_DATA_DIR="${ELA_DATA_DIR:-/data}"
+if [ ! -d "$ELA_DATA_DIR" ]; then
+    echo "Creating data directory $ELA_DATA_DIR ..."
+    mkdir -p "$ELA_DATA_DIR" || {
+        echo "error: failed to create $ELA_DATA_DIR" >&2
+        echo "       Try: sudo mkdir -p $ELA_DATA_DIR && sudo chown \$(id -u):\$(id -g) $ELA_DATA_DIR" >&2
+        exit 1
+    }
+fi
+export ELA_DATA_DIR
+
+# ---------------------------------------------------------------------------
+# TLS certificate resolution
+# ---------------------------------------------------------------------------
+# If --cert/--key were not supplied, reuse previously generated self-signed
+# certs if they exist, otherwise generate new ones with openssl.
+if [ -z "$TLS_CERT" ]; then
+    mkdir -p "$SSL_DIR"
+    TLS_CERT="$SSL_DIR/ela.crt"
+    TLS_KEY="$SSL_DIR/ela.key"
+
+    if [ ! -f "$TLS_CERT" ] || [ ! -f "$TLS_KEY" ]; then
+        if ! command -v openssl >/dev/null 2>&1; then
+            echo "error: openssl is required to generate a self-signed certificate" >&2
+            echo "       Install openssl or supply --cert and --key" >&2
+            exit 1
+        fi
+        echo "Generating self-signed TLS certificate for $HOSTNAME ..."
+        openssl req -x509 -newkey rsa:2048 \
+            -keyout "$TLS_KEY" \
+            -out    "$TLS_CERT" \
+            -days   3650 \
+            -nodes \
+            -subj   "/CN=$HOSTNAME" \
+            -addext "subjectAltName=DNS:$HOSTNAME,IP:127.0.0.1" \
+            2>/dev/null
+        echo "  cert: $TLS_CERT"
+        echo "  key:  $TLS_KEY"
+    else
+        echo "Reusing existing TLS certificate: $TLS_CERT"
+    fi
+fi
+
+export ELA_TLS_CERT="$TLS_CERT"
+export ELA_TLS_KEY="$TLS_KEY"
+
+# Generate nginx config with hostname substituted
+sed "s/example\\.com/$HOSTNAME/g" "$NGINX_TLS_TEMPLATE" > "$GENERATED_NGINX_CONF"
 export ELA_NGINX_CONF_PATH="$GENERATED_NGINX_CONF"
 
 set -- docker compose -f "$COMPOSE_FILE"
@@ -148,7 +244,9 @@ if [ "$DETACH" -eq 1 ]; then
     echo "Stack status:"
     "$@" ps
     echo
-    echo "Frontend URL: http://$HOSTNAME/"
-    echo "Terminal URL base: ws://$HOSTNAME/terminal/<mac>"
+    echo "Frontend URL (HTTP):  http://$HOSTNAME/"
+    echo "Frontend URL (HTTPS): https://$HOSTNAME/"
+    echo "Terminal URL base:    ws://$HOSTNAME/terminal/<mac>"
+    echo "Terminal URL base:    wss://$HOSTNAME/terminal/<mac>"
     echo "Follow logs with: docker compose -f $COMPOSE_FILE logs -f"
 fi

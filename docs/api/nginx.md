@@ -10,28 +10,39 @@ site file.
 
 ```
 Internet
-    └── HTTP / WS (port 80) ──► nginx container
-                                   ├── /terminal/<mac>  ──► terminal-api:8080
-                                   └── /*               ──► agent-api:5000
+    ├── HTTP  / WS  (port 80)  ──► nginx container
+    └── HTTPS / WSS (port 443) ──►     ├── /terminal/<mac>  ──► terminal-api:8080
+                                        └── /*               ──► agent-api:5000
 ```
 
 `/terminal/<mac>` is routed to the WebSocket terminal server. Everything else
 is passed to the agent API at its native web root.
 
-The bundled Docker nginx config currently exposes HTTP only on port `80`.
+Both HTTP (port 80) and HTTPS (port 443) are served independently — plain HTTP
+is never redirected to HTTPS so that agents on networks without TLS can
+still connect.
 
 ## Prerequisites
 
 - Docker Engine with Compose support
 - Access to the Docker daemon
-- A free listener on TCP port `80`
+- Free listeners on TCP ports `80` and `443`
+- `openssl` on the host (only needed when not supplying your own cert)
 
 ## Installation
 
-Start the full containerized stack with:
-
 ```sh
 ./nginx/install.sh ela.example.com
+```
+
+If `--cert` and `--key` are not supplied, a 10-year self-signed certificate is
+generated automatically and stored in `nginx/ssl/` (gitignored). On subsequent
+runs the existing cert is reused; delete `nginx/ssl/` to force regeneration.
+
+To supply your own certificate:
+
+```sh
+./nginx/install.sh ela.example.com --cert /path/to/ela.crt --key /path/to/ela.key
 ```
 
 Common options:
