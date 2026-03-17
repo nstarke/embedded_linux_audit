@@ -3,11 +3,17 @@
 
 const fs = require('fs');
 const http = require('http');
-const path = require('path');
 const readline = require('readline');
 const { WebSocketServer } = require('ws');
 const auth = require('../auth');
 const { getTerminalServiceConfig } = require('../lib/config');
+const { initializeDatabase, runMigrations, closeDatabase } = require('../lib/db');
+const {
+  recordTerminalConnection,
+  touchTerminalHeartbeat,
+  closeTerminalConnection,
+  setDeviceAlias,
+} = require('../lib/db/deviceRegistry');
 
 /* -------------------------------------------------------------------------
  * Configuration
@@ -16,43 +22,54 @@ const { getTerminalServiceConfig } = require('../lib/config');
 const terminalConfig = getTerminalServiceConfig();
 const PORT = terminalConfig.port;
 const HEARTBEAT_INTERVAL_MS = 30000;
-const ALIASES_FILE = path.join(__dirname, 'ela-aliases.json');
+const LEGACY_ALIASES_FILE = `${__dirname}/ela-aliases.json`;
 
 /* -------------------------------------------------------------------------
- * Alias persistence
+ * Legacy alias import
  * ---------------------------------------------------------------------- */
 
-function loadAliases() {
+function loadLegacyAliases() {
   try {
-    return JSON.parse(fs.readFileSync(ALIASES_FILE, 'utf8'));
+    return JSON.parse(fs.readFileSync(LEGACY_ALIASES_FILE, 'utf8'));
   } catch (_) {
     return {};
   }
 }
 
-function saveAliases() {
-  try {
-    fs.writeFileSync(ALIASES_FILE, JSON.stringify(aliases, null, 2), 'utf8');
-  } catch (err) {
-    process.stderr.write(`Warning: failed to save aliases: ${err.message}\n`);
+async function importLegacyAliases() {
+  const aliases = loadLegacyAliases();
+  for (const [macAddress, alias] of Object.entries(aliases)) {
+    if (!alias) {
+      continue;
+    }
+    try {
+      await setDeviceAlias(macAddress, alias, 'legacy_terminal_file');
+    } catch (err) {
+      process.stderr.write(`Warning: failed to import alias for ${macAddress}: ${err.message}\n`);
+    }
   }
 }
-
-const aliases = loadAliases();
 const VALIDATE_KEY = process.argv.includes('--validate-key');
 
 /* -------------------------------------------------------------------------
  * Session registry
  * ---------------------------------------------------------------------- */
 
-// mac -> { ws, mac, alias, lastHeartbeat, heartbeatTimer, outputBuffer }
+// mac -> { ws, mac, alias, connectionId, lastHeartbeat, heartbeatTimer, outputBuffer }
 const sessions = new Map();
 
-function addSession(mac, ws) {
+function exitGracefully() {
+  cleanup()
+    .then(() => closeDatabase().catch(() => {}))
+    .finally(() => process.exit(0));
+}
+
+function addSession(mac, ws, alias, connectionId) {
   const entry = {
     ws,
     mac,
-    alias: aliases[mac] || null,
+    alias: alias || null,
+    connectionId,
     lastHeartbeat: null,
     heartbeatTimer: null,
     outputBuffer: [],
@@ -101,7 +118,7 @@ const wss = new WebSocketServer({
   },
 });
 
-wss.on('connection', (ws, req) => {
+wss.on('connection', async (ws, req) => {
   // Extract MAC from URL: /terminal/<mac>
   const parts = (req.url || '').split('/').filter(Boolean);
   const mac = parts[1] || 'unknown';
@@ -113,7 +130,16 @@ wss.on('connection', (ws, req) => {
     removeSession(mac);
   }
 
-  const entry = addSession(mac, ws);
+  let registration;
+  try {
+    registration = await recordTerminalConnection(mac, req.socket?.remoteAddress || null);
+  } catch (err) {
+    ws.close(1011, 'database unavailable');
+    process.stderr.write(`Failed to register terminal connection for ${mac}: ${err.message}\n`);
+    return;
+  }
+
+  const entry = addSession(mac, ws, registration.alias, registration.connectionId);
 
   // Notify TUI of new connection
   if (tui.state === TUI_STATE.SESSION_LIST) {
@@ -128,6 +154,11 @@ wss.on('connection', (ws, req) => {
       const msg = JSON.parse(text);
       if (msg._type === 'heartbeat_ack') {
         entry.lastHeartbeat = msg.date || new Date().toISOString();
+        if (entry.connectionId) {
+          void touchTerminalHeartbeat(entry.connectionId, new Date(entry.lastHeartbeat)).catch((err) => {
+            process.stderr.write(`Warning: failed to update heartbeat for ${mac}: ${err.message}\n`);
+          });
+        }
         return;
       }
     } catch (_) {
@@ -148,6 +179,11 @@ wss.on('connection', (ws, req) => {
   });
 
   ws.on('close', () => {
+    if (entry.connectionId) {
+      void closeTerminalConnection(entry.connectionId).catch((err) => {
+        process.stderr.write(`Warning: failed to close terminal connection for ${mac}: ${err.message}\n`);
+      });
+    }
     removeSession(mac);
     if (tui.state === TUI_STATE.ACTIVE_SESSION && tui.activeMac === mac) {
       process.stdout.write('\r\n[session disconnected]\r\n');
@@ -265,15 +301,14 @@ const tui = {
       const mac = macs[this.cursor];
       if (mac) this.attach(mac);
     } else if (name === 'q' || (ctrl && name === 'c')) {
-      cleanup();
-      process.exit(0);
+      exitGracefully();
     }
   },
 
   _handleSessionKey(key, name, ctrl) {
     if (ctrl && name === 'c') {
-      cleanup();
-      process.exit(0);
+      exitGracefully();
+      return;
     }
 
     const entry = sessions.get(this.activeMac);
@@ -305,15 +340,14 @@ const tui = {
         const mac = this.activeMac;
         const sessionEntry = sessions.get(mac);
         if (sessionEntry) {
-          if (arg) {
-            sessionEntry.alias = arg;
-            aliases[mac] = arg;
-          } else {
-            sessionEntry.alias = null;
-            delete aliases[mac];
-          }
-          saveAliases();
-          process.stdout.write(`\r\n[alias ${arg ? `set to "${arg}"` : 'cleared'}]\r\n`);
+          setDeviceAlias(mac, arg || null, 'terminal_api')
+            .then(() => {
+              sessionEntry.alias = arg || null;
+              process.stdout.write(`\r\n[alias ${arg ? `set to "${arg}"` : 'cleared'}]\r\n`);
+            })
+            .catch((err) => {
+              process.stdout.write(`\r\n[failed to save alias: ${err.message}]\r\n`);
+            });
         }
         return;
       }
@@ -382,27 +416,52 @@ function setupInput() {
  * Startup / shutdown
  * ---------------------------------------------------------------------- */
 
-function cleanup() {
-  for (const [mac] of sessions) {
+async function cleanup() {
+  const closeOps = [];
+  for (const [mac, entry] of sessions) {
+    if (entry.connectionId) {
+      closeOps.push(closeTerminalConnection(entry.connectionId).catch(() => {}));
+    }
     removeSession(mac);
   }
+  await Promise.all(closeOps);
   if (process.stdin.isTTY) {
     process.stdin.setRawMode(false);
   }
   process.stdout.write(ANSI.reset + '\r\n');
 }
 
-process.on('SIGINT', () => { cleanup(); process.exit(0); });
-process.on('SIGTERM', () => { cleanup(); process.exit(0); });
+process.on('SIGINT', async () => {
+  exitGracefully();
+});
+process.on('SIGTERM', async () => {
+  exitGracefully();
+});
 
-if (!auth.init(terminalConfig.keyPath, VALIDATE_KEY)) {
-  process.stderr.write(
-    'error: --validate-key is set but ela.key is missing or contains no valid tokens\n'
-  );
-  process.exit(1);
+async function main() {
+  if (!auth.init(terminalConfig.keyPath, VALIDATE_KEY)) {
+    process.stderr.write(
+      'error: --validate-key is set but ela.key is missing or contains no valid tokens\n'
+    );
+    process.exit(1);
+  }
+
+  await initializeDatabase();
+  await runMigrations();
+  await importLegacyAliases();
+
+  httpServer.listen(PORT, () => {
+    setupInput();
+    tui.render();
+  });
 }
 
-httpServer.listen(PORT, () => {
-  setupInput();
-  tui.render();
+main().catch(async (err) => {
+  process.stderr.write(`${err.stack || err.message}\n`);
+  try {
+    await closeDatabase();
+  } catch (_) {
+    // ignore shutdown errors
+  }
+  process.exit(1);
 });

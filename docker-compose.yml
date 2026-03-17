@@ -40,9 +40,15 @@ services:
       dockerfile: api/terminal/Dockerfile
     environment:
       NODE_ENV: production
+      ELA_DB_HOST: postgres
+      ELA_DB_PORT: 5432
+      ELA_DB_NAME: embedded_linux_audit
+      ELA_DB_USER: ela
+      ELA_DB_PASSWORD: ela
       ELA_TERMINAL_PORT: 8080
     depends_on:
-      - agent-api
+      postgres:
+        condition: service_healthy
 
   nginx:
     image: nginx:1.27-alpine

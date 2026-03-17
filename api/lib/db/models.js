@@ -421,6 +421,133 @@ function defineModels(sequelize) {
     timestamps: false,
   });
 
+  const DeviceAlias = sequelize.define('DeviceAlias', {
+    id: {
+      type: DataTypes.BIGINT,
+      autoIncrement: true,
+      primaryKey: true,
+    },
+    deviceId: {
+      type: DataTypes.BIGINT,
+      allowNull: false,
+      unique: true,
+      field: 'device_id',
+    },
+    alias: {
+      type: DataTypes.STRING(255),
+      allowNull: false,
+    },
+    source: {
+      type: DataTypes.STRING(64),
+      allowNull: false,
+      defaultValue: 'terminal_api',
+    },
+  }, {
+    tableName: 'device_aliases',
+    underscored: true,
+  });
+
+  const TerminalConnection = sequelize.define('TerminalConnection', {
+    id: {
+      type: DataTypes.BIGINT,
+      autoIncrement: true,
+      primaryKey: true,
+    },
+    deviceId: {
+      type: DataTypes.BIGINT,
+      allowNull: false,
+      field: 'device_id',
+    },
+    remoteAddress: {
+      type: DataTypes.STRING(255),
+      allowNull: true,
+      field: 'remote_address',
+    },
+    connectedAt: {
+      type: DataTypes.DATE,
+      allowNull: false,
+      field: 'connected_at',
+    },
+    disconnectedAt: {
+      type: DataTypes.DATE,
+      allowNull: true,
+      field: 'disconnected_at',
+    },
+    lastHeartbeatAt: {
+      type: DataTypes.DATE,
+      allowNull: true,
+      field: 'last_heartbeat_at',
+    },
+  }, {
+    tableName: 'terminal_connections',
+    underscored: true,
+    updatedAt: false,
+    createdAt: 'created_at',
+  });
+
+  const ArchReport = sequelize.define('ArchReport', {
+    uploadId: {
+      type: DataTypes.BIGINT,
+      allowNull: false,
+      primaryKey: true,
+      field: 'upload_id',
+    },
+    subcommand: {
+      type: DataTypes.STRING(64),
+      allowNull: true,
+    },
+    value: {
+      type: DataTypes.STRING(255),
+      allowNull: true,
+    },
+  }, {
+    tableName: 'arch_reports',
+    underscored: true,
+    timestamps: false,
+  });
+
+  const GrepMatch = sequelize.define('GrepMatch', {
+    id: {
+      type: DataTypes.BIGINT,
+      autoIncrement: true,
+      primaryKey: true,
+    },
+    uploadId: {
+      type: DataTypes.BIGINT,
+      allowNull: false,
+      field: 'upload_id',
+    },
+    recordIndex: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+      field: 'record_index',
+    },
+    rootPath: {
+      type: DataTypes.TEXT,
+      allowNull: true,
+      field: 'root_path',
+    },
+    filePath: {
+      type: DataTypes.TEXT,
+      allowNull: false,
+      field: 'file_path',
+    },
+    lineNumber: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      field: 'line_number',
+    },
+    lineText: {
+      type: DataTypes.TEXT,
+      allowNull: true,
+      field: 'line_text',
+    },
+  }, {
+    tableName: 'grep_matches',
+    underscored: true,
+    timestamps: false,
+  });
+
   Device.hasMany(Upload, { foreignKey: 'deviceId' });
   Upload.belongsTo(Device, { foreignKey: 'deviceId' });
   Upload.hasOne(CommandUpload, { foreignKey: 'uploadId' });
@@ -430,6 +557,12 @@ function defineModels(sequelize) {
   Upload.hasMany(UbootEnvCandidate, { foreignKey: 'uploadId' });
   Upload.hasMany(UbootEnvVariable, { foreignKey: 'uploadId' });
   Upload.hasMany(LogEvent, { foreignKey: 'uploadId' });
+  Upload.hasOne(ArchReport, { foreignKey: 'uploadId' });
+  Upload.hasMany(GrepMatch, { foreignKey: 'uploadId' });
+  Device.hasOne(DeviceAlias, { foreignKey: 'deviceId' });
+  DeviceAlias.belongsTo(Device, { foreignKey: 'deviceId' });
+  Device.hasMany(TerminalConnection, { foreignKey: 'deviceId' });
+  TerminalConnection.belongsTo(Device, { foreignKey: 'deviceId' });
 
   return {
     Device,
@@ -441,6 +574,10 @@ function defineModels(sequelize) {
     UbootEnvCandidate,
     UbootEnvVariable,
     LogEvent,
+    DeviceAlias,
+    TerminalConnection,
+    ArchReport,
+    GrepMatch,
   };
 }
 

@@ -104,6 +104,9 @@ See [docs/api/agent/helper-server.md](docs/api/agent/helper-server.md) for full 
 
 A Node.js WebSocket server with a terminal TUI for managing multiple simultaneous agent sessions. Each agent that connects via `transfer --remote ws://...` appears as a named session the operator can attach to, send commands to, and detach from without dropping the connection.
 
+- Persists terminal connection events in PostgreSQL
+- Stores operator-assigned device aliases in PostgreSQL and maps them to upload records by MAC address
+
 ```bash
 cd api/terminal && npm install && npm start
 ```
@@ -130,6 +133,8 @@ The default stack exposes:
 - `http://localhost/terminal/<mac>` → terminal WebSocket endpoint
 
 The agent API container runs database migrations automatically on startup. Compose defaults target the bundled PostgreSQL container using the `ela`/`ela` credentials defined in `docker-compose.yml`.
+
+For operational details, see [docs/api/docker-operations.md](/home/nick/Documents/git/embedded_linux_audit/docs/api/docker-operations.md).
 
 ## Portable static release builds
 

@@ -102,12 +102,61 @@ function parseCommandUpload(contentType, payloadText) {
   };
 }
 
+function parseArchReport(contentType, payloadText) {
+  if (contentType === 'application/json') {
+    const parsed = parseJsonValue(payloadText);
+    if (!parsed || parsed.record !== 'arch') {
+      return null;
+    }
+    return {
+      subcommand: typeof parsed.subcommand === 'string' ? parsed.subcommand : null,
+      value: typeof parsed.value === 'string' ? parsed.value : null,
+    };
+  }
+
+  const firstLine = splitLines(payloadText)[0];
+  if (!firstLine) {
+    return null;
+  }
+
+  if (contentType === 'text/csv') {
+    const fields = parseSimpleCsvLine(firstLine);
+    return {
+      subcommand: null,
+      value: fields[0] || null,
+    };
+  }
+
+  return {
+    subcommand: null,
+    value: firstLine,
+  };
+}
+
 function parseFileListEntries(payloadText, rootPath) {
   return splitLines(payloadText).map((entryPath, index) => ({
     recordIndex: index,
     rootPath: rootPath || null,
     entryPath,
   }));
+}
+
+function parseGrepMatches(payloadText, rootPath) {
+  return splitLines(payloadText)
+    .map((line, index) => {
+      const match = /^(.*?):([0-9]+):(.*)$/.exec(line);
+      if (!match) {
+        return null;
+      }
+      return {
+        recordIndex: index,
+        rootPath: rootPath || null,
+        filePath: match[1],
+        lineNumber: Number.parseInt(match[2], 10),
+        lineText: match[3],
+      };
+    })
+    .filter(Boolean);
 }
 
 function parseSymlinkListEntries(contentType, payloadText, rootPath) {
@@ -278,7 +327,9 @@ function normalizeUpload(input) {
       payloadJson: rawJson,
     },
     commandUpload: null,
+    archReport: null,
     fileListEntries: [],
+    grepMatches: [],
     symlinkListEntries: [],
     efiVariables: [],
     ubootEnvCandidates: [],
@@ -294,8 +345,16 @@ function normalizeUpload(input) {
     result.commandUpload = parseCommandUpload(input.contentType, payloadText);
   }
 
+  if (input.uploadType === 'arch') {
+    result.archReport = parseArchReport(input.contentType, payloadText);
+  }
+
   if (input.uploadType === 'file-list') {
     result.fileListEntries = parseFileListEntries(payloadText, input.requestFilePath);
+  }
+
+  if (input.uploadType === 'grep') {
+    result.grepMatches = parseGrepMatches(payloadText, input.requestFilePath);
   }
 
   if (input.uploadType === 'symlink-list') {

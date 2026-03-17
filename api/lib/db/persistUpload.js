@@ -2,6 +2,7 @@
 
 const crypto = require('crypto');
 const { getModels, getSequelize } = require('./index');
+const { ensureDevice } = require('./deviceRegistry');
 const { normalizeUpload } = require('./normalizeUpload');
 
 function textPayloadForContentType(contentType, buffer) {
@@ -29,20 +30,7 @@ async function persistUpload(input) {
 
   return sequelize.transaction(async (transaction) => {
     const apiTimestamp = new Date(input.apiTimestamp);
-    const [device] = await models.Device.findOrCreate({
-      where: { macAddress: input.macAddress },
-      defaults: {
-        macAddress: input.macAddress,
-        firstSeenAt: apiTimestamp,
-        lastSeenAt: apiTimestamp,
-      },
-      transaction,
-    });
-
-    if (device.lastSeenAt < apiTimestamp) {
-      device.lastSeenAt = apiTimestamp;
-      await device.save({ transaction });
-    }
+    const device = await ensureDevice(input.macAddress, transaction, apiTimestamp);
 
     const upload = await models.Upload.create({
       deviceId: device.id,
@@ -67,8 +55,16 @@ async function persistUpload(input) {
       }, { transaction });
     }
 
+    if (normalized.archReport) {
+      await models.ArchReport.create({
+        uploadId: upload.id,
+        ...normalized.archReport,
+      }, { transaction });
+    }
+
     const bulkInserts = [
       [models.FileListEntry, normalized.fileListEntries],
+      [models.GrepMatch, normalized.grepMatches],
       [models.SymlinkListEntry, normalized.symlinkListEntries],
       [models.EfiVariable, normalized.efiVariables],
       [models.UbootEnvCandidate, normalized.ubootEnvCandidates],
