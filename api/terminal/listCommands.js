@@ -7,7 +7,7 @@ function parseListCommand(input) {
   }
 
   if (trimmed === 'update') {
-    return { type: 'update-all' };
+    return { type: 'update' };
   }
 
   if (trimmed === 'shell') {

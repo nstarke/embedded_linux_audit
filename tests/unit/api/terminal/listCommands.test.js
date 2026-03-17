@@ -7,7 +7,7 @@ const {
 
 describe('terminal list command helpers', () => {
   test('parses update, shell, and set batch commands', () => {
-    expect(parseListCommand('update')).toEqual({ type: 'update-all' });
+    expect(parseListCommand('update')).toEqual({ type: 'update' });
     expect(parseListCommand('shell uname -a')).toEqual({
       type: 'shell-all',
       command: 'uname -a',

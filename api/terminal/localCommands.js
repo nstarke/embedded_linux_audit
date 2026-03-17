@@ -6,7 +6,6 @@ async function executeLocalSessionCommand({
   sessionEntry,
   sessions = [],
   setDeviceAlias,
-  updateUrl = '',
   startSessionUpdate = () => false,
   onDetach,
   writeOutput,
@@ -32,12 +31,7 @@ async function executeLocalSessionCommand({
   }
 
   if (cmd === '/update') {
-    if (!updateUrl) {
-      cancelRemoteInput();
-      writeOutput('\r\n[update: ELA_UPDATE_URL is not set]\r\n');
-      return true;
-    }
-    if (!sessionEntry || !startSessionUpdate(sessionEntry, updateUrl)) {
+    if (!sessionEntry || !startSessionUpdate(sessionEntry)) {
       cancelRemoteInput();
       writeOutput('\r\n[update: already in progress]\r\n');
       return true;
