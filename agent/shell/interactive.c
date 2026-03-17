@@ -950,6 +950,14 @@ static char *interactive_read_line_fallback(const char *prompt,
 			continue;
 		}
 
+		if (ch == 0x15) { /* Ctrl+U: kill from beginning of line */
+			len = 0;
+			if (line)
+				line[0] = '\0';
+			interactive_redraw_prompt_line(prompt, "");
+			continue;
+		}
+
 		if (ch == '\t') {
 			interactive_tab_complete_fallback(&line, &len, &cap, prompt);
 			continue;

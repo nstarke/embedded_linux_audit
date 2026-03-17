@@ -16,19 +16,14 @@ const {
 const { loadLegacyAliases } = require('./legacyAliases');
 const { createSessionRegistry } = require('./sessionRegistry');
 const { executeLocalSessionCommand } = require('./localCommands');
-
-/* -------------------------------------------------------------------------
- * Configuration
- * ---------------------------------------------------------------------- */
+const { startSessionUpdate, handleUpdateMessage } = require('./updateManager');
 
 const terminalConfig = getTerminalServiceConfig();
 const PORT = terminalConfig.port;
 const HEARTBEAT_INTERVAL_MS = 30000;
 const LEGACY_ALIASES_FILE = `${__dirname}/ela-aliases.json`;
-
-/* -------------------------------------------------------------------------
- * Legacy alias import
- * ---------------------------------------------------------------------- */
+const UPDATE_URL = (process.env.ELA_UPDATE_URL || '').replace(/\/+$/, '');
+const VALIDATE_KEY = process.argv.includes('--validate-key');
 
 async function importLegacyAliases() {
   const aliases = loadLegacyAliases(LEGACY_ALIASES_FILE);
@@ -43,14 +38,23 @@ async function importLegacyAliases() {
     }
   }
 }
-const VALIDATE_KEY = process.argv.includes('--validate-key');
 
-/* -------------------------------------------------------------------------
- * Session registry
- * ---------------------------------------------------------------------- */
-
-// mac -> { ws, mac, alias, connectionId, lastHeartbeat, heartbeatTimer, outputBuffer }
 const sessionRegistry = createSessionRegistry({ heartbeatIntervalMs: HEARTBEAT_INTERVAL_MS });
+
+async function cleanup() {
+  const closeOps = [];
+  for (const [mac, entry] of sessionRegistry.entries()) {
+    if (entry.connectionId) {
+      closeOps.push(closeTerminalConnection(entry.connectionId).catch(() => {}));
+    }
+    sessionRegistry.removeSession(mac);
+  }
+  await Promise.all(closeOps);
+  if (process.stdin.isTTY) {
+    process.stdin.setRawMode(false);
+  }
+  process.stdout.write(ANSI.reset + '\r\n');
+}
 
 function exitGracefully() {
   cleanup()
@@ -58,14 +62,18 @@ function exitGracefully() {
     .finally(() => process.exit(0));
 }
 
-/* -------------------------------------------------------------------------
- * WebSocket server
- * ---------------------------------------------------------------------- */
-
 const httpServer = http.createServer((req, res) => {
   res.writeHead(404);
   res.end();
 });
+
+function onUpdateStateTransition(entry, message) {
+  if (tui.state === TUI_STATE.ACTIVE_SESSION && tui.activeMac === entry.mac) {
+    process.stdout.write(`\r\n[${message}]\r\n`);
+  } else if (tui.state === TUI_STATE.SESSION_LIST) {
+    tui.render();
+  }
+}
 
 const wss = new WebSocketServer({
   server: httpServer,
@@ -75,7 +83,7 @@ const wss = new WebSocketServer({
       done(false, 404, 'Not Found');
       return;
     }
-    if (auth.checkBearer(info.req.headers['authorization'])) {
+    if (auth.checkBearer(info.req.headers.authorization)) {
       done(true);
     } else {
       done(false, 401, 'Unauthorized');
@@ -84,11 +92,9 @@ const wss = new WebSocketServer({
 });
 
 wss.on('connection', async (ws, req) => {
-  // Extract MAC from URL: /terminal/<mac>
   const parts = (req.url || '').split('/').filter(Boolean);
   const mac = parts[1] || 'unknown';
 
-  // If a session for this MAC already exists, close the old one
   const existing = sessionRegistry.getSession(mac);
   if (existing) {
     existing.ws.close();
@@ -108,8 +114,9 @@ wss.on('connection', async (ws, req) => {
     alias: registration.alias,
     connectionId: registration.connectionId,
   });
+  entry.updateCtx = null;
+  entry.updateStatus = null;
 
-  // Notify TUI of new connection
   if (tui.state === TUI_STATE.SESSION_LIST) {
     tui.render();
   }
@@ -117,7 +124,6 @@ wss.on('connection', async (ws, req) => {
   ws.on('message', (data) => {
     const text = data.toString();
 
-    // Try to parse heartbeat_ack
     try {
       const msg = JSON.parse(text);
       if (msg._type === 'heartbeat_ack') {
@@ -129,16 +135,19 @@ wss.on('connection', async (ws, req) => {
         }
         return;
       }
-    } catch (_) {
-      // not JSON — treat as raw output
+    } catch {
+      // raw output path
     }
 
-    // Deliver to TUI if this is the active session
-    if (tui.state === TUI_STATE.ACTIVE_SESSION &&
-        tui.activeMac === mac) {
+    handleUpdateMessage(entry, text, {
+      updateUrl: UPDATE_URL,
+      onUpdateComplete: (sessionEntry) => onUpdateStateTransition(sessionEntry, 'update complete'),
+      onUpdateFailed: (sessionEntry) => onUpdateStateTransition(sessionEntry, 'update failed'),
+    });
+
+    if (tui.state === TUI_STATE.ACTIVE_SESSION && tui.activeMac === mac) {
       process.stdout.write(text);
     } else {
-      // Buffer output for when the session is attached
       entry.outputBuffer.push(text);
       if (entry.outputBuffer.length > 500) {
         entry.outputBuffer.shift();
@@ -166,28 +175,26 @@ wss.on('connection', async (ws, req) => {
   });
 });
 
-/* -------------------------------------------------------------------------
- * TUI
- * ---------------------------------------------------------------------- */
-
 const TUI_STATE = { SESSION_LIST: 'SESSION_LIST', ACTIVE_SESSION: 'ACTIVE_SESSION' };
 
 const ANSI = {
-  clear:       '\x1b[2J\x1b[H',
-  reset:       '\x1b[0m',
-  reverse:     '\x1b[7m',
-  bold:        '\x1b[1m',
-  dim:         '\x1b[2m',
-  eraseLine:   '\x1b[2K\r',
+  clear: '\x1b[2J\x1b[H',
+  reset: '\x1b[0m',
+  reverse: '\x1b[7m',
+  bold: '\x1b[1m',
+  dim: '\x1b[2m',
 };
 
 const tui = {
-  state:      TUI_STATE.SESSION_LIST,
-  cursor:     0,       // index in session list
-  activeMac:  null,
+  state: TUI_STATE.SESSION_LIST,
+  cursor: 0,
+  activeMac: null,
+  _listCmd: null,
 
   render() {
-    if (this.state !== TUI_STATE.SESSION_LIST) return;
+    if (this.state !== TUI_STATE.SESSION_LIST) {
+      return;
+    }
 
     const macs = sessionRegistry.listMacs();
     let out = ANSI.clear;
@@ -197,42 +204,43 @@ const tui = {
     if (macs.length === 0) {
       out += `${ANSI.dim}  (no connected devices)${ANSI.reset}\r\n`;
     } else {
-      for (let i = 0; i < macs.length; i++) {
+      for (let i = 0; i < macs.length; i += 1) {
         const mac = macs[i];
         const entry = sessionRegistry.getSession(mac);
-        const hb = entry.lastHeartbeat
-          ? `  last heartbeat: ${entry.lastHeartbeat}`
-          : '';
+        const hb = entry.lastHeartbeat ? `  last heartbeat: ${entry.lastHeartbeat}` : '';
         const label = entry.alias ? `${entry.alias} (${mac})` : mac;
-        const line = `  ${label}${hb}`;
-        if (i === this.cursor) {
-          out += `${ANSI.reverse}${line}${ANSI.reset}\r\n`;
-        } else {
-          out += `${line}\r\n`;
-        }
+        const statusTag = entry.updateStatus ? `  [${entry.updateStatus}]` : '';
+        const line = `  ${label}${hb}${statusTag}`;
+        out += i === this.cursor
+          ? `${ANSI.reverse}${line}${ANSI.reset}\r\n`
+          : `${line}\r\n`;
       }
     }
 
-    out += '\r\n' + `${ANSI.dim}↑/↓ navigate   Enter attach   q quit${ANSI.reset}\r\n`;
+    out += `\r\n${ANSI.dim}↑/↓ navigate   Enter attach   / command   q quit${ANSI.reset}\r\n`;
+    if (this._listCmd !== null) {
+      out += `/${this._listCmd}`;
+    }
     process.stdout.write(out);
   },
 
   attach(mac) {
     const entry = sessionRegistry.getSession(mac);
-    if (!entry) return;
+    if (!entry) {
+      return;
+    }
 
-    this.state        = TUI_STATE.ACTIVE_SESSION;
-    this.activeMac    = mac;
+    this.state = TUI_STATE.ACTIVE_SESSION;
+    this.activeMac = mac;
     this._localCmdBuf = '';
 
     const label = entry.alias ? `${entry.alias} (${mac})` : mac;
     process.stdout.write(ANSI.clear);
     process.stdout.write(
       `${ANSI.bold}Attached to ${label}${ANSI.reset}  (type '/detach' + Enter to return)\r\n` +
-      '─'.repeat(60) + '\r\n'
+      '─'.repeat(60) + '\r\n',
     );
 
-    // Flush buffered output; the agent's own prompt is included in the buffer
     if (entry.outputBuffer.length > 0) {
       process.stdout.write(entry.outputBuffer.join(''));
       entry.outputBuffer = [];
@@ -240,37 +248,107 @@ const tui = {
   },
 
   detach() {
-    this.state     = TUI_STATE.SESSION_LIST;
+    this.state = TUI_STATE.SESSION_LIST;
     this.activeMac = null;
-    // Clamp cursor
     const count = sessionRegistry.size;
-    if (this.cursor >= count) this.cursor = Math.max(0, count - 1);
+    if (this.cursor >= count) {
+      this.cursor = Math.max(0, count - 1);
+    }
     this.render();
   },
 
   handleKey(key, name, ctrl) {
     if (this.state === TUI_STATE.SESSION_LIST) {
-      this._handleListKey(name, ctrl);
+      this._handleListKey(key, name, ctrl);
     } else {
-      this._handleSessionKey(key, name, ctrl);
+      void this._handleSessionKey(key, name, ctrl);
     }
   },
 
-  _handleListKey(name, ctrl) {
+  _handleListKey(key, name, ctrl) {
     const macs = sessionRegistry.listMacs();
 
+    if (this._listCmd !== null) {
+      if (name === 'return') {
+        const cmd = this._listCmd;
+        this._listCmd = null;
+        this._executeListCommand(cmd);
+        return;
+      }
+      if (name === 'escape' || (ctrl && name === 'c')) {
+        this._listCmd = null;
+        this.render();
+        return;
+      }
+      if (name === 'backspace') {
+        if (this._listCmd.length > 0) {
+          this._listCmd = this._listCmd.slice(0, -1);
+        }
+        this.render();
+        return;
+      }
+      if (key && key.length === 1 && key.charCodeAt(0) >= 0x20 && key.charCodeAt(0) < 0x7f) {
+        this._listCmd += key;
+        this.render();
+      }
+      return;
+    }
+
+    if (key === '/') {
+      this._listCmd = '';
+      this.render();
+      return;
+    }
+
     if (name === 'up' || name === 'k') {
-      if (this.cursor > 0) this.cursor--;
+      if (this.cursor > 0) {
+        this.cursor -= 1;
+      }
       this.render();
     } else if (name === 'down' || name === 'j') {
-      if (this.cursor < macs.length - 1) this.cursor++;
+      if (this.cursor < macs.length - 1) {
+        this.cursor += 1;
+      }
       this.render();
     } else if (name === 'return' && macs.length > 0) {
       const mac = macs[this.cursor];
-      if (mac) this.attach(mac);
+      if (mac) {
+        this.attach(mac);
+      }
     } else if (name === 'q' || (ctrl && name === 'c')) {
       exitGracefully();
     }
+  },
+
+  _executeListCommand(cmd) {
+    if (cmd === 'update-all') {
+      if (!UPDATE_URL) {
+        process.stdout.write('\r\n[update: ELA_UPDATE_URL is not set]\r\n');
+        this.render();
+        return;
+      }
+      const macs = sessionRegistry.listMacs();
+      if (macs.length === 0) {
+        process.stdout.write('\r\n[update: no connected sessions]\r\n');
+        this.render();
+        return;
+      }
+      let started = 0;
+      for (const mac of macs) {
+        const entry = sessionRegistry.getSession(mac);
+        if (entry && startSessionUpdate(entry, UPDATE_URL)) {
+          started += 1;
+        }
+      }
+      process.stdout.write(`\r\n[update: initiated for ${started} session(s)]\r\n`);
+      this.render();
+      return;
+    }
+
+    if (cmd !== '') {
+      process.stdout.write(`\r\n[unknown command: /${cmd}]\r\n`);
+    }
+    this.render();
   },
 
   async _handleSessionKey(key, name, ctrl) {
@@ -281,13 +359,9 @@ const tui = {
 
     const entry = sessionRegistry.getSession(this.activeMac);
 
-    /*
-     * /detach and /name are local TUI commands — intercept before forwarding.
-     * Everything else (including Enter, Tab, arrows, printable chars,
-     * backspace) is forwarded raw to the agent.
-     */
-    if (this._localCmdBuf === undefined)
+    if (this._localCmdBuf === undefined) {
       this._localCmdBuf = '';
+    }
 
     if (name === 'return') {
       const cmd = this._localCmdBuf;
@@ -297,7 +371,10 @@ const tui = {
           cmd,
           activeMac: this.activeMac,
           sessionEntry: entry,
+          sessions: sessionRegistry.entries().map(([, sessionEntry]) => sessionEntry),
           setDeviceAlias,
+          updateUrl: UPDATE_URL,
+          startSessionUpdate,
           onDetach: () => this.detach(),
           writeOutput: (text) => process.stdout.write(text),
           cancelRemoteInput: () => {
@@ -313,50 +390,47 @@ const tui = {
         process.stdout.write(`\r\n[failed to save alias: ${err.message}]\r\n`);
         return;
       }
-      // Not a local command — send the buffered bytes + newline to the agent
+
       if (entry && entry.ws.readyState === entry.ws.OPEN) {
-        if (cmd) entry.ws.send(cmd);
+        if (cmd) {
+          entry.ws.send(cmd);
+        }
         entry.ws.send('\n');
       }
       return;
     }
 
-    // Accumulate printable chars in localCmdBuf so we can detect /detach.
-    // Exclude DEL (0x7f) — it has charCode 127 >= 0x20 but is not printable.
     if (key && key.length === 1 && key.charCodeAt(0) >= 0x20 && key.charCodeAt(0) < 0x7f) {
       this._localCmdBuf += key;
-      if (entry && entry.ws.readyState === entry.ws.OPEN)
+      if (entry && entry.ws.readyState === entry.ws.OPEN) {
         entry.ws.send(key);
+      }
       return;
     }
 
-    // Backspace: erase last char from localCmdBuf (not clear entirely) and
-    // forward to agent so its readline stays in sync.
     if (name === 'backspace') {
-      if (this._localCmdBuf.length > 0)
+      if (this._localCmdBuf.length > 0) {
         this._localCmdBuf = this._localCmdBuf.slice(0, -1);
-      if (entry && entry.ws.readyState === entry.ws.OPEN)
+      }
+      if (entry && entry.ws.readyState === entry.ws.OPEN) {
         entry.ws.send('\x7f');
+      }
       return;
     }
 
-    // Reset localCmdBuf on any other non-printable key.
     this._localCmdBuf = '';
 
-    if (!entry || entry.ws.readyState !== entry.ws.OPEN)
+    if (!entry || entry.ws.readyState !== entry.ws.OPEN) {
       return;
+    }
 
-    if (name === 'tab')        { entry.ws.send('\t');      return; }
-    if (name === 'up')         { entry.ws.send('\x1b[A'); return; }
-    if (name === 'down')       { entry.ws.send('\x1b[B'); return; }
-    if (name === 'left')       { entry.ws.send('\x1b[D'); return; }
-    if (name === 'right')      { entry.ws.send('\x1b[C'); return; }
+    if (name === 'tab') { entry.ws.send('\t'); return; }
+    if (name === 'up') { entry.ws.send('\x1b[A'); return; }
+    if (name === 'down') { entry.ws.send('\x1b[B'); return; }
+    if (name === 'left') { entry.ws.send('\x1b[D'); return; }
+    if (name === 'right') { entry.ws.send('\x1b[C'); }
   },
 };
-
-/* -------------------------------------------------------------------------
- * stdin raw-mode keypress handling
- * ---------------------------------------------------------------------- */
 
 function setupInput() {
   if (!process.stdin.isTTY) {
@@ -366,7 +440,6 @@ function setupInput() {
 
   readline.emitKeypressEvents(process.stdin);
   process.stdin.setRawMode(true);
-
   process.stdin.on('keypress', (key, info) => {
     const name = info && info.name;
     const ctrl = info && info.ctrl;
@@ -374,37 +447,17 @@ function setupInput() {
   });
 }
 
-/* -------------------------------------------------------------------------
- * Startup / shutdown
- * ---------------------------------------------------------------------- */
-
-async function cleanup() {
-  const closeOps = [];
-  for (const [mac, entry] of sessionRegistry.entries()) {
-    if (entry.connectionId) {
-      closeOps.push(closeTerminalConnection(entry.connectionId).catch(() => {}));
-    }
-    sessionRegistry.removeSession(mac);
-  }
-  await Promise.all(closeOps);
-  if (process.stdin.isTTY) {
-    process.stdin.setRawMode(false);
-  }
-  process.stdout.write(ANSI.reset + '\r\n');
-}
-
-process.on('SIGINT', async () => {
+process.on('SIGINT', () => {
   exitGracefully();
 });
-process.on('SIGTERM', async () => {
+
+process.on('SIGTERM', () => {
   exitGracefully();
 });
 
 async function main() {
   if (!auth.init(terminalConfig.keyPath, VALIDATE_KEY)) {
-    process.stderr.write(
-      'error: --validate-key is set but ela.key is missing or contains no valid tokens\n'
-    );
+    process.stderr.write('error: --validate-key is set but ela.key is missing or contains no valid tokens\n');
     process.exit(1);
   }
 
@@ -422,7 +475,7 @@ main().catch(async (err) => {
   process.stderr.write(`${err.stack || err.message}\n`);
   try {
     await closeDatabase();
-  } catch (_) {
+  } catch {
     // ignore shutdown errors
   }
   process.exit(1);
