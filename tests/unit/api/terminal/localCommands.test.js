@@ -67,6 +67,28 @@ describe('local terminal commands', () => {
     expect(writeOutput).toHaveBeenCalledWith('\r\n[update: detecting architecture...]\r\n');
   });
 
+  test('handles shell command by launching execute-command sh and enabling passthrough', async () => {
+    const sessionEntry = { inputMode: 'line', ws: { OPEN: 1, readyState: 1, send: jest.fn() } };
+    const writeOutput = jest.fn();
+    const cancelRemoteInput = jest.fn();
+
+    const handled = await executeLocalSessionCommand({
+      cmd: '/shell',
+      activeMac: 'aa:bb',
+      sessionEntry,
+      setDeviceAlias: jest.fn(),
+      onDetach: jest.fn(),
+      writeOutput,
+      cancelRemoteInput,
+    });
+
+    expect(handled).toBe(true);
+    expect(cancelRemoteInput).toHaveBeenCalled();
+    expect(sessionEntry.inputMode).toBe('passthrough');
+    expect(sessionEntry.ws.send).toHaveBeenCalledWith('linux execute-command sh\n');
+    expect(writeOutput).toHaveBeenCalledWith('\r\n[passthrough mode enabled; launched linux execute-command sh]\r\n');
+  });
+
   test('handles exit-all by broadcasting exit to all sessions', async () => {
     const a = { ws: { OPEN: 1, readyState: 1, send: jest.fn() } };
     const b = { ws: { OPEN: 1, readyState: 1, send: jest.fn() } };
