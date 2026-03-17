@@ -87,6 +87,45 @@ function resolveProjectPath(projectRoot, targetPath) {
   return path.isAbsolute(targetPath) ? targetPath : path.resolve(projectRoot, targetPath);
 }
 
+async function selectStartupDataDir(dataRootDir, { reuseLastTimestampDir = false, now = Date.now } = {}) {
+  const fallbackTimestamp = `${now()}`;
+
+  if (!reuseLastTimestampDir) {
+    return {
+      dataDir: path.join(dataRootDir, fallbackTimestamp),
+      timestamp: fallbackTimestamp,
+      reusedExisting: false,
+    };
+  }
+
+  let latestTimestamp = null;
+  try {
+    const entries = await fsp.readdir(dataRootDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isDirectory()) {
+        continue;
+      }
+      if (!/^\d+$/.test(entry.name)) {
+        continue;
+      }
+      if (latestTimestamp === null || Number(entry.name) > Number(latestTimestamp)) {
+        latestTimestamp = entry.name;
+      }
+    }
+  } catch (err) {
+    if (err.code !== 'ENOENT') {
+      throw err;
+    }
+  }
+
+  const timestamp = latestTimestamp || fallbackTimestamp;
+  return {
+    dataDir: path.join(dataRootDir, timestamp),
+    timestamp,
+    reusedExisting: Boolean(latestTimestamp),
+  };
+}
+
 function isWithinRoot(candidatePath, rootPath) {
   const resolvedCandidate = path.resolve(candidatePath);
   const resolvedRoot = path.resolve(rootPath);
@@ -127,6 +166,7 @@ module.exports = {
   logPathForContentType,
   augmentJsonPayload,
   resolveProjectPath,
+  selectStartupDataDir,
   isWithinRoot,
   getClientIp,
   sanitizeUploadPath,

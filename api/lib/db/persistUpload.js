@@ -39,6 +39,7 @@ async function persistUpload(input) {
       srcIp: input.srcIp || null,
       apiTimestamp,
       requestFilePath: input.requestFilePath || null,
+      localArtifactPath: input.localArtifactPath || null,
       isSymlink: Boolean(input.isSymlink),
       symlinkPath: input.symlinkPath || null,
       payloadText: normalized.upload.payloadText,

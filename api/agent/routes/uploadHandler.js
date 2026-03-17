@@ -116,6 +116,7 @@ function createUploadHandler(deps) {
 
     let payloadToLog = payload;
     let shouldTryJson = normalizedContentType.includes('json');
+    let localArtifactPath = null;
 
     if (!shouldTryJson) {
       try {
@@ -136,14 +137,16 @@ function createUploadHandler(deps) {
 
     if (uploadType === 'file' && wantsSymlink) {
       try {
-        await writeSymlink(path.join(macDataDir, 'fs'), requestedFilePath, symlinkPath);
+        const symlinkBaseDir = path.join(macDataDir, 'fs');
+        await writeSymlink(symlinkBaseDir, requestedFilePath, symlinkPath);
+        localArtifactPath = path.resolve(symlinkBaseDir, requestedFilePath);
       } catch {
         reply.send(400, 'invalid symlink upload\n');
         return;
       }
     } else if (uploadType === 'file' && requestedFilePath) {
       try {
-        await writeUploadFile(path.join(macDataDir, 'fs'), requestedFilePath, payload);
+        localArtifactPath = await writeUploadFile(path.join(macDataDir, 'fs'), requestedFilePath, payload);
       } catch {
         reply.send(400, 'invalid filePath\n');
         return;
@@ -160,6 +163,7 @@ function createUploadHandler(deps) {
         }
 
         const targetListPath = path.join(targetDir, fileListNameForPath(requestedListPath));
+        localArtifactPath = targetListPath;
         await fsp.writeFile(
           targetListPath,
           payloadToLog[payloadToLog.length - 1] === 0x0a ? payloadToLog : Buffer.concat([payloadToLog, Buffer.from('\n')]),
@@ -169,10 +173,12 @@ function createUploadHandler(deps) {
         const unique = crypto.randomUUID().replace(/-/g, '').slice(0, 8);
         const safeIp = srcIp.replace(/:/g, '_');
         const binaryPath = path.join(targetDir, `upload_${tsSafe}_${safeIp}_${unique}.bin`);
+        localArtifactPath = binaryPath;
         await fsp.writeFile(binaryPath, payload);
       } else {
         const logPrefix = logFilePrefixForUploadType(path, targetDir, uploadType);
         const targetLogPath = logPathForContentType(logPrefix, contentTypeHeader);
+        localArtifactPath = targetLogPath;
         await fsp.mkdir(path.dirname(targetLogPath), { recursive: true });
         await fsp.appendFile(
           targetLogPath,
@@ -188,6 +194,7 @@ function createUploadHandler(deps) {
       srcIp,
       apiTimestamp: timestamp,
       requestFilePath: requestedFilePath,
+      localArtifactPath,
       isSymlink: wantsSymlink,
       symlinkPath: wantsSymlink ? symlinkPath : null,
       payload,

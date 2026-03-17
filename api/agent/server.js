@@ -22,6 +22,7 @@ const {
   logPathForContentType,
   augmentJsonPayload,
   resolveProjectPath,
+  selectStartupDataDir,
   isWithinRoot,
   getClientIp,
   sanitizeUploadPath,
@@ -304,6 +305,7 @@ function parseArgs(argv) {
       case '--key': args.key = argv[++i]; break;
       case '--validate-key': args.validateKey = true; break;
       case '--skip-asset-sync': args.skipAssetSync = true; break;
+      case '--reuse-last-data-dir': args.reuseLastDataDir = true; break;
       case '--help':
         printHelp();
         process.exit(0);
@@ -321,7 +323,7 @@ function parseArgs(argv) {
 }
 
 function printHelp() {
-  console.log(`Usage: node server.js [options]\n\nOptions:\n  --host HOST\n  --port PORT\n  --log-prefix PREFIX\n  --data-dir DIR\n  --repo OWNER/NAME\n  --assets-dir DIR\n  --tests-dir DIR\n  --github-token TOKEN\n  --force-download\n  --clean\n  --https\n  --verbose\n  --cert PATH\n  --key PATH\n  --validate-key   Require Authorization: Bearer token (reads from ela.key)\n  --skip-asset-sync  Skip GitHub release asset refresh during startup\n  --help`);
+  console.log(`Usage: node server.js [options]\n\nOptions:\n  --host HOST\n  --port PORT\n  --log-prefix PREFIX\n  --data-dir DIR\n  --repo OWNER/NAME\n  --assets-dir DIR\n  --tests-dir DIR\n  --github-token TOKEN\n  --force-download\n  --clean\n  --https\n  --verbose\n  --cert PATH\n  --key PATH\n  --validate-key   Require Authorization: Bearer token (reads from ela.key)\n  --skip-asset-sync  Skip GitHub release asset refresh during startup\n  --reuse-last-data-dir  Reuse the latest timestamped data directory instead of creating a new one\n  --help`);
 }
   
 async function main() {
@@ -348,9 +350,11 @@ async function main() {
   }
 
   const logPrefix = resolveProjectPath(PROJECT_ROOT, args.logPrefix);
-  const startupTimestamp = `${Date.now()}`;
   const dataRootDir = resolveProjectPath(PROJECT_ROOT, args.dataDir);
-  const dataDir = path.join(dataRootDir, startupTimestamp);
+  const startupDataDir = await selectStartupDataDir(dataRootDir, {
+    reuseLastTimestampDir: Boolean(args.reuseLastDataDir),
+  });
+  const dataDir = startupDataDir.dataDir;
   const defaultAssetsDir = path.join(dataRootDir, 'release_binaries');
   const assetsDir = args.assetsDir
     ? (path.isAbsolute(args.assetsDir)
@@ -369,6 +373,11 @@ async function main() {
     fsp.mkdir(dataDir, { recursive: true }),
     fsp.mkdir(defaultAssetsDir, { recursive: true })
   ]);
+
+  if (args.reuseLastDataDir) {
+    const action = startupDataDir.reusedExisting ? 'Reusing' : 'Created';
+    console.log(`${action} startup data directory ${dataDir}`);
+  }
 
   if (args.skipAssetSync) {
     console.log(`Skipping release asset sync; serving assets from ${assetsDir}`);

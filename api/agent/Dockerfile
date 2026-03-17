@@ -19,4 +19,4 @@ ENV NODE_ENV=production \
 
 EXPOSE 5000
 
-CMD ["node", "server.js", "--skip-asset-sync"]
+CMD ["node", "server.js", "--reuse-last-data-dir"]

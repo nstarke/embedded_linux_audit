@@ -98,6 +98,12 @@ A Node.js HTTP(S) server that acts as a collection point for agent data and a di
 cd api/agent && npm install && npm start -- --host 0.0.0.0 --port 5000
 ```
 
+To reuse the latest timestamped artifact directory instead of creating a new one on startup:
+
+```bash
+cd api/agent && npm start -- --reuse-last-data-dir
+```
+
 See [docs/api/agent/helper-server.md](docs/api/agent/helper-server.md) for full options.
 
 ### WebSocket terminal server (`api/terminal/`)

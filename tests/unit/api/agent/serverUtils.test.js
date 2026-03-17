@@ -1,11 +1,14 @@
 'use strict';
 
 const path = require('path');
+const os = require('os');
+const fs = require('fs/promises');
 const {
   normalizeContentType,
   augmentJsonPayload,
   sanitizeUploadPath,
   isWithinRoot,
+  selectStartupDataDir,
 } = require('../../../../api/agent/serverUtils');
 
 describe('agent server utils', () => {
@@ -28,5 +31,54 @@ describe('agent server utils', () => {
     const root = '/tmp/root';
     expect(isWithinRoot(path.join(root, 'a', 'b'), root)).toBe(true);
     expect(isWithinRoot('/tmp/other', root)).toBe(false);
+  });
+
+  test('selectStartupDataDir creates a fresh timestamp path by default', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ela-agent-data-'));
+
+    const selected = await selectStartupDataDir(root, {
+      now: () => 12345,
+    });
+
+    expect(selected).toEqual({
+      dataDir: path.join(root, '12345'),
+      timestamp: '12345',
+      reusedExisting: false,
+    });
+  });
+
+  test('selectStartupDataDir reuses the highest numeric timestamp directory', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ela-agent-data-'));
+    await fs.mkdir(path.join(root, '100'));
+    await fs.mkdir(path.join(root, '999'));
+    await fs.mkdir(path.join(root, 'release_binaries'));
+    await fs.writeFile(path.join(root, 'note.txt'), 'x', 'utf8');
+
+    const selected = await selectStartupDataDir(root, {
+      reuseLastTimestampDir: true,
+      now: () => 12345,
+    });
+
+    expect(selected).toEqual({
+      dataDir: path.join(root, '999'),
+      timestamp: '999',
+      reusedExisting: true,
+    });
+  });
+
+  test('selectStartupDataDir falls back to current timestamp when no prior timestamp exists', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ela-agent-data-'));
+    await fs.mkdir(path.join(root, 'release_binaries'));
+
+    const selected = await selectStartupDataDir(root, {
+      reuseLastTimestampDir: true,
+      now: () => 54321,
+    });
+
+    expect(selected).toEqual({
+      dataDir: path.join(root, '54321'),
+      timestamp: '54321',
+      reusedExisting: false,
+    });
   });
 });

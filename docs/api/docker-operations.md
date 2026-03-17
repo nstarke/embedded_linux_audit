@@ -112,6 +112,11 @@ Important agent API variables:
 - `ELA_AGENT_SKIP_ASSET_SYNC`
 - `ELA_AGENT_REPO`
 
+The bundled agent container starts with `--reuse-last-data-dir`, so container
+restarts continue writing runtime artifacts into the latest timestamped
+directory already present in the `agent-data` volume instead of creating a new
+timestamp on every boot.
+
 Important terminal API variables:
 
 - `ELA_TERMINAL_PORT`

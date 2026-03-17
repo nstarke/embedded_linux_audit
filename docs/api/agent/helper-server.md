@@ -23,6 +23,7 @@ cd api/agent && npm start -- --verbose
 Additional server options:
 
 - `--data-dir` changes the base directory used for helper-server data storage. By default this is `api/agent/data`.
+- `--reuse-last-data-dir` reuses the latest existing timestamped runtime data directory under `--data-dir`; if none exists, startup creates and uses the current timestamp directory.
 - `--https` enables HTTPS with a self-signed localhost certificate.
 - `--clean` deletes runtime upload data under the configured data directory before startup, but preserves cached release binaries in `<data-dir>/release_binaries`.
 - `--force-download` refreshes the cached release binaries in `<data-dir>/release_binaries`.

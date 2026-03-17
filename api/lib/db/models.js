@@ -66,6 +66,11 @@ function defineModels(sequelize) {
       allowNull: true,
       field: 'request_file_path',
     },
+    localArtifactPath: {
+      type: DataTypes.TEXT,
+      allowNull: true,
+      field: 'local_artifact_path',
+    },
     isSymlink: {
       type: DataTypes.BOOLEAN,
       allowNull: false,
