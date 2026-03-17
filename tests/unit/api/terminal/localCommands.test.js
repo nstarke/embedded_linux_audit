@@ -55,7 +55,6 @@ describe('local terminal commands', () => {
       sessionEntry,
       sessions: [sessionEntry],
       setDeviceAlias: jest.fn(),
-      updateUrl: 'https://updates.example',
       startSessionUpdate: startUpdate,
       onDetach: jest.fn(),
       writeOutput,
@@ -63,7 +62,7 @@ describe('local terminal commands', () => {
     });
 
     expect(handled).toBe(true);
-    expect(startUpdate).toHaveBeenCalledWith(sessionEntry, 'https://updates.example');
+    expect(startUpdate).toHaveBeenCalledWith(sessionEntry);
     expect(writeOutput).toHaveBeenCalledWith('\r\n[update: detecting architecture...]\r\n');
   });
 

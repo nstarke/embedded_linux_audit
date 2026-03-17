@@ -7,22 +7,40 @@ function buildIsaString(isa, endianness) {
   return `${isa}-${endianness === 'big' ? 'be' : 'le'}`;
 }
 
-function startSessionUpdate(entry, updateUrl) {
-  if (!updateUrl || entry.updateCtx) {
+function deriveUpdateBaseUrl(apiUrl) {
+  const trimmed = String(apiUrl || '').trim().replace(/\/+$/, '');
+  if (!/^https?:\/\//i.test(trimmed)) {
+    return null;
+  }
+
+  if (trimmed.endsWith('/upload')) {
+    return trimmed.slice(0, -'/upload'.length) || null;
+  }
+
+  return trimmed;
+}
+
+function startSessionUpdate(entry) {
+  if (entry.updateCtx) {
     return false;
   }
 
-  entry.updateCtx = { state: 'await-isa', isa: null, buffer: '' };
+  entry.updateCtx = {
+    state: 'await-api-url',
+    apiUrl: null,
+    updateBaseUrl: null,
+    isa: null,
+    buffer: '',
+  };
   entry.updateStatus = 'updating';
   if (entry.ws.readyState === entry.ws.OPEN) {
     entry.ws.send('\x15');
-    entry.ws.send('--output-format json arch isa\n');
+    entry.ws.send('linux execute-command "printf \'[ELA_API_URL_BEGIN]%s[ELA_API_URL_END]\' \\"$ELA_API_URL\\""\n');
   }
   return true;
 }
 
 function handleUpdateMessage(entry, text, {
-  updateUrl,
   onUpdateComplete = () => {},
   onUpdateFailed = () => {},
 } = {}) {
@@ -32,6 +50,30 @@ function handleUpdateMessage(entry, text, {
   }
 
   ctx.buffer += text;
+
+  if (ctx.state === 'await-api-url') {
+    const start = ctx.buffer.indexOf('[ELA_API_URL_BEGIN]');
+    const end = ctx.buffer.indexOf('[ELA_API_URL_END]');
+    if (start < 0 || end < 0 || end <= start) {
+      return;
+    }
+
+    ctx.apiUrl = ctx.buffer.slice(start + '[ELA_API_URL_BEGIN]'.length, end).trim();
+    ctx.updateBaseUrl = deriveUpdateBaseUrl(ctx.apiUrl);
+    if (!ctx.updateBaseUrl) {
+      entry.updateCtx = null;
+      entry.updateStatus = 'failed';
+      onUpdateFailed(entry);
+      return;
+    }
+
+    ctx.buffer = '';
+    ctx.state = 'await-isa';
+    if (entry.ws.readyState === entry.ws.OPEN) {
+      entry.ws.send('--output-format json arch isa\n');
+    }
+    return;
+  }
 
   if (ctx.state === 'await-isa') {
     const match = ctx.buffer.match(/\{"record":"arch"[^}]+\}/);
@@ -78,7 +120,7 @@ function handleUpdateMessage(entry, text, {
     ctx.buffer = '';
     ctx.state = 'in-progress';
     if (entry.ws.readyState === entry.ws.OPEN) {
-      const downloadCommand = `linux download-file ${updateUrl}/isa/${isaString} /tmp/ela.new\n`;
+      const downloadCommand = `linux download-file ${ctx.updateBaseUrl}/isa/${isaString} /tmp/ela.new\n`;
       const moveCommand = 'linux execute-command ' +
         '"chmod +x /tmp/ela.new && ' +
         'mv /tmp/ela.new $(readlink -f /proc/self/exe) && ' +
@@ -106,6 +148,7 @@ function handleUpdateMessage(entry, text, {
 
 module.exports = {
   buildIsaString,
+  deriveUpdateBaseUrl,
   startSessionUpdate,
   handleUpdateMessage,
 };

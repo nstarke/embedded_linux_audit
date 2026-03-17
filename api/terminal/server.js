@@ -29,7 +29,6 @@ const terminalConfig = getTerminalServiceConfig();
 const PORT = terminalConfig.port;
 const HEARTBEAT_INTERVAL_MS = 30000;
 const LEGACY_ALIASES_FILE = `${__dirname}/ela-aliases.json`;
-const UPDATE_URL = (process.env.ELA_UPDATE_URL || '').replace(/\/+$/, '');
 const VALIDATE_KEY = process.argv.includes('--validate-key');
 
 async function importLegacyAliases() {
@@ -147,7 +146,6 @@ wss.on('connection', async (ws, req) => {
     }
 
     handleUpdateMessage(entry, text, {
-      updateUrl: UPDATE_URL,
       onUpdateComplete: (sessionEntry) => onUpdateStateTransition(sessionEntry, 'update complete'),
       onUpdateFailed: (sessionEntry) => onUpdateStateTransition(sessionEntry, 'update failed'),
     });
@@ -383,12 +381,7 @@ const tui = {
   _executeListCommand(cmd) {
     const parsed = parseListCommand(cmd);
 
-    if (parsed.type === 'update-all') {
-      if (!UPDATE_URL) {
-        this._statusMsg = 'update: ELA_UPDATE_URL is not set';
-        this.render();
-        return;
-      }
+    if (parsed.type === 'update') {
       const macs = sessionRegistry.listMacs();
       if (macs.length === 0) {
         this._statusMsg = 'update: no connected sessions';
@@ -398,7 +391,7 @@ const tui = {
       let started = 0;
       for (const mac of macs) {
         const entry = sessionRegistry.getSession(mac);
-        if (entry && startSessionUpdate(entry, UPDATE_URL)) {
+        if (entry && startSessionUpdate(entry)) {
           started += 1;
         }
       }
@@ -433,6 +426,32 @@ const tui = {
       return;
     }
 
+    if (parsed.type === 'cmd-all') {
+      const macs = sessionRegistry.listMacs();
+      if (macs.length === 0) {
+        this._statusMsg = 'cmd: no connected sessions';
+        this.render();
+        return;
+      }
+
+      this._confirmPrompt = `[confirm: run "${parsed.command}" on ${macs.length} node(s)? y/N]`;
+      this._confirmValue = '';
+      this._confirmAction = () => {
+        let started = 0;
+        for (const mac of sessionRegistry.listMacs()) {
+          const entry = sessionRegistry.getSession(mac);
+          if (entry && entry.ws.readyState === entry.ws.OPEN) {
+            entry.ws.send(`${parsed.command}\n`);
+            started += 1;
+          }
+        }
+        this._statusMsg = `cmd: launched on ${started} node(s)`;
+        this.render();
+      };
+      this.render();
+      return;
+    }
+
     if (parsed.type === 'set-all') {
       const macs = sessionRegistry.listMacs();
       if (macs.length === 0) {
@@ -456,6 +475,12 @@ const tui = {
 
     if (parsed.type === 'invalid-shell') {
       this._statusMsg = 'usage: /shell <command>';
+      this.render();
+      return;
+    }
+
+    if (parsed.type === 'invalid-cmd') {
+      this._statusMsg = 'usage: /cmd <command>';
       this.render();
       return;
     }
@@ -508,7 +533,6 @@ const tui = {
           sessionEntry: entry,
           sessions: sessionRegistry.entries().map(([, sessionEntry]) => sessionEntry),
           setDeviceAlias,
-          updateUrl: UPDATE_URL,
           startSessionUpdate,
           onDetach: () => this.detach(),
           writeOutput: (text) => process.stdout.write(text),
