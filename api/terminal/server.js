@@ -392,9 +392,6 @@ const tui = {
       }
 
       if (entry && entry.ws.readyState === entry.ws.OPEN) {
-        if (cmd) {
-          entry.ws.send(cmd);
-        }
         entry.ws.send('\n');
       }
       return;

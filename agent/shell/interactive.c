@@ -909,8 +909,12 @@ static char *interactive_read_line_fallback(const char *prompt,
 		return NULL;
 
 	history_index = (ssize_t)(history ? history->count : 0);
-	if (tty_input)
+	if (tty_input) {
 		interactive_redraw_prompt_line(prompt, "");
+	} else if (prompt && *prompt) {
+		printf("%s", prompt);
+		fflush(stdout);
+	}
 
 	for (;;) {
 		unsigned char ch;
