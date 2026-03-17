@@ -31,6 +31,13 @@ From the repository root:
 docker compose up --build
 ```
 
+If you want the bundled nginx frontend to advertise a specific hostname rather
+than the default `example.com`, use the installer instead:
+
+```bash
+./nginx/install.sh ela.example.com
+```
+
 Expected behavior on first boot:
 
 1. `postgres` initializes the `embedded_linux_audit` database.
