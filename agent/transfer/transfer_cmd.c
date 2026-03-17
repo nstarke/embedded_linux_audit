@@ -114,39 +114,58 @@ int transfer_main(int argc, char **argv)
 	}
 
 	if (ela_is_ws_url(target)) {
+		struct ela_ws_conn ws;
+
+		if (ela_ws_connect(target, insecure, &ws) != 0) {
+			fprintf(stderr, "transfer: failed to connect to %s\n", target);
+			return 1;
+		}
+
 		pid = fork();
 		if (pid < 0) {
+			ela_ws_close_parent_fd(&ws);
 			fprintf(stderr, "transfer: fork failed: %s\n", strerror(errno));
 			return 1;
 		}
 
 		if (pid > 0) {
+			/* Parent: release socket fd without disrupting the child's session */
+			ela_ws_close_parent_fd(&ws);
 			fprintf(stdout, "Transfer started (pid=%ld)\n", (long)pid);
 			return 0;
 		}
 
-		/* Daemon child: connect with retry */
+		/* Daemon child */
 		setsid();
 		{
-			int attempt;
-			for (attempt = 0; attempt <= retry_attempts; attempt++) {
-				struct ela_ws_conn ws;
-
-				if (attempt > 0) {
-					fprintf(stderr,
-						"transfer: reconnect attempt %d/%d, waiting %ds\n",
-						attempt, retry_attempts,
-						TRANSFER_RETRY_DELAY_SECS);
-					sleep(TRANSFER_RETRY_DELAY_SECS);
-				}
-
-				if (ela_ws_connect(target, insecure, &ws) != 0) {
-					fprintf(stderr, "transfer: failed to connect to %s\n", target);
-					continue;
-				}
-
+			int reconnect = 1;
+			int failed_attempts = 0;
+			for (;;) {
 				ela_ws_run_interactive(&ws, argv[0]);
 				ela_ws_close(&ws);
+
+				if (retry_attempts == 0)
+					break;
+
+				reconnect = 0;
+				for (;;) {
+					failed_attempts++;
+					if (failed_attempts > retry_attempts)
+						break;
+					fprintf(stderr,
+						"transfer: reconnect attempt %d/%d, waiting %ds\n",
+						failed_attempts, retry_attempts,
+						TRANSFER_RETRY_DELAY_SECS);
+					sleep(TRANSFER_RETRY_DELAY_SECS);
+					if (ela_ws_connect(target, insecure, &ws) == 0) {
+						failed_attempts = 0;
+						reconnect = 1;
+						break;
+					}
+					fprintf(stderr, "transfer: failed to connect to %s\n", target);
+				}
+				if (!reconnect)
+					break;
 			}
 			fprintf(stderr,
 				"transfer: max retry attempts (%d) reached, exiting\n",
