@@ -38,6 +38,7 @@ services:
     build:
       context: .
       dockerfile: api/terminal/Dockerfile
+    tty: true
     environment:
       NODE_ENV: production
       ELA_DB_HOST: postgres
@@ -49,6 +50,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    volumes:
+      - ${ELA_TERMINAL_SOCKET_DIR:-/run/ela-terminal}:/run/ela-terminal
 
   nginx:
     image: nginx:1.27-alpine

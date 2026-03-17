@@ -177,6 +177,19 @@ fi
 export ELA_DATA_DIR
 
 # ---------------------------------------------------------------------------
+# tmux socket directory for terminal-api
+# ---------------------------------------------------------------------------
+ELA_TERMINAL_SOCKET_DIR="${ELA_TERMINAL_SOCKET_DIR:-/run/ela-terminal}"
+if [ ! -d "$ELA_TERMINAL_SOCKET_DIR" ]; then
+    mkdir -p "$ELA_TERMINAL_SOCKET_DIR" || {
+        echo "error: failed to create $ELA_TERMINAL_SOCKET_DIR" >&2
+        exit 1
+    }
+fi
+chmod 0755 "$ELA_TERMINAL_SOCKET_DIR"
+export ELA_TERMINAL_SOCKET_DIR
+
+# ---------------------------------------------------------------------------
 # TLS certificate resolution
 # ---------------------------------------------------------------------------
 # If --cert/--key were not supplied, reuse previously generated self-signed
