@@ -8,7 +8,8 @@
     "start": "node server.js",
     "start:secure": "node server.js --validate-key",
     "dev": "node server.js",
-    "migrate": "node ../lib/db/migrate.js"
+    "migrate": "node ../lib/db/migrate.js",
+    "test:unit": "node ../../node_modules/jest/bin/jest.js --runInBand ../../tests/unit/api/agent ../../tests/unit/api/lib"
   },
   "engines": {
     "node": ">=18"

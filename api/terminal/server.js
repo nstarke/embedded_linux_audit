@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT - Copyright (c) 2026 Nicholas Starke
 'use strict';
 
-const fs = require('fs');
 const http = require('http');
 const readline = require('readline');
 const { WebSocketServer } = require('ws');
@@ -14,6 +13,9 @@ const {
   closeTerminalConnection,
   setDeviceAlias,
 } = require('../lib/db/deviceRegistry');
+const { loadLegacyAliases } = require('./legacyAliases');
+const { createSessionRegistry } = require('./sessionRegistry');
+const { executeLocalSessionCommand } = require('./localCommands');
 
 /* -------------------------------------------------------------------------
  * Configuration
@@ -28,16 +30,8 @@ const LEGACY_ALIASES_FILE = `${__dirname}/ela-aliases.json`;
  * Legacy alias import
  * ---------------------------------------------------------------------- */
 
-function loadLegacyAliases() {
-  try {
-    return JSON.parse(fs.readFileSync(LEGACY_ALIASES_FILE, 'utf8'));
-  } catch (_) {
-    return {};
-  }
-}
-
 async function importLegacyAliases() {
-  const aliases = loadLegacyAliases();
+  const aliases = loadLegacyAliases(LEGACY_ALIASES_FILE);
   for (const [macAddress, alias] of Object.entries(aliases)) {
     if (!alias) {
       continue;
@@ -56,41 +50,12 @@ const VALIDATE_KEY = process.argv.includes('--validate-key');
  * ---------------------------------------------------------------------- */
 
 // mac -> { ws, mac, alias, connectionId, lastHeartbeat, heartbeatTimer, outputBuffer }
-const sessions = new Map();
+const sessionRegistry = createSessionRegistry({ heartbeatIntervalMs: HEARTBEAT_INTERVAL_MS });
 
 function exitGracefully() {
   cleanup()
     .then(() => closeDatabase().catch(() => {}))
     .finally(() => process.exit(0));
-}
-
-function addSession(mac, ws, alias, connectionId) {
-  const entry = {
-    ws,
-    mac,
-    alias: alias || null,
-    connectionId,
-    lastHeartbeat: null,
-    heartbeatTimer: null,
-    outputBuffer: [],
-  };
-
-  entry.heartbeatTimer = setInterval(() => {
-    if (ws.readyState === ws.OPEN) {
-      ws.send(JSON.stringify({ _type: 'heartbeat' }));
-    }
-  }, HEARTBEAT_INTERVAL_MS);
-
-  sessions.set(mac, entry);
-  return entry;
-}
-
-function removeSession(mac) {
-  const entry = sessions.get(mac);
-  if (entry) {
-    clearInterval(entry.heartbeatTimer);
-    sessions.delete(mac);
-  }
 }
 
 /* -------------------------------------------------------------------------
@@ -124,10 +89,10 @@ wss.on('connection', async (ws, req) => {
   const mac = parts[1] || 'unknown';
 
   // If a session for this MAC already exists, close the old one
-  const existing = sessions.get(mac);
+  const existing = sessionRegistry.getSession(mac);
   if (existing) {
     existing.ws.close();
-    removeSession(mac);
+    sessionRegistry.removeSession(mac);
   }
 
   let registration;
@@ -139,7 +104,10 @@ wss.on('connection', async (ws, req) => {
     return;
   }
 
-  const entry = addSession(mac, ws, registration.alias, registration.connectionId);
+  const entry = sessionRegistry.addSession(mac, ws, {
+    alias: registration.alias,
+    connectionId: registration.connectionId,
+  });
 
   // Notify TUI of new connection
   if (tui.state === TUI_STATE.SESSION_LIST) {
@@ -184,7 +152,7 @@ wss.on('connection', async (ws, req) => {
         process.stderr.write(`Warning: failed to close terminal connection for ${mac}: ${err.message}\n`);
       });
     }
-    removeSession(mac);
+    sessionRegistry.removeSession(mac);
     if (tui.state === TUI_STATE.ACTIVE_SESSION && tui.activeMac === mac) {
       process.stdout.write('\r\n[session disconnected]\r\n');
       tui.detach();
@@ -194,7 +162,7 @@ wss.on('connection', async (ws, req) => {
   });
 
   ws.on('error', () => {
-    removeSession(mac);
+    sessionRegistry.removeSession(mac);
   });
 });
 
@@ -221,7 +189,7 @@ const tui = {
   render() {
     if (this.state !== TUI_STATE.SESSION_LIST) return;
 
-    const macs = [...sessions.keys()];
+    const macs = sessionRegistry.listMacs();
     let out = ANSI.clear;
     out += `${ANSI.bold}ela-terminal${ANSI.reset}  —  ${macs.length} session(s)\r\n`;
     out += '─'.repeat(60) + '\r\n';
@@ -231,7 +199,7 @@ const tui = {
     } else {
       for (let i = 0; i < macs.length; i++) {
         const mac = macs[i];
-        const entry = sessions.get(mac);
+        const entry = sessionRegistry.getSession(mac);
         const hb = entry.lastHeartbeat
           ? `  last heartbeat: ${entry.lastHeartbeat}`
           : '';
@@ -250,7 +218,7 @@ const tui = {
   },
 
   attach(mac) {
-    const entry = sessions.get(mac);
+    const entry = sessionRegistry.getSession(mac);
     if (!entry) return;
 
     this.state        = TUI_STATE.ACTIVE_SESSION;
@@ -275,7 +243,7 @@ const tui = {
     this.state     = TUI_STATE.SESSION_LIST;
     this.activeMac = null;
     // Clamp cursor
-    const count = sessions.size;
+    const count = sessionRegistry.size;
     if (this.cursor >= count) this.cursor = Math.max(0, count - 1);
     this.render();
   },
@@ -289,7 +257,7 @@ const tui = {
   },
 
   _handleListKey(name, ctrl) {
-    const macs = [...sessions.keys()];
+    const macs = sessionRegistry.listMacs();
 
     if (name === 'up' || name === 'k') {
       if (this.cursor > 0) this.cursor--;
@@ -305,13 +273,13 @@ const tui = {
     }
   },
 
-  _handleSessionKey(key, name, ctrl) {
+  async _handleSessionKey(key, name, ctrl) {
     if (ctrl && name === 'c') {
       exitGracefully();
       return;
     }
 
-    const entry = sessions.get(this.activeMac);
+    const entry = sessionRegistry.getSession(this.activeMac);
 
     /*
      * /detach and /name are local TUI commands — intercept before forwarding.
@@ -324,31 +292,25 @@ const tui = {
     if (name === 'return') {
       const cmd = this._localCmdBuf;
       this._localCmdBuf = '';
-      if (cmd === '/detach') {
-        // Cancel the typed chars on the agent's readline before detaching.
-        if (entry && entry.ws.readyState === entry.ws.OPEN)
-          entry.ws.send('\x15');
-        process.stdout.write('\r\n');
-        this.detach();
-        return;
-      }
-      if (cmd === '/name' || cmd.startsWith('/name ')) {
-        // Cancel the typed chars on the agent's readline.
-        if (entry && entry.ws.readyState === entry.ws.OPEN)
-          entry.ws.send('\x15');
-        const arg = cmd.slice(6).trim();  // everything after '/name '
-        const mac = this.activeMac;
-        const sessionEntry = sessions.get(mac);
-        if (sessionEntry) {
-          setDeviceAlias(mac, arg || null, 'terminal_api')
-            .then(() => {
-              sessionEntry.alias = arg || null;
-              process.stdout.write(`\r\n[alias ${arg ? `set to "${arg}"` : 'cleared'}]\r\n`);
-            })
-            .catch((err) => {
-              process.stdout.write(`\r\n[failed to save alias: ${err.message}]\r\n`);
-            });
+      try {
+        const handled = await executeLocalSessionCommand({
+          cmd,
+          activeMac: this.activeMac,
+          sessionEntry: entry,
+          setDeviceAlias,
+          onDetach: () => this.detach(),
+          writeOutput: (text) => process.stdout.write(text),
+          cancelRemoteInput: () => {
+            if (entry && entry.ws.readyState === entry.ws.OPEN) {
+              entry.ws.send('\x15');
+            }
+          },
+        });
+        if (handled) {
+          return;
         }
+      } catch (err) {
+        process.stdout.write(`\r\n[failed to save alias: ${err.message}]\r\n`);
         return;
       }
       // Not a local command — send the buffered bytes + newline to the agent
@@ -418,11 +380,11 @@ function setupInput() {
 
 async function cleanup() {
   const closeOps = [];
-  for (const [mac, entry] of sessions) {
+  for (const [mac, entry] of sessionRegistry.entries()) {
     if (entry.connectionId) {
       closeOps.push(closeTerminalConnection(entry.connectionId).catch(() => {}));
     }
-    removeSession(mac);
+    sessionRegistry.removeSession(mac);
   }
   await Promise.all(closeOps);
   if (process.stdin.isTTY) {

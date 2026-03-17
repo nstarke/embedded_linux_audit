@@ -1,0 +1,16 @@
+{
+  "name": "embedded_linux_audit-js-tests",
+  "private": true,
+  "scripts": {
+    "test:js": "jest --runInBand tests/unit/api"
+  },
+  "devDependencies": {
+    "jest": "^30.0.5"
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "roots": [
+      "<rootDir>/tests/unit/api"
+    ]
+  }
+}
