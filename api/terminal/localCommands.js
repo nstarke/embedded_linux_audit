@@ -1,30 +1,31 @@
 'use strict';
 
+const SESSION_COMMAND_HELP = [
+  '/help                          show commands available for the attached session',
+  '/detach                        return to the top-level session list',
+  '/update                        update only the currently attached node',
+  '/shell                         launch linux execute-command sh and enter passthrough mode',
+  '/name [alias]                  set or clear the alias for the current node',
+];
+
 async function executeLocalSessionCommand({
   cmd,
   activeMac,
   sessionEntry,
-  sessions = [],
   setDeviceAlias,
   startSessionUpdate = () => false,
   onDetach,
   writeOutput,
   cancelRemoteInput,
 }) {
-  if (cmd === '/detach') {
+  if (cmd === '/help') {
     cancelRemoteInput();
-    writeOutput('\r\n');
-    onDetach();
+    writeOutput(`\r\n${SESSION_COMMAND_HELP.join('\r\n')}\r\n`);
     return true;
   }
 
-  if (cmd === '/exit-all') {
+  if (cmd === '/detach') {
     cancelRemoteInput();
-    for (const entry of sessions) {
-      if (entry.ws.readyState === entry.ws.OPEN) {
-        entry.ws.send('exit\n');
-      }
-    }
     writeOutput('\r\n');
     onDetach();
     return true;
@@ -68,5 +69,6 @@ async function executeLocalSessionCommand({
 }
 
 module.exports = {
+  SESSION_COMMAND_HELP,
   executeLocalSessionCommand,
 };

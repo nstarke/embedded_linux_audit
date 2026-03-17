@@ -30,7 +30,7 @@ describe('update manager', () => {
     expect(ws.send).toHaveBeenNthCalledWith(1, '\x15');
     expect(ws.send).toHaveBeenNthCalledWith(
       2,
-      'linux execute-command "printf \'[ELA_API_URL_BEGIN]%s[ELA_API_URL_END]\' \\"$ELA_API_URL\\""\n',
+      'linux execute-command "echo \\"[ELA_API_URL_BEGIN]$ELA_API_URL[ELA_API_URL_END]\\""\n',
     );
   });
 

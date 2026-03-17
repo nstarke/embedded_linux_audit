@@ -1,13 +1,30 @@
 'use strict';
 
+const LIST_COMMAND_HELP = [
+  '/help                          show commands available in the top-level session list',
+  '/update                        update all connected nodes using each node\'s ELA_API_URL',
+  '/shell <command>               run linux execute-command <command> on all connected nodes after confirmation',
+  '/cmd <command>                 run a raw agent command on all connected nodes after confirmation',
+  '/set <key> <value>             set an agent environment variable on all connected nodes',
+  '/exit                          run exit on all connected nodes after confirmation',
+];
+
 function parseListCommand(input) {
   const trimmed = String(input || '').trim();
   if (!trimmed) {
     return { type: 'empty' };
   }
 
+  if (trimmed === 'help') {
+    return { type: 'help' };
+  }
+
   if (trimmed === 'update') {
     return { type: 'update' };
+  }
+
+  if (trimmed === 'exit') {
+    return { type: 'exit' };
   }
 
   if (trimmed === 'shell') {
@@ -61,6 +78,7 @@ function isAffirmativeResponse(input) {
 }
 
 module.exports = {
+  LIST_COMMAND_HELP,
   isAffirmativeResponse,
   parseListCommand,
 };
