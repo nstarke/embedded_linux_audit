@@ -774,6 +774,11 @@ int embedded_linux_audit_dispatch(int argc, char **argv)
 		goto done;
 	}
 
+	if (!strcmp(argv[cmd_idx], "arch")) {
+		ret = arch_main(argc - cmd_idx, argv + cmd_idx);
+		goto done;
+	}
+
 	fprintf(stderr, "Unknown command group: %s\n\n", argv[cmd_idx]);
 	usage(argv[0]);
 	ret = 2;

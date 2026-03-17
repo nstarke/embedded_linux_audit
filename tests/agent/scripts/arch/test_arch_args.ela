@@ -1,0 +1,17 @@
+# Interactive/script coverage for the arch command
+arch --help
+ela arch -h
+embedded_linux_audit arch help
+
+arch bit
+ela arch isa
+embedded_linux_audit arch endianness
+
+# Output format coverage
+ela --output-format json arch bit
+ela --output-format json arch isa
+ela --output-format json arch endianness
+
+ela --output-format csv arch bit
+ela --output-format csv arch isa
+ela --output-format csv arch endianness

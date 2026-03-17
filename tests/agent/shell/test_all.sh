@@ -57,6 +57,7 @@ for test_script in \
     "$SCRIPT_DIR/uboot/test_uboot_image_args.sh" \
     "$SCRIPT_DIR/uboot/test_uboot_env_args.sh" \
     "$SCRIPT_DIR/transfer/test_transfer_args.sh" \
+    "$SCRIPT_DIR/arch/test_arch_args.sh" \
     "$SCRIPT_DIR/test_api_key.sh"
 do
     echo

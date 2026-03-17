@@ -29,12 +29,20 @@ static const char *const interactive_top_level_commands[] = {
 	"quit",
 	"exit",
 	"set",
+	"arch",
 	"uboot",
 	"linux",
 	"efi",
 	"bios",
 	"tpm2",
 	"transfer",
+	NULL,
+};
+
+static const char *const interactive_group_arch[] = {
+	"bit",
+	"isa",
+	"endianness",
 	NULL,
 };
 
@@ -88,6 +96,9 @@ static const char *const *interactive_candidates_for_position(int argc, char **a
 {
 	if (argc <= 1)
 		return interactive_top_level_commands;
+
+	if (!strcmp(argv[0], "arch"))
+		return interactive_group_arch;
 
 	if (!strcmp(argv[0], "uboot"))
 		return interactive_group_uboot;
