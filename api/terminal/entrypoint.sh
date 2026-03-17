@@ -5,7 +5,7 @@ mkdir -p /run/ela-terminal
 # The socket is created with 0666 so any host user can attach without sudo.
 tmux -S /run/ela-terminal/tmux.sock \
     new-session -d -s ela-terminal \
-    "node /app/api/terminal/server.js; echo '[ela-terminal exited — press Enter to close]'; read _"
+    "exec node /app/api/terminal/server.js"
 
 chmod 0666 /run/ela-terminal/tmux.sock
 # Hand socket ownership to the invoking host user so they can attach

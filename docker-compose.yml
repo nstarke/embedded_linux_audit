@@ -1,6 +1,7 @@
 services:
   postgres:
     image: postgres:16-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_DB: embedded_linux_audit
       POSTGRES_USER: ela
@@ -17,6 +18,7 @@ services:
     build:
       context: .
       dockerfile: api/agent/Dockerfile
+    restart: unless-stopped
     environment:
       NODE_ENV: production
       ELA_DB_HOST: postgres
@@ -38,6 +40,7 @@ services:
     build:
       context: .
       dockerfile: api/terminal/Dockerfile
+    restart: unless-stopped
     environment:
       NODE_ENV: production
       ELA_DB_HOST: postgres
@@ -55,6 +58,7 @@ services:
 
   nginx:
     image: nginx:1.27-alpine
+    restart: unless-stopped
     depends_on:
       - agent-api
       - terminal-api
