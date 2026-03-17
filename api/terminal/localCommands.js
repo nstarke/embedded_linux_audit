@@ -46,6 +46,19 @@ async function executeLocalSessionCommand({
     return true;
   }
 
+  if (cmd === '/shell') {
+    cancelRemoteInput();
+    if (!sessionEntry || sessionEntry.ws.readyState !== sessionEntry.ws.OPEN) {
+      writeOutput('\r\n[shell: session is not connected]\r\n');
+      return true;
+    }
+
+    sessionEntry.inputMode = 'passthrough';
+    sessionEntry.ws.send('linux execute-command sh\n');
+    writeOutput('\r\n[passthrough mode enabled; launched linux execute-command sh]\r\n');
+    return true;
+  }
+
   if (cmd === '/name' || cmd.startsWith('/name ')) {
     cancelRemoteInput();
     const alias = cmd.slice(6).trim() || null;

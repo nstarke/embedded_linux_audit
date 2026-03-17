@@ -613,14 +613,15 @@ int embedded_linux_audit_dispatch(int argc, char **argv)
 			/* Daemon child: connect with retry */
 			setsid();
 			{
-				int attempt;
-				for (attempt = 0; attempt <= retry_attempts; attempt++) {
+				int failed_attempts = 0;
+				bool had_successful_connection = false;
+				for (;;) {
 					struct ela_ws_conn ws;
 
-					if (attempt > 0) {
+					if (failed_attempts > 0) {
 						fprintf(stderr,
 							"--remote: reconnect attempt %d/%d, waiting %ds\n",
-							attempt, retry_attempts,
+							failed_attempts, retry_attempts,
 							ELA_RETRY_DELAY_SECS);
 						sleep(ELA_RETRY_DELAY_SECS);
 					}
@@ -628,11 +629,21 @@ int embedded_linux_audit_dispatch(int argc, char **argv)
 					if (ela_ws_connect(remote_target, insecure, &ws) != 0) {
 						fprintf(stderr, "--remote: failed to connect to %s\n",
 							remote_target);
+						failed_attempts++;
+						if (failed_attempts > retry_attempts)
+							break;
 						continue;
 					}
 
+					if (had_successful_connection)
+						failed_attempts = 0;
+					had_successful_connection = true;
+
 					ela_ws_run_interactive(&ws, argv[0]);
 					ela_ws_close(&ws);
+
+					if (retry_attempts == 0)
+						break;
 				}
 				fprintf(stderr,
 					"--remote: max retry attempts (%d) reached, exiting\n",
