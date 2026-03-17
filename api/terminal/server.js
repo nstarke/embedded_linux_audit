@@ -112,7 +112,6 @@ wss.on('connection', (ws, req) => {
     if (tui.state === TUI_STATE.ACTIVE_SESSION &&
         tui.activeMac === mac) {
       process.stdout.write(text);
-      tui.prompt(entry);
     } else {
       // Buffer output for when the session is attached
       entry.outputBuffer.push(text);
@@ -156,7 +155,6 @@ const tui = {
   state:      TUI_STATE.SESSION_LIST,
   cursor:     0,       // index in session list
   activeMac:  null,
-  lineBuffer: '',      // current line being typed in active session
 
   render() {
     if (this.state !== TUI_STATE.SESSION_LIST) return;
@@ -189,19 +187,12 @@ const tui = {
     process.stdout.write(out);
   },
 
-  prompt(entry) {
-    const mac = entry.mac;
-    const p = entry.alias ? `${entry.alias} (${mac})> ` : `(${mac})> `;
-    process.stdout.write(p);
-  },
-
   attach(mac) {
     const entry = sessions.get(mac);
     if (!entry) return;
 
     this.state     = TUI_STATE.ACTIVE_SESSION;
     this.activeMac = mac;
-    this.lineBuffer = '';
 
     const label = entry.alias ? `${entry.alias} (${mac})` : mac;
     process.stdout.write(ANSI.clear);
@@ -210,19 +201,16 @@ const tui = {
       '─'.repeat(60) + '\r\n'
     );
 
-    // Flush buffered output
+    // Flush buffered output; the agent's own prompt is included in the buffer
     if (entry.outputBuffer.length > 0) {
       process.stdout.write(entry.outputBuffer.join(''));
       entry.outputBuffer = [];
     }
-
-    this.prompt(entry);
   },
 
   detach() {
     this.state     = TUI_STATE.SESSION_LIST;
     this.activeMac = null;
-    this.lineBuffer = '';
     // Clamp cursor
     const count = sessions.size;
     if (this.cursor >= count) this.cursor = Math.max(0, count - 1);
@@ -263,61 +251,52 @@ const tui = {
 
     const entry = sessions.get(this.activeMac);
 
+    /*
+     * /detach is a local TUI command — intercept it before forwarding.
+     * Everything else (including /help, /name, Enter, Tab, arrows, printable
+     * chars, backspace) is forwarded raw to the agent so that the agent's
+     * own line-editing, history, and tab-completion handle them.
+     */
+    if (this._localCmdBuf === undefined)
+      this._localCmdBuf = '';
+
     if (name === 'return') {
-      const line = this.lineBuffer;
-      this.lineBuffer = '';
-      process.stdout.write('\r\n');
-
-      if (line === '/help') {
-        process.stdout.write(
-          '[terminal commands]\r\n' +
-          '  /help            show this help\r\n' +
-          '  /name <alias>    assign an alias to this device\r\n' +
-          '  /detach          return to the session list\r\n' +
-          '[all other input is forwarded to the agent]\r\n'
-        );
-        if (entry) this.prompt(entry);
-        return;
-      }
-
-      if (line === '/detach') {
+      const cmd = this._localCmdBuf;
+      this._localCmdBuf = '';
+      if (cmd === '/detach') {
+        process.stdout.write('\r\n');
         this.detach();
         return;
       }
-
-      if (line.startsWith('/name ') || line === '/name') {
-        const alias = line.slice(6).trim();
-        if (!alias) {
-          process.stdout.write('[usage: /name <alias>]\r\n');
-        } else if (entry) {
-          entry.alias = alias;
-          process.stdout.write(`[device named: ${alias}]\r\n`);
-        }
-        if (entry) this.prompt(entry);
-        return;
-      }
-
+      // Not a local command — send the buffered bytes + newline to the agent
       if (entry && entry.ws.readyState === entry.ws.OPEN) {
-        entry.ws.send(line + '\n');
-      }
-      if (entry) this.prompt(entry);
-      return;
-    }
-
-    if (name === 'backspace') {
-      if (this.lineBuffer.length > 0) {
-        this.lineBuffer = this.lineBuffer.slice(0, -1);
-        // Erase last character on terminal
-        process.stdout.write('\b \b');
+        if (cmd) entry.ws.send(cmd);
+        entry.ws.send('\n');
       }
       return;
     }
 
-    // Printable character
+    // Accumulate printable chars in localCmdBuf so we can detect /detach.
+    // All other special keys are forwarded immediately.
     if (key && key.length === 1 && key.charCodeAt(0) >= 0x20) {
-      this.lineBuffer += key;
-      process.stdout.write(key);
+      this._localCmdBuf += key;
+      if (entry && entry.ws.readyState === entry.ws.OPEN)
+        entry.ws.send(key);
+      return;
     }
+
+    // Reset localCmdBuf on any non-printable key
+    this._localCmdBuf = '';
+
+    if (!entry || entry.ws.readyState !== entry.ws.OPEN)
+      return;
+
+    if (name === 'backspace')  { entry.ws.send('\x7f');    return; }
+    if (name === 'tab')        { entry.ws.send('\t');      return; }
+    if (name === 'up')         { entry.ws.send('\x1b[A'); return; }
+    if (name === 'down')       { entry.ws.send('\x1b[B'); return; }
+    if (name === 'left')       { entry.ws.send('\x1b[D'); return; }
+    if (name === 'right')      { entry.ws.send('\x1b[C'); return; }
   },
 };
 

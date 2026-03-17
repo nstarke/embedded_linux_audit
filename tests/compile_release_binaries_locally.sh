@@ -174,6 +174,7 @@ ensure_zig() {
 
 set_isa_config() {
     isa="$1"
+    zig_extra_cflags=""
 
     case "$isa" in
         arm32-le)
@@ -205,6 +206,10 @@ set_isa_config() {
             ;;
         powerpc-be)
             zig_targets="powerpc-linux-musleabi,powerpc-linux-musleabihf,powerpc-linux-gnueabi,powerpc-linux-gnueabihf"
+            # Force baseline ISA: zig cc (LLVM) may emit isel/lwsync instructions
+            # that older embedded PowerPC cores (Book E, 603, 750, 4xx) do not
+            # implement, causing an "Illegal instruction" crash at runtime.
+            zig_extra_cflags="-mcpu=ppc"
             ;;
         x86)
             zig_targets="x86-linux-musl"
@@ -252,7 +257,7 @@ build_with_targets() {
             CMAKE_C_COMPILER="$(command -v zig)" \
             CMAKE_C_COMPILER_ARG1=cc \
             CMAKE_C_COMPILER_TARGET="$target" \
-            CC="zig cc -target $target" || build_ok=0
+            CC="zig cc -target $target${zig_extra_cflags:+ $zig_extra_cflags}" || build_ok=0
 
         if [ "$build_ok" -eq 1 ]; then
             cp "$REPO_ROOT/embedded_linux_audit" "$output_path"

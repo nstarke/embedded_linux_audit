@@ -155,6 +155,17 @@ endif
 endif
 endif
 
+# wolfSSL autoconf configure CFLAGS: force baseline ISA for 32-bit powerpc so
+# zig cc (LLVM) does not emit instructions unsupported on embedded PowerPC cores.
+WOLFSSL_CONFIGURE_CFLAGS :=
+ifneq ($(strip $(CMAKE_C_COMPILER_TARGET)),)
+ifneq (,$(findstring powerpc,$(CMAKE_C_COMPILER_TARGET)))
+ifeq (,$(findstring powerpc64,$(CMAKE_C_COMPILER_TARGET)))
+WOLFSSL_CONFIGURE_CFLAGS := -mcpu=ppc
+endif
+endif
+endif
+
 # Some bundled wolfSSL configure scripts in our pinned submodule revision reject
 # libtool-style --enable-static/--disable-shared toggles even though we only
 # consume the static archive. The build still produces src/.libs/libwolfssl.a
@@ -221,6 +232,16 @@ CURL_EXTRA_CFLAGS += -DOPENSSL_EXTRA
 ifneq (,$(findstring powerpc,$(CMAKE_C_COMPILER_TARGET)))
 ifeq (,$(findstring powerpc64,$(CMAKE_C_COMPILER_TARGET)))
 CURL_EXTRA_CFLAGS += -DSIZEOF_LONG_LONG=8
+endif
+endif
+endif
+# For 32-bit powerpc, force baseline ISA so zig cc (LLVM) does not emit isel /
+# lwsync instructions that older embedded PowerPC cores (Book E, 603, 750, 4xx)
+# do not implement, which would cause an "Illegal instruction" crash at runtime.
+ifneq ($(strip $(CMAKE_C_COMPILER_TARGET)),)
+ifneq (,$(findstring powerpc,$(CMAKE_C_COMPILER_TARGET)))
+ifeq (,$(findstring powerpc64,$(CMAKE_C_COMPILER_TARGET)))
+CURL_EXTRA_CFLAGS += -mcpu=ppc
 endif
 endif
 endif
@@ -387,6 +408,16 @@ endif
 CFLAGS += $(OPENSSL_CFLAGS)
 CFLAGS += -I.
 CFLAGS += -Iagent
+
+# Force baseline PowerPC ISA for 32-bit powerpc cross-builds so zig cc (LLVM)
+# does not generate isel/lwsync instructions absent from older embedded cores.
+ifneq ($(strip $(CMAKE_C_COMPILER_TARGET)),)
+ifneq (,$(findstring powerpc,$(CMAKE_C_COMPILER_TARGET)))
+ifeq (,$(findstring powerpc64,$(CMAKE_C_COMPILER_TARGET)))
+CFLAGS += -mcpu=ppc
+endif
+endif
+endif
 
 ifeq ($(ELA_USE_READLINE),1)
 CFLAGS += -DELA_HAS_READLINE -I$(READLINE_DIR)
@@ -634,6 +665,7 @@ $(WOLFSSL_LIB): check-autoconf
 	fi
 	cd $(WOLFSSL_BUILD) && $(abspath $(WOLFSSL_DIR))/configure \
 		CC="$(CC)" \
+		$(if $(WOLFSSL_CONFIGURE_CFLAGS),CFLAGS="$(WOLFSSL_CONFIGURE_CFLAGS)") \
 		$(WOLFSSL_CONFIGURE_HOST_ARG) \
 		$(WOLFSSL_EXTRA_CONFIGURE_FLAGS) \
 		$(WOLFSSL_LIBRARY_CONFIGURE_FLAGS) \

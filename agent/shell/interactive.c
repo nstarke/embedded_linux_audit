@@ -24,7 +24,6 @@
 /* Forward declaration: defined in embedded_linux_audit.c (non-static) */
 int embedded_linux_audit_dispatch(int argc, char **argv);
 
-#if defined(ELA_HAS_READLINE)
 static const char *const interactive_top_level_commands[] = {
 	"help",
 	"quit",
@@ -84,6 +83,30 @@ static const char *const interactive_set_variables[] = {
 	NULL,
 };
 
+static const char *const *interactive_candidates_for_position(int argc, char **argv)
+{
+	if (argc <= 1)
+		return interactive_top_level_commands;
+
+	if (!strcmp(argv[0], "uboot"))
+		return interactive_group_uboot;
+
+	if (!strcmp(argv[0], "linux"))
+		return interactive_group_linux;
+
+	if (!strcmp(argv[0], "efi"))
+		return interactive_group_efi;
+
+	if (!strcmp(argv[0], "bios"))
+		return interactive_group_bios;
+
+	if (!strcmp(argv[0], "set") && argc == 2)
+		return interactive_set_variables;
+
+	return NULL;
+}
+
+#if defined(ELA_HAS_READLINE)
 static const char *const *interactive_completion_candidates;
 #endif
 
@@ -455,32 +478,6 @@ int interactive_set_command(int argc, char **argv)
 }
 
 #if defined(ELA_HAS_READLINE)
-static const char *const *interactive_candidates_for_position(int argc, char **argv)
-{
-	if (argc <= 0)
-		return interactive_top_level_commands;
-
-	if (argc == 1)
-		return interactive_top_level_commands;
-
-	if (!strcmp(argv[0], "uboot"))
-		return interactive_group_uboot;
-
-	if (!strcmp(argv[0], "linux"))
-		return interactive_group_linux;
-
-	if (!strcmp(argv[0], "efi"))
-		return interactive_group_efi;
-
-	if (!strcmp(argv[0], "bios"))
-		return interactive_group_bios;
-
-	if (!strcmp(argv[0], "set") && argc == 2)
-		return interactive_set_variables;
-
-	return NULL;
-}
-
 static char *interactive_completion_generator(const char *text, int state)
 {
 	static int index;
@@ -752,6 +749,100 @@ static void interactive_redraw_prompt_line(const char *prompt, const char *line)
 	fflush(stdout);
 }
 
+/*
+ * Perform tab completion on the current line buffer.  Works in both TTY and
+ * pipe (WebSocket) modes by writing completions/matches to stdout.
+ */
+static void interactive_tab_complete_fallback(char **line_ptr, size_t *len_ptr,
+					      size_t *cap_ptr, const char *prompt)
+{
+	char *line = *line_ptr;
+	size_t len = *len_ptr;
+	const char *const *candidates;
+	char **argv = NULL;
+	int argc = 0;
+	size_t word_start;
+	const char *cur_word;
+	size_t cur_len;
+	const char *matches[64];
+	int nmatch = 0;
+	int i;
+
+	/* Find start of current (incomplete) word */
+	word_start = len;
+	if (word_start > 0 && !isspace((unsigned char)line[word_start - 1])) {
+		while (word_start > 0 &&
+		       !isspace((unsigned char)line[word_start - 1]))
+			word_start--;
+	}
+
+	cur_word = (line && len > word_start) ? line + word_start : "";
+	cur_len  = len - word_start;
+
+	/*
+	 * Parse the tokens that precede the current word to determine context.
+	 * completion_argc counts the position we are completing (1-based token
+	 * index), matching the logic in the readline completion handler.
+	 */
+	if (line && word_start > 0) {
+		char *prefix = malloc(word_start + 1);
+
+		if (!prefix)
+			return;
+		memcpy(prefix, line, word_start);
+		prefix[word_start] = '\0';
+		interactive_parse_line(prefix, &argv, &argc);
+		free(prefix);
+	}
+
+	candidates = interactive_candidates_for_position(argc + 1, argv);
+	interactive_free_argv(argv, argc);
+
+	if (!candidates)
+		return;
+
+	for (i = 0; candidates[i] && nmatch < 64; i++) {
+		if (strncmp(candidates[i], cur_word, cur_len) == 0)
+			matches[nmatch++] = candidates[i];
+	}
+
+	if (nmatch == 0)
+		return;
+
+	if (nmatch == 1) {
+		/* Single match: replace the current word with the full name + space */
+		const char *full     = matches[0];
+		size_t       full_len = strlen(full);
+		size_t       new_len  = word_start + full_len + 1; /* trailing space */
+
+		if (new_len + 1 > *cap_ptr) {
+			size_t  new_cap = new_len + 32;
+			char   *tmp     = realloc(*line_ptr, new_cap);
+
+			if (!tmp)
+				return;
+			*line_ptr = tmp;
+			*cap_ptr  = new_cap;
+			line      = *line_ptr;
+		}
+
+		memcpy(line + word_start, full, full_len);
+		line[word_start + full_len]     = ' ';
+		line[word_start + full_len + 1] = '\0';
+		*len_ptr = new_len;
+		interactive_redraw_prompt_line(prompt, line);
+		return;
+	}
+
+	/* Multiple matches: list them, then redraw the prompt */
+	putchar('\n');
+	for (i = 0; i < nmatch; i++)
+		printf("%s  ", matches[i]);
+	putchar('\n');
+	fflush(stdout);
+	interactive_redraw_prompt_line(prompt, line ? line : "");
+}
+
 static char *interactive_read_line_fallback(const char *prompt,
 					    int tty_fd,
 					    const struct termios *saved_termios,
@@ -764,32 +855,16 @@ static char *interactive_read_line_fallback(const char *prompt,
 	size_t cap = 0;
 	ssize_t history_index;
 	bool tty_input;
+	int read_fd;
 
 	tty_input = tty_fd >= 0 && have_saved_termios && isatty(tty_fd);
-	if (!tty_input) {
-		size_t line_cap = 0;
-
-		fputs(prompt, stdout);
-		fflush(stdout);
-		if (getline(&line, &line_cap, stdin) < 0) {
-			free(line);
-			return NULL;
-		}
-
-		if (line[0]) {
-			size_t line_len = strlen(line);
-
-			if (line_len > 0 && line[line_len - 1] == '\n')
-				line[line_len - 1] = '\0';
-		}
-
-		if (interactive_history_add(history, line) != 0) {
-			free(line);
-			return NULL;
-		}
-
-		return line;
-	}
+	/*
+	 * read_fd: use the real TTY when available, otherwise read from stdin
+	 * directly (pipe from ws_client.c in WebSocket mode).  In both cases
+	 * the loop below handles input character-by-character so that escape
+	 * sequences for history and Tab for completion work over WebSocket too.
+	 */
+	read_fd = tty_input ? tty_fd : STDIN_FILENO;
 
 	if (interactive_set_raw_mode(tty_fd, saved_termios, have_saved_termios) != 0)
 		return NULL;
@@ -799,7 +874,7 @@ static char *interactive_read_line_fallback(const char *prompt,
 
 	for (;;) {
 		unsigned char ch;
-		ssize_t nread = read(tty_fd, &ch, 1);
+		ssize_t nread = read(read_fd, &ch, 1);
 
 		if (nread <= 0) {
 			if (nread < 0 && errno == EINTR)
@@ -812,6 +887,7 @@ static char *interactive_read_line_fallback(const char *prompt,
 
 		if (ch == '\r' || ch == '\n') {
 			putchar('\n');
+			fflush(stdout);
 			break;
 		}
 
@@ -834,10 +910,15 @@ static char *interactive_read_line_fallback(const char *prompt,
 			continue;
 		}
 
+		if (ch == '\t') {
+			interactive_tab_complete_fallback(&line, &len, &cap, prompt);
+			continue;
+		}
+
 		if (ch == '\033') {
 			unsigned char seq[2];
 
-			if (read(tty_fd, &seq[0], 1) != 1 || read(tty_fd, &seq[1], 1) != 1)
+			if (read(read_fd, &seq[0], 1) != 1 || read(read_fd, &seq[1], 1) != 1)
 				continue;
 
 			if (seq[0] == '[' && history) {
@@ -963,8 +1044,10 @@ int interactive_loop(const char *prog)
 
 #if defined(ELA_HAS_READLINE)
 		char prompt[128];
-
-		snprintf(prompt, sizeof(prompt), "%s> ", prog);
+		{
+			const char *bn = strrchr(prog, '/');
+			snprintf(prompt, sizeof(prompt), "%s> ", bn ? bn + 1 : prog);
+		}
 		interactive_restore_terminal(tty_fd, &saved_termios, have_saved_termios);
 		line = readline(prompt);
 		if (!line) {
@@ -976,8 +1059,10 @@ int interactive_loop(const char *prog)
 			add_history(line);
 #else
 		char prompt[128];
-
-		snprintf(prompt, sizeof(prompt), "%s> ", prog);
+		{
+			const char *bn = strrchr(prog, '/');
+			snprintf(prompt, sizeof(prompt), "%s> ", bn ? bn + 1 : prog);
+		}
 		line = interactive_read_line_fallback(prompt,
 						 tty_fd,
 						 &saved_termios,
