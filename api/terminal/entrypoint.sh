@@ -7,6 +7,11 @@ tmux -S /run/ela-terminal/tmux.sock \
     new-session -d -s ela-terminal \
     "exec node /app/api/terminal/server.js"
 
+# Mirror the tmux pane output into the container logs so docker compose logs
+# shows terminal-api startup errors and runtime diagnostics.
+tmux -S /run/ela-terminal/tmux.sock \
+    pipe-pane -o -t ela-terminal 'cat >>/proc/1/fd/1'
+
 chmod 0666 /run/ela-terminal/tmux.sock
 # Hand socket ownership to the invoking host user so they can attach
 # without sudo.  ELA_SOCKET_UID is set by install.sh to the real user's UID.
