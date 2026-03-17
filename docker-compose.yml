@@ -27,7 +27,7 @@ services:
       ELA_AGENT_HOST: 0.0.0.0
       ELA_AGENT_PORT: 5000
       ELA_AGENT_DATA_DIR: /data
-      ELA_AGENT_SKIP_ASSET_SYNC: "true"
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
     depends_on:
       postgres:
         condition: service_healthy

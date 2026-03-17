@@ -26,13 +26,14 @@ Positional arguments:
   HOSTNAME         Hostname substituted into the nginx config (e.g. ela.example.com)
 
 Options:
-  --cert PATH      TLS certificate file (PEM); auto-generated self-signed if omitted
-  --key  PATH      TLS private key file  (PEM); required when --cert is given
-  --env-file PATH  Pass an env file to docker compose
-  --no-build       Skip image builds and start with existing images
-  --foreground     Run docker compose up in the foreground
-  --pull           Pull newer base images before starting
-  --help           Show this help text
+  --cert PATH           TLS certificate file (PEM); auto-generated self-signed if omitted
+  --key  PATH           TLS private key file  (PEM); required when --cert is given
+  --github-token TOKEN  GitHub token for downloading release binaries (or set GITHUB_TOKEN env var)
+  --env-file PATH       Pass an env file to docker compose
+  --no-build            Skip image builds and start with existing images
+  --foreground          Run docker compose up in the foreground
+  --pull                Pull newer base images before starting
+  --help                Show this help text
 
 Both HTTP (port 80 / WS) and HTTPS (port 443 / WSS) are always enabled.
 HTTP is not redirected to HTTPS.
@@ -52,9 +53,18 @@ ENV_FILE=""
 HOSTNAME=""
 TLS_CERT=""
 TLS_KEY=""
+GITHUB_TOKEN="${GITHUB_TOKEN:-}"
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
+        --github-token)
+            shift
+            if [ "$#" -eq 0 ]; then
+                echo "error: --github-token requires a value" >&2
+                exit 1
+            fi
+            GITHUB_TOKEN="$1"
+            ;;
         --cert)
             shift
             if [ "$#" -eq 0 ]; then
@@ -245,6 +255,7 @@ fi
 
 export ELA_TLS_CERT="$TLS_CERT"
 export ELA_TLS_KEY="$TLS_KEY"
+export GITHUB_TOKEN
 
 # Generate nginx config with hostname substituted
 sed "s/example\\.com/$HOSTNAME/g" "$NGINX_TLS_TEMPLATE" > "$GENERATED_NGINX_CONF"
