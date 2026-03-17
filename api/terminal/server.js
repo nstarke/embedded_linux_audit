@@ -15,6 +15,7 @@ const {
 } = require('../lib/db/deviceRegistry');
 const { loadLegacyAliases } = require('./legacyAliases');
 const { createSessionRegistry } = require('./sessionRegistry');
+const { isAffirmativeResponse, parseListCommand } = require('./listCommands');
 const { executeLocalSessionCommand } = require('./localCommands');
 const { startSessionUpdate, handleUpdateMessage } = require('./updateManager');
 const {
@@ -196,6 +197,9 @@ const tui = {
   cursor: 0,
   activeMac: null,
   _listCmd: null,
+  _confirmPrompt: null,
+  _confirmValue: '',
+  _confirmAction: null,
 
   render() {
     if (this.state !== TUI_STATE.SESSION_LIST) {
@@ -224,7 +228,9 @@ const tui = {
     }
 
     out += `\r\n${ANSI.dim}↑/↓ navigate   Enter attach   / command   q quit${ANSI.reset}\r\n`;
-    if (this._listCmd !== null) {
+    if (this._confirmPrompt !== null) {
+      out += `${this._confirmPrompt} ${this._confirmValue}`;
+    } else if (this._listCmd !== null) {
       out += `/${this._listCmd}`;
     }
     process.stdout.write(out);
@@ -277,6 +283,43 @@ const tui = {
 
   _handleListKey(key, name, ctrl) {
     const macs = sessionRegistry.listMacs();
+
+    if (this._confirmPrompt !== null) {
+      if (name === 'return') {
+        const accepted = isAffirmativeResponse(this._confirmValue);
+        const action = this._confirmAction;
+        this._confirmPrompt = null;
+        this._confirmValue = '';
+        this._confirmAction = null;
+        if (accepted && action) {
+          action();
+        } else {
+          process.stdout.write('\r\n[cancelled]\r\n');
+          this.render();
+        }
+        return;
+      }
+      if (name === 'escape' || (ctrl && name === 'c')) {
+        this._confirmPrompt = null;
+        this._confirmValue = '';
+        this._confirmAction = null;
+        process.stdout.write('\r\n[cancelled]\r\n');
+        this.render();
+        return;
+      }
+      if (name === 'backspace') {
+        if (this._confirmValue.length > 0) {
+          this._confirmValue = this._confirmValue.slice(0, -1);
+        }
+        this.render();
+        return;
+      }
+      if (key && key.length === 1 && key.charCodeAt(0) >= 0x20 && key.charCodeAt(0) < 0x7f) {
+        this._confirmValue += key;
+        this.render();
+      }
+      return;
+    }
 
     if (this._listCmd !== null) {
       if (name === 'return') {
@@ -331,7 +374,9 @@ const tui = {
   },
 
   _executeListCommand(cmd) {
-    if (cmd === 'update-all') {
+    const parsed = parseListCommand(cmd);
+
+    if (parsed.type === 'update-all') {
       if (!UPDATE_URL) {
         process.stdout.write('\r\n[update: ELA_UPDATE_URL is not set]\r\n');
         this.render();
@@ -355,8 +400,40 @@ const tui = {
       return;
     }
 
-    if (cmd !== '') {
-      process.stdout.write(`\r\n[unknown command: /${cmd}]\r\n`);
+    if (parsed.type === 'shell-all') {
+      const macs = sessionRegistry.listMacs();
+      if (macs.length === 0) {
+        process.stdout.write('\r\n[shell: no connected sessions]\r\n');
+        this.render();
+        return;
+      }
+
+      this._confirmPrompt = `[confirm: run "linux execute-command ${parsed.command}" on ${macs.length} node(s)? y/N]`;
+      this._confirmValue = '';
+      this._confirmAction = () => {
+        let started = 0;
+        for (const mac of sessionRegistry.listMacs()) {
+          const entry = sessionRegistry.getSession(mac);
+          if (entry && entry.ws.readyState === entry.ws.OPEN) {
+            entry.ws.send(`linux execute-command ${parsed.command}\n`);
+            started += 1;
+          }
+        }
+        process.stdout.write(`\r\n[shell: launched on ${started} node(s)]\r\n`);
+        this.render();
+      };
+      this.render();
+      return;
+    }
+
+    if (parsed.type === 'invalid-shell') {
+      process.stdout.write('\r\n[usage: /shell <command>]\r\n');
+      this.render();
+      return;
+    }
+
+    if (parsed.type === 'unknown') {
+      process.stdout.write(`\r\n[unknown command: /${parsed.raw}]\r\n`);
     }
     this.render();
   },
