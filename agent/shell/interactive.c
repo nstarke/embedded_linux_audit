@@ -80,6 +80,7 @@ static const char *const interactive_set_variables[] = {
 	"ELA_API_KEY",
 	"ELA_VERBOSE",
 	"ELA_DEBUG",
+	"ELA_WS_RETRY_ATTEMPTS",
 	NULL,
 };
 
@@ -133,6 +134,7 @@ static void interactive_usage(const char *prog)
 	       "  set ELA_API_KEY <key>         Set bearer token for API authentication\n"
 	       "  set ELA_VERBOSE <bool>        Set verbose output mode (true/false)\n"
 	       "  set ELA_DEBUG <bool>          Set debug output mode (true/false)\n"
+	       "  set ELA_WS_RETRY_ATTEMPTS <n> Set WebSocket reconnect attempts (0-1000, default 5)\n"
 	       "\n"
 	       "Available command groups:\n"
 	       "  uboot env\n"
@@ -183,17 +185,18 @@ static void print_set_values(void)
 	const char *ela_debug          = getenv("ELA_DEBUG");
 
 	printf("Supported variables:\n"
-	       "  ELA_API_URL         current=%s\n"
-	       "  ELA_API_INSECURE    current=%s\n"
-	       "  ELA_QUIET           current=%s\n"
-	       "  ELA_OUTPUT_FORMAT   current=%s\n"
-	       "  ELA_OUTPUT_TCP      current=%s\n"
-	       "  ELA_SCRIPT          current=%s\n"
-	       "  ELA_OUTPUT_HTTP     current=%s\n"
-	       "  ELA_OUTPUT_INSECURE current=%s\n"
-	       "  ELA_API_KEY         current=%s\n"
-	       "  ELA_VERBOSE         current=%s\n"
-	       "  ELA_DEBUG           current=%s\n",
+	       "  ELA_API_URL              current=%s\n"
+	       "  ELA_API_INSECURE         current=%s\n"
+	       "  ELA_QUIET                current=%s\n"
+	       "  ELA_OUTPUT_FORMAT        current=%s\n"
+	       "  ELA_OUTPUT_TCP           current=%s\n"
+	       "  ELA_SCRIPT               current=%s\n"
+	       "  ELA_OUTPUT_HTTP          current=%s\n"
+	       "  ELA_OUTPUT_INSECURE      current=%s\n"
+	       "  ELA_API_KEY              current=%s\n"
+	       "  ELA_VERBOSE              current=%s\n"
+	       "  ELA_DEBUG                current=%s\n"
+	       "  ELA_WS_RETRY_ATTEMPTS    current=%s\n",
 	       (ela_api_url && *ela_api_url) ? ela_api_url : "<unset>",
 	       (ela_api_insecure && *ela_api_insecure) ? ela_api_insecure : "<unset>",
 	       (ela_quiet && *ela_quiet) ? ela_quiet : "<unset>",
@@ -204,7 +207,9 @@ static void print_set_values(void)
 	       (ela_output_insecure && *ela_output_insecure) ? ela_output_insecure : "<unset>",
 	       (ela_api_key && *ela_api_key) ? "<set>" : "<unset>",
 	       (ela_verbose && *ela_verbose) ? ela_verbose : "<unset>",
-	       (ela_debug && *ela_debug) ? ela_debug : "<unset>");
+	       (ela_debug && *ela_debug) ? ela_debug : "<unset>",
+	       (getenv("ELA_WS_RETRY_ATTEMPTS") && *getenv("ELA_WS_RETRY_ATTEMPTS"))
+	           ? getenv("ELA_WS_RETRY_ATTEMPTS") : "<unset>");
 }
 
 static int interactive_list_supported_variables(FILE *stream)
@@ -220,20 +225,22 @@ static int interactive_list_supported_variables(FILE *stream)
 	const char *ela_api_key        = getenv("ELA_API_KEY");
 	const char *ela_verbose        = getenv("ELA_VERBOSE");
 	const char *ela_debug          = getenv("ELA_DEBUG");
+	const char *ela_ws_retry       = getenv("ELA_WS_RETRY_ATTEMPTS");
 
 	return fprintf(stream,
 		       "Supported variables:\n"
-		       "  ELA_API_URL         current=%s\n"
-		       "  ELA_API_INSECURE    current=%s\n"
-		       "  ELA_QUIET           current=%s\n"
-		       "  ELA_OUTPUT_FORMAT   current=%s\n"
-		       "  ELA_OUTPUT_TCP      current=%s\n"
-		       "  ELA_SCRIPT          current=%s\n"
-		       "  ELA_OUTPUT_HTTP     current=%s\n"
-		       "  ELA_OUTPUT_INSECURE current=%s\n"
-		       "  ELA_API_KEY         current=%s\n"
-		       "  ELA_VERBOSE         current=%s\n"
-		       "  ELA_DEBUG           current=%s\n",
+		       "  ELA_API_URL              current=%s\n"
+		       "  ELA_API_INSECURE         current=%s\n"
+		       "  ELA_QUIET                current=%s\n"
+		       "  ELA_OUTPUT_FORMAT        current=%s\n"
+		       "  ELA_OUTPUT_TCP           current=%s\n"
+		       "  ELA_SCRIPT               current=%s\n"
+		       "  ELA_OUTPUT_HTTP          current=%s\n"
+		       "  ELA_OUTPUT_INSECURE      current=%s\n"
+		       "  ELA_API_KEY              current=%s\n"
+		       "  ELA_VERBOSE              current=%s\n"
+		       "  ELA_DEBUG                current=%s\n"
+		       "  ELA_WS_RETRY_ATTEMPTS    current=%s\n",
 		       (ela_api_url && *ela_api_url) ? ela_api_url : "<unset>",
 		       (ela_api_insecure && *ela_api_insecure) ? ela_api_insecure : "<unset>",
 		       (ela_quiet && *ela_quiet) ? ela_quiet : "<unset>",
@@ -244,7 +251,8 @@ static int interactive_list_supported_variables(FILE *stream)
 		       (ela_output_insecure && *ela_output_insecure) ? ela_output_insecure : "<unset>",
 		       (ela_api_key && *ela_api_key) ? "<set>" : "<unset>",
 		       (ela_verbose && *ela_verbose) ? ela_verbose : "<unset>",
-		       (ela_debug && *ela_debug) ? ela_debug : "<unset>");
+		       (ela_debug && *ela_debug) ? ela_debug : "<unset>",
+		       (ela_ws_retry && *ela_ws_retry) ? ela_ws_retry : "<unset>");
 }
 
 static bool interactive_parse_bool(const char *value, const char **normalized)
@@ -469,6 +477,26 @@ int interactive_set_command(int argc, char **argv)
 		}
 
 		printf("ELA_DEBUG=%s\n", normalized_bool);
+		return 0;
+	}
+
+	if (!strcmp(argv[1], "ELA_WS_RETRY_ATTEMPTS")) {
+		char *end;
+		long v = strtol(argv[2], &end, 10);
+
+		if (*end || v < 0 || v > 1000) {
+			fprintf(stderr,
+				"Invalid ELA_WS_RETRY_ATTEMPTS value: %s (expected integer 0-1000)\n",
+				argv[2]);
+			return 2;
+		}
+
+		if (setenv("ELA_WS_RETRY_ATTEMPTS", argv[2], 1) != 0) {
+			fprintf(stderr, "Failed to set ELA_WS_RETRY_ATTEMPTS\n");
+			return 2;
+		}
+
+		printf("ELA_WS_RETRY_ATTEMPTS=%s\n", argv[2]);
 		return 0;
 	}
 

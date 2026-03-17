@@ -35,6 +35,12 @@ int ela_ws_connect(const char *base_url, int insecure,
 void ela_ws_close_parent_fd(const struct ela_ws_conn *ws);
 
 /*
+ * Fully close a WebSocket connection: free TLS state and close the socket.
+ * Safe to call on a zero-initialised struct.
+ */
+void ela_ws_close(struct ela_ws_conn *ws);
+
+/*
  * Run an interactive REPL session over the established WebSocket connection.
  * interactive_loop() runs in a forked child process bridged via pipes.
  * Received text frames containing "_type":"heartbeat" are answered with the
