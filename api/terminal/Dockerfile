@@ -5,6 +5,9 @@ WORKDIR /app
 COPY api /app/api
 COPY LICENSE.api /app/LICENSE.api
 
+WORKDIR /app/api
+RUN npm install --omit=dev
+
 WORKDIR /app/api/terminal
 RUN npm install --omit=dev
 

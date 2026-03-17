@@ -9,6 +9,9 @@ COPY Makefile /app/Makefile
 COPY README.md /app/README.md
 COPY LICENSE.api /app/LICENSE.api
 
+WORKDIR /app/api
+RUN npm install --omit=dev
+
 WORKDIR /app/api/agent
 RUN npm install --omit=dev
 
