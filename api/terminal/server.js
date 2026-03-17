@@ -196,6 +196,7 @@ const tui = {
   cursor: 0,
   activeMac: null,
   _listCmd: null,
+  _statusMsg: null,
 
   render() {
     if (this.state !== TUI_STATE.SESSION_LIST) {
@@ -224,6 +225,10 @@ const tui = {
     }
 
     out += `\r\n${ANSI.dim}↑/↓ navigate   Enter attach   / command   q quit${ANSI.reset}\r\n`;
+    if (this._statusMsg !== null) {
+      out += `${ANSI.dim}${this._statusMsg}${ANSI.reset}\r\n`;
+      this._statusMsg = null;
+    }
     if (this._listCmd !== null) {
       out += `/${this._listCmd}`;
     }
@@ -333,13 +338,13 @@ const tui = {
   _executeListCommand(cmd) {
     if (cmd === 'update-all') {
       if (!UPDATE_URL) {
-        process.stdout.write('\r\n[update: ELA_UPDATE_URL is not set]\r\n');
+        this._statusMsg = 'update: ELA_UPDATE_URL is not set';
         this.render();
         return;
       }
       const macs = sessionRegistry.listMacs();
       if (macs.length === 0) {
-        process.stdout.write('\r\n[update: no connected sessions]\r\n');
+        this._statusMsg = 'update: no connected sessions';
         this.render();
         return;
       }
@@ -350,13 +355,13 @@ const tui = {
           started += 1;
         }
       }
-      process.stdout.write(`\r\n[update: initiated for ${started} session(s)]\r\n`);
+      this._statusMsg = `update: initiated for ${started} session(s)`;
       this.render();
       return;
     }
 
     if (cmd !== '') {
-      process.stdout.write(`\r\n[unknown command: /${cmd}]\r\n`);
+      this._statusMsg = `unknown command: /${cmd}`;
     }
     this.render();
   },
