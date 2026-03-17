@@ -59,3 +59,6 @@ Remote output notes:
 - `./embedded_linux_audit --insecure --output-http <https://host:port/path> bios orom pull`
   disable TLS certificate and hostname verification for HTTPS output.
 - `efi|bios orom` sends emitted output records and all log lines (including verbose logs) to the configured `--output-{tcp,http,https}` destination.
+- `arch bit`, `arch isa`, and `arch endianness` fully honor `--output-format`; the single-value result is emitted as plain text, a CSV-quoted field, or a JSON object (`{"record":"arch","subcommand":"...","value":"..."}`).
+- `./embedded_linux_audit --output-tcp <ip:port> arch isa` sends the formatted result over TCP.
+- `./embedded_linux_audit --output-http <http://host:port/path> arch isa` sends the formatted result in a single HTTP POST with `Content-Type: text/plain; charset=utf-8` (or `text/csv` / `application/json` when `--output-format csv/json` is set).
