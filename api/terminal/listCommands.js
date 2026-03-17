@@ -39,7 +39,17 @@ function parseListCommand(input) {
   }
 
   if (trimmed.startsWith('shell ')) {
-    const command = trimmed.slice(6).trim();
+    let command = trimmed.slice(6).trim();
+    if (!command) {
+      return { type: 'invalid-shell' };
+    }
+    if (command.length >= 2) {
+      const first = command[0];
+      const last = command[command.length - 1];
+      if ((first === '"' && last === '"') || (first === "'" && last === "'")) {
+        command = command.slice(1, -1).trim();
+      }
+    }
     return command
       ? { type: 'shell-all', command }
       : { type: 'invalid-shell' };
