@@ -551,6 +551,11 @@ run_qemu_shell_tests() {
 
         cat "$test_log"
 
+        if [ "$test_rc" -eq 143 ] || [ "$test_rc" -eq 137 ]; then
+            echo "[FAIL] shell/$rel_path timed out after ${QEMU_SHELL_TEST_TIMEOUT}s (rc=$test_rc)"
+            FAIL_COUNT="$(expr "$FAIL_COUNT" + 1)"
+        fi
+
         sub_passes="$(sed -n 's/^Passed: //p' "$test_log" | tail -n 1)"
         sub_fails="$(sed -n 's/^Failed: //p' "$test_log" | tail -n 1)"
         if [ -n "$sub_passes" ]; then
