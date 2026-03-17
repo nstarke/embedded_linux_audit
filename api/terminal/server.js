@@ -433,8 +433,35 @@ const tui = {
       return;
     }
 
+    if (parsed.type === 'set-all') {
+      const macs = sessionRegistry.listMacs();
+      if (macs.length === 0) {
+        this._statusMsg = 'set: no connected sessions';
+        this.render();
+        return;
+      }
+
+      let started = 0;
+      for (const mac of sessionRegistry.listMacs()) {
+        const entry = sessionRegistry.getSession(mac);
+        if (entry && entry.ws.readyState === entry.ws.OPEN) {
+          entry.ws.send(`set ${parsed.key} ${parsed.value}\n`);
+          started += 1;
+        }
+      }
+      this._statusMsg = `set: dispatched "${parsed.key}" to ${started} node(s)`;
+      this.render();
+      return;
+    }
+
     if (parsed.type === 'invalid-shell') {
       this._statusMsg = 'usage: /shell <command>';
+      this.render();
+      return;
+    }
+
+    if (parsed.type === 'invalid-set') {
+      this._statusMsg = 'usage: /set <key> <value>';
       this.render();
       return;
     }

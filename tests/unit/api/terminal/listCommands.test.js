@@ -12,7 +12,14 @@ describe('terminal list command helpers', () => {
       type: 'shell-all',
       command: 'uname -a',
     });
+    expect(parseListCommand('set ELA_API_URL https://ela.example.com/upload')).toEqual({
+      type: 'set-all',
+      key: 'ELA_API_URL',
+      value: 'https://ela.example.com/upload',
+    });
     expect(parseListCommand('shell   ')).toEqual({ type: 'invalid-shell' });
+    expect(parseListCommand('set')).toEqual({ type: 'invalid-set' });
+    expect(parseListCommand('set ELA_API_URL')).toEqual({ type: 'invalid-set' });
     expect(parseListCommand('')).toEqual({ type: 'empty' });
     expect(parseListCommand('unknown')).toEqual({ type: 'unknown', raw: 'unknown' });
   });
