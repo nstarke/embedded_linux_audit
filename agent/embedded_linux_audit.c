@@ -886,7 +886,11 @@ done:
 
 int main(int argc, char **argv)
 {
+	struct ela_conf boot_conf = {0};
 	char **interactive_argv;
+
+	ela_conf_load(&boot_conf);
+	ela_conf_export_to_env(&boot_conf);
 
 	if (argc < 2 && !(getenv("ELA_SCRIPT") && *getenv("ELA_SCRIPT")))
 		return interactive_loop(argv[0]);

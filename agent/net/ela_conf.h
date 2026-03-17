@@ -34,4 +34,12 @@ void ela_conf_save(const struct ela_conf *conf);
  */
 void ela_conf_update_from_env(void);
 
+/*
+ * Export conf fields to environment variables so subcommands and the
+ * interactive `set` display reflect conf-sourced defaults.  Uses
+ * overwrite=0: existing env vars (set by the user before launch) win.
+ * Call once at startup after ela_conf_load().
+ */
+void ela_conf_export_to_env(const struct ela_conf *conf);
+
 #endif /* ELA_CONF_H */

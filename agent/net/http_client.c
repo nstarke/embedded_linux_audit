@@ -1627,9 +1627,14 @@ static int ela_http_post_https_once(const char *effective_uri,
 
 	rc = curl_easy_perform(curl);
 	if (rc != CURLE_OK) {
-		if (verbose)
+		if (verbose) {
 			fprintf(stderr, "HTTP POST transport failure uri=%s error=%s\n",
 				effective_uri, curl_easy_strerror(rc));
+			if (rc == CURLE_COULDNT_RESOLVE_HOST)
+				fprintf(stderr,
+					"  hint: DNS resolution failed — check /etc/resolv.conf"
+					" or use an IP address in ELA_API_URL\n");
+		}
 		if (errbuf && errbuf_len)
 			snprintf(errbuf, errbuf_len, "curl perform failed: %s", curl_easy_strerror(rc));
 		curl_slist_free_all(headers);
