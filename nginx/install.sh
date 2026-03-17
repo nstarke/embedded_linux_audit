@@ -124,6 +124,23 @@ if [ ! -f "$COMPOSE_FILE" ]; then
     exit 1
 fi
 
+# ---------------------------------------------------------------------------
+# Privileged port capability (ports 80 / 443)
+# docker-proxy must have cap_net_bind_service to bind ports below 1024.
+# ---------------------------------------------------------------------------
+_docker_proxy="$(command -v docker-proxy 2>/dev/null || true)"
+if [ -n "$_docker_proxy" ]; then
+    if ! getcap "$_docker_proxy" 2>/dev/null | grep -q cap_net_bind_service; then
+        echo "Granting cap_net_bind_service to $_docker_proxy ..."
+        setcap cap_net_bind_service=+ep "$_docker_proxy" 2>/dev/null || \
+            sudo setcap cap_net_bind_service=+ep "$_docker_proxy" || {
+                echo "warning: could not set cap_net_bind_service on docker-proxy" >&2
+                echo "         Ports 80/443 may be inaccessible." >&2
+                echo "         Run manually: sudo setcap cap_net_bind_service=+ep $_docker_proxy" >&2
+            }
+    fi
+fi
+
 if [ ! -f "$NGINX_TLS_TEMPLATE" ]; then
     echo "error: $NGINX_TLS_TEMPLATE not found" >&2
     exit 1
@@ -199,6 +216,14 @@ if [ ! -d "$ELA_POSTGRES_DATA_DIR" ]; then
     }
 fi
 export ELA_POSTGRES_DATA_DIR
+
+# ---------------------------------------------------------------------------
+# Socket UID — used inside the terminal-api container to chown the tmux
+# socket so the invoking user can attach without sudo.
+# ---------------------------------------------------------------------------
+_real_user="${SUDO_USER:-$USER}"
+ELA_SOCKET_UID="$(id -u "$_real_user" 2>/dev/null || id -u)"
+export ELA_SOCKET_UID
 
 # ---------------------------------------------------------------------------
 # tmux socket directory for terminal-api

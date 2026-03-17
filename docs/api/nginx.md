@@ -28,6 +28,26 @@ still connect.
 - Access to the Docker daemon
 - Free listeners on TCP ports `80` and `443`
 - `openssl` on the host (only needed when not supplying your own cert)
+- `docker-proxy` with `cap_net_bind_service` (see below)
+
+## Privileged port capability
+
+Docker binds host ports through `docker-proxy`, which must hold
+`cap_net_bind_service` to use ports below 1024 (80 and 443).
+`install.sh` applies this automatically, but you can set or verify it
+manually:
+
+```sh
+# Grant the capability
+sudo setcap cap_net_bind_service=+ep $(command -v docker-proxy)
+
+# Verify
+getcap $(command -v docker-proxy)
+# → /usr/bin/docker-proxy cap_net_bind_service=+ep
+```
+
+The capability must be re-applied after Docker is upgraded since package
+upgrades replace the binary.
 
 ## Installation
 

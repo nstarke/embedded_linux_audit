@@ -46,6 +46,7 @@ services:
       ELA_DB_USER: ela
       ELA_DB_PASSWORD: ela
       ELA_TERMINAL_PORT: 8080
+      ELA_SOCKET_UID: ${ELA_SOCKET_UID:-}
     depends_on:
       postgres:
         condition: service_healthy

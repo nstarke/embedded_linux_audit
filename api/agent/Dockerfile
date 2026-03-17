@@ -17,8 +17,7 @@ RUN npm install --omit=dev
 
 ENV NODE_ENV=production \
     ELA_AGENT_HOST=0.0.0.0 \
-    ELA_AGENT_PORT=5000 \
-    ELA_AGENT_SKIP_ASSET_SYNC=true
+    ELA_AGENT_PORT=5000
 
 EXPOSE 5000
 
