@@ -164,6 +164,7 @@ PY
         if [ "$rc" -eq 0 ] && \
            grep -F "/upload/file-list?filePath=%2F" "$http_req_path" >/dev/null 2>&1 && \
            grep -F "text/plain; charset=utf-8" "$http_req_type" >/dev/null 2>&1 && \
+           grep -F "HTTP POST completed successfully:" "$http_post_log" >/dev/null 2>&1 && \
            file_has_exact_line "$TMP_TOP_FILE" "$http_req_body"; then
             echo "[PASS] linux list-files global --output-http performs HTTP POST upload"
             PASS_COUNT="$(expr "$PASS_COUNT" + 1)"
