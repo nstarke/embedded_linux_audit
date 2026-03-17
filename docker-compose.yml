@@ -38,7 +38,6 @@ services:
     build:
       context: .
       dockerfile: api/terminal/Dockerfile
-    tty: true
     environment:
       NODE_ENV: production
       ELA_DB_HOST: postgres
