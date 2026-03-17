@@ -200,6 +200,7 @@ const tui = {
   _confirmPrompt: null,
   _confirmValue: '',
   _confirmAction: null,
+  _statusMsg: null,
 
   render() {
     if (this.state !== TUI_STATE.SESSION_LIST) {
@@ -230,8 +231,14 @@ const tui = {
     out += `\r\n${ANSI.dim}↑/↓ navigate   Enter attach   / command   q quit${ANSI.reset}\r\n`;
     if (this._confirmPrompt !== null) {
       out += `${this._confirmPrompt} ${this._confirmValue}`;
-    } else if (this._listCmd !== null) {
-      out += `/${this._listCmd}`;
+    } else {
+      if (this._statusMsg !== null) {
+        out += `${ANSI.dim}${this._statusMsg}${ANSI.reset}\r\n`;
+        this._statusMsg = null;
+      }
+      if (this._listCmd !== null) {
+        out += `/${this._listCmd}`;
+      }
     }
     process.stdout.write(out);
   },
@@ -378,13 +385,13 @@ const tui = {
 
     if (parsed.type === 'update-all') {
       if (!UPDATE_URL) {
-        process.stdout.write('\r\n[update: ELA_UPDATE_URL is not set]\r\n');
+        this._statusMsg = 'update: ELA_UPDATE_URL is not set';
         this.render();
         return;
       }
       const macs = sessionRegistry.listMacs();
       if (macs.length === 0) {
-        process.stdout.write('\r\n[update: no connected sessions]\r\n');
+        this._statusMsg = 'update: no connected sessions';
         this.render();
         return;
       }
@@ -395,7 +402,7 @@ const tui = {
           started += 1;
         }
       }
-      process.stdout.write(`\r\n[update: initiated for ${started} session(s)]\r\n`);
+      this._statusMsg = `update: initiated for ${started} session(s)`;
       this.render();
       return;
     }
@@ -403,7 +410,7 @@ const tui = {
     if (parsed.type === 'shell-all') {
       const macs = sessionRegistry.listMacs();
       if (macs.length === 0) {
-        process.stdout.write('\r\n[shell: no connected sessions]\r\n');
+        this._statusMsg = 'shell: no connected sessions';
         this.render();
         return;
       }
@@ -419,7 +426,7 @@ const tui = {
             started += 1;
           }
         }
-        process.stdout.write(`\r\n[shell: launched on ${started} node(s)]\r\n`);
+        this._statusMsg = `shell: launched on ${started} node(s)`;
         this.render();
       };
       this.render();
@@ -427,13 +434,13 @@ const tui = {
     }
 
     if (parsed.type === 'invalid-shell') {
-      process.stdout.write('\r\n[usage: /shell <command>]\r\n');
+      this._statusMsg = 'usage: /shell <command>';
       this.render();
       return;
     }
 
     if (parsed.type === 'unknown') {
-      process.stdout.write(`\r\n[unknown command: /${parsed.raw}]\r\n`);
+      this._statusMsg = `unknown command: /${parsed.raw}`;
     }
     this.render();
   },
