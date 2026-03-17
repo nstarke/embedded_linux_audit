@@ -169,6 +169,10 @@ if [ ! -d "$ELA_DATA_DIR" ]; then
         echo "       Try: sudo mkdir -p $ELA_DATA_DIR && sudo chown \$(id -u):\$(id -g) $ELA_DATA_DIR" >&2
         exit 1
     }
+    _real_user="${SUDO_USER:-$USER}"
+    if [ -n "$_real_user" ] && [ "$_real_user" != "root" ]; then
+        chown "$_real_user" "$ELA_DATA_DIR" 2>/dev/null || true
+    fi
 fi
 export ELA_DATA_DIR
 
@@ -211,6 +215,14 @@ OPENSSLEOF
             echo "error: openssl failed to generate certificate" >&2
             exit 1
         fi
+        # Ensure the invoking user (not root) owns the files so docker compose
+        # can read them when run without sudo.
+        _real_user="${SUDO_USER:-$USER}"
+        if [ -n "$_real_user" ] && [ "$_real_user" != "root" ]; then
+            chown "$_real_user" "$TLS_CERT" "$TLS_KEY" 2>/dev/null || true
+        fi
+        chmod 644 "$TLS_CERT"
+        chmod 600 "$TLS_KEY"
         echo "  cert: $TLS_CERT"
         echo "  key:  $TLS_KEY"
     else
