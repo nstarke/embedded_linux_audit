@@ -11,7 +11,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 DEST_RELEASE_DIR="${RELEASE_BINARIES_DIR:-$REPO_ROOT/api/data/release_binaries}"
 TOOLS_CACHE_DIR="$REPO_ROOT/.cache/tools"
 ZIG_VERSION="0.14.0"
-SUPPORTED_ISAS="arm32-le arm32-be aarch64-le aarch64-be mips-le mips-be mips64-le mips64-be powerpc-le powerpc-be x86 x86_64 riscv32 riscv64"
+SUPPORTED_ISAS="arm32-le arm32-be aarch64-le aarch64-be mips-le mips-be mips64-le mips64-be powerpc-le powerpc64-be powerpc-be x86 x86_64 riscv32 riscv64"
 
 REQUIRED_SUBMODULE_PATHS="
 third_party/libcsv/libcsv.c
@@ -203,6 +203,9 @@ set_isa_config() {
             ;;
         powerpc-le)
             zig_targets="powerpc64le-linux-musl,powerpc64le-linux-gnu"
+            ;;
+        powerpc64-be)
+            zig_targets="powerpc64-linux-musl,powerpc64-linux-gnu"
             ;;
         powerpc-be)
             zig_targets="powerpc-linux-musleabi,powerpc-linux-musleabihf,powerpc-linux-gnueabi,powerpc-linux-gnueabihf"

@@ -215,8 +215,9 @@ const tui = {
     const entry = sessions.get(mac);
     if (!entry) return;
 
-    this.state     = TUI_STATE.ACTIVE_SESSION;
-    this.activeMac = mac;
+    this.state        = TUI_STATE.ACTIVE_SESSION;
+    this.activeMac    = mac;
+    this._localCmdBuf = '';
 
     const label = entry.alias ? `${entry.alias} (${mac})` : mac;
     process.stdout.write(ANSI.clear);
@@ -287,11 +288,17 @@ const tui = {
       const cmd = this._localCmdBuf;
       this._localCmdBuf = '';
       if (cmd === '/detach') {
+        // Cancel the typed chars on the agent's readline before detaching.
+        if (entry && entry.ws.readyState === entry.ws.OPEN)
+          entry.ws.send('\x15');
         process.stdout.write('\r\n');
         this.detach();
         return;
       }
       if (cmd === '/name' || cmd.startsWith('/name ')) {
+        // Cancel the typed chars on the agent's readline.
+        if (entry && entry.ws.readyState === entry.ws.OPEN)
+          entry.ws.send('\x15');
         const arg = cmd.slice(6).trim();  // everything after '/name '
         const mac = this.activeMac;
         const sessionEntry = sessions.get(mac);
@@ -317,21 +324,30 @@ const tui = {
     }
 
     // Accumulate printable chars in localCmdBuf so we can detect /detach.
-    // All other special keys are forwarded immediately.
-    if (key && key.length === 1 && key.charCodeAt(0) >= 0x20) {
+    // Exclude DEL (0x7f) — it has charCode 127 >= 0x20 but is not printable.
+    if (key && key.length === 1 && key.charCodeAt(0) >= 0x20 && key.charCodeAt(0) < 0x7f) {
       this._localCmdBuf += key;
       if (entry && entry.ws.readyState === entry.ws.OPEN)
         entry.ws.send(key);
       return;
     }
 
-    // Reset localCmdBuf on any non-printable key
+    // Backspace: erase last char from localCmdBuf (not clear entirely) and
+    // forward to agent so its readline stays in sync.
+    if (name === 'backspace') {
+      if (this._localCmdBuf.length > 0)
+        this._localCmdBuf = this._localCmdBuf.slice(0, -1);
+      if (entry && entry.ws.readyState === entry.ws.OPEN)
+        entry.ws.send('\x7f');
+      return;
+    }
+
+    // Reset localCmdBuf on any other non-printable key.
     this._localCmdBuf = '';
 
     if (!entry || entry.ws.readyState !== entry.ws.OPEN)
       return;
 
-    if (name === 'backspace')  { entry.ws.send('\x7f');    return; }
     if (name === 'tab')        { entry.ws.send('\t');      return; }
     if (name === 'up')         { entry.ws.send('\x1b[A'); return; }
     if (name === 'down')       { entry.ws.send('\x1b[B'); return; }

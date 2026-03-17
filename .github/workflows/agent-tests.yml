@@ -30,6 +30,7 @@ jobs:
           - mips64-le
           - mips64-be
           - powerpc-le
+          - powerpc64-be
           - powerpc-be
           - x86
           - x86_64
@@ -203,6 +204,7 @@ jobs:
           - mips64-le
           - mips64-be
           - powerpc-le
+          - powerpc64-be
           - powerpc-be
           - x86
           - x86_64
@@ -308,6 +310,7 @@ jobs:
             echo "- tests/agent/qemu-mips64-le"
             echo "- tests/agent/qemu-mips64-be"
             echo "- tests/agent/qemu-powerpc-le"
+            echo "- tests/agent/qemu-powerpc64-be"
             echo "- tests/agent/qemu-powerpc-be"
             echo "- tests/agent/qemu-x86"
             echo "- tests/agent/qemu-x86_64"
@@ -320,7 +323,7 @@ jobs:
           for isa in \
             arm32-le arm32-be aarch64-le aarch64-be \
             mips-le mips-be mips64-le mips64-be \
-            powerpc-le powerpc-be x86 x86_64 riscv32 riscv64
+            powerpc-le powerpc64-be powerpc-be x86 x86_64 riscv32 riscv64
           do
             log_path="$(find qemu-logs -type f -name "${isa}.log" | head -n 1)"
             {

@@ -860,11 +860,16 @@ int ela_ws_run_interactive(struct ela_ws_conn *ws, const char *prog)
 	char   frame_buf[65536];
 	char   read_buf[65536];
 	time_t last_ping_t;
+	char   mac[32];
 
 	if (pipe(pipe_to_loop) != 0 || pipe(pipe_from_loop) != 0) {
 		fprintf(stderr, "ws: pipe: %s\n", strerror(errno));
 		return 1;
 	}
+
+	/* Let the child know its session MAC so it can show the prompt. */
+	get_primary_mac(mac, sizeof(mac));
+	setenv("ELA_SESSION_MAC", mac, 1);
 
 	child = fork();
 	if (child < 0) {

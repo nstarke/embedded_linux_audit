@@ -29,12 +29,20 @@ static const char *const interactive_top_level_commands[] = {
 	"quit",
 	"exit",
 	"set",
+	"arch",
 	"uboot",
 	"linux",
 	"efi",
 	"bios",
 	"tpm2",
 	"transfer",
+	NULL,
+};
+
+static const char *const interactive_group_arch[] = {
+	"bit",
+	"isa",
+	"endianness",
 	NULL,
 };
 
@@ -88,6 +96,9 @@ static const char *const *interactive_candidates_for_position(int argc, char **a
 {
 	if (argc <= 1)
 		return interactive_top_level_commands;
+
+	if (!strcmp(argv[0], "arch"))
+		return interactive_group_arch;
 
 	if (!strcmp(argv[0], "uboot"))
 		return interactive_group_uboot;
@@ -1058,10 +1069,10 @@ int interactive_loop(const char *prog)
 			have_saved_termios = true;
 	}
 
-	/* Only show the banner and prompt when running interactively on a real
-	 * TTY.  When stdin is a pipe (WebSocket / TCP remote mode) suppress
-	 * both so that the operator only sees output from the commands. */
-	const bool show_prompt = tty_fd >= 0;
+	/* Show prompt on a real TTY, or when running over a WebSocket session
+	 * (ELA_SESSION_MAC is set by ela_ws_run_interactive before forking). */
+	const char *session_mac = getenv("ELA_SESSION_MAC");
+	const bool show_prompt = tty_fd >= 0 || (session_mac && *session_mac);
 
 	if (show_prompt) {
 		printf("Entering interactive mode for %s. Type 'help' for commands or 'quit' to exit.\n\n", prog);
@@ -1081,11 +1092,14 @@ int interactive_loop(const char *prog)
 #if defined(ELA_HAS_READLINE)
 		char prompt[128];
 		{
-			const char *bn = strrchr(prog, '/');
-			if (show_prompt)
-				snprintf(prompt, sizeof(prompt), "%s> ", bn ? bn + 1 : prog);
-			else
+			if (!show_prompt) {
 				prompt[0] = '\0';
+			} else if (session_mac && *session_mac) {
+				snprintf(prompt, sizeof(prompt), "(%s)> ", session_mac);
+			} else {
+				const char *bn = strrchr(prog, '/');
+				snprintf(prompt, sizeof(prompt), "%s> ", bn ? bn + 1 : prog);
+			}
 		}
 		interactive_restore_terminal(tty_fd, &saved_termios, have_saved_termios);
 		line = readline(show_prompt ? prompt : NULL);
@@ -1099,11 +1113,14 @@ int interactive_loop(const char *prog)
 #else
 		char prompt[128];
 		{
-			const char *bn = strrchr(prog, '/');
-			if (show_prompt)
-				snprintf(prompt, sizeof(prompt), "%s> ", bn ? bn + 1 : prog);
-			else
+			if (!show_prompt) {
 				prompt[0] = '\0';
+			} else if (session_mac && *session_mac) {
+				snprintf(prompt, sizeof(prompt), "(%s)> ", session_mac);
+			} else {
+				const char *bn = strrchr(prog, '/');
+				snprintf(prompt, sizeof(prompt), "%s> ", bn ? bn + 1 : prog);
+			}
 		}
 		line = interactive_read_line_fallback(prompt,
 						 tty_fd,

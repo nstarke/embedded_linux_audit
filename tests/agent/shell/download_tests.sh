@@ -220,12 +220,54 @@ can_run_binary() {
     status=$?
 
     case "$status" in
-        126|127)
-            return 1
-            ;;
-        *)
+        0)
             return 0
             ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+# Attempt to determine the ISA from the uname -m output.
+# Prints the ISA name and returns 0 on success; prints nothing and returns 1
+# if the machine type is not recognised.
+detect_isa_from_uname() {
+    machine="$(uname -m 2>/dev/null)" || return 1
+
+    case "$machine" in
+        x86_64|amd64)
+            echo "x86_64" ;;
+        i[3456]86|i86pc)
+            echo "x86" ;;
+        aarch64|arm64)
+            echo "aarch64-le" ;;
+        aarch64_be)
+            echo "aarch64-be" ;;
+        armeb|armv*eb)
+            echo "arm32-be" ;;
+        armv*|arm|armhf)
+            echo "arm32-le" ;;
+        mips64el|mips64le)
+            echo "mips64-le" ;;
+        mips64)
+            echo "mips64-be" ;;
+        mipsel|mipsle)
+            echo "mips-le" ;;
+        mips)
+            echo "mips-be" ;;
+        ppc64le|powerpc64le)
+            echo "powerpc-le" ;;
+        ppc64|powerpc64)
+            echo "powerpc64-be" ;;
+        ppc|powerpc)
+            echo "powerpc-be" ;;
+        riscv32)
+            echo "riscv32" ;;
+        riscv64)
+            echo "riscv64" ;;
+        *)
+            return 1 ;;
     esac
 }
 
@@ -347,34 +389,66 @@ if [ -n "$ISA" ]; then
     mv -f "$AUDIT_BINARY_TMP" "$AUDIT_BINARY_DEST"
 else
     TEMP_BINARY_DIRECTORY="$(mktemp -d /tmp/download_tests_binaries.XXXXXX)"
-    echo "ISA not specified; downloading release binaries for auto-discovery to: $TEMP_BINARY_DIRECTORY"
 
     DISCOVERED_ISA=""
     DISCOVERED_BINARY=""
 
-    for candidate_isa in $(list_valid_isas | delete_cr_stream | sed 's/[[:space:]]*$//' | sed '/^$/d'); do
-        candidate_path_rel="$(find_release_binary_url_for_isa "$INDEX_FILE" "$candidate_isa")"
-        [ -n "$candidate_path_rel" ] || continue
-
-        candidate_url="$(resolve_url "$BASE_URL" "$candidate_path_rel")"
-        candidate_file="$TEMP_BINARY_DIRECTORY/ela-$candidate_isa"
-
-        echo "downloading $candidate_url -> $candidate_file"
-        fetch_to_file "$candidate_url" "$candidate_file"
-        chmod +x "$candidate_file"
-    done
-
-    for candidate_isa in $(list_valid_isas | delete_cr_stream | sed 's/[[:space:]]*$//' | sed '/^$/d'); do
-        candidate_file="$TEMP_BINARY_DIRECTORY/ela-$candidate_isa"
-        [ -f "$candidate_file" ] || continue
-
-        echo "probing ISA candidate: $candidate_isa"
-        if can_run_binary "$candidate_file"; then
-            DISCOVERED_ISA="$candidate_isa"
-            DISCOVERED_BINARY="$candidate_file"
-            break
+    # Fast path: use uname -m to determine the ISA without downloading every binary.
+    uname_isa="$(detect_isa_from_uname 2>/dev/null)" || true
+    if [ -n "$uname_isa" ]; then
+        echo "ISA not specified; uname -m suggests: $uname_isa"
+        uname_path_rel="$(find_release_binary_url_for_isa "$INDEX_FILE" "$uname_isa")"
+        if [ -n "$uname_path_rel" ]; then
+            uname_url="$(resolve_url "$BASE_URL" "$uname_path_rel")"
+            uname_file="$TEMP_BINARY_DIRECTORY/ela-$uname_isa"
+            echo "downloading $uname_url -> $uname_file"
+            if fetch_to_file "$uname_url" "$uname_file"; then
+                chmod +x "$uname_file"
+                if can_run_binary "$uname_file"; then
+                    DISCOVERED_ISA="$uname_isa"
+                    DISCOVERED_BINARY="$uname_file"
+                else
+                    echo "warning: uname-detected ISA binary failed to execute; falling back to probe-all"
+                fi
+            else
+                echo "warning: failed to download uname-detected ISA binary; falling back to probe-all"
+            fi
+        else
+            echo "warning: uname-detected ISA '$uname_isa' not available on server; falling back to probe-all"
         fi
-    done
+    fi
+
+    # Slow-path fallback: download every candidate and probe each one in turn.
+    # Used when uname -m gives an unrecognised machine type, or when the fast-path
+    # binary failed to execute (e.g. /tmp is noexec on the target device).
+    if [ -z "$DISCOVERED_ISA" ]; then
+        echo "ISA not specified; downloading all release binaries for probe-based discovery to: $TEMP_BINARY_DIRECTORY"
+        for candidate_isa in $(list_valid_isas | delete_cr_stream | sed 's/[[:space:]]*$//' | sed '/^$/d'); do
+            candidate_path_rel="$(find_release_binary_url_for_isa "$INDEX_FILE" "$candidate_isa")"
+            [ -n "$candidate_path_rel" ] || continue
+
+            candidate_url="$(resolve_url "$BASE_URL" "$candidate_path_rel")"
+            candidate_file="$TEMP_BINARY_DIRECTORY/ela-$candidate_isa"
+
+            [ -f "$candidate_file" ] && continue
+
+            echo "downloading $candidate_url -> $candidate_file"
+            fetch_to_file "$candidate_url" "$candidate_file"
+            chmod +x "$candidate_file"
+        done
+
+        for candidate_isa in $(list_valid_isas | delete_cr_stream | sed 's/[[:space:]]*$//' | sed '/^$/d'); do
+            candidate_file="$TEMP_BINARY_DIRECTORY/ela-$candidate_isa"
+            [ -f "$candidate_file" ] || continue
+
+            echo "probing ISA candidate: $candidate_isa"
+            if can_run_binary "$candidate_file"; then
+                DISCOVERED_ISA="$candidate_isa"
+                DISCOVERED_BINARY="$candidate_file"
+                break
+            fi
+        done
+    fi
 
     if [ -z "$DISCOVERED_ISA" ] || [ -z "$DISCOVERED_BINARY" ]; then
         echo "error: could not discover a working ISA from release binaries at $BASE_URL/"
