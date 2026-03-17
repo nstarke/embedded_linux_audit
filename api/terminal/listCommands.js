@@ -21,6 +21,17 @@ function parseListCommand(input) {
       : { type: 'invalid-shell' };
   }
 
+  if (trimmed === 'cmd') {
+    return { type: 'invalid-cmd' };
+  }
+
+  if (trimmed.startsWith('cmd ')) {
+    const command = trimmed.slice(4).trim();
+    return command
+      ? { type: 'cmd-all', command }
+      : { type: 'invalid-cmd' };
+  }
+
   if (trimmed === 'set' || trimmed.startsWith('set ')) {
     const remainder = trimmed.slice(3).trim();
     if (!remainder) {

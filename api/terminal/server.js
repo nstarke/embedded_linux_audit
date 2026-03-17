@@ -426,6 +426,32 @@ const tui = {
       return;
     }
 
+    if (parsed.type === 'cmd-all') {
+      const macs = sessionRegistry.listMacs();
+      if (macs.length === 0) {
+        this._statusMsg = 'cmd: no connected sessions';
+        this.render();
+        return;
+      }
+
+      this._confirmPrompt = `[confirm: run "${parsed.command}" on ${macs.length} node(s)? y/N]`;
+      this._confirmValue = '';
+      this._confirmAction = () => {
+        let started = 0;
+        for (const mac of sessionRegistry.listMacs()) {
+          const entry = sessionRegistry.getSession(mac);
+          if (entry && entry.ws.readyState === entry.ws.OPEN) {
+            entry.ws.send(`${parsed.command}\n`);
+            started += 1;
+          }
+        }
+        this._statusMsg = `cmd: launched on ${started} node(s)`;
+        this.render();
+      };
+      this.render();
+      return;
+    }
+
     if (parsed.type === 'set-all') {
       const macs = sessionRegistry.listMacs();
       if (macs.length === 0) {
@@ -449,6 +475,12 @@ const tui = {
 
     if (parsed.type === 'invalid-shell') {
       this._statusMsg = 'usage: /shell <command>';
+      this.render();
+      return;
+    }
+
+    if (parsed.type === 'invalid-cmd') {
+      this._statusMsg = 'usage: /cmd <command>';
       this.render();
       return;
     }
