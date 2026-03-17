@@ -5,6 +5,7 @@
 #include "util/output_buffer.h"
 
 #include <errno.h>
+#include <fcntl.h>
 #include <getopt.h>
 #include <json.h>
 #include <stdbool.h>
@@ -12,9 +13,129 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/select.h>
 #include <sys/socket.h>
 #include <sys/wait.h>
 #include <unistd.h>
+
+#ifdef __linux__
+#include <pty.h>
+#endif
+
+/*
+ * Run a command interactively: allocate a PTY so the child sees a real
+ * terminal (enabling interactive shells, readline, echo, etc.), then
+ * bridge stdin (WebSocket input pipe) <-> PTY master and PTY output ->
+ * stdout (WebSocket output pipe) until the child exits.
+ */
+static int run_command_interactive(const char *command)
+{
+#ifdef __linux__
+	int     master_fd = -1;
+	pid_t   pid;
+	int     status = 0;
+	char    buf[4096];
+	ssize_t n;
+
+	fflush(stdout);
+	fflush(stderr);
+
+	pid = forkpty(&master_fd, NULL, NULL, NULL);
+	if (pid < 0) {
+		fprintf(stderr, "execute-command: forkpty: %s\n", strerror(errno));
+		return 1;
+	}
+
+	if (pid == 0) {
+		/* Child: PTY slave is our controlling terminal */
+		execl("/bin/sh", "/bin/sh", "-c", command, NULL);
+		fprintf(stderr, "execute-command: execl: %s\n", strerror(errno));
+		_exit(127);
+	}
+
+	/* Parent: bridge WebSocket pipe <-> PTY master */
+	for (;;) {
+		fd_set         rfds;
+		struct timeval tv;
+		int            sel;
+		int            maxfd;
+
+		if (waitpid(pid, &status, WNOHANG) > 0) {
+			/* Drain any remaining PTY output */
+			while ((n = read(master_fd, buf, sizeof(buf))) > 0)
+				(void)write(STDOUT_FILENO, buf, (size_t)n);
+			goto done;
+		}
+
+		FD_ZERO(&rfds);
+		FD_SET(STDIN_FILENO,  &rfds);
+		FD_SET(master_fd, &rfds);
+		maxfd = master_fd > STDIN_FILENO ? master_fd : STDIN_FILENO;
+
+		tv.tv_sec  = 0;
+		tv.tv_usec = 100000; /* 100 ms */
+
+		sel = select(maxfd + 1, &rfds, NULL, NULL, &tv);
+		if (sel < 0) {
+			if (errno == EINTR)
+				continue;
+			break;
+		}
+
+		/* PTY output -> stdout (to WebSocket) */
+		if (FD_ISSET(master_fd, &rfds)) {
+			n = read(master_fd, buf, sizeof(buf));
+			if (n <= 0)
+				break; /* EIO: slave closed (child exited) */
+			if (write(STDOUT_FILENO, buf, (size_t)n) < 0)
+				break;
+		}
+
+		/* stdin (from WebSocket) -> PTY master (to child) */
+		if (FD_ISSET(STDIN_FILENO, &rfds)) {
+			n = read(STDIN_FILENO, buf, sizeof(buf));
+			if (n <= 0)
+				break;
+			if (write(master_fd, buf, (size_t)n) < 0)
+				break;
+		}
+	}
+
+	waitpid(pid, &status, 0);
+done:
+	close(master_fd);
+	if (WIFEXITED(status))
+		return WEXITSTATUS(status);
+	if (WIFSIGNALED(status))
+		return 128 + WTERMSIG(status);
+	return 0;
+
+#else
+	/* Non-Linux fallback: fork with inherited stdin/stdout/stderr */
+	pid_t pid;
+	int   status = 0;
+
+	fflush(stdout);
+	fflush(stderr);
+
+	pid = fork();
+	if (pid < 0) {
+		fprintf(stderr, "execute-command: fork: %s\n", strerror(errno));
+		return 1;
+	}
+	if (pid == 0) {
+		execl("/bin/sh", "/bin/sh", "-c", command, NULL);
+		_exit(127);
+	}
+	while (waitpid(pid, &status, 0) < 0 && errno == EINTR)
+		;
+	if (WIFEXITED(status))
+		return WEXITSTATUS(status);
+	if (WIFSIGNALED(status))
+		return 128 + WTERMSIG(status);
+	return 0;
+#endif
+}
 
 static void usage(const char *prog)
 {
@@ -160,6 +281,15 @@ int linux_execute_command_scan_main(int argc, char **argv)
 			return 2;
 		}
 	}
+
+	/*
+	 * Interactive mode: no output redirection configured.
+	 * Run the command with a PTY so interactive processes (shells,
+	 * editors, etc.) see a real terminal, then stream I/O directly
+	 * through the WebSocket pipes.
+	 */
+	if (!output_uri && output_sock < 0)
+		return run_command_interactive(command);
 
 	fp = popen(command, "r");
 	if (!fp) {

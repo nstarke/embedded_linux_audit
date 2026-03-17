@@ -870,7 +870,8 @@ static char *interactive_read_line_fallback(const char *prompt,
 		return NULL;
 
 	history_index = (ssize_t)(history ? history->count : 0);
-	interactive_redraw_prompt_line(prompt, "");
+	if (tty_input)
+		interactive_redraw_prompt_line(prompt, "");
 
 	for (;;) {
 		unsigned char ch;
@@ -1029,8 +1030,15 @@ int interactive_loop(const char *prog)
 			have_saved_termios = true;
 	}
 
-	printf("Entering interactive mode for %s. Type 'help' for commands or 'quit' to exit.\n\n", prog);
-	interactive_usage(prog);
+	/* Only show the banner and prompt when running interactively on a real
+	 * TTY.  When stdin is a pipe (WebSocket / TCP remote mode) suppress
+	 * both so that the operator only sees output from the commands. */
+	const bool show_prompt = tty_fd >= 0;
+
+	if (show_prompt) {
+		printf("Entering interactive mode for %s. Type 'help' for commands or 'quit' to exit.\n\n", prog);
+		interactive_usage(prog);
+	}
 
 #if defined(ELA_HAS_READLINE)
 	rl_attempted_completion_function = interactive_completion;
@@ -1046,12 +1054,15 @@ int interactive_loop(const char *prog)
 		char prompt[128];
 		{
 			const char *bn = strrchr(prog, '/');
-			snprintf(prompt, sizeof(prompt), "%s> ", bn ? bn + 1 : prog);
+			if (show_prompt)
+				snprintf(prompt, sizeof(prompt), "%s> ", bn ? bn + 1 : prog);
+			else
+				prompt[0] = '\0';
 		}
 		interactive_restore_terminal(tty_fd, &saved_termios, have_saved_termios);
-		line = readline(prompt);
+		line = readline(show_prompt ? prompt : NULL);
 		if (!line) {
-			putchar('\n');
+			if (show_prompt) putchar('\n');
 			break;
 		}
 
@@ -1061,7 +1072,10 @@ int interactive_loop(const char *prog)
 		char prompt[128];
 		{
 			const char *bn = strrchr(prog, '/');
-			snprintf(prompt, sizeof(prompt), "%s> ", bn ? bn + 1 : prog);
+			if (show_prompt)
+				snprintf(prompt, sizeof(prompt), "%s> ", bn ? bn + 1 : prog);
+			else
+				prompt[0] = '\0';
 		}
 		line = interactive_read_line_fallback(prompt,
 						 tty_fd,
@@ -1069,7 +1083,7 @@ int interactive_loop(const char *prog)
 						 have_saved_termios,
 						 &history);
 		if (!line) {
-			putchar('\n');
+			if (show_prompt) putchar('\n');
 			break;
 		}
 #endif

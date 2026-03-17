@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT - Copyright (c) 2026 Nicholas Starke
 'use strict';
 
+const fs = require('fs');
 const http = require('http');
 const path = require('path');
 const readline = require('readline');
@@ -13,6 +14,29 @@ const auth = require('../auth');
 
 const PORT = parseInt(process.env.ELA_TERMINAL_PORT || '8080', 10);
 const HEARTBEAT_INTERVAL_MS = 30000;
+const ALIASES_FILE = path.join(__dirname, 'ela-aliases.json');
+
+/* -------------------------------------------------------------------------
+ * Alias persistence
+ * ---------------------------------------------------------------------- */
+
+function loadAliases() {
+  try {
+    return JSON.parse(fs.readFileSync(ALIASES_FILE, 'utf8'));
+  } catch (_) {
+    return {};
+  }
+}
+
+function saveAliases() {
+  try {
+    fs.writeFileSync(ALIASES_FILE, JSON.stringify(aliases, null, 2), 'utf8');
+  } catch (err) {
+    process.stderr.write(`Warning: failed to save aliases: ${err.message}\n`);
+  }
+}
+
+const aliases = loadAliases();
 const VALIDATE_KEY = process.argv.includes('--validate-key');
 
 /* -------------------------------------------------------------------------
@@ -26,7 +50,7 @@ function addSession(mac, ws) {
   const entry = {
     ws,
     mac,
-    alias: null,
+    alias: aliases[mac] || null,
     lastHeartbeat: null,
     heartbeatTimer: null,
     outputBuffer: [],
@@ -252,10 +276,9 @@ const tui = {
     const entry = sessions.get(this.activeMac);
 
     /*
-     * /detach is a local TUI command — intercept it before forwarding.
-     * Everything else (including /help, /name, Enter, Tab, arrows, printable
-     * chars, backspace) is forwarded raw to the agent so that the agent's
-     * own line-editing, history, and tab-completion handle them.
+     * /detach and /name are local TUI commands — intercept before forwarding.
+     * Everything else (including Enter, Tab, arrows, printable chars,
+     * backspace) is forwarded raw to the agent.
      */
     if (this._localCmdBuf === undefined)
       this._localCmdBuf = '';
@@ -266,6 +289,23 @@ const tui = {
       if (cmd === '/detach') {
         process.stdout.write('\r\n');
         this.detach();
+        return;
+      }
+      if (cmd === '/name' || cmd.startsWith('/name ')) {
+        const arg = cmd.slice(6).trim();  // everything after '/name '
+        const mac = this.activeMac;
+        const sessionEntry = sessions.get(mac);
+        if (sessionEntry) {
+          if (arg) {
+            sessionEntry.alias = arg;
+            aliases[mac] = arg;
+          } else {
+            sessionEntry.alias = null;
+            delete aliases[mac];
+          }
+          saveAliases();
+          process.stdout.write(`\r\n[alias ${arg ? `set to "${arg}"` : 'cleared'}]\r\n`);
+        }
         return;
       }
       // Not a local command — send the buffered bytes + newline to the agent
