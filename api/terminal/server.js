@@ -26,6 +26,7 @@ const {
 } = require('./sessionInput');
 
 const terminalConfig = getTerminalServiceConfig();
+const HOST = terminalConfig.host;
 const PORT = terminalConfig.port;
 const HEARTBEAT_INTERVAL_MS = 30000;
 const LEGACY_ALIASES_FILE = `${__dirname}/ela-aliases.json`;
@@ -657,8 +658,9 @@ async function main() {
   await runMigrations();
   await importLegacyAliases();
 
-  httpServer.listen(PORT, () => {
+  httpServer.listen(PORT, HOST, () => {
     setupInput();
+    process.stdout.write(`ELA terminal API listening on ws://${HOST}:${PORT}\n`);
     tui.render();
   });
 }
