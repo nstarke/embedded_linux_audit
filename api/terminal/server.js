@@ -17,6 +17,7 @@ const { loadLegacyAliases } = require('./legacyAliases');
 const { createSessionRegistry } = require('./sessionRegistry');
 const { formatListCommandHelp, isAffirmativeResponse, parseListCommand } = require('./listCommands');
 const { executeLocalSessionCommand } = require('./localCommands');
+const { createTerminalHttpHandler } = require('./httpRoutes');
 const { startSessionUpdate, handleUpdateMessage } = require('./updateManager');
 const {
   PASSTHROUGH_EXIT_HINT,
@@ -69,10 +70,7 @@ function exitGracefully() {
     .finally(() => process.exit(0));
 }
 
-const httpServer = http.createServer((req, res) => {
-  res.writeHead(404);
-  res.end();
-});
+const httpServer = http.createServer(createTerminalHttpHandler());
 
 function onUpdateStateTransition(entry, message) {
   if (tui.state === TUI_STATE.ACTIVE_SESSION && tui.activeMac === entry.mac) {
