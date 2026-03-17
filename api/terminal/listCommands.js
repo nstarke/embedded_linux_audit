@@ -6,7 +6,7 @@ function parseListCommand(input) {
     return { type: 'empty' };
   }
 
-  if (trimmed === 'update-all') {
+  if (trimmed === 'update') {
     return { type: 'update-all' };
   }
 

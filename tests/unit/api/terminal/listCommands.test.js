@@ -6,8 +6,8 @@ const {
 } = require('../../../../api/terminal/listCommands');
 
 describe('terminal list command helpers', () => {
-  test('parses update-all and shell batch commands', () => {
-    expect(parseListCommand('update-all')).toEqual({ type: 'update-all' });
+  test('parses update, shell, and set batch commands', () => {
+    expect(parseListCommand('update')).toEqual({ type: 'update-all' });
     expect(parseListCommand('shell uname -a')).toEqual({
       type: 'shell-all',
       command: 'uname -a',
