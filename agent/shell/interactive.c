@@ -2,6 +2,7 @@
 
 #include "interactive.h"
 #include "../embedded_linux_audit_cmd.h"
+#include "../net/ela_conf.h"
 
 #include <ctype.h>
 #include <errno.h>
@@ -328,7 +329,7 @@ int interactive_set_command(int argc, char **argv)
 		/* ELA_API_URL is only consulted when explicit transport overrides are unset. */
 		unsetenv("ELA_OUTPUT_HTTP");
 		unsetenv("ELA_OUTPUT_HTTPS");
-
+		ela_conf_update_from_env();
 		printf("ELA_API_URL=%s\n", argv[2]);
 		return 0;
 	}
@@ -346,6 +347,7 @@ int interactive_set_command(int argc, char **argv)
 			return 2;
 		}
 
+		ela_conf_update_from_env();
 		printf("ELA_API_INSECURE=%s\n", normalized_bool);
 		return 0;
 	}
@@ -380,6 +382,7 @@ int interactive_set_command(int argc, char **argv)
 			return 2;
 		}
 
+		ela_conf_update_from_env();
 		printf("ELA_OUTPUT_FORMAT=%s\n", argv[2]);
 		return 0;
 	}
@@ -433,6 +436,7 @@ int interactive_set_command(int argc, char **argv)
 			unsetenv("ELA_OUTPUT_HTTPS");
 		}
 
+		ela_conf_update_from_env();
 		printf("ELA_OUTPUT_HTTP=%s\n", argv[2]);
 		return 0;
 	}
@@ -450,6 +454,7 @@ int interactive_set_command(int argc, char **argv)
 			return 2;
 		}
 
+		ela_conf_update_from_env();
 		printf("ELA_OUTPUT_INSECURE=%s\n", normalized_bool);
 		return 0;
 	}

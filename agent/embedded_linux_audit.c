@@ -2,6 +2,7 @@
 
 #include "embedded_linux_audit_cmd.h"
 #include "net/api_key.h"
+#include "net/ela_conf.h"
 #include "net/ws_client.h"
 #include "shell/interactive.h"
 #include "shell/script_exec.h"
@@ -204,6 +205,9 @@ int embedded_linux_audit_dispatch(int argc, char **argv)
 	bool verbose = true;
 	bool insecure = getenv("ELA_OUTPUT_INSECURE") && !strcmp(getenv("ELA_OUTPUT_INSECURE"), "1");
 	bool output_format_explicit = false;
+	bool conf_needs_save = false;
+	const char *conf_raw_output_http = NULL; /* raw URL to persist */
+	struct ela_conf ela_conf = {0};
 	int cmd_idx = 1;
 	int ret;
 	char *command_summary;
@@ -226,6 +230,29 @@ int embedded_linux_audit_dispatch(int argc, char **argv)
 	if ((!output_tcp || !*output_tcp) && ela_output_tcp && *ela_output_tcp)
 		output_tcp = ela_output_tcp;
 
+	/*
+	 * Load /tmp/.ela.conf and apply as defaults.
+	 * Priority (highest to lowest): CLI args > env vars > conf file > built-ins.
+	 * We only apply a conf value when the higher-priority source hasn't set it.
+	 */
+	ela_conf_load(&ela_conf);
+
+	if (ela_conf.output_format[0] && !ela_output_format)
+		output_format = ela_conf.output_format;
+
+	if (ela_conf.insecure && !insecure)
+		insecure = true;
+
+	if (ela_conf.output_http[0] &&
+	    (!output_http || !*output_http) &&
+	    (!output_https || !*output_https)) {
+		ela_parse_http_output_uri(ela_conf.output_http,
+					  &output_http,
+					  &output_https,
+					  NULL, 0);
+		conf_raw_output_http = ela_conf.output_http;
+	}
+
 	while (cmd_idx < argc) {
 		if (!strcmp(argv[cmd_idx], "--output-format")) {
 			cmd_idx++;
@@ -242,6 +269,7 @@ int embedded_linux_audit_dispatch(int argc, char **argv)
 		if (!strncmp(argv[cmd_idx], "--output-format=", 16)) {
 			output_format = argv[cmd_idx] + 16;
 			output_format_explicit = true;
+
 			cmd_idx++;
 			continue;
 		}
@@ -254,6 +282,7 @@ int embedded_linux_audit_dispatch(int argc, char **argv)
 
 		if (!strcmp(argv[cmd_idx], "--insecure")) {
 			insecure = true;
+
 			cmd_idx++;
 			continue;
 		}
@@ -278,6 +307,7 @@ int embedded_linux_audit_dispatch(int argc, char **argv)
 		if (!strcmp(argv[cmd_idx], "--output-http")) {
 			const char *new_output_http;
 			const char *new_output_https;
+			const char *raw_url;
 
 			cmd_idx++;
 			if (cmd_idx >= argc) {
@@ -285,7 +315,8 @@ int embedded_linux_audit_dispatch(int argc, char **argv)
 				usage(argv[0]);
 				return 2;
 			}
-			if (ela_parse_http_output_uri(argv[cmd_idx++],
+			raw_url = argv[cmd_idx++];
+			if (ela_parse_http_output_uri(raw_url,
 						  &new_output_http,
 						  &new_output_https,
 						  errbuf,
@@ -298,14 +329,16 @@ int embedded_linux_audit_dispatch(int argc, char **argv)
 			parsed_output_https = new_output_https;
 			output_http = new_output_http;
 			output_https = new_output_https;
+			conf_raw_output_http = raw_url;
 			continue;
 		}
 
 		if (!strncmp(argv[cmd_idx], "--output-http=", 14)) {
 			const char *new_output_http;
 			const char *new_output_https;
+			const char *raw_url = argv[cmd_idx] + 14;
 
-			if (ela_parse_http_output_uri(argv[cmd_idx] + 14,
+			if (ela_parse_http_output_uri(raw_url,
 						  &new_output_http,
 						  &new_output_https,
 						  errbuf,
@@ -318,6 +351,8 @@ int embedded_linux_audit_dispatch(int argc, char **argv)
 			parsed_output_https = new_output_https;
 			output_http = new_output_http;
 			output_https = new_output_https;
+			conf_raw_output_http = raw_url;
+
 			cmd_idx++;
 			continue;
 		}
@@ -346,12 +381,14 @@ int embedded_linux_audit_dispatch(int argc, char **argv)
 				usage(argv[0]);
 				return 2;
 			}
+			conf_needs_save = true;
 			remote_target = argv[cmd_idx++];
 			continue;
 		}
 
 		if (!strncmp(argv[cmd_idx], "--remote=", 9)) {
 			remote_target = argv[cmd_idx] + 9;
+			conf_needs_save = true;
 			cmd_idx++;
 			continue;
 		}
@@ -415,10 +452,39 @@ int embedded_linux_audit_dispatch(int argc, char **argv)
 		break;
 	}
 
+	/*
+	 * Load --remote from conf only when the binary is invoked with no
+	 * commands and no script (auto-connect mode).  Loaded conf remote must
+	 * not bleed into command invocations, which would fail with
+	 * "--remote cannot be combined with a command".
+	 */
+	if (ela_conf.remote[0] && !remote_target && cmd_idx >= argc && !script_path)
+		remote_target = ela_conf.remote;
+
 	if (strcmp(output_format, "txt") && strcmp(output_format, "csv") && strcmp(output_format, "json")) {
 		fprintf(stderr, "Invalid --output-format: %s (expected: csv, json, txt)\n\n", output_format);
 		usage(argv[0]);
 		return 2;
+	}
+
+	/*
+	 * Persist any explicitly-set CLI settings back to /tmp/.ela.conf so
+	 * subsequent invocations pick them up automatically.  We write the full
+	 * effective state so the file stays consistent across partial updates.
+	 */
+	if (conf_needs_save) {
+		struct ela_conf save_conf = {0};
+
+		if (remote_target && *remote_target)
+			snprintf(save_conf.remote, sizeof(save_conf.remote),
+				 "%s", remote_target);
+		if (conf_raw_output_http && *conf_raw_output_http)
+			snprintf(save_conf.output_http, sizeof(save_conf.output_http),
+				 "%s", conf_raw_output_http);
+		snprintf(save_conf.output_format, sizeof(save_conf.output_format),
+			 "%s", output_format ? output_format : "txt");
+		save_conf.insecure = insecure ? 1 : 0;
+		ela_conf_save(&save_conf);
 	}
 
 	ela_api_key_init(api_key);
