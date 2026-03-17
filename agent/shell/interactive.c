@@ -325,6 +325,10 @@ int interactive_set_command(int argc, char **argv)
 			return 2;
 		}
 
+		/* ELA_API_URL is only consulted when explicit transport overrides are unset. */
+		unsetenv("ELA_OUTPUT_HTTP");
+		unsetenv("ELA_OUTPUT_HTTPS");
+
 		printf("ELA_API_URL=%s\n", argv[2]);
 		return 0;
 	}
@@ -415,9 +419,18 @@ int interactive_set_command(int argc, char **argv)
 			return 2;
 		}
 
-		if (setenv("ELA_OUTPUT_HTTP", argv[2], 1) != 0) {
-			fprintf(stderr, "Failed to set ELA_OUTPUT_HTTP\n");
-			return 2;
+		if (!strncmp(argv[2], "https://", 8)) {
+			if (setenv("ELA_OUTPUT_HTTPS", argv[2], 1) != 0) {
+				fprintf(stderr, "Failed to set ELA_OUTPUT_HTTPS\n");
+				return 2;
+			}
+			unsetenv("ELA_OUTPUT_HTTP");
+		} else {
+			if (setenv("ELA_OUTPUT_HTTP", argv[2], 1) != 0) {
+				fprintf(stderr, "Failed to set ELA_OUTPUT_HTTP\n");
+				return 2;
+			}
+			unsetenv("ELA_OUTPUT_HTTPS");
 		}
 
 		printf("ELA_OUTPUT_HTTP=%s\n", argv[2]);

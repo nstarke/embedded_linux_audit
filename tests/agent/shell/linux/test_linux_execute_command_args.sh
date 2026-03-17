@@ -73,13 +73,17 @@ run_exact_case "linux execute-command invalid ELA_OUTPUT_TCP" 2 env ELA_OUTPUT_T
 run_accept_case "top-level ELA_SCRIPT local file" env ELA_SCRIPT="$script_file" "$BIN"
 
 interactive_set_log="$(mktemp /tmp/test_interactive_set_env.XXXXXX)"
-printf 'set ELA_OUTPUT_FORMAT json\nset ELA_QUIET true\nset ELA_OUTPUT_TCP 127.0.0.1:9\nset ELA_SCRIPT %s\nquit\n' "$script_file" | "$BIN" >"$interactive_set_log" 2>&1
+printf 'set ELA_OUTPUT_FORMAT json\nset ELA_QUIET true\nset ELA_OUTPUT_TCP 127.0.0.1:9\nset ELA_OUTPUT_HTTP https://127.0.0.1:5443/upload\nset ELA_API_URL https://127.0.0.1:9443/upload\nset ELA_SCRIPT %s\nset\nquit\n' "$script_file" | "$BIN" >"$interactive_set_log" 2>&1
 rc=$?
 if [ "$rc" -eq 0 ] && \
    grep -q "ELA_OUTPUT_FORMAT=json" "$interactive_set_log" && \
    grep -q "ELA_QUIET=true" "$interactive_set_log" && \
    grep -q "ELA_OUTPUT_TCP=127.0.0.1:9" "$interactive_set_log" && \
-   grep -q "ELA_SCRIPT=$script_file" "$interactive_set_log"; then
+   grep -q "ELA_OUTPUT_HTTP=https://127.0.0.1:5443/upload" "$interactive_set_log" && \
+   grep -q "ELA_API_URL=https://127.0.0.1:9443/upload" "$interactive_set_log" && \
+   grep -q "ELA_SCRIPT=$script_file" "$interactive_set_log" && \
+   grep -q "ELA_API_URL              current=https://127.0.0.1:9443/upload" "$interactive_set_log" && \
+   grep -q "ELA_OUTPUT_HTTP          current=<unset>" "$interactive_set_log"; then
     echo "[PASS] interactive set updates global argument environment variables"
     PASS_COUNT="$(expr "$PASS_COUNT" + 1)"
 else
