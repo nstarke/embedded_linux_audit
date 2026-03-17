@@ -9,6 +9,13 @@ const LIST_COMMAND_HELP = [
   '/exit                          run exit on all connected nodes after confirmation',
 ];
 
+function formatListCommandHelp() {
+  return [
+    'Top-level commands:',
+    ...LIST_COMMAND_HELP.map((line) => `  ${line}`),
+  ].join('\r\n');
+}
+
 function parseListCommand(input) {
   const trimmed = String(input || '').trim();
   if (!trimmed) {
@@ -78,6 +85,7 @@ function isAffirmativeResponse(input) {
 }
 
 module.exports = {
+  formatListCommandHelp,
   LIST_COMMAND_HELP,
   isAffirmativeResponse,
   parseListCommand,

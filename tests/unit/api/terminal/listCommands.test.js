@@ -1,6 +1,7 @@
 'use strict';
 
 const {
+  formatListCommandHelp,
   LIST_COMMAND_HELP,
   isAffirmativeResponse,
   parseListCommand,
@@ -36,6 +37,8 @@ describe('terminal list command helpers', () => {
   test('exports top-level help text for supported commands', () => {
     expect(LIST_COMMAND_HELP).toContain('/help                          show commands available in the top-level session list');
     expect(LIST_COMMAND_HELP).toContain('/exit                          run exit on all connected nodes after confirmation');
+    expect(formatListCommandHelp()).toContain('Top-level commands:\r\n  /help');
+    expect(formatListCommandHelp()).toContain('\r\n  /exit                          run exit on all connected nodes after confirmation');
   });
 
   test('accepts only y/yes confirmation responses', () => {

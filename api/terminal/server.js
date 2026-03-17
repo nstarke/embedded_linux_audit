@@ -15,7 +15,7 @@ const {
 } = require('../lib/db/deviceRegistry');
 const { loadLegacyAliases } = require('./legacyAliases');
 const { createSessionRegistry } = require('./sessionRegistry');
-const { LIST_COMMAND_HELP, isAffirmativeResponse, parseListCommand } = require('./listCommands');
+const { formatListCommandHelp, isAffirmativeResponse, parseListCommand } = require('./listCommands');
 const { executeLocalSessionCommand } = require('./localCommands');
 const { startSessionUpdate, handleUpdateMessage } = require('./updateManager');
 const {
@@ -382,7 +382,7 @@ const tui = {
     const parsed = parseListCommand(cmd);
 
     if (parsed.type === 'help') {
-      this._statusMsg = LIST_COMMAND_HELP.join('  |  ');
+      this._statusMsg = formatListCommandHelp();
       this.render();
       return;
     }
