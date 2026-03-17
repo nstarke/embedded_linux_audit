@@ -92,6 +92,7 @@ else
     FAIL_COUNT="$(expr "$FAIL_COUNT" + 1)"
 fi
 rm -f "$interactive_set_log"
+rm -f /tmp/.ela.conf   # interactive set persists env vars to conf; reset for subsequent tests
 
 run_accept_case "linux execute-command txt" "$BIN" --output-format txt linux execute-command "echo hello"
 run_accept_case "linux execute-command csv" "$BIN" --output-format csv linux execute-command "echo hello"

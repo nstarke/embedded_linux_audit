@@ -237,9 +237,6 @@ int embedded_linux_audit_dispatch(int argc, char **argv)
 	 */
 	ela_conf_load(&ela_conf);
 
-	if (ela_conf.remote[0] && !remote_target)
-		remote_target = ela_conf.remote;
-
 	if (ela_conf.output_format[0] && !ela_output_format)
 		output_format = ela_conf.output_format;
 
@@ -266,14 +263,13 @@ int embedded_linux_audit_dispatch(int argc, char **argv)
 			}
 			output_format = argv[cmd_idx++];
 			output_format_explicit = true;
-			conf_needs_save = true;
 			continue;
 		}
 
 		if (!strncmp(argv[cmd_idx], "--output-format=", 16)) {
 			output_format = argv[cmd_idx] + 16;
 			output_format_explicit = true;
-			conf_needs_save = true;
+
 			cmd_idx++;
 			continue;
 		}
@@ -286,7 +282,7 @@ int embedded_linux_audit_dispatch(int argc, char **argv)
 
 		if (!strcmp(argv[cmd_idx], "--insecure")) {
 			insecure = true;
-			conf_needs_save = true;
+
 			cmd_idx++;
 			continue;
 		}
@@ -334,7 +330,6 @@ int embedded_linux_audit_dispatch(int argc, char **argv)
 			output_http = new_output_http;
 			output_https = new_output_https;
 			conf_raw_output_http = raw_url;
-			conf_needs_save = true;
 			continue;
 		}
 
@@ -357,7 +352,7 @@ int embedded_linux_audit_dispatch(int argc, char **argv)
 			output_http = new_output_http;
 			output_https = new_output_https;
 			conf_raw_output_http = raw_url;
-			conf_needs_save = true;
+
 			cmd_idx++;
 			continue;
 		}
@@ -386,8 +381,8 @@ int embedded_linux_audit_dispatch(int argc, char **argv)
 				usage(argv[0]);
 				return 2;
 			}
-			remote_target = argv[cmd_idx++];
 			conf_needs_save = true;
+			remote_target = argv[cmd_idx++];
 			continue;
 		}
 
@@ -456,6 +451,15 @@ int embedded_linux_audit_dispatch(int argc, char **argv)
 
 		break;
 	}
+
+	/*
+	 * Load --remote from conf only when the binary is invoked with no
+	 * commands and no script (auto-connect mode).  Loaded conf remote must
+	 * not bleed into command invocations, which would fail with
+	 * "--remote cannot be combined with a command".
+	 */
+	if (ela_conf.remote[0] && !remote_target && cmd_idx >= argc && !script_path)
+		remote_target = ela_conf.remote;
 
 	if (strcmp(output_format, "txt") && strcmp(output_format, "csv") && strcmp(output_format, "json")) {
 		fprintf(stderr, "Invalid --output-format: %s (expected: csv, json, txt)\n\n", output_format);
