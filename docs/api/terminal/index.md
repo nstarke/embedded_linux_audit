@@ -142,6 +142,35 @@ The agent appends its MAC address to the URL path
 session already exists for that MAC the previous connection is closed and
 replaced.
 
+### Automatic reconnection
+
+The agent automatically reconnects if the WebSocket connection drops.  The
+default is 5 reconnect attempts, each after a 60-second wait.  Use
+`--retry-attempts` to override:
+
+```sh
+# Retry up to 10 times before exiting
+./embedded_linux_audit --remote ws://server:8080 --retry-attempts 10
+
+# No retry — exit immediately on disconnect
+./embedded_linux_audit --remote ws://server:8080 --retry-attempts 0
+
+# Equivalent for the transfer subcommand
+./embedded_linux_audit transfer ws://server:8080 --retry-attempts 10
+```
+
+The number of retry attempts can also be configured with the
+`ELA_WS_RETRY_ATTEMPTS` environment variable (integer, 0–1000).  The CLI flag
+takes precedence over the environment variable.
+
+```sh
+# Set via environment
+ELA_WS_RETRY_ATTEMPTS=10 ./embedded_linux_audit --remote ws://server:8080
+
+# Set via interactive set command (takes effect for subsequent connections)
+(aa-bb-cc-dd-ee-ff)> set ELA_WS_RETRY_ATTEMPTS 10
+```
+
 ## TUI — session list
 
 When no session is attached the server displays a list of connected devices:
@@ -202,8 +231,15 @@ verbatim to the agent's interactive loop (e.g. `linux dmesg`,
 production-router (aa-bb-cc-dd-ee-ff)>
 ```
 
-The alias persists for the lifetime of the server process.  It is shown in
-both the session list and the active-session prompt.
+Aliases are persisted to `api/terminal/ela-aliases.json` and reloaded
+automatically on server startup, so they survive server restarts.  To clear an
+alias, run `/name` with no argument:
+
+```
+production-router (aa-bb-cc-dd-ee-ff)> /name
+[alias cleared]
+(aa-bb-cc-dd-ee-ff)>
+```
 
 ### Detaching
 

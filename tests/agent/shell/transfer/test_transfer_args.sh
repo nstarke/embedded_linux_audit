@@ -47,6 +47,16 @@ run_accept_case "transfer --insecure wss:// unreachable target" "$BIN" transfer 
 run_exact_case "transfer --insecure unknown option" 2 "$BIN" transfer --unknown-opt 127.0.0.1:1
 run_exact_case "transfer --insecure no target" 2 "$BIN" transfer --insecure
 
+# --retry-attempts argument tests
+run_accept_case "transfer --retry-attempts 0" "$BIN" transfer --retry-attempts 0 ws://127.0.0.1:1
+run_accept_case "transfer --retry-attempts 10" "$BIN" transfer --retry-attempts 10 ws://127.0.0.1:1
+run_accept_case "transfer --retry-attempts=3" "$BIN" transfer --retry-attempts=3 ws://127.0.0.1:1
+run_exact_case "transfer missing --retry-attempts value" 2 "$BIN" transfer --retry-attempts
+run_exact_case "transfer invalid --retry-attempts negative" 2 "$BIN" transfer --retry-attempts=-1 ws://127.0.0.1:1
+run_exact_case "transfer invalid --retry-attempts too large" 2 "$BIN" transfer --retry-attempts=1001 ws://127.0.0.1:1
+run_exact_case "transfer invalid --retry-attempts non-integer" 2 "$BIN" transfer --retry-attempts abc ws://127.0.0.1:1
+run_accept_case "transfer ELA_WS_RETRY_ATTEMPTS env var" env ELA_WS_RETRY_ATTEMPTS=3 "$BIN" transfer ws://127.0.0.1:1
+
 REPO_ROOT="$(cd "$SHELL_TEST_ROOT/../../.." && pwd)"
 TERMINAL_SERVER_JS="$(cd "$REPO_ROOT/api/terminal" 2>/dev/null && pwd)/server.js"
 

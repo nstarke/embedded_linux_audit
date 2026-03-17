@@ -643,6 +643,24 @@ void ela_ws_close_parent_fd(const struct ela_ws_conn *ws)
 	 * the fork COW mapping.  We intentionally do not free them here. */
 }
 
+void ela_ws_close(struct ela_ws_conn *ws)
+{
+	if (!ws)
+		return;
+	if (ws->ssl) {
+		ws_ssl_free((ws_ssl_t *)ws->ssl);
+		ws->ssl = NULL;
+	}
+	if (ws->ssl_ctx) {
+		ws_ctx_free((ws_ssl_ctx_t *)ws->ssl_ctx);
+		ws->ssl_ctx = NULL;
+	}
+	if (ws->sock >= 0) {
+		close(ws->sock);
+		ws->sock = -1;
+	}
+}
+
 /* -------------------------------------------------------------------------
  * WebSocket frame format
  *
