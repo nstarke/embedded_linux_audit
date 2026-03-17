@@ -15,6 +15,7 @@ const auth = require('../auth');
 const PORT = parseInt(process.env.ELA_TERMINAL_PORT || '8080', 10);
 const HEARTBEAT_INTERVAL_MS = 30000;
 const ALIASES_FILE = path.join(__dirname, 'ela-aliases.json');
+const UPDATE_URL = (process.env.ELA_UPDATE_URL || '').replace(/\/+$/, '');
 
 /* -------------------------------------------------------------------------
  * Alias persistence
@@ -54,6 +55,8 @@ function addSession(mac, ws) {
     lastHeartbeat: null,
     heartbeatTimer: null,
     outputBuffer: [],
+    updateCtx: null,    // active update state machine, or null
+    updateStatus: null, // null | 'updating' | 'ok' | 'failed'
   };
 
   entry.heartbeatTimer = setInterval(() => {
@@ -132,6 +135,9 @@ wss.on('connection', (ws, req) => {
       // not JSON — treat as raw output
     }
 
+    // Drive the update state machine regardless of which view is active
+    handleUpdateMessage(entry, text);
+
     // Deliver to TUI if this is the active session
     if (tui.state === TUI_STATE.ACTIVE_SESSION &&
         tui.activeMac === mac) {
@@ -161,6 +167,100 @@ wss.on('connection', (ws, req) => {
 });
 
 /* -------------------------------------------------------------------------
+ * Update helpers
+ * ---------------------------------------------------------------------- */
+
+/*
+ * Map (arch isa, arch endianness) → the ISA directory name used by the
+ * agent API's /isa/:isa endpoint (and the release binaries directory).
+ * Architectures that only ship one endianness variant use no suffix.
+ */
+function buildIsaString(isa, endianness) {
+  if (isa === 'x86_64' || isa === 'x86' || isa === 'riscv32' || isa === 'riscv64')
+    return isa;
+  return `${isa}-${endianness === 'big' ? 'be' : 'le'}`;
+}
+
+/*
+ * Kick off the update state machine for a single session.
+ * Returns false if already updating or no UPDATE_URL is configured.
+ */
+function startSessionUpdate(entry) {
+  if (!UPDATE_URL || entry.updateCtx) return false;
+  entry.updateCtx = { state: 'await-isa', isa: null, buffer: '' };
+  entry.updateStatus = 'updating';
+  if (entry.ws.readyState === entry.ws.OPEN) {
+    entry.ws.send('\x15'); // cancel any buffered readline input
+    entry.ws.send('--output-format json arch isa\n');
+  }
+  return true;
+}
+
+/*
+ * Drive the per-session update state machine forward when new text arrives
+ * from the agent.  Called from ws.on('message') for every frame.
+ */
+function handleUpdateMessage(entry, text) {
+  const ctx = entry.updateCtx;
+  if (!ctx) return;
+  ctx.buffer += text;
+
+  if (ctx.state === 'await-isa') {
+    // Look for the JSON record emitted by: --output-format json arch isa
+    const m = ctx.buffer.match(/\{"record":"arch"[^}]+\}/);
+    if (!m) return;
+    try {
+      const obj = JSON.parse(m[0]);
+      if (obj.subcommand !== 'isa' || !obj.value) return;
+      ctx.isa = obj.value;
+    } catch (_) { return; }
+    ctx.buffer = '';
+    ctx.state = 'await-endianness';
+    if (entry.ws.readyState === entry.ws.OPEN)
+      entry.ws.send('--output-format json arch endianness\n');
+
+  } else if (ctx.state === 'await-endianness') {
+    const m = ctx.buffer.match(/\{"record":"arch"[^}]+\}/);
+    if (!m) return;
+    let endianness;
+    try {
+      const obj = JSON.parse(m[0]);
+      if (obj.subcommand !== 'endianness' || !obj.value) return;
+      endianness = obj.value;
+    } catch (_) { return; }
+
+    const isaStr = buildIsaString(ctx.isa, endianness);
+    ctx.buffer = '';
+    ctx.state = 'in-progress';
+    if (entry.ws.readyState === entry.ws.OPEN) {
+      const dlCmd  = `linux download-file ${UPDATE_URL}/isa/${isaStr} /tmp/ela.new\n`;
+      const mvCmd  = 'linux execute-command ' +
+        '"chmod +x /tmp/ela.new && ' +
+        'mv /tmp/ela.new $(readlink -f /proc/self/exe) && ' +
+        'echo [UPDATE OK] || echo [UPDATE FAILED]"\n';
+      entry.ws.send(dlCmd + mvCmd);
+    }
+
+  } else if (ctx.state === 'in-progress') {
+    if (text.includes('[UPDATE OK]')) {
+      entry.updateCtx = null;
+      entry.updateStatus = 'ok';
+      if (tui.state === TUI_STATE.ACTIVE_SESSION && tui.activeMac === entry.mac)
+        process.stdout.write('\r\n[update complete]\r\n');
+      else if (tui.state === TUI_STATE.SESSION_LIST)
+        tui.render();
+    } else if (text.includes('[UPDATE FAILED]')) {
+      entry.updateCtx = null;
+      entry.updateStatus = 'failed';
+      if (tui.state === TUI_STATE.ACTIVE_SESSION && tui.activeMac === entry.mac)
+        process.stdout.write('\r\n[update failed]\r\n');
+      else if (tui.state === TUI_STATE.SESSION_LIST)
+        tui.render();
+    }
+  }
+}
+
+/* -------------------------------------------------------------------------
  * TUI
  * ---------------------------------------------------------------------- */
 
@@ -179,6 +279,7 @@ const tui = {
   state:      TUI_STATE.SESSION_LIST,
   cursor:     0,       // index in session list
   activeMac:  null,
+  _listCmd:   null,    // non-null while typing a /command in the session list
 
   render() {
     if (this.state !== TUI_STATE.SESSION_LIST) return;
@@ -198,7 +299,10 @@ const tui = {
           ? `  last heartbeat: ${entry.lastHeartbeat}`
           : '';
         const label = entry.alias ? `${entry.alias} (${mac})` : mac;
-        const line = `  ${label}${hb}`;
+        const statusTag = entry.updateStatus
+          ? `  [${entry.updateStatus}]`
+          : '';
+        const line = `  ${label}${hb}${statusTag}`;
         if (i === this.cursor) {
           out += `${ANSI.reverse}${line}${ANSI.reset}\r\n`;
         } else {
@@ -207,7 +311,10 @@ const tui = {
       }
     }
 
-    out += '\r\n' + `${ANSI.dim}↑/↓ navigate   Enter attach   q quit${ANSI.reset}\r\n`;
+    out += '\r\n' + `${ANSI.dim}↑/↓ navigate   Enter attach   / command   q quit${ANSI.reset}\r\n`;
+    if (this._listCmd !== null) {
+      out += `/${this._listCmd}`;
+    }
     process.stdout.write(out);
   },
 
@@ -244,14 +351,47 @@ const tui = {
 
   handleKey(key, name, ctrl) {
     if (this.state === TUI_STATE.SESSION_LIST) {
-      this._handleListKey(name, ctrl);
+      this._handleListKey(key, name, ctrl);
     } else {
       this._handleSessionKey(key, name, ctrl);
     }
   },
 
-  _handleListKey(name, ctrl) {
+  _handleListKey(key, name, ctrl) {
     const macs = [...sessions.keys()];
+
+    // Command-input mode: user pressed '/' and is typing a command
+    if (this._listCmd !== null) {
+      if (name === 'return') {
+        const cmd = this._listCmd;
+        this._listCmd = null;
+        this._executeListCommand(cmd);
+        return;
+      }
+      if (name === 'escape' || (ctrl && name === 'c')) {
+        this._listCmd = null;
+        this.render();
+        return;
+      }
+      if (name === 'backspace') {
+        if (this._listCmd.length > 0) this._listCmd = this._listCmd.slice(0, -1);
+        this.render();
+        return;
+      }
+      if (key && key.length === 1 && key.charCodeAt(0) >= 0x20 && key.charCodeAt(0) < 0x7f) {
+        this._listCmd += key;
+        this.render();
+        return;
+      }
+      return;
+    }
+
+    // '/' starts command-input mode
+    if (key === '/') {
+      this._listCmd = '';
+      this.render();
+      return;
+    }
 
     if (name === 'up' || name === 'k') {
       if (this.cursor > 0) this.cursor--;
@@ -265,6 +405,34 @@ const tui = {
     } else if (name === 'q' || (ctrl && name === 'c')) {
       cleanup();
       process.exit(0);
+    }
+  },
+
+  _executeListCommand(cmd) {
+    if (cmd === 'update-all') {
+      if (!UPDATE_URL) {
+        process.stdout.write('\r\n[update: ELA_UPDATE_URL is not set]\r\n');
+        this.render();
+        return;
+      }
+      const macs = [...sessions.keys()];
+      if (macs.length === 0) {
+        process.stdout.write('\r\n[update: no connected sessions]\r\n');
+        this.render();
+        return;
+      }
+      let started = 0;
+      for (const mac of macs) {
+        const entry = sessions.get(mac);
+        if (entry && startSessionUpdate(entry)) started++;
+      }
+      process.stdout.write(`\r\n[update: initiated for ${started} session(s)]\r\n`);
+      this.render();
+    } else if (cmd === '') {
+      this.render();
+    } else {
+      process.stdout.write(`\r\n[unknown command: /${cmd}]\r\n`);
+      this.render();
     }
   },
 
@@ -293,6 +461,38 @@ const tui = {
           entry.ws.send('\x15');
         process.stdout.write('\r\n');
         this.detach();
+        return;
+      }
+      if (cmd === '/exit-all') {
+        // Cancel any buffered input on the current agent's readline first.
+        if (entry && entry.ws.readyState === entry.ws.OPEN)
+          entry.ws.send('\x15');
+        // Send 'exit\n' to every connected session to close them all.
+        for (const [, sess] of sessions) {
+          if (sess.ws.readyState === sess.ws.OPEN)
+            sess.ws.send('exit\n');
+        }
+        process.stdout.write('\r\n');
+        this.detach();
+        return;
+      }
+      if (cmd === '/update') {
+        if (!UPDATE_URL) {
+          if (entry && entry.ws.readyState === entry.ws.OPEN)
+            entry.ws.send('\x15');
+          process.stdout.write('\r\n[update: ELA_UPDATE_URL is not set]\r\n');
+          return;
+        }
+        const activeEntry = sessions.get(this.activeMac);
+        if (activeEntry) {
+          if (!startSessionUpdate(activeEntry)) {
+            if (entry && entry.ws.readyState === entry.ws.OPEN)
+              entry.ws.send('\x15');
+            process.stdout.write('\r\n[update: already in progress]\r\n');
+          } else {
+            process.stdout.write('\r\n[update: detecting architecture...]\r\n');
+          }
+        }
         return;
       }
       if (cmd === '/name' || cmd.startsWith('/name ')) {
