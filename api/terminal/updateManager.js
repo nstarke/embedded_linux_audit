@@ -35,7 +35,7 @@ function startSessionUpdate(entry) {
   entry.updateStatus = 'updating';
   if (entry.ws.readyState === entry.ws.OPEN) {
     entry.ws.send('\x15');
-    entry.ws.send('linux execute-command "printf \'[ELA_API_URL_BEGIN]%s[ELA_API_URL_END]\' \\"$ELA_API_URL\\""\n');
+    entry.ws.send('linux execute-command "echo \\"[ELA_API_URL_BEGIN]$ELA_API_URL[ELA_API_URL_END]\\""\n');
   }
   return true;
 }
