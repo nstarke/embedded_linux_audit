@@ -234,8 +234,8 @@ if [ ! -d "$ELA_TERMINAL_SOCKET_DIR" ]; then
         echo "error: failed to create $ELA_TERMINAL_SOCKET_DIR" >&2
         exit 1
     }
+    chmod 0755 "$ELA_TERMINAL_SOCKET_DIR"
 fi
-chmod 0755 "$ELA_TERMINAL_SOCKET_DIR"
 export ELA_TERMINAL_SOCKET_DIR
 
 # ---------------------------------------------------------------------------
