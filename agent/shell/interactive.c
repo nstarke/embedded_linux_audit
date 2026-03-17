@@ -24,18 +24,25 @@
 /* Forward declaration: defined in embedded_linux_audit.c (non-static) */
 int embedded_linux_audit_dispatch(int argc, char **argv);
 
-#if defined(ELA_HAS_READLINE)
 static const char *const interactive_top_level_commands[] = {
 	"help",
 	"quit",
 	"exit",
 	"set",
+	"arch",
 	"uboot",
 	"linux",
 	"efi",
 	"bios",
 	"tpm2",
 	"transfer",
+	NULL,
+};
+
+static const char *const interactive_group_arch[] = {
+	"bit",
+	"isa",
+	"endianness",
 	NULL,
 };
 
@@ -81,9 +88,37 @@ static const char *const interactive_set_variables[] = {
 	"ELA_API_KEY",
 	"ELA_VERBOSE",
 	"ELA_DEBUG",
+	"ELA_WS_RETRY_ATTEMPTS",
 	NULL,
 };
 
+static const char *const *interactive_candidates_for_position(int argc, char **argv)
+{
+	if (argc <= 1)
+		return interactive_top_level_commands;
+
+	if (!strcmp(argv[0], "arch"))
+		return interactive_group_arch;
+
+	if (!strcmp(argv[0], "uboot"))
+		return interactive_group_uboot;
+
+	if (!strcmp(argv[0], "linux"))
+		return interactive_group_linux;
+
+	if (!strcmp(argv[0], "efi"))
+		return interactive_group_efi;
+
+	if (!strcmp(argv[0], "bios"))
+		return interactive_group_bios;
+
+	if (!strcmp(argv[0], "set") && argc == 2)
+		return interactive_set_variables;
+
+	return NULL;
+}
+
+#if defined(ELA_HAS_READLINE)
 static const char *const *interactive_completion_candidates;
 #endif
 
@@ -110,6 +145,7 @@ static void interactive_usage(const char *prog)
 	       "  set ELA_API_KEY <key>         Set bearer token for API authentication\n"
 	       "  set ELA_VERBOSE <bool>        Set verbose output mode (true/false)\n"
 	       "  set ELA_DEBUG <bool>          Set debug output mode (true/false)\n"
+	       "  set ELA_WS_RETRY_ATTEMPTS <n> Set WebSocket reconnect attempts (0-1000, default 5)\n"
 	       "\n"
 	       "Available command groups:\n"
 	       "  uboot env\n"
@@ -160,17 +196,18 @@ static void print_set_values(void)
 	const char *ela_debug          = getenv("ELA_DEBUG");
 
 	printf("Supported variables:\n"
-	       "  ELA_API_URL         current=%s\n"
-	       "  ELA_API_INSECURE    current=%s\n"
-	       "  ELA_QUIET           current=%s\n"
-	       "  ELA_OUTPUT_FORMAT   current=%s\n"
-	       "  ELA_OUTPUT_TCP      current=%s\n"
-	       "  ELA_SCRIPT          current=%s\n"
-	       "  ELA_OUTPUT_HTTP     current=%s\n"
-	       "  ELA_OUTPUT_INSECURE current=%s\n"
-	       "  ELA_API_KEY         current=%s\n"
-	       "  ELA_VERBOSE         current=%s\n"
-	       "  ELA_DEBUG           current=%s\n",
+	       "  ELA_API_URL              current=%s\n"
+	       "  ELA_API_INSECURE         current=%s\n"
+	       "  ELA_QUIET                current=%s\n"
+	       "  ELA_OUTPUT_FORMAT        current=%s\n"
+	       "  ELA_OUTPUT_TCP           current=%s\n"
+	       "  ELA_SCRIPT               current=%s\n"
+	       "  ELA_OUTPUT_HTTP          current=%s\n"
+	       "  ELA_OUTPUT_INSECURE      current=%s\n"
+	       "  ELA_API_KEY              current=%s\n"
+	       "  ELA_VERBOSE              current=%s\n"
+	       "  ELA_DEBUG                current=%s\n"
+	       "  ELA_WS_RETRY_ATTEMPTS    current=%s\n",
 	       (ela_api_url && *ela_api_url) ? ela_api_url : "<unset>",
 	       (ela_api_insecure && *ela_api_insecure) ? ela_api_insecure : "<unset>",
 	       (ela_quiet && *ela_quiet) ? ela_quiet : "<unset>",
@@ -181,7 +218,9 @@ static void print_set_values(void)
 	       (ela_output_insecure && *ela_output_insecure) ? ela_output_insecure : "<unset>",
 	       (ela_api_key && *ela_api_key) ? "<set>" : "<unset>",
 	       (ela_verbose && *ela_verbose) ? ela_verbose : "<unset>",
-	       (ela_debug && *ela_debug) ? ela_debug : "<unset>");
+	       (ela_debug && *ela_debug) ? ela_debug : "<unset>",
+	       (getenv("ELA_WS_RETRY_ATTEMPTS") && *getenv("ELA_WS_RETRY_ATTEMPTS"))
+	           ? getenv("ELA_WS_RETRY_ATTEMPTS") : "<unset>");
 }
 
 static int interactive_list_supported_variables(FILE *stream)
@@ -197,20 +236,22 @@ static int interactive_list_supported_variables(FILE *stream)
 	const char *ela_api_key        = getenv("ELA_API_KEY");
 	const char *ela_verbose        = getenv("ELA_VERBOSE");
 	const char *ela_debug          = getenv("ELA_DEBUG");
+	const char *ela_ws_retry       = getenv("ELA_WS_RETRY_ATTEMPTS");
 
 	return fprintf(stream,
 		       "Supported variables:\n"
-		       "  ELA_API_URL         current=%s\n"
-		       "  ELA_API_INSECURE    current=%s\n"
-		       "  ELA_QUIET           current=%s\n"
-		       "  ELA_OUTPUT_FORMAT   current=%s\n"
-		       "  ELA_OUTPUT_TCP      current=%s\n"
-		       "  ELA_SCRIPT          current=%s\n"
-		       "  ELA_OUTPUT_HTTP     current=%s\n"
-		       "  ELA_OUTPUT_INSECURE current=%s\n"
-		       "  ELA_API_KEY         current=%s\n"
-		       "  ELA_VERBOSE         current=%s\n"
-		       "  ELA_DEBUG           current=%s\n",
+		       "  ELA_API_URL              current=%s\n"
+		       "  ELA_API_INSECURE         current=%s\n"
+		       "  ELA_QUIET                current=%s\n"
+		       "  ELA_OUTPUT_FORMAT        current=%s\n"
+		       "  ELA_OUTPUT_TCP           current=%s\n"
+		       "  ELA_SCRIPT               current=%s\n"
+		       "  ELA_OUTPUT_HTTP          current=%s\n"
+		       "  ELA_OUTPUT_INSECURE      current=%s\n"
+		       "  ELA_API_KEY              current=%s\n"
+		       "  ELA_VERBOSE              current=%s\n"
+		       "  ELA_DEBUG                current=%s\n"
+		       "  ELA_WS_RETRY_ATTEMPTS    current=%s\n",
 		       (ela_api_url && *ela_api_url) ? ela_api_url : "<unset>",
 		       (ela_api_insecure && *ela_api_insecure) ? ela_api_insecure : "<unset>",
 		       (ela_quiet && *ela_quiet) ? ela_quiet : "<unset>",
@@ -221,7 +262,8 @@ static int interactive_list_supported_variables(FILE *stream)
 		       (ela_output_insecure && *ela_output_insecure) ? ela_output_insecure : "<unset>",
 		       (ela_api_key && *ela_api_key) ? "<set>" : "<unset>",
 		       (ela_verbose && *ela_verbose) ? ela_verbose : "<unset>",
-		       (ela_debug && *ela_debug) ? ela_debug : "<unset>");
+		       (ela_debug && *ela_debug) ? ela_debug : "<unset>",
+		       (ela_ws_retry && *ela_ws_retry) ? ela_ws_retry : "<unset>");
 }
 
 static bool interactive_parse_bool(const char *value, const char **normalized)
@@ -449,38 +491,32 @@ int interactive_set_command(int argc, char **argv)
 		return 0;
 	}
 
+	if (!strcmp(argv[1], "ELA_WS_RETRY_ATTEMPTS")) {
+		char *end;
+		long v = strtol(argv[2], &end, 10);
+
+		if (*end || v < 0 || v > 1000) {
+			fprintf(stderr,
+				"Invalid ELA_WS_RETRY_ATTEMPTS value: %s (expected integer 0-1000)\n",
+				argv[2]);
+			return 2;
+		}
+
+		if (setenv("ELA_WS_RETRY_ATTEMPTS", argv[2], 1) != 0) {
+			fprintf(stderr, "Failed to set ELA_WS_RETRY_ATTEMPTS\n");
+			return 2;
+		}
+
+		printf("ELA_WS_RETRY_ATTEMPTS=%s\n", argv[2]);
+		return 0;
+	}
+
 	fprintf(stderr, "Unsupported variable for set: %s\n", argv[1]);
 	interactive_list_supported_variables(stderr);
 	return 2;
 }
 
 #if defined(ELA_HAS_READLINE)
-static const char *const *interactive_candidates_for_position(int argc, char **argv)
-{
-	if (argc <= 0)
-		return interactive_top_level_commands;
-
-	if (argc == 1)
-		return interactive_top_level_commands;
-
-	if (!strcmp(argv[0], "uboot"))
-		return interactive_group_uboot;
-
-	if (!strcmp(argv[0], "linux"))
-		return interactive_group_linux;
-
-	if (!strcmp(argv[0], "efi"))
-		return interactive_group_efi;
-
-	if (!strcmp(argv[0], "bios"))
-		return interactive_group_bios;
-
-	if (!strcmp(argv[0], "set") && argc == 2)
-		return interactive_set_variables;
-
-	return NULL;
-}
-
 static char *interactive_completion_generator(const char *text, int state)
 {
 	static int index;
@@ -752,6 +788,100 @@ static void interactive_redraw_prompt_line(const char *prompt, const char *line)
 	fflush(stdout);
 }
 
+/*
+ * Perform tab completion on the current line buffer.  Works in both TTY and
+ * pipe (WebSocket) modes by writing completions/matches to stdout.
+ */
+static void interactive_tab_complete_fallback(char **line_ptr, size_t *len_ptr,
+					      size_t *cap_ptr, const char *prompt)
+{
+	char *line = *line_ptr;
+	size_t len = *len_ptr;
+	const char *const *candidates;
+	char **argv = NULL;
+	int argc = 0;
+	size_t word_start;
+	const char *cur_word;
+	size_t cur_len;
+	const char *matches[64];
+	int nmatch = 0;
+	int i;
+
+	/* Find start of current (incomplete) word */
+	word_start = len;
+	if (word_start > 0 && !isspace((unsigned char)line[word_start - 1])) {
+		while (word_start > 0 &&
+		       !isspace((unsigned char)line[word_start - 1]))
+			word_start--;
+	}
+
+	cur_word = (line && len > word_start) ? line + word_start : "";
+	cur_len  = len - word_start;
+
+	/*
+	 * Parse the tokens that precede the current word to determine context.
+	 * completion_argc counts the position we are completing (1-based token
+	 * index), matching the logic in the readline completion handler.
+	 */
+	if (line && word_start > 0) {
+		char *prefix = malloc(word_start + 1);
+
+		if (!prefix)
+			return;
+		memcpy(prefix, line, word_start);
+		prefix[word_start] = '\0';
+		interactive_parse_line(prefix, &argv, &argc);
+		free(prefix);
+	}
+
+	candidates = interactive_candidates_for_position(argc + 1, argv);
+	interactive_free_argv(argv, argc);
+
+	if (!candidates)
+		return;
+
+	for (i = 0; candidates[i] && nmatch < 64; i++) {
+		if (strncmp(candidates[i], cur_word, cur_len) == 0)
+			matches[nmatch++] = candidates[i];
+	}
+
+	if (nmatch == 0)
+		return;
+
+	if (nmatch == 1) {
+		/* Single match: replace the current word with the full name + space */
+		const char *full     = matches[0];
+		size_t       full_len = strlen(full);
+		size_t       new_len  = word_start + full_len + 1; /* trailing space */
+
+		if (new_len + 1 > *cap_ptr) {
+			size_t  new_cap = new_len + 32;
+			char   *tmp     = realloc(*line_ptr, new_cap);
+
+			if (!tmp)
+				return;
+			*line_ptr = tmp;
+			*cap_ptr  = new_cap;
+			line      = *line_ptr;
+		}
+
+		memcpy(line + word_start, full, full_len);
+		line[word_start + full_len]     = ' ';
+		line[word_start + full_len + 1] = '\0';
+		*len_ptr = new_len;
+		interactive_redraw_prompt_line(prompt, line);
+		return;
+	}
+
+	/* Multiple matches: list them, then redraw the prompt */
+	putchar('\n');
+	for (i = 0; i < nmatch; i++)
+		printf("%s  ", matches[i]);
+	putchar('\n');
+	fflush(stdout);
+	interactive_redraw_prompt_line(prompt, line ? line : "");
+}
+
 static char *interactive_read_line_fallback(const char *prompt,
 					    int tty_fd,
 					    const struct termios *saved_termios,
@@ -764,42 +894,27 @@ static char *interactive_read_line_fallback(const char *prompt,
 	size_t cap = 0;
 	ssize_t history_index;
 	bool tty_input;
+	int read_fd;
 
 	tty_input = tty_fd >= 0 && have_saved_termios && isatty(tty_fd);
-	if (!tty_input) {
-		size_t line_cap = 0;
-
-		fputs(prompt, stdout);
-		fflush(stdout);
-		if (getline(&line, &line_cap, stdin) < 0) {
-			free(line);
-			return NULL;
-		}
-
-		if (line[0]) {
-			size_t line_len = strlen(line);
-
-			if (line_len > 0 && line[line_len - 1] == '\n')
-				line[line_len - 1] = '\0';
-		}
-
-		if (interactive_history_add(history, line) != 0) {
-			free(line);
-			return NULL;
-		}
-
-		return line;
-	}
+	/*
+	 * read_fd: use the real TTY when available, otherwise read from stdin
+	 * directly (pipe from ws_client.c in WebSocket mode).  In both cases
+	 * the loop below handles input character-by-character so that escape
+	 * sequences for history and Tab for completion work over WebSocket too.
+	 */
+	read_fd = tty_input ? tty_fd : STDIN_FILENO;
 
 	if (interactive_set_raw_mode(tty_fd, saved_termios, have_saved_termios) != 0)
 		return NULL;
 
 	history_index = (ssize_t)(history ? history->count : 0);
-	interactive_redraw_prompt_line(prompt, "");
+	if (tty_input)
+		interactive_redraw_prompt_line(prompt, "");
 
 	for (;;) {
 		unsigned char ch;
-		ssize_t nread = read(tty_fd, &ch, 1);
+		ssize_t nread = read(read_fd, &ch, 1);
 
 		if (nread <= 0) {
 			if (nread < 0 && errno == EINTR)
@@ -812,6 +927,7 @@ static char *interactive_read_line_fallback(const char *prompt,
 
 		if (ch == '\r' || ch == '\n') {
 			putchar('\n');
+			fflush(stdout);
 			break;
 		}
 
@@ -834,10 +950,15 @@ static char *interactive_read_line_fallback(const char *prompt,
 			continue;
 		}
 
+		if (ch == '\t') {
+			interactive_tab_complete_fallback(&line, &len, &cap, prompt);
+			continue;
+		}
+
 		if (ch == '\033') {
 			unsigned char seq[2];
 
-			if (read(tty_fd, &seq[0], 1) != 1 || read(tty_fd, &seq[1], 1) != 1)
+			if (read(read_fd, &seq[0], 1) != 1 || read(read_fd, &seq[1], 1) != 1)
 				continue;
 
 			if (seq[0] == '[' && history) {
@@ -948,8 +1069,15 @@ int interactive_loop(const char *prog)
 			have_saved_termios = true;
 	}
 
-	printf("Entering interactive mode for %s. Type 'help' for commands or 'quit' to exit.\n\n", prog);
-	interactive_usage(prog);
+	/* Show prompt on a real TTY, or when running over a WebSocket session
+	 * (ELA_SESSION_MAC is set by ela_ws_run_interactive before forking). */
+	const char *session_mac = getenv("ELA_SESSION_MAC");
+	const bool show_prompt = tty_fd >= 0 || (session_mac && *session_mac);
+
+	if (show_prompt) {
+		printf("Entering interactive mode for %s. Type 'help' for commands or 'quit' to exit.\n\n", prog);
+		interactive_usage(prog);
+	}
 
 #if defined(ELA_HAS_READLINE)
 	rl_attempted_completion_function = interactive_completion;
@@ -963,12 +1091,20 @@ int interactive_loop(const char *prog)
 
 #if defined(ELA_HAS_READLINE)
 		char prompt[128];
-
-		snprintf(prompt, sizeof(prompt), "%s> ", prog);
+		{
+			if (!show_prompt) {
+				prompt[0] = '\0';
+			} else if (session_mac && *session_mac) {
+				snprintf(prompt, sizeof(prompt), "(%s)> ", session_mac);
+			} else {
+				const char *bn = strrchr(prog, '/');
+				snprintf(prompt, sizeof(prompt), "%s> ", bn ? bn + 1 : prog);
+			}
+		}
 		interactive_restore_terminal(tty_fd, &saved_termios, have_saved_termios);
-		line = readline(prompt);
+		line = readline(show_prompt ? prompt : NULL);
 		if (!line) {
-			putchar('\n');
+			if (show_prompt) putchar('\n');
 			break;
 		}
 
@@ -976,15 +1112,23 @@ int interactive_loop(const char *prog)
 			add_history(line);
 #else
 		char prompt[128];
-
-		snprintf(prompt, sizeof(prompt), "%s> ", prog);
+		{
+			if (!show_prompt) {
+				prompt[0] = '\0';
+			} else if (session_mac && *session_mac) {
+				snprintf(prompt, sizeof(prompt), "(%s)> ", session_mac);
+			} else {
+				const char *bn = strrchr(prog, '/');
+				snprintf(prompt, sizeof(prompt), "%s> ", bn ? bn + 1 : prog);
+			}
+		}
 		line = interactive_read_line_fallback(prompt,
 						 tty_fd,
 						 &saved_termios,
 						 have_saved_termios,
 						 &history);
 		if (!line) {
-			putchar('\n');
+			if (show_prompt) putchar('\n');
 			break;
 		}
 #endif

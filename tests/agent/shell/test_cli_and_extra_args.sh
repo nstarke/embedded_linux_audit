@@ -84,6 +84,16 @@ run_accept_case "top-level --remote wss:// unreachable target" "$BIN" --remote w
 run_accept_case "top-level --insecure --remote wss:// unreachable target" "$BIN" --insecure --remote wss://127.0.0.1:1
 run_exact_case "top-level --remote ws:// cannot be combined with command" 2 "$BIN" --remote ws://127.0.0.1:1 linux dmesg
 
+# --retry-attempts argument tests
+run_accept_case "--remote --retry-attempts 0" "$BIN" --remote ws://127.0.0.1:1 --retry-attempts 0
+run_accept_case "--remote --retry-attempts 10" "$BIN" --remote ws://127.0.0.1:1 --retry-attempts 10
+run_accept_case "--remote --retry-attempts=3" "$BIN" --remote ws://127.0.0.1:1 --retry-attempts=3
+run_exact_case "--remote missing --retry-attempts value" 2 "$BIN" --remote ws://127.0.0.1:1 --retry-attempts
+run_exact_case "--remote invalid --retry-attempts negative" 2 "$BIN" --remote ws://127.0.0.1:1 --retry-attempts=-1
+run_exact_case "--remote invalid --retry-attempts too large" 2 "$BIN" --remote ws://127.0.0.1:1 --retry-attempts=1001
+run_exact_case "--remote invalid --retry-attempts non-integer" 2 "$BIN" --remote ws://127.0.0.1:1 --retry-attempts abc
+run_accept_case "--remote ELA_WS_RETRY_ATTEMPTS env var" env ELA_WS_RETRY_ATTEMPTS=3 "$BIN" --remote ws://127.0.0.1:1
+
 # Live daemon lifecycle: verify --remote daemonizes and prints "Remote session started"
 if command -v nc >/dev/null 2>&1; then
     remote_port=19873

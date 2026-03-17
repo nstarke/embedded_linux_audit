@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT - Copyright (c) 2026 Nicholas Starke
 'use strict';
 
+const fs = require('fs');
 const http = require('http');
 const path = require('path');
 const readline = require('readline');
@@ -15,6 +16,29 @@ const { getTerminalServiceConfig } = require('../lib/config');
 const terminalConfig = getTerminalServiceConfig();
 const PORT = terminalConfig.port;
 const HEARTBEAT_INTERVAL_MS = 30000;
+const ALIASES_FILE = path.join(__dirname, 'ela-aliases.json');
+
+/* -------------------------------------------------------------------------
+ * Alias persistence
+ * ---------------------------------------------------------------------- */
+
+function loadAliases() {
+  try {
+    return JSON.parse(fs.readFileSync(ALIASES_FILE, 'utf8'));
+  } catch (_) {
+    return {};
+  }
+}
+
+function saveAliases() {
+  try {
+    fs.writeFileSync(ALIASES_FILE, JSON.stringify(aliases, null, 2), 'utf8');
+  } catch (err) {
+    process.stderr.write(`Warning: failed to save aliases: ${err.message}\n`);
+  }
+}
+
+const aliases = loadAliases();
 const VALIDATE_KEY = process.argv.includes('--validate-key');
 
 /* -------------------------------------------------------------------------
@@ -28,7 +52,7 @@ function addSession(mac, ws) {
   const entry = {
     ws,
     mac,
-    alias: null,
+    alias: aliases[mac] || null,
     lastHeartbeat: null,
     heartbeatTimer: null,
     outputBuffer: [],
@@ -114,7 +138,6 @@ wss.on('connection', (ws, req) => {
     if (tui.state === TUI_STATE.ACTIVE_SESSION &&
         tui.activeMac === mac) {
       process.stdout.write(text);
-      tui.prompt(entry);
     } else {
       // Buffer output for when the session is attached
       entry.outputBuffer.push(text);
@@ -158,7 +181,6 @@ const tui = {
   state:      TUI_STATE.SESSION_LIST,
   cursor:     0,       // index in session list
   activeMac:  null,
-  lineBuffer: '',      // current line being typed in active session
 
   render() {
     if (this.state !== TUI_STATE.SESSION_LIST) return;
@@ -191,19 +213,13 @@ const tui = {
     process.stdout.write(out);
   },
 
-  prompt(entry) {
-    const mac = entry.mac;
-    const p = entry.alias ? `${entry.alias} (${mac})> ` : `(${mac})> `;
-    process.stdout.write(p);
-  },
-
   attach(mac) {
     const entry = sessions.get(mac);
     if (!entry) return;
 
-    this.state     = TUI_STATE.ACTIVE_SESSION;
-    this.activeMac = mac;
-    this.lineBuffer = '';
+    this.state        = TUI_STATE.ACTIVE_SESSION;
+    this.activeMac    = mac;
+    this._localCmdBuf = '';
 
     const label = entry.alias ? `${entry.alias} (${mac})` : mac;
     process.stdout.write(ANSI.clear);
@@ -212,19 +228,16 @@ const tui = {
       '─'.repeat(60) + '\r\n'
     );
 
-    // Flush buffered output
+    // Flush buffered output; the agent's own prompt is included in the buffer
     if (entry.outputBuffer.length > 0) {
       process.stdout.write(entry.outputBuffer.join(''));
       entry.outputBuffer = [];
     }
-
-    this.prompt(entry);
   },
 
   detach() {
     this.state     = TUI_STATE.SESSION_LIST;
     this.activeMac = null;
-    this.lineBuffer = '';
     // Clamp cursor
     const count = sessions.size;
     if (this.cursor >= count) this.cursor = Math.max(0, count - 1);
@@ -265,61 +278,83 @@ const tui = {
 
     const entry = sessions.get(this.activeMac);
 
+    /*
+     * /detach and /name are local TUI commands — intercept before forwarding.
+     * Everything else (including Enter, Tab, arrows, printable chars,
+     * backspace) is forwarded raw to the agent.
+     */
+    if (this._localCmdBuf === undefined)
+      this._localCmdBuf = '';
+
     if (name === 'return') {
-      const line = this.lineBuffer;
-      this.lineBuffer = '';
-      process.stdout.write('\r\n');
-
-      if (line === '/help') {
-        process.stdout.write(
-          '[terminal commands]\r\n' +
-          '  /help            show this help\r\n' +
-          '  /name <alias>    assign an alias to this device\r\n' +
-          '  /detach          return to the session list\r\n' +
-          '[all other input is forwarded to the agent]\r\n'
-        );
-        if (entry) this.prompt(entry);
-        return;
-      }
-
-      if (line === '/detach') {
+      const cmd = this._localCmdBuf;
+      this._localCmdBuf = '';
+      if (cmd === '/detach') {
+        // Cancel the typed chars on the agent's readline before detaching.
+        if (entry && entry.ws.readyState === entry.ws.OPEN)
+          entry.ws.send('\x15');
+        process.stdout.write('\r\n');
         this.detach();
         return;
       }
-
-      if (line.startsWith('/name ') || line === '/name') {
-        const alias = line.slice(6).trim();
-        if (!alias) {
-          process.stdout.write('[usage: /name <alias>]\r\n');
-        } else if (entry) {
-          entry.alias = alias;
-          process.stdout.write(`[device named: ${alias}]\r\n`);
+      if (cmd === '/name' || cmd.startsWith('/name ')) {
+        // Cancel the typed chars on the agent's readline.
+        if (entry && entry.ws.readyState === entry.ws.OPEN)
+          entry.ws.send('\x15');
+        const arg = cmd.slice(6).trim();  // everything after '/name '
+        const mac = this.activeMac;
+        const sessionEntry = sessions.get(mac);
+        if (sessionEntry) {
+          if (arg) {
+            sessionEntry.alias = arg;
+            aliases[mac] = arg;
+          } else {
+            sessionEntry.alias = null;
+            delete aliases[mac];
+          }
+          saveAliases();
+          process.stdout.write(`\r\n[alias ${arg ? `set to "${arg}"` : 'cleared'}]\r\n`);
         }
-        if (entry) this.prompt(entry);
         return;
       }
-
+      // Not a local command — send the buffered bytes + newline to the agent
       if (entry && entry.ws.readyState === entry.ws.OPEN) {
-        entry.ws.send(line + '\n');
+        if (cmd) entry.ws.send(cmd);
+        entry.ws.send('\n');
       }
-      if (entry) this.prompt(entry);
       return;
     }
 
+    // Accumulate printable chars in localCmdBuf so we can detect /detach.
+    // Exclude DEL (0x7f) — it has charCode 127 >= 0x20 but is not printable.
+    if (key && key.length === 1 && key.charCodeAt(0) >= 0x20 && key.charCodeAt(0) < 0x7f) {
+      this._localCmdBuf += key;
+      if (entry && entry.ws.readyState === entry.ws.OPEN)
+        entry.ws.send(key);
+      return;
+    }
+
+    // Backspace: erase last char from localCmdBuf (not clear entirely) and
+    // forward to agent so its readline stays in sync.
     if (name === 'backspace') {
-      if (this.lineBuffer.length > 0) {
-        this.lineBuffer = this.lineBuffer.slice(0, -1);
-        // Erase last character on terminal
-        process.stdout.write('\b \b');
-      }
+      if (this._localCmdBuf.length > 0)
+        this._localCmdBuf = this._localCmdBuf.slice(0, -1);
+      if (entry && entry.ws.readyState === entry.ws.OPEN)
+        entry.ws.send('\x7f');
       return;
     }
 
-    // Printable character
-    if (key && key.length === 1 && key.charCodeAt(0) >= 0x20) {
-      this.lineBuffer += key;
-      process.stdout.write(key);
-    }
+    // Reset localCmdBuf on any other non-printable key.
+    this._localCmdBuf = '';
+
+    if (!entry || entry.ws.readyState !== entry.ws.OPEN)
+      return;
+
+    if (name === 'tab')        { entry.ws.send('\t');      return; }
+    if (name === 'up')         { entry.ws.send('\x1b[A'); return; }
+    if (name === 'down')       { entry.ws.send('\x1b[B'); return; }
+    if (name === 'left')       { entry.ws.send('\x1b[D'); return; }
+    if (name === 'right')      { entry.ws.send('\x1b[C'); return; }
   },
 };
 

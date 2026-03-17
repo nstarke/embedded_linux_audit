@@ -15,6 +15,93 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+/* -------------------------------------------------------------------------
+ * DNS auto-configuration: if /etc/resolv.conf has no nameservers, use the
+ * default gateway from /proc/net/route as a fallback.
+ * ---------------------------------------------------------------------- */
+
+#ifdef __linux__
+static int ela_has_dns_configured(void)
+{
+	FILE *f;
+	char  line[256];
+
+	f = fopen("/etc/resolv.conf", "r");
+	if (!f)
+		return 0;
+	while (fgets(line, sizeof(line), f)) {
+		if (strncmp(line, "nameserver", 10) == 0) {
+			fclose(f);
+			return 1;
+		}
+	}
+	fclose(f);
+	return 0;
+}
+
+/* Read /proc/net/route; return the default gateway as a dotted string.
+ * Returns 0 on success, -1 if not found. */
+static int ela_get_default_gateway(char *buf, size_t buf_sz)
+{
+	FILE        *f;
+	char         line[256];
+	char         iface[64];
+	unsigned int dest, gw, flags, mask;
+	struct in_addr addr;
+	int          found = 0;
+
+	f = fopen("/proc/net/route", "r");
+	if (!f)
+		return -1;
+
+	/* skip header */
+	if (!fgets(line, sizeof(line), f)) {
+		fclose(f);
+		return -1;
+	}
+
+	while (fgets(line, sizeof(line), f)) {
+		unsigned int ref, use, metric, mtu, win, irtt;
+		int n = sscanf(line, "%63s %X %X %X %u %u %u %X %u %u %u",
+			       iface, &dest, &gw, &flags,
+			       &ref, &use, &metric, &mask,
+			       &mtu, &win, &irtt);
+		if (n < 8)
+			continue;
+		/* default route: destination 0.0.0.0, RTF_GATEWAY (0x2) set */
+		if (dest == 0 && (flags & 0x0002) && gw != 0) {
+			/* /proc/net/route stores in host byte order */
+			addr.s_addr = htonl(gw);
+			if (inet_ntop(AF_INET, &addr, buf, (socklen_t)buf_sz)) {
+				found = 1;
+				break;
+			}
+		}
+	}
+
+	fclose(f);
+	return found ? 0 : -1;
+}
+
+/* Write gateway as nameserver to /etc/resolv.conf if none is configured. */
+static void ela_ensure_dns(void)
+{
+	char  gw[INET_ADDRSTRLEN];
+	FILE *f;
+
+	if (ela_has_dns_configured())
+		return;
+	if (ela_get_default_gateway(gw, sizeof(gw)) != 0)
+		return;
+
+	f = fopen("/etc/resolv.conf", "w");
+	if (!f)
+		return;
+	fprintf(f, "nameserver %s\n", gw);
+	fclose(f);
+}
+#endif /* __linux__ */
+
 int connect_tcp_host_port(const char *host, uint16_t port)
 {
 	struct in_addr addr;
@@ -52,6 +139,13 @@ int connect_tcp_host_port_any(const char *host, uint16_t port)
 	char portbuf[8];
 	int sock = -1;
 	int rc;
+#ifdef __linux__
+	static int dns_ensured;
+	if (!dns_ensured) {
+		ela_ensure_dns();
+		dns_ensured = 1;
+	}
+#endif
 
 	if (!host || !*host || !port)
 		return -1;

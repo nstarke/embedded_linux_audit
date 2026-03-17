@@ -15,6 +15,10 @@ This section contains documentation for the `embedded_linux_audit` agent, organi
 
 ## Command Groups
 
+### Arch
+
+- [`embedded_linux_audit arch`](arch/index.md)
+
 ### U-Boot
 
 - [U-Boot Index](uboot/index.md)

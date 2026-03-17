@@ -14,6 +14,9 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+#define ELA_DEFAULT_RETRY_ATTEMPTS 5
+#define ELA_RETRY_DELAY_SECS       60
+
 static void usage(const char *prog)
 {
 	fprintf(stderr,
@@ -32,7 +35,9 @@ static void usage(const char *prog)
 		"  --output-http <http(s)://...>    Configure HTTP or HTTPS remote output for commands/subcommands\n"
 		"  --script <path|http(s)://...>    Execute commands from a local or remote script file\n"
 		"  --remote <host:port>             Connect out to host:port, daemonize, and serve an interactive\n"
-		"                                   session over the TCP connection (reverse shell)\n"
+		"                                   session over the TCP or WebSocket connection\n"
+		"  --retry-attempts <n>             For WebSocket --remote: reconnect up to n times on disconnect\n"
+		"                                   (default: 5, 0=no retry; each retry waits 60s)\n"
 		"\n"
 		"Groups and subcommands:\n"
 		"  uboot env          Scan for U-Boot environment candidates\n"
@@ -186,6 +191,16 @@ int embedded_linux_audit_dispatch(int argc, char **argv)
 	const char *ela_api_insecure = NULL;
 	const char *remote_target = NULL;
 	const char *api_key = NULL;
+	int retry_attempts = ELA_DEFAULT_RETRY_ATTEMPTS;
+	{
+		const char *env_retry = getenv("ELA_WS_RETRY_ATTEMPTS");
+		if (env_retry && *env_retry) {
+			char *end;
+			long v = strtol(env_retry, &end, 10);
+			if (!*end && v >= 0 && v <= 1000)
+				retry_attempts = (int)v;
+		}
+	}
 	bool verbose = true;
 	bool insecure = getenv("ELA_OUTPUT_INSECURE") && !strcmp(getenv("ELA_OUTPUT_INSECURE"), "1");
 	bool output_format_explicit = false;
@@ -341,6 +356,40 @@ int embedded_linux_audit_dispatch(int argc, char **argv)
 			continue;
 		}
 
+		if (!strcmp(argv[cmd_idx], "--retry-attempts")) {
+			cmd_idx++;
+			if (cmd_idx >= argc) {
+				fprintf(stderr, "Missing value for --retry-attempts\n\n");
+				usage(argv[0]);
+				return 2;
+			}
+			{
+				char *end;
+				long v = strtol(argv[cmd_idx], &end, 10);
+				if (*end || v < 0 || v > 1000) {
+					fprintf(stderr, "Invalid value for --retry-attempts: %s\n\n", argv[cmd_idx]);
+					usage(argv[0]);
+					return 2;
+				}
+				retry_attempts = (int)v;
+			}
+			cmd_idx++;
+			continue;
+		}
+
+		if (!strncmp(argv[cmd_idx], "--retry-attempts=", 17)) {
+			char *end;
+			long v = strtol(argv[cmd_idx] + 17, &end, 10);
+			if (*end || v < 0 || v > 1000) {
+				fprintf(stderr, "Invalid value for --retry-attempts: %s\n\n", argv[cmd_idx] + 17);
+				usage(argv[0]);
+				return 2;
+			}
+			retry_attempts = (int)v;
+			cmd_idx++;
+			continue;
+		}
+
 		if (!strcmp(argv[cmd_idx], "--api-key")) {
 			cmd_idx++;
 			if (cmd_idx >= argc) {
@@ -488,29 +537,46 @@ int embedded_linux_audit_dispatch(int argc, char **argv)
 		}
 
 		if (ela_is_ws_url(remote_target)) {
-			struct ela_ws_conn ws;
-
-			if (ela_ws_connect(remote_target, insecure, &ws) != 0) {
-				fprintf(stderr, "--remote: failed to connect to %s\n", remote_target);
-				return 1;
-			}
-
 			pid = fork();
 			if (pid < 0) {
 				fprintf(stderr, "--remote: fork failed: %s\n", strerror(errno));
-				ela_ws_close_parent_fd(&ws);
 				return 1;
 			}
 
 			if (pid > 0) {
-				ela_ws_close_parent_fd(&ws);
 				fprintf(stdout, "Remote session started (pid=%ld)\n", (long)pid);
 				return 0;
 			}
 
-			/* Daemon child */
+			/* Daemon child: connect with retry */
 			setsid();
-			exit(ela_ws_run_interactive(&ws, argv[0]));
+			{
+				int attempt;
+				for (attempt = 0; attempt <= retry_attempts; attempt++) {
+					struct ela_ws_conn ws;
+
+					if (attempt > 0) {
+						fprintf(stderr,
+							"--remote: reconnect attempt %d/%d, waiting %ds\n",
+							attempt, retry_attempts,
+							ELA_RETRY_DELAY_SECS);
+						sleep(ELA_RETRY_DELAY_SECS);
+					}
+
+					if (ela_ws_connect(remote_target, insecure, &ws) != 0) {
+						fprintf(stderr, "--remote: failed to connect to %s\n",
+							remote_target);
+						continue;
+					}
+
+					ela_ws_run_interactive(&ws, argv[0]);
+					ela_ws_close(&ws);
+				}
+				fprintf(stderr,
+					"--remote: max retry attempts (%d) reached, exiting\n",
+					retry_attempts);
+				exit(1);
+			}
 		}
 
 		int sock = ela_connect_tcp_any(remote_target);
@@ -705,6 +771,11 @@ int embedded_linux_audit_dispatch(int argc, char **argv)
 
 	if (!strcmp(argv[cmd_idx], "transfer")) {
 		ret = transfer_main(argc - cmd_idx, argv + cmd_idx);
+		goto done;
+	}
+
+	if (!strcmp(argv[cmd_idx], "arch")) {
+		ret = arch_main(argc - cmd_idx, argv + cmd_idx);
 		goto done;
 	}
 

@@ -13,3 +13,4 @@ logs
 .cache
 package-lock.json
 .claude
+ela-aliases.json

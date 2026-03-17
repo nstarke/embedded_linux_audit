@@ -13,6 +13,7 @@
 #include <sys/select.h>
 #include <signal.h>
 #include <sys/socket.h>
+#include <termios.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -32,6 +33,65 @@
 #endif
 
 static volatile sig_atomic_t linux_ssh_stop_requested;
+
+/*
+ * Read a password from stdin without echoing.  Prints 'prompt' to stdout,
+ * reads characters one at a time until newline or EOF, and stores the result
+ * (NUL-terminated) in buf[0..buf_sz-1].  Returns the number of characters
+ * read, or -1 on error.
+ *
+ * When stdin is a real TTY, echo is disabled via tcsetattr so the password
+ * is invisible.  When stdin is a pipe (e.g. WebSocket mode) the server's raw
+ * passthrough means characters are forwarded immediately but not echoed by
+ * the agent, so the password is equally invisible.
+ */
+static int linux_ssh_read_password(const char *prompt, char *buf, size_t buf_sz)
+{
+	struct termios old, raw;
+	int have_termios = 0;
+	size_t len = 0;
+
+	if (!buf || buf_sz == 0)
+		return -1;
+
+	fputs(prompt, stdout);
+	fflush(stdout);
+
+	if (isatty(STDIN_FILENO) && tcgetattr(STDIN_FILENO, &old) == 0) {
+		have_termios = 1;
+		raw = old;
+		raw.c_lflag &= (tcflag_t)~(ECHO | ICANON);
+		raw.c_cc[VMIN]  = 1;
+		raw.c_cc[VTIME] = 0;
+		tcsetattr(STDIN_FILENO, TCSANOW, &raw);
+	}
+
+	while (len + 1 < buf_sz) {
+		unsigned char ch;
+		ssize_t n = read(STDIN_FILENO, &ch, 1);
+
+		if (n <= 0)
+			break;
+		if (ch == '\r' || ch == '\n')
+			break;
+		if (ch == 0x7f || ch == 0x08) { /* backspace */
+			if (len > 0)
+				len--;
+			continue;
+		}
+		if (ch < 0x20) /* ignore other control chars */
+			continue;
+		buf[len++] = (char)ch;
+	}
+	buf[len] = '\0';
+
+	if (have_termios)
+		tcsetattr(STDIN_FILENO, TCSANOW, &old);
+
+	putchar('\n');
+	fflush(stdout);
+	return (int)len;
+}
 
 static void usage(const char *prog)
 {
@@ -96,8 +156,15 @@ static int linux_ssh_connect_session(const char *host, uint16_t port, ssh_sessio
 	}
 
 	auth_rc = ssh_userauth_publickey_auto(session, NULL, NULL);
-	if (auth_rc != SSH_AUTH_SUCCESS) {
+	if (auth_rc != SSH_AUTH_SUCCESS)
 		auth_rc = ssh_userauth_none(session, NULL);
+	if (auth_rc != SSH_AUTH_SUCCESS) {
+		char password[256];
+		int pw_len = linux_ssh_read_password("Password: ", password, sizeof(password));
+
+		if (pw_len >= 0)
+			auth_rc = ssh_userauth_password(session, NULL, password);
+		memset(password, 0, sizeof(password));
 	}
 	if (auth_rc != SSH_AUTH_SUCCESS) {
 		fprintf(stderr, "ssh: authentication failed for %s@%s:%u: %s\n",

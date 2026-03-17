@@ -11,7 +11,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 DEST_RELEASE_DIR="${RELEASE_BINARIES_DIR:-$REPO_ROOT/api/data/release_binaries}"
 TOOLS_CACHE_DIR="$REPO_ROOT/.cache/tools"
 ZIG_VERSION="0.14.0"
-SUPPORTED_ISAS="arm32-le arm32-be aarch64-le aarch64-be mips-le mips-be mips64-le mips64-be powerpc-le powerpc-be x86 x86_64 riscv32 riscv64"
+SUPPORTED_ISAS="arm32-le arm32-be aarch64-le aarch64-be mips-le mips-be mips64-le mips64-be powerpc-le powerpc64-be powerpc-be x86 x86_64 riscv32 riscv64"
 
 REQUIRED_SUBMODULE_PATHS="
 third_party/libcsv/libcsv.c
@@ -174,6 +174,7 @@ ensure_zig() {
 
 set_isa_config() {
     isa="$1"
+    zig_extra_cflags=""
 
     case "$isa" in
         arm32-le)
@@ -203,8 +204,15 @@ set_isa_config() {
         powerpc-le)
             zig_targets="powerpc64le-linux-musl,powerpc64le-linux-gnu"
             ;;
+        powerpc64-be)
+            zig_targets="powerpc64-linux-musl,powerpc64-linux-gnu"
+            ;;
         powerpc-be)
             zig_targets="powerpc-linux-musleabi,powerpc-linux-musleabihf,powerpc-linux-gnueabi,powerpc-linux-gnueabihf"
+            # Force baseline ISA: zig cc (LLVM) may emit isel/lwsync instructions
+            # that older embedded PowerPC cores (Book E, 603, 750, 4xx) do not
+            # implement, causing an "Illegal instruction" crash at runtime.
+            zig_extra_cflags="-mcpu=ppc"
             ;;
         x86)
             zig_targets="x86-linux-musl"
@@ -238,7 +246,7 @@ build_with_targets() {
     for target in "$@"; do
         echo "Trying target: $target"
         if [ "$clean_before_build" -eq 1 ]; then
-            if ! make clean; then
+            if ! make -C "$REPO_ROOT" clean; then
                 build_ok=0
                 echo "Clean failed before target: $target"
                 continue
@@ -246,13 +254,13 @@ build_with_targets() {
         fi
 
         build_ok=1
-        make static \
+        make -C "$REPO_ROOT" static \
             JOBS="$jobs_arg" \
             ELA_USE_READLINE=0 \
             CMAKE_C_COMPILER="$(command -v zig)" \
             CMAKE_C_COMPILER_ARG1=cc \
             CMAKE_C_COMPILER_TARGET="$target" \
-            CC="zig cc -target $target" || build_ok=0
+            CC="zig cc -target $target${zig_extra_cflags:+ $zig_extra_cflags}" || build_ok=0
 
         if [ "$build_ok" -eq 1 ]; then
             cp "$REPO_ROOT/embedded_linux_audit" "$output_path"

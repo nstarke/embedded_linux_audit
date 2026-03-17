@@ -102,6 +102,7 @@ int efi_orom_main(int argc, char **argv);
 int efi_dump_vars_main(int argc, char **argv);
 int bios_orom_main(int argc, char **argv);
 int transfer_main(int argc, char **argv);
+int arch_main(int argc, char **argv);
 
 struct embedded_linux_audit_input {
 	const char *device;
