@@ -189,14 +189,28 @@ if [ -z "$TLS_CERT" ]; then
             exit 1
         fi
         echo "Generating self-signed TLS certificate for $HOSTNAME ..."
+        _openssl_cnf=$(mktemp)
+        cat > "$_openssl_cnf" <<OPENSSLEOF
+[req]
+distinguished_name = req_dn
+x509_extensions    = v3_req
+prompt             = no
+[req_dn]
+CN = $HOSTNAME
+[v3_req]
+subjectAltName = DNS:$HOSTNAME,IP:127.0.0.1
+OPENSSLEOF
         openssl req -x509 -newkey rsa:2048 \
             -keyout "$TLS_KEY" \
             -out    "$TLS_CERT" \
             -days   3650 \
             -nodes \
-            -subj   "/CN=$HOSTNAME" \
-            -addext "subjectAltName=DNS:$HOSTNAME,IP:127.0.0.1" \
-            2>/dev/null
+            -config "$_openssl_cnf"
+        rm -f "$_openssl_cnf"
+        if [ ! -f "$TLS_CERT" ] || [ ! -f "$TLS_KEY" ]; then
+            echo "error: openssl failed to generate certificate" >&2
+            exit 1
+        fi
         echo "  cert: $TLS_CERT"
         echo "  key:  $TLS_KEY"
     else
