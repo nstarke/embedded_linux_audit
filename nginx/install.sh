@@ -171,9 +171,9 @@ fi
 # ---------------------------------------------------------------------------
 # Data directory
 # ---------------------------------------------------------------------------
-ELA_DATA_DIR="${ELA_DATA_DIR:-/data}"
+ELA_DATA_DIR="${ELA_DATA_DIR:-/data/agent}"
 if [ ! -d "$ELA_DATA_DIR" ]; then
-    echo "Creating data directory $ELA_DATA_DIR ..."
+    echo "Creating agent data directory $ELA_DATA_DIR ..."
     mkdir -p "$ELA_DATA_DIR" || {
         echo "error: failed to create $ELA_DATA_DIR" >&2
         echo "       Try: sudo mkdir -p $ELA_DATA_DIR && sudo chown \$(id -u):\$(id -g) $ELA_DATA_DIR" >&2
@@ -185,6 +185,20 @@ if [ ! -d "$ELA_DATA_DIR" ]; then
     fi
 fi
 export ELA_DATA_DIR
+
+# ---------------------------------------------------------------------------
+# PostgreSQL data directory
+# ---------------------------------------------------------------------------
+ELA_POSTGRES_DATA_DIR="${ELA_POSTGRES_DATA_DIR:-/data/postgres}"
+if [ ! -d "$ELA_POSTGRES_DATA_DIR" ]; then
+    echo "Creating PostgreSQL data directory $ELA_POSTGRES_DATA_DIR ..."
+    mkdir -p "$ELA_POSTGRES_DATA_DIR" || {
+        echo "error: failed to create $ELA_POSTGRES_DATA_DIR" >&2
+        echo "       Try: sudo mkdir -p $ELA_POSTGRES_DATA_DIR && sudo chown \$(id -u):\$(id -g) $ELA_POSTGRES_DATA_DIR" >&2
+        exit 1
+    }
+fi
+export ELA_POSTGRES_DATA_DIR
 
 # ---------------------------------------------------------------------------
 # tmux socket directory for terminal-api
