@@ -540,6 +540,11 @@ run_qemu_shell_tests() {
         echo
         echo "===== Running shell/$rel_path ====="
 
+        # Remove any stale /tmp/.ela.conf left by binary tests (which may run
+        # as root via sudo) or a previous test script's interactive session.
+        # Use run_host_command so sudo is available when GITHUB_ACTIONS=true.
+        run_host_command rm -f /tmp/.ela.conf 2>/dev/null || true
+
         BIN="$bin_wrapper" /bin/sh "$test_script" >"$test_log" 2>&1 &
         test_pid=$!
         (sleep "$QEMU_SHELL_TEST_TIMEOUT" && kill "$test_pid" 2>/dev/null) >/dev/null 2>/dev/null &
@@ -569,6 +574,7 @@ run_qemu_shell_tests() {
             rc=1
         fi
 
+        run_host_command rm -f /tmp/.ela.conf 2>/dev/null || true
         rm -f "$test_log"
     done <"$shell_test_list"
 

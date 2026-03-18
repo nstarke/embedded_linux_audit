@@ -274,8 +274,11 @@ require_binary() {
     # Reset any persisted config from previous runs so tests start from a
     # known state.  /tmp/.ela.conf survives between test scripts and can
     # cause later scripts to inherit --remote or --output-http values saved
-    # by earlier tests, producing wrong exit codes or hangs.
-    rm -f /tmp/.ela.conf
+    # by earlier tests, producing wrong exit codes or hangs.  Suppress the
+    # error if the file is owned by another user (e.g. a prior sudo QEMU
+    # run); the qemu test runner cleans it up via run_host_command before
+    # invoking each shell test script.
+    rm -f /tmp/.ela.conf 2>/dev/null || true
 
     ela_ensure_command python3 >/dev/null 2>&1 || true
 
