@@ -361,6 +361,179 @@ static int simple_http_post(const char *uri,
 	return 0;
 }
 
+#ifdef ELA_HAS_WOLFSSL
+static int simple_wolfssl_https_post(const struct parsed_http_uri *parsed,
+				     const char *uri,
+				     const uint8_t *data,
+				     size_t len,
+				     const char *content_type,
+				     const char *auth_key,
+				     bool insecure,
+				     bool verbose,
+				     char *errbuf,
+				     size_t errbuf_len,
+				     int *status_out)
+{
+	WOLFSSL_CTX *ctx = NULL;
+	WOLFSSL *ssl = NULL;
+	int sock = -1;
+	char *headers = NULL;
+	char *request = NULL;
+	size_t request_len = 0;
+	size_t request_cap = 0;
+	char content_len_buf[32];
+	int status;
+	int rc;
+
+	if (status_out)
+		*status_out = 0;
+
+	ela_set_sigill_stage("https:wolfssl_post_init");
+	if (wolfSSL_Init() != WOLFSSL_SUCCESS) {
+		if (errbuf && errbuf_len)
+			snprintf(errbuf, errbuf_len, "wolfSSL_Init failed");
+		goto cleanup;
+	}
+
+	ela_set_sigill_stage("https:wolfssl_post_ctx_new");
+	ctx = wolfSSL_CTX_new(wolfTLSv1_2_client_method());
+	if (!ctx) {
+		if (errbuf && errbuf_len)
+			snprintf(errbuf, errbuf_len, "wolfSSL_CTX_new failed");
+		goto cleanup;
+	}
+	wolfSSL_CTX_set_verify(ctx, insecure ? WOLFSSL_VERIFY_NONE : WOLFSSL_VERIFY_PEER, NULL);
+	if (!insecure) {
+		ela_set_sigill_stage("https:wolfssl_post_load_ca");
+		if (wolfSSL_CTX_load_verify_buffer(ctx,
+				(const unsigned char *)ela_default_ca_bundle_pem,
+				(long)ela_default_ca_bundle_pem_len,
+				WOLFSSL_FILETYPE_PEM) != WOLFSSL_SUCCESS) {
+			if (errbuf && errbuf_len)
+				snprintf(errbuf, errbuf_len, "wolfSSL_CTX_load_verify_buffer failed");
+			goto cleanup;
+		}
+	}
+
+	ela_set_sigill_stage("https:wolfssl_post_tcp_connect");
+	sock = connect_tcp_host_port_any(parsed->host, parsed->port);
+	if (sock < 0) {
+		if (errbuf && errbuf_len)
+			snprintf(errbuf, errbuf_len, "failed to connect to %s:%u", parsed->host, (unsigned int)parsed->port);
+		goto cleanup;
+	}
+
+	ela_set_sigill_stage("https:wolfssl_post_new");
+	ssl = wolfSSL_new(ctx);
+	if (!ssl) {
+		if (errbuf && errbuf_len)
+			snprintf(errbuf, errbuf_len, "wolfSSL_new failed");
+		goto cleanup;
+	}
+	if (wolfSSL_set_fd(ssl, sock) != WOLFSSL_SUCCESS) {
+		if (errbuf && errbuf_len)
+			snprintf(errbuf, errbuf_len, "wolfSSL_set_fd failed");
+		goto cleanup;
+	}
+	if (!insecure)
+		wolfSSL_check_domain_name(ssl, parsed->host);
+
+	ela_set_sigill_stage("https:wolfssl_post_connect");
+	while ((rc = wolfSSL_connect(ssl)) != WOLFSSL_SUCCESS) {
+		int err = wolfSSL_get_error(ssl, rc);
+		if (err != WOLFSSL_ERROR_WANT_READ && err != WOLFSSL_ERROR_WANT_WRITE &&
+		    err != WANT_READ && err != WANT_WRITE) {
+			if (errbuf && errbuf_len)
+				snprintf(errbuf, errbuf_len, "wolfSSL_connect failed: %d", err);
+			goto cleanup;
+		}
+	}
+
+	snprintf(content_len_buf, sizeof(content_len_buf), "%zu", len);
+	if (append_text(&request, &request_len, &request_cap, "POST ") != 0 ||
+	    append_text(&request, &request_len, &request_cap, parsed->path) != 0 ||
+	    append_text(&request, &request_len, &request_cap, " HTTP/1.1\r\nHost: ") != 0 ||
+	    append_text(&request, &request_len, &request_cap, parsed->host) != 0 ||
+	    append_text(&request, &request_len, &request_cap, "\r\nConnection: close\r\nContent-Type: ") != 0 ||
+	    append_text(&request, &request_len, &request_cap, content_type) != 0 ||
+	    append_text(&request, &request_len, &request_cap, "\r\nContent-Length: ") != 0 ||
+	    append_text(&request, &request_len, &request_cap, content_len_buf) != 0) {
+		if (errbuf && errbuf_len)
+			snprintf(errbuf, errbuf_len, "failed to build HTTPS request");
+		goto cleanup;
+	}
+
+	if (auth_key && *auth_key) {
+		if (append_text(&request, &request_len, &request_cap, "\r\nAuthorization: Bearer ") != 0 ||
+		    append_text(&request, &request_len, &request_cap, auth_key) != 0) {
+			if (errbuf && errbuf_len)
+				snprintf(errbuf, errbuf_len, "failed to build HTTPS request");
+			goto cleanup;
+		}
+	}
+
+	if (append_text(&request, &request_len, &request_cap, "\r\n\r\n") != 0 ||
+	    append_bytes(&request, &request_len, &request_cap, (const char *)data, len) != 0) {
+		if (errbuf && errbuf_len)
+			snprintf(errbuf, errbuf_len, "failed to build HTTPS request");
+		goto cleanup;
+	}
+
+	if (verbose) {
+		fprintf(stderr, "HTTPS POST request uri=%s bytes=%zu content-type=%s insecure=%s (wolfssl)\n",
+			uri, len, content_type, insecure ? "true" : "false");
+	}
+
+	ela_set_sigill_stage("https:wolfssl_post_write_request");
+	if ((rc = wolfSSL_write(ssl, request, (int)request_len)) <= 0) {
+		if (errbuf && errbuf_len)
+			snprintf(errbuf, errbuf_len, "wolfSSL_write failed: %d", wolfSSL_get_error(ssl, rc));
+		goto cleanup;
+	}
+
+	ela_set_sigill_stage("https:wolfssl_post_read_headers");
+	if (wolfssl_read_headers(ssl, &headers) != 0) {
+		if (errbuf && errbuf_len)
+			snprintf(errbuf, errbuf_len, "failed to read HTTPS response headers");
+		goto cleanup;
+	}
+
+	status = parse_status_code_from_headers(headers);
+	if (status_out)
+		*status_out = status;
+	if (status < 200 || status >= 300) {
+		if (errbuf && errbuf_len)
+			snprintf(errbuf, errbuf_len, "HTTP status %d", status);
+		goto cleanup;
+	}
+
+	if (verbose)
+		fprintf(stderr, "HTTPS POST success uri=%s status=%d\n", uri, status);
+
+	free(headers);
+	free(request);
+	wolfSSL_shutdown(ssl);
+	wolfSSL_free(ssl);
+	wolfSSL_CTX_free(ctx);
+	if (sock >= 0)
+		close(sock);
+	return 0;
+
+cleanup:
+	free(headers);
+	free(request);
+	if (ssl) {
+		wolfSSL_shutdown(ssl);
+		wolfSSL_free(ssl);
+	}
+	if (ctx)
+		wolfSSL_CTX_free(ctx);
+	if (sock >= 0)
+		close(sock);
+	return -1;
+}
+#endif
+
 static int simple_http_get_to_file(const char *uri,
 				   const char *output_path,
 				   bool verbose,
@@ -890,6 +1063,134 @@ static int ssl_connect_with_embedded_ca(const struct parsed_http_uri *parsed,
 fail:
 	if (ssl)
 		SSL_free(ssl);
+	if (sock >= 0)
+		close(sock);
+	if (ctx)
+		SSL_CTX_free(ctx);
+	return -1;
+}
+
+static int simple_https_post(const char *uri,
+			     const uint8_t *data,
+			     size_t len,
+			     const char *content_type,
+			     const char *auth_key,
+			     bool insecure,
+			     bool verbose,
+			     char *errbuf,
+			     size_t errbuf_len,
+			     int *status_out)
+{
+	struct parsed_http_uri parsed;
+	SSL_CTX *ctx = NULL;
+	SSL *ssl = NULL;
+	int sock = -1;
+	char *headers = NULL;
+	char *request = NULL;
+	size_t request_len = 0;
+	size_t request_cap = 0;
+	char content_len_buf[32];
+	int status;
+
+	if (status_out)
+		*status_out = 0;
+
+	if (parse_http_uri(uri, &parsed) != 0 || !parsed.https) {
+		if (errbuf && errbuf_len)
+			snprintf(errbuf, errbuf_len, "unsupported or invalid HTTPS URI");
+		return -1;
+	}
+
+#ifdef ELA_HAS_WOLFSSL
+	if (isa_is_powerpc_family(ela_detect_isa())) {
+		ela_set_sigill_stage("https:wolfssl_post_fallback");
+		return simple_wolfssl_https_post(&parsed, uri, data, len, content_type,
+						 auth_key, insecure, verbose,
+						 errbuf, errbuf_len, status_out);
+	}
+#endif
+
+	ela_install_sigill_debug_handler();
+	ela_set_sigill_stage("https:post:start");
+	if (ssl_connect_with_embedded_ca(&parsed, insecure, &ctx, &ssl, &sock, errbuf, errbuf_len) < 0)
+		return -1;
+
+	snprintf(content_len_buf, sizeof(content_len_buf), "%zu", len);
+	if (append_text(&request, &request_len, &request_cap, "POST ") != 0 ||
+	    append_text(&request, &request_len, &request_cap, parsed.path) != 0 ||
+	    append_text(&request, &request_len, &request_cap, " HTTP/1.1\r\nHost: ") != 0 ||
+	    append_text(&request, &request_len, &request_cap, parsed.host) != 0 ||
+	    append_text(&request, &request_len, &request_cap, "\r\nConnection: close\r\nContent-Type: ") != 0 ||
+	    append_text(&request, &request_len, &request_cap, content_type) != 0 ||
+	    append_text(&request, &request_len, &request_cap, "\r\nContent-Length: ") != 0 ||
+	    append_text(&request, &request_len, &request_cap, content_len_buf) != 0) {
+		if (errbuf && errbuf_len)
+			snprintf(errbuf, errbuf_len, "failed to build HTTPS request");
+		goto fail;
+	}
+
+	if (auth_key && *auth_key) {
+		if (append_text(&request, &request_len, &request_cap, "\r\nAuthorization: Bearer ") != 0 ||
+		    append_text(&request, &request_len, &request_cap, auth_key) != 0) {
+			if (errbuf && errbuf_len)
+				snprintf(errbuf, errbuf_len, "failed to build HTTPS request");
+			goto fail;
+		}
+	}
+
+	if (append_text(&request, &request_len, &request_cap, "\r\n\r\n") != 0 ||
+	    append_bytes(&request, &request_len, &request_cap, (const char *)data, len) != 0) {
+		if (errbuf && errbuf_len)
+			snprintf(errbuf, errbuf_len, "failed to build HTTPS request");
+		goto fail;
+	}
+
+	if (verbose) {
+		fprintf(stderr, "HTTPS POST request uri=%s bytes=%zu content-type=%s insecure=%s (openssl)\n",
+			uri, len, content_type, insecure ? "true" : "false");
+	}
+
+	ela_set_sigill_stage("https:post:write_request");
+	if (ssl_write_all(ssl, (const uint8_t *)request, request_len) != 0) {
+		if (errbuf && errbuf_len)
+			snprintf(errbuf, errbuf_len, "failed to send HTTPS request");
+		goto fail;
+	}
+
+	ela_set_sigill_stage("https:post:read_headers");
+	if (ssl_read_headers(ssl, &headers) != 0) {
+		if (errbuf && errbuf_len)
+			snprintf(errbuf, errbuf_len, "failed to read HTTPS response headers");
+		goto fail;
+	}
+
+	status = parse_status_code_from_headers(headers);
+	if (status_out)
+		*status_out = status;
+	if (status < 200 || status >= 300) {
+		if (errbuf && errbuf_len)
+			snprintf(errbuf, errbuf_len, "HTTP status %d", status);
+		goto fail;
+	}
+
+	if (verbose)
+		fprintf(stderr, "HTTPS POST success uri=%s status=%d\n", uri, status);
+
+	free(headers);
+	free(request);
+	SSL_shutdown(ssl);
+	SSL_free(ssl);
+	close(sock);
+	SSL_CTX_free(ctx);
+	return 0;
+
+fail:
+	free(headers);
+	free(request);
+	if (ssl) {
+		SSL_shutdown(ssl);
+		SSL_free(ssl);
+	}
 	if (sock >= 0)
 		close(sock);
 	if (ctx)
@@ -1792,13 +2093,13 @@ static struct curl_slist *ela_curl_resolve_list(const char *url)
  * Single HTTPS POST attempt via curl.  Returns 0 on success, -1 on failure.
  * *status_out is set to the HTTP response code when a response is received.
  */
-static int ela_http_post_https_once(const char *effective_uri,
-				    const uint8_t *data, size_t len,
-				    const char *content_type,
-				    const char *auth_key,
-				    bool insecure, bool verbose,
-				    char *errbuf, size_t errbuf_len,
-				    int *status_out)
+static int __attribute__((unused)) ela_http_post_https_once(const char *effective_uri,
+							    const uint8_t *data, size_t len,
+							    const char *content_type,
+							    const char *auth_key,
+							    bool insecure, bool verbose,
+							    char *errbuf, size_t errbuf_len,
+							    int *status_out)
 {
 	CURL *curl;
 	CURLcode rc;
@@ -1969,9 +2270,9 @@ int ela_http_post(const char *uri, const uint8_t *data, size_t len,
 	key = ela_api_key_get();
 	do {
 		if (is_https) {
-			ret = ela_http_post_https_once(effective_uri, data, len,
-						       ct, key, insecure, verbose,
-						       errbuf, errbuf_len, &status);
+			ret = simple_https_post(effective_uri, data, len,
+						ct, key, insecure, verbose,
+						errbuf, errbuf_len, &status);
 		} else {
 			/*
 			 * For plain http://, use the lightweight socket-based POST
