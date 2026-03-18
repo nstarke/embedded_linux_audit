@@ -71,6 +71,25 @@ void ela_conf_load(struct ela_conf *conf)
 	fclose(f);
 }
 
+void ela_conf_export_to_env(const struct ela_conf *conf)
+{
+	if (!conf)
+		return;
+
+	if (conf->output_http[0]) {
+		if (!strncmp(conf->output_http, "https://", 8))
+			setenv("ELA_OUTPUT_HTTPS", conf->output_http, 0);
+		else
+			setenv("ELA_OUTPUT_HTTP", conf->output_http, 0);
+	}
+
+	if (conf->output_format[0])
+		setenv("ELA_OUTPUT_FORMAT", conf->output_format, 0);
+
+	if (conf->insecure)
+		setenv("ELA_API_INSECURE", "true", 0);
+}
+
 void ela_conf_update_from_env(void)
 {
 	struct ela_conf conf;

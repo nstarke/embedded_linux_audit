@@ -504,6 +504,7 @@ const tui = {
         for (const mac of sessionRegistry.listMacs()) {
           const entry = sessionRegistry.getSession(mac);
           if (entry && entry.ws.readyState === entry.ws.OPEN) {
+            entry.ws.send('\x15');
             entry.ws.send(`set ${parsed.key} ${parsed.value}\n`);
             started += 1;
           }
