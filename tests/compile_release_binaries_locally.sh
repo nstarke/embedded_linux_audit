@@ -43,6 +43,36 @@ clean_outputs() {
     done
 }
 
+clean_repo_build_artifacts() {
+    rm -f "$REPO_ROOT/embedded_linux_audit"
+    rm -rf "$REPO_ROOT/generated"
+    rm -f "$REPO_ROOT"/third_party/libefivar/.ela-build-*
+    rm -f "$REPO_ROOT"/third_party/ncurses/.ela-build-*
+    rm -f "$REPO_ROOT"/third_party/readline/.ela-build-*
+    rm -f "$REPO_ROOT"/generated/libefivar-link-*.a
+    rm -rf "$REPO_ROOT"/generated/libefivar-repack-*
+    rm -rf "$REPO_ROOT"/third_party/json-c/build*
+    rm -rf "$REPO_ROOT"/third_party/libubootenv/build*
+    rm -rf "$REPO_ROOT"/third_party/zlib/build*
+    rm -rf "$REPO_ROOT"/third_party/curl/build*
+    rm -rf "$REPO_ROOT"/third_party/libssh/build*
+    rm -rf "$REPO_ROOT"/third_party/tpm2-tss/build*
+    rm -rf "$REPO_ROOT"/third_party/wolfssl/build*
+    rm -rf "$REPO_ROOT"/third_party/openssl/build*
+    rm -f "$REPO_ROOT"/third_party/ncurses/.ela-build-*
+    rm -f "$REPO_ROOT"/third_party/readline/.ela-build-*
+}
+
+clean_before_target() {
+    if make -C "$REPO_ROOT" clean; then
+        return 0
+    fi
+
+    echo "warning: 'make clean' failed; removing build artifacts directly" >&2
+    clean_repo_build_artifacts
+    return 0
+}
+
 require_command() {
     if ! ela_ensure_command "$1"; then
         echo "error: missing required command: $1" >&2
@@ -247,7 +277,7 @@ build_with_targets() {
     for target in "$@"; do
         echo "Trying target: $target"
         if [ "$clean_before_build" -eq 1 ]; then
-            if ! make -C "$REPO_ROOT" clean; then
+            if ! clean_before_target; then
                 build_ok=0
                 echo "Clean failed before target: $target"
                 continue
