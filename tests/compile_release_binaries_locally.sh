@@ -33,7 +33,8 @@ usage() {
 
 clean_outputs() {
     if [ "$#" -eq 0 ]; then
-        rm -rf "$DEST_RELEASE_DIR"
+        mkdir -p "$DEST_RELEASE_DIR"
+        find "$DEST_RELEASE_DIR" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
         return 0
     fi
 
