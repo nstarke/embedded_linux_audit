@@ -2,6 +2,7 @@
 
 #include "tcp_util.h"
 #include "tcp_parse_util.h"
+#include "tcp_runtime_util.h"
 #include "../embedded_linux_audit_cmd.h"
 
 #include <arpa/inet.h>
@@ -24,11 +25,6 @@
  * ---------------------------------------------------------------------- */
 
 #ifdef __linux__
-static bool ela_is_loopback_ipv4(const char *ip)
-{
-	return ip && !strncmp(ip, "127.", 4);
-}
-
 static int ela_has_dns_configured(void)
 {
 	FILE *f;
@@ -38,7 +34,9 @@ static int ela_has_dns_configured(void)
 	if (!f)
 		return 0;
 	while (fgets(line, sizeof(line), f)) {
-		if (strncmp(line, "nameserver", 10) == 0) {
+		char nameserver[16];
+
+		if (ela_tcp_parse_nameserver_line(line, nameserver, sizeof(nameserver)) == 0) {
 			fclose(f);
 			return 1;
 		}
@@ -53,9 +51,6 @@ static int ela_get_default_gateway(char *buf, size_t buf_sz)
 {
 	FILE        *f;
 	char         line[256];
-	char         iface[64];
-	unsigned int dest, gw, flags, mask;
-	struct in_addr addr;
 	int          found = 0;
 
 	f = fopen("/proc/net/route", "r");
@@ -69,21 +64,9 @@ static int ela_get_default_gateway(char *buf, size_t buf_sz)
 	}
 
 	while (fgets(line, sizeof(line), f)) {
-		unsigned int ref, use, metric, mtu, win, irtt;
-		int n = sscanf(line, "%63s %X %X %X %u %u %u %X %u %u %u",
-			       iface, &dest, &gw, &flags,
-			       &ref, &use, &metric, &mask,
-			       &mtu, &win, &irtt);
-		if (n < 8)
-			continue;
-		/* default route: destination 0.0.0.0, RTF_GATEWAY (0x2) set */
-		if (dest == 0 && (flags & 0x0002) && gw != 0) {
-			/* /proc/net/route stores in host byte order */
-			addr.s_addr = htonl(gw);
-			if (inet_ntop(AF_INET, &addr, buf, (socklen_t)buf_sz)) {
-				found = 1;
-				break;
-			}
+		if (ela_tcp_parse_default_gateway_line(line, buf, buf_sz) == 0) {
+			found = 1;
+			break;
 		}
 	}
 
@@ -102,23 +85,7 @@ static int ela_read_nameservers(char ns[][16], int max_ns)
 		return 0;
 
 	while (count < max_ns && fgets(line, sizeof(line), f)) {
-		const char *p = line;
-		int i;
-
-		while (*p == ' ' || *p == '\t')
-			p++;
-		if (strncmp(p, "nameserver", 10) != 0)
-			continue;
-		p += 10;
-		while (*p == ' ' || *p == '\t')
-			p++;
-
-		for (i = 0; i < 15 && *p && *p != '\n' && *p != '\r' &&
-		            *p != ' ' && *p != '\t' && *p != '#'; i++) {
-			ns[count][i] = *p++;
-		}
-		ns[count][i] = '\0';
-		if (i > 0)
+		if (ela_tcp_parse_nameserver_line(line, ns[count], sizeof(ns[count])) == 0)
 			count++;
 	}
 
@@ -183,14 +150,14 @@ static int ela_udp_resolve_ipv4(const char *hostname, char *ip_buf, size_t ip_bu
 
 	ns_count = ela_read_nameservers(ns, 3);
 	for (i = 0; i < ns_count; i++) {
-		if (!ns[i][0] || ela_is_loopback_ipv4(ns[i]))
+		if (ela_tcp_should_skip_nameserver(ns[i]))
 			continue;
 		if (ela_dns_query_a(ns[i], hostname, ip_buf, ip_buf_len) == 0)
 			return 0;
 	}
 
 	if (ela_get_default_gateway(gw, sizeof(gw)) == 0 &&
-	    !ela_is_loopback_ipv4(gw) &&
+	    !ela_tcp_should_skip_nameserver(gw) &&
 	    ela_dns_query_a(gw, hostname, ip_buf, ip_buf_len) == 0) {
 		return 0;
 	}
@@ -280,7 +247,8 @@ int connect_tcp_host_port_any(const char *host, uint16_t port)
 #ifdef __linux__
 		char ip[INET_ADDRSTRLEN];
 
-		if (ela_udp_resolve_ipv4(host, ip, sizeof(ip)) == 0)
+		if (ela_tcp_should_try_udp_resolve_fallback(rc, host) &&
+		    ela_udp_resolve_ipv4(host, ip, sizeof(ip)) == 0)
 			return connect_tcp_host_port(ip, port);
 #endif
 		return -1;

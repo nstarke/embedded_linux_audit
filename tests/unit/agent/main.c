@@ -17,6 +17,7 @@ int run_remote_copy_util_tests(void);
 int run_orom_util_tests(void);
 int run_http_protocol_util_tests(void);
 int run_tcp_parse_util_tests(void);
+int run_tcp_runtime_util_tests(void);
 int run_api_key_util_tests(void);
 int run_command_io_util_tests(void);
 int run_ws_frame_util_tests(void);
@@ -68,6 +69,7 @@ int main(void)
 	rc |= run_orom_util_tests();
 	rc |= run_http_protocol_util_tests();
 	rc |= run_tcp_parse_util_tests();
+	rc |= run_tcp_runtime_util_tests();
 	rc |= run_api_key_util_tests();
 	rc |= run_command_io_util_tests();
 	rc |= run_ws_frame_util_tests();

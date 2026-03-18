@@ -410,6 +410,7 @@ AGENT_UNIT_TEST_SRC := \
 	tests/unit/agent/test_orom_util.c \
 	tests/unit/agent/test_http_protocol_util.c \
 	tests/unit/agent/test_tcp_parse_util.c \
+	tests/unit/agent/test_tcp_runtime_util.c \
 	tests/unit/agent/test_api_key_util.c \
 	tests/unit/agent/test_command_io_util.c \
 	tests/unit/agent/test_ws_frame_util.c \
@@ -466,6 +467,7 @@ AGENT_UNIT_TEST_DEPS := \
 	agent/net/ws_connect_util.c \
 	agent/net/ws_interactive_util.c \
 	agent/net/tcp_parse_util.c \
+	agent/net/tcp_runtime_util.c \
 	agent/net/api_key_util.c \
 	agent/net/ws_frame_util.c \
 	agent/net/ws_session_util.c \
@@ -510,6 +512,7 @@ AGENT_UNIT_TEST_DEPS := \
 	agent/net/ela_conf.h \
 	agent/net/ws_url_util.h \
 	agent/net/tcp_parse_util.h \
+	agent/net/tcp_runtime_util.h \
 	agent/net/api_key_util.h \
 	agent/net/ws_frame_util.h \
 	agent/net/ws_session_util.h \
@@ -931,6 +934,7 @@ $(AGENT_UNIT_TEST_BIN): $(AGENT_UNIT_TEST_SRC) $(AGENT_UNIT_TEST_DEPS) $(JSONC_L
 			agent/net/ws_connect_util.c \
 			agent/net/ws_interactive_util.c \
 			agent/net/tcp_parse_util.c \
+			agent/net/tcp_runtime_util.c \
 			agent/net/api_key_util.c \
 			agent/net/ws_frame_util.c \
 			agent/net/ws_session_util.c \

@@ -3,6 +3,7 @@
 #include "script_exec_util.h"
 
 #include <ctype.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -122,4 +123,56 @@ char *ela_script_trim(char *s)
 	}
 
 	return s;
+}
+
+bool ela_script_line_is_ignorable(const char *trimmed)
+{
+	return !trimmed || !*trimmed || *trimmed == '#';
+}
+
+int ela_script_plan_dispatch(int argc,
+			     char **argv,
+			     struct ela_script_dispatch_plan *plan,
+			     char *errbuf,
+			     size_t errbuf_len)
+{
+	int script_cmd_idx = 0;
+
+	if (!plan || argc < 0 || (argc > 0 && !argv)) {
+		if (errbuf && errbuf_len)
+			snprintf(errbuf, errbuf_len, "invalid script command");
+		return -1;
+	}
+
+	memset(plan, 0, sizeof(*plan));
+
+	if (argc == 0) {
+		if (errbuf && errbuf_len)
+			snprintf(errbuf, errbuf_len, "empty script command");
+		return -1;
+	}
+
+	if (!strcmp(argv[0], "help")) {
+		plan->kind = ELA_SCRIPT_COMMAND_HELP;
+		return 0;
+	}
+
+	if (!strcmp(argv[0], "set")) {
+		plan->kind = ELA_SCRIPT_COMMAND_SET;
+		return 0;
+	}
+
+	if (!strcmp(argv[0], "ela") || !strcmp(argv[0], "embedded_linux_audit"))
+		script_cmd_idx = 1;
+
+	if (script_cmd_idx >= argc) {
+		if (errbuf && errbuf_len)
+			snprintf(errbuf, errbuf_len, "missing command after %s", argv[0]);
+		return -1;
+	}
+
+	plan->kind = ELA_SCRIPT_COMMAND_DISPATCH;
+	plan->script_cmd_idx = script_cmd_idx;
+	plan->dispatch_argc = argc + 1 - script_cmd_idx;
+	return 0;
 }

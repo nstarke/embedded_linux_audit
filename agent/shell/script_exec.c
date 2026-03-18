@@ -199,15 +199,14 @@ int execute_script_commands(const char *prog, const char *script_source)
 	while (fgets(line, sizeof(line), fp)) {
 		char **argv = NULL;
 		char **dispatch_argv = NULL;
-		int dispatch_argc;
-		int script_cmd_idx = 0;
+		struct ela_script_dispatch_plan plan;
 		char *trimmed;
 		int argc = 0;
 		int rc;
 
 		lineno++;
 		trimmed = script_trim(line);
-		if (!trimmed || !*trimmed || *trimmed == '#')
+		if (ela_script_line_is_ignorable(trimmed))
 			continue;
 
 		rc = interactive_parse_line(trimmed, &argv, &argc);
@@ -227,13 +226,24 @@ int execute_script_commands(const char *prog, const char *script_source)
 			continue;
 		}
 
-		if (!strcmp(argv[0], "help")) {
+		if (ela_script_plan_dispatch(argc, argv, &plan, errbuf, sizeof(errbuf)) != 0) {
+			fprintf(stderr,
+				"Script line %lu in %s %s\n",
+				lineno,
+				effective_path,
+				errbuf[0] ? errbuf : "is invalid");
+			interactive_free_argv(argv, argc);
+			final_rc = 2;
+			goto out;
+		}
+
+		if (plan.kind == ELA_SCRIPT_COMMAND_HELP) {
 			ela_usage(prog);
 			interactive_free_argv(argv, argc);
 			continue;
 		}
 
-		if (!strcmp(argv[0], "set")) {
+		if (plan.kind == ELA_SCRIPT_COMMAND_SET) {
 			rc = interactive_set_command(argc, argv);
 			interactive_free_argv(argv, argc);
 			if (rc != 0) {
@@ -243,23 +253,7 @@ int execute_script_commands(const char *prog, const char *script_source)
 			continue;
 		}
 
-		if (!strcmp(argv[0], "ela") || !strcmp(argv[0], "embedded_linux_audit"))
-			script_cmd_idx = 1;
-
-		if (script_cmd_idx >= argc) {
-			fprintf(stderr,
-				"Script line %lu in %s must include a command after %s\n",
-				lineno,
-				effective_path,
-				argv[0]);
-			interactive_free_argv(argv, argc);
-			final_rc = 2;
-			goto out;
-		}
-
-		dispatch_argc = argc + 1 - script_cmd_idx;
-
-		dispatch_argv = calloc((size_t)dispatch_argc + 1, sizeof(*dispatch_argv));
+		dispatch_argv = calloc((size_t)plan.dispatch_argc + 1, sizeof(*dispatch_argv));
 		if (!dispatch_argv) {
 			fprintf(stderr, "Out of memory while preparing script line %lu\n", lineno);
 			interactive_free_argv(argv, argc);
@@ -268,10 +262,10 @@ int execute_script_commands(const char *prog, const char *script_source)
 		}
 
 		dispatch_argv[0] = (char *)prog;
-		for (int i = script_cmd_idx; i < argc; i++)
-			dispatch_argv[i - script_cmd_idx + 1] = argv[i];
+		for (int i = plan.script_cmd_idx; i < argc; i++)
+			dispatch_argv[i - plan.script_cmd_idx + 1] = argv[i];
 
-		(void)embedded_linux_audit_dispatch(dispatch_argc, dispatch_argv);
+		(void)embedded_linux_audit_dispatch(plan.dispatch_argc, dispatch_argv);
 		free(dispatch_argv);
 		interactive_free_argv(argv, argc);
 
