@@ -2,7 +2,7 @@
 
 const { promptTokenForMac } = require('./promptFormatter');
 
-const DEFAULT_MAX_BATCH_LINES = 80;
+const DEFAULT_MAX_BATCH_LINES = 5;
 
 function getBatchOutputLabel(entry) {
   if (!entry) {

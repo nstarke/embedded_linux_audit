@@ -30,18 +30,19 @@ describe('terminal batch output helpers', () => {
 
   test('retains only the most recent lines', () => {
     const lines = appendBatchOutput(
-      ['[old] one', '[old] two'],
+      ['[old] one', '[old] two', '[old] three', '[old] four'],
       { mac: 'aa-bb', alias: null },
-      'three\nfour',
-      { maxLines: 3 },
+      'five\nsix',
     );
 
     expect(lines).toEqual([
       '[old] two',
-      '[aa-bb] three',
-      '[aa-bb] four',
+      '[old] three',
+      '[old] four',
+      '[aa-bb] five',
+      '[aa-bb] six',
     ]);
-    expect(DEFAULT_MAX_BATCH_LINES).toBeGreaterThan(0);
+    expect(DEFAULT_MAX_BATCH_LINES).toBe(5);
   });
 
   test('renders a readable multi-line block', () => {
