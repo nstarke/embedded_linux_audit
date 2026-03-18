@@ -7,6 +7,7 @@
 
 #include "ws_client.h"
 #include "api_key.h"
+#include "http_ws_policy_util.h"
 #include "ws_frame_util.h"
 #include "ws_session_util.h"
 #include "ws_url_util.h"
@@ -737,7 +738,7 @@ int ela_ws_run_interactive(struct ela_ws_conn *ws, const char *prog)
 		 * The server's ws library automatically replies with a PONG. */
 		{
 			time_t now = time(NULL);
-			if (now - last_ping_t >= 25) {
+			if (ela_ws_should_send_keepalive(now, last_ping_t, 25)) {
 				ws_send_ping(ws);
 				last_ping_t = now;
 			}

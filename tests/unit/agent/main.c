@@ -26,6 +26,10 @@ int run_tpm2_command_util_tests(void);
 int run_transfer_parse_util_tests(void);
 int run_ws_session_util_tests(void);
 int run_uboot_command_extract_util_tests(void);
+int run_uboot_env_util_tests(void);
+int run_uboot_audit_util_tests(void);
+int run_linux_dmesg_util_tests(void);
+int run_http_ws_policy_util_tests(void);
 
 int main(void)
 {
@@ -57,6 +61,10 @@ int main(void)
 	rc |= run_transfer_parse_util_tests();
 	rc |= run_ws_session_util_tests();
 	rc |= run_uboot_command_extract_util_tests();
+	rc |= run_uboot_env_util_tests();
+	rc |= run_uboot_audit_util_tests();
+	rc |= run_linux_dmesg_util_tests();
+	rc |= run_http_ws_policy_util_tests();
 
 	return rc;
 }

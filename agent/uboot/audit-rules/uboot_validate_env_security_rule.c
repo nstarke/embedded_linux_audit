@@ -1,15 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later - Copyright (c) 2026 Nicholas Starke
 
 #include "embedded_linux_audit_cmd.h"
+#include "uboot/audit-rules/uboot_audit_util.h"
 
 #include <ctype.h>
 #include <stdio.h>
 #include <string.h>
-
-struct env_kv_view {
-	const char *name;
-	const char *value;
-};
 
 static int parse_env_pairs(const uint8_t *buf,
 			   size_t len,
@@ -17,191 +13,37 @@ static int parse_env_pairs(const uint8_t *buf,
 			   struct env_kv_view *pairs,
 			   size_t max_pairs)
 {
-	size_t off = data_off;
-	size_t count = 0;
-
-	if (!buf || data_off >= len || !pairs || !max_pairs)
-		return -1;
-
-	while (off < len && count < max_pairs) {
-		const char *entry;
-		size_t slen;
-		const char *eq;
-
-		if (buf[off] == '\0') {
-			if (off + 1 >= len || buf[off + 1] == '\0')
-				break;
-			off++;
-			continue;
-		}
-
-		entry = (const char *)(buf + off);
-		slen = strnlen(entry, len - off);
-		if (slen >= len - off)
-			break;
-
-		eq = memchr(entry, '=', slen);
-		if (eq) {
-			pairs[count].name = entry;
-			pairs[count].value = eq + 1;
-			count++;
-		}
-
-		off += slen + 1;
-	}
-
-	return (int)count;
+	return ela_uboot_parse_env_pairs(buf, len, data_off, pairs, max_pairs);
 }
 
 static const char *find_env_value(const struct env_kv_view *pairs, size_t count, const char *name)
 {
-	for (size_t i = 0; i < count; i++) {
-		size_t nlen;
-
-		if (!pairs[i].name || !pairs[i].value)
-			continue;
-
-		nlen = strcspn(pairs[i].name, "=");
-		if (strlen(name) == nlen && !strncmp(pairs[i].name, name, nlen))
-			return pairs[i].value;
-	}
-
-	return NULL;
+	return ela_uboot_find_env_value(pairs, count, name);
 }
 
 static int choose_env_data_offset(const struct embedded_linux_audit_input *input, size_t *data_off)
 {
-	uint32_t stored_le;
-	uint32_t stored_be;
-	uint32_t calc_std;
-	uint32_t calc_redund;
-
-	if (!input || !data_off || !input->data || !input->crc32_table || input->data_len < 8)
-		return -1;
-
-	stored_le = (uint32_t)input->data[0] |
-		((uint32_t)input->data[1] << 8) |
-		((uint32_t)input->data[2] << 16) |
-		((uint32_t)input->data[3] << 24);
-	stored_be = ela_read_be32(input->data);
-
-	calc_std = ela_crc32_calc(input->crc32_table, input->data + 4, input->data_len - 4);
-	if (calc_std == stored_le || calc_std == stored_be) {
-		*data_off = 4;
-		return 0;
-	}
-
-	if (input->data_len <= 5)
-		return -1;
-
-	calc_redund = ela_crc32_calc(input->crc32_table, input->data + 5, input->data_len - 5);
-	if (calc_redund == stored_le || calc_redund == stored_be) {
-		*data_off = 5;
-		return 0;
-	}
-
-	return -1;
+	return ela_uboot_choose_env_data_offset(input, data_off);
 }
 
 static int parse_int_value(const char *s, int *out)
 {
-	long v = 0;
-	int sign = 1;
-
-	if (!s || !*s || !out)
-		return -1;
-
-	if (*s == '+') {
-		s++;
-	} else if (*s == '-') {
-		s++;
-		sign = -1;
-	}
-
-	if (!*s)
-		return -1;
-
-	for (; *s; s++) {
-		if (!isdigit((unsigned char)*s))
-			return -1;
-		v = (v * 10) + (*s - '0');
-		if (v > 2147483647L)
-			return -1;
-	}
-
-	*out = (int)(v * sign);
-	return 0;
+	return ela_uboot_parse_int_value(s, out);
 }
 
 static bool contains_token_ci(const char *s, const char *token)
 {
-	size_t tlen;
-
-	if (!s || !*s || !token || !*token)
-		return false;
-
-	tlen = strlen(token);
-	for (const char *p = s; *p; p++) {
-		size_t i;
-		for (i = 0; i < tlen; i++) {
-			if (!p[i])
-				return false;
-			if (tolower((unsigned char)p[i]) != tolower((unsigned char)token[i]))
-				break;
-		}
-		if (i == tlen)
-			return true;
-	}
-
-	return false;
+	return ela_uboot_contains_token_ci(s, token);
 }
 
 static bool value_suggests_network_boot(const char *value)
 {
-	static const char *network_tokens[] = {
-		"dhcp",
-		"pxe",
-		"tftp",
-		"bootp",
-		"nfs",
-		"netboot",
-		"httpboot",
-	};
-
-	if (!value || !*value)
-		return false;
-
-	for (size_t i = 0; i < sizeof(network_tokens) / sizeof(network_tokens[0]); i++) {
-		if (contains_token_ci(value, network_tokens[i]))
-			return true;
-	}
-
-	return false;
+	return ela_uboot_value_suggests_network_boot(value);
 }
 
 static bool value_suggests_factory_reset(const char *value)
 {
-	static const char *factory_reset_tokens[] = {
-		"factory_reset",
-		"factory reset",
-		"reset_to_defaults",
-		"restore_defaults",
-		"resetenv",
-		"eraseenv",
-		"env default -a",
-		"default -f -a",
-		"wipe_data",
-	};
-
-	if (!value || !*value)
-		return false;
-
-	for (size_t i = 0; i < sizeof(factory_reset_tokens) / sizeof(factory_reset_tokens[0]); i++) {
-		if (contains_token_ci(value, factory_reset_tokens[i]))
-			return true;
-	}
-
-	return false;
+	return ela_uboot_value_suggests_factory_reset(value);
 }
 
 static int run_validate_env_security(const struct embedded_linux_audit_input *input, char *message, size_t message_len)

@@ -2,6 +2,7 @@
 
 #include "embedded_linux_audit_cmd.h"
 #include "uboot/env/uboot_env_internal.h"
+#include "uboot/env/uboot_env_util.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -40,19 +41,6 @@
 #else
 #define MAYBE_UNUSED
 #endif
-
-struct env_kv {
-	char *name;
-	char *value;
-};
-
-struct uboot_cfg_entry {
-	char dev[256];
-	uint64_t off;
-	uint64_t env_size;
-	uint64_t erase_size;
-	uint64_t sectors;
-};
 
 static uint32_t crc32_table[256];
 static bool g_verbose;
@@ -673,71 +661,17 @@ char *uboot_trim(char *s)
 
 static MAYBE_UNUSED void free_env_kvs(struct env_kv *kvs, size_t count)
 {
-	if (!kvs)
-		return;
-	for (size_t i = 0; i < count; i++) {
-		free(kvs[i].name);
-		free(kvs[i].value);
-	}
-	free(kvs);
+	ela_uboot_env_free_kvs(kvs, count);
 }
 
 static MAYBE_UNUSED int env_set_kv(struct env_kv **kvs, size_t *count, const char *name, const char *value)
 {
-	struct env_kv *tmp;
-	char *name_dup;
-	char *value_dup;
-
-	if (!kvs || !count || !name || !value)
-		return -1;
-
-	for (size_t i = 0; i < *count; i++) {
-		if (strcmp((*kvs)[i].name, name))
-			continue;
-		value_dup = strdup(value);
-		if (!value_dup)
-			return -1;
-		free((*kvs)[i].value);
-		(*kvs)[i].value = value_dup;
-		return 0;
-	}
-
-	tmp = realloc(*kvs, (*count + 1) * sizeof(**kvs));
-	if (!tmp)
-		return -1;
-	*kvs = tmp;
-
-	name_dup = strdup(name);
-	value_dup = strdup(value);
-	if (!name_dup || !value_dup) {
-		free(name_dup);
-		free(value_dup);
-		return -1;
-	}
-
-	(*kvs)[*count].name = name_dup;
-	(*kvs)[*count].value = value_dup;
-	(*count)++;
-	return 0;
+	return ela_uboot_env_set_kv(kvs, count, name, value);
 }
 
 static MAYBE_UNUSED int env_unset_kv(struct env_kv *kvs, size_t *count, const char *name)
 {
-	if (!kvs || !count || !name)
-		return -1;
-
-	for (size_t i = 0; i < *count; i++) {
-		if (strcmp(kvs[i].name, name))
-			continue;
-		free(kvs[i].name);
-		free(kvs[i].value);
-		for (size_t j = i + 1; j < *count; j++)
-			kvs[j - 1] = kvs[j];
-		(*count)--;
-		return 0;
-	}
-
-	return 0;
+	return ela_uboot_env_unset_kv(kvs, count, name);
 }
 
 static MAYBE_UNUSED int parse_fw_config(const char *path, struct uboot_cfg_entry out[2], size_t *out_count)
@@ -757,30 +691,9 @@ static MAYBE_UNUSED int parse_fw_config(const char *path, struct uboot_cfg_entry
 
 	while (fgets(line, sizeof(line), fp)) {
 		char *s = uboot_trim(line);
-		char dev[256], off_s[64], size_s[64], erase_s[64], sec_s[64];
-		uint64_t off, env_size, erase, sec;
 
 		if (!*s || *s == '#')
 			continue;
-
-		if (sscanf(s, "%255s %63s %63s %63s %63s", dev, off_s, size_s, erase_s, sec_s) != 5) {
-			err_printf("Invalid uboot_env.config line: %s\n", s);
-			fclose(fp);
-			return -1;
-		}
-
-		if (ela_parse_u64(off_s, &off) || ela_parse_u64(size_s, &env_size) ||
-		    ela_parse_u64(erase_s, &erase) || ela_parse_u64(sec_s, &sec)) {
-			err_printf("Invalid numeric values in uboot_env.config line: %s\n", s);
-			fclose(fp);
-			return -1;
-		}
-
-		if (!env_size || env_size < 8) {
-			err_printf("Invalid env size in uboot_env.config line: %s\n", s);
-			fclose(fp);
-			return -1;
-		}
 
 		if (count >= 2) {
 			err_printf("uboot_env.config must contain one or two usable entries for --write\n");
@@ -788,12 +701,11 @@ static MAYBE_UNUSED int parse_fw_config(const char *path, struct uboot_cfg_entry
 			return -1;
 		}
 
-		strncpy(out[count].dev, dev, sizeof(out[count].dev) - 1);
-		out[count].dev[sizeof(out[count].dev) - 1] = '\0';
-		out[count].off = off;
-		out[count].env_size = env_size;
-		out[count].erase_size = erase;
-		out[count].sectors = sec;
+		if (ela_uboot_parse_fw_config_line(s, &out[count]) != 1) {
+			err_printf("Invalid uboot_env.config line: %s\n", s);
+			fclose(fp);
+			return -1;
+		}
 		count++;
 	}
 
@@ -816,49 +728,7 @@ static MAYBE_UNUSED int parse_fw_config(const char *path, struct uboot_cfg_entry
 static MAYBE_UNUSED int parse_existing_env_data(const uint8_t *buf, size_t buf_len, size_t data_off,
 					   struct env_kv **kvs, size_t *count)
 {
-	size_t off = data_off;
-
-	if (!buf || !kvs || !count || data_off >= buf_len)
-		return -1;
-
-	while (off < buf_len) {
-		const char *entry;
-		size_t slen;
-		const char *eq;
-		char *name, *value;
-
-		if (buf[off] == '\0') {
-			if (off + 1 >= buf_len || buf[off + 1] == '\0')
-				break;
-			off++;
-			continue;
-		}
-
-		entry = (const char *)(buf + off);
-		slen = strnlen(entry, buf_len - off);
-		if (slen >= buf_len - off)
-			break;
-
-		eq = memchr(entry, '=', slen);
-		if (!eq) {
-			off += slen + 1;
-			continue;
-		}
-
-		name = strndup(entry, (size_t)(eq - entry));
-		value = strndup(eq + 1, slen - (size_t)(eq - entry) - 1);
-		if (!name || !value || env_set_kv(kvs, count, name, value)) {
-			free(name);
-			free(value);
-			return -1;
-		}
-		free(name);
-		free(value);
-
-		off += slen + 1;
-	}
-
-	return 0;
+	return ela_uboot_parse_existing_env_data(buf, buf_len, data_off, kvs, count);
 }
 
 static MAYBE_UNUSED int apply_write_script(const char *script_path, struct env_kv **kvs, size_t *count)
@@ -942,32 +812,7 @@ static MAYBE_UNUSED int apply_write_script(const char *script_path, struct env_k
 
 static MAYBE_UNUSED int build_env_region(const struct env_kv *kvs, size_t count, uint8_t *out, size_t out_len)
 {
-	size_t pos = 0;
-
-	if (!out || out_len < 2)
-		return -1;
-
-	memset(out, 0, out_len);
-	for (size_t i = 0; i < count; i++) {
-		size_t nlen = strlen(kvs[i].name);
-		size_t vlen = strlen(kvs[i].value);
-		size_t need = nlen + 1 + vlen + 1;
-
-		if (pos + need + 1 > out_len)
-			return -1;
-
-		memcpy(out + pos, kvs[i].name, nlen);
-		pos += nlen;
-		out[pos++] = '=';
-		memcpy(out + pos, kvs[i].value, vlen);
-		pos += vlen;
-		out[pos++] = '\0';
-	}
-
-	if (pos + 1 > out_len)
-		return -1;
-	out[pos++] = '\0';
-	return 0;
+	return ela_uboot_build_env_region(kvs, count, out, out_len);
 }
 
 static MAYBE_UNUSED int read_env_copy(const struct uboot_cfg_entry *cfg, uint8_t **out)
@@ -1003,26 +848,7 @@ static MAYBE_UNUSED int read_env_copy(const struct uboot_cfg_entry *cfg, uint8_t
 
 static MAYBE_UNUSED bool env_crc_matches(const uint8_t *buf, size_t env_size, size_t data_off, bool *is_le)
 {
-	uint32_t stored_le;
-	uint32_t stored_be;
-	uint32_t calc;
-
-	if (!buf || env_size <= data_off || !is_le)
-		return false;
-
-	stored_le = read_le32(buf);
-	stored_be = ela_read_be32(buf);
-	calc = ela_crc32_calc(crc32_table, buf + data_off, env_size - data_off);
-	if (calc == stored_le) {
-		*is_le = true;
-		return true;
-	}
-	if (calc == stored_be) {
-		*is_le = false;
-		return true;
-	}
-
-	return false;
+	return ela_uboot_env_crc_matches(crc32_table, buf, env_size, data_off, is_le);
 }
 
 static MAYBE_UNUSED int write_env_copy(const struct uboot_cfg_entry *cfg, const uint8_t *buf)

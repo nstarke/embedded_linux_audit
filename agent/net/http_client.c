@@ -2,6 +2,7 @@
 
 #include "http_client.h"
 #include "api_key.h"
+#include "http_ws_policy_util.h"
 #include "tcp_util.h"
 #include "../util/http_uri_util.h"
 #include "../util/http_protocol_util.h"
@@ -261,7 +262,7 @@ static int simple_http_post(const char *uri,
 	if (status_out)
 		*status_out = status_code;
 
-	if (status_code < 200 || status_code >= 300) {
+	if (!ela_http_status_is_success(status_code)) {
 		if (errbuf && errbuf_len)
 			snprintf(errbuf, errbuf_len, "HTTP status %d", status_code);
 		if (verbose)
@@ -1005,7 +1006,8 @@ static int simple_https_post(const char *uri,
 	}
 
 #ifdef ELA_HAS_WOLFSSL
-	if (isa_is_powerpc_family(ela_detect_isa())) {
+	if (ela_http_choose_https_backend(isa_is_powerpc_family(ela_detect_isa())) ==
+	    ELA_HTTP_HTTPS_BACKEND_WOLFSSL) {
 		ela_set_sigill_stage("https:wolfssl_post_fallback");
 		return simple_wolfssl_https_post(&parsed, uri, data, len, content_type,
 						 auth_key, insecure, verbose,
@@ -1070,7 +1072,7 @@ static int simple_https_post(const char *uri,
 	status = ela_http_parse_status_code_from_headers(headers);
 	if (status_out)
 		*status_out = status;
-	if (status < 200 || status >= 300) {
+	if (!ela_http_status_is_success(status)) {
 		if (errbuf && errbuf_len)
 			snprintf(errbuf, errbuf_len, "HTTP status %d", status);
 		goto fail;
@@ -1126,7 +1128,8 @@ static int simple_https_get_to_file(const char *uri,
 	}
 
 	#ifdef ELA_HAS_WOLFSSL
-	if (isa_is_powerpc_family(ela_detect_isa())) {
+	if (ela_http_choose_https_backend(isa_is_powerpc_family(ela_detect_isa())) ==
+	    ELA_HTTP_HTTPS_BACKEND_WOLFSSL) {
 		ela_set_sigill_stage("https:wolfssl_fallback");
 		return simple_wolfssl_https_get_to_file(&parsed, uri, output_path, insecure,
 			verbose, errbuf, errbuf_len);
@@ -1177,7 +1180,7 @@ static int simple_https_get_to_file(const char *uri,
 
 	status = ela_http_parse_status_code_from_headers(headers);
 	ela_set_sigill_stage("https:get:read_body");
-	if (status < 200 || status >= 300) {
+	if (!ela_http_status_is_success(status)) {
 		if (errbuf && errbuf_len)
 			snprintf(errbuf, errbuf_len, "HTTP status %d", status);
 		goto fail;
