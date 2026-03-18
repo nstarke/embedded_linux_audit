@@ -205,6 +205,7 @@ int embedded_linux_audit_dispatch(int argc, char **argv)
 	bool verbose = true;
 	bool insecure = getenv("ELA_OUTPUT_INSECURE") && !strcmp(getenv("ELA_OUTPUT_INSECURE"), "1");
 	bool output_format_explicit = false;
+	bool output_explicit = false; /* --output-http/https/tcp passed on command line */
 	bool conf_needs_save = false;
 	const char *conf_raw_output_http = NULL; /* raw URL to persist */
 	struct ela_conf ela_conf = {0};
@@ -295,11 +296,13 @@ int embedded_linux_audit_dispatch(int argc, char **argv)
 				return 2;
 			}
 			output_tcp = argv[cmd_idx++];
+			output_explicit = true;
 			continue;
 		}
 
 		if (!strncmp(argv[cmd_idx], "--output-tcp=", 13)) {
 			output_tcp = argv[cmd_idx] + 13;
+			output_explicit = true;
 			cmd_idx++;
 			continue;
 		}
@@ -330,6 +333,7 @@ int embedded_linux_audit_dispatch(int argc, char **argv)
 			output_http = new_output_http;
 			output_https = new_output_https;
 			conf_raw_output_http = raw_url;
+			output_explicit = true;
 			continue;
 		}
 
@@ -352,6 +356,7 @@ int embedded_linux_audit_dispatch(int argc, char **argv)
 			output_http = new_output_http;
 			output_https = new_output_https;
 			conf_raw_output_http = raw_url;
+			output_explicit = true;
 
 			cmd_idx++;
 			continue;
@@ -458,7 +463,8 @@ int embedded_linux_audit_dispatch(int argc, char **argv)
 	 * not bleed into command invocations, which would fail with
 	 * "--remote cannot be combined with a command".
 	 */
-	if (ela_conf.remote[0] && !remote_target && cmd_idx >= argc && !script_path)
+	if (ela_conf.remote[0] && !remote_target && cmd_idx >= argc && !script_path &&
+	    !output_explicit)
 		remote_target = ela_conf.remote;
 
 	if (strcmp(output_format, "txt") && strcmp(output_format, "csv") && strcmp(output_format, "json")) {
