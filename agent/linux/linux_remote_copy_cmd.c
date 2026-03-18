@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later - Copyright (c) 2026 Nicholas Starke
 
 #include "embedded_linux_audit_cmd.h"
+#include "util/remote_copy_util.h"
+#include "util/str_util.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -39,49 +41,15 @@ static void usage(const char *prog)
 		prog);
 }
 
-static bool has_path_prefix(const char *path, const char *prefix)
-{
-	size_t prefix_len;
-
-	if (!path || !prefix)
-		return false;
-
-	prefix_len = strlen(prefix);
-	if (strncmp(path, prefix, prefix_len))
-		return false;
-
-	return path[prefix_len] == '\0' || path[prefix_len] == '/';
-}
-
-static bool path_is_allowed(const char *path, bool allow_dev, bool allow_sysfs, bool allow_proc)
-{
-	if (has_path_prefix(path, "/dev"))
-		return allow_dev;
-	if (has_path_prefix(path, "/sys"))
-		return allow_sysfs;
-	if (has_path_prefix(path, "/proc"))
-		return allow_proc;
-	return true;
-}
-
-static bool stat_is_copyable_file(const struct stat *st)
-{
-	if (!st)
-		return false;
-
-	return S_ISREG(st->st_mode) || S_ISCHR(st->st_mode) || S_ISBLK(st->st_mode);
-}
-
 static void print_verbose_copy_summary(const char *path, uint64_t copied_files)
 {
+	char message[PATH_MAX + 96];
+
 	if (!path)
 		return;
 
-	fprintf(stderr,
-		"remote-copy copied path %s (%" PRIu64 " file%s copied)\n",
-		path,
-		copied_files,
-		copied_files == 1 ? "" : "s");
+	if (ela_format_remote_copy_summary(message, sizeof(message), path, copied_files) == 0)
+		fputs(message, stderr);
 }
 
 static void report_remote_copy_http_error(const char *output_uri,
@@ -151,39 +119,17 @@ static int send_symlink_to_http(const char *path, const char *output_uri, bool i
 		return -1;
 	}
 
-	{
-		char *final_uri;
-		size_t final_len = strlen(upload_uri) + strlen("&symlink=true&symlinkPath=") + (size_t)target_len * 3U + 1U;
-		CURL *curl = curl_easy_init();
-		char *escaped_target;
-		if (!curl) {
-			report_remote_copy_http_error(output_uri, insecure, verbose,
-				"Unable to initialize curl for symlink upload\n");
+		{
+			char *final_uri = ela_remote_copy_build_symlink_upload_uri(upload_uri, target);
+			if (!final_uri) {
+				report_remote_copy_http_error(output_uri, insecure, verbose,
+					"Unable to allocate upload URI for symlink\n");
+				free(upload_uri);
+				return -1;
+			}
 			free(upload_uri);
-			return -1;
+			upload_uri = final_uri;
 		}
-		escaped_target = curl_easy_escape(curl, target, 0);
-		curl_easy_cleanup(curl);
-		if (!escaped_target) {
-			report_remote_copy_http_error(output_uri, insecure, verbose,
-				"Unable to escape symlink target for upload\n");
-			free(upload_uri);
-			return -1;
-		}
-		final_len = strlen(upload_uri) + strlen("&symlink=true&symlinkPath=") + strlen(escaped_target) + 1U;
-		final_uri = malloc(final_len);
-		if (!final_uri) {
-			report_remote_copy_http_error(output_uri, insecure, verbose,
-				"Unable to allocate upload URI for symlink\n");
-			curl_free(escaped_target);
-			free(upload_uri);
-			return -1;
-		}
-		snprintf(final_uri, final_len, "%s&symlink=true&symlinkPath=%s", upload_uri, escaped_target);
-		curl_free(escaped_target);
-		free(upload_uri);
-		upload_uri = final_uri;
-	}
 
 	if (ela_http_post(upload_uri,
 			   (const uint8_t *)"",
@@ -345,7 +291,7 @@ static int upload_path_http(const char *path,
 {
 	struct stat st;
 
-	if (!path_is_allowed(path, allow_dev, allow_sysfs, allow_proc)) {
+	if (!ela_path_is_allowed(path, allow_dev, allow_sysfs, allow_proc)) {
 		char message[PATH_MAX + 96];
 		snprintf(message, sizeof(message), "Refusing to copy restricted path without allow flag: %s\n", path);
 		report_remote_copy_http_error(output_uri, insecure, verbose, message);
@@ -430,7 +376,7 @@ static int upload_path_http(const char *path,
 		return rc;
 	}
 
-	if (!stat_is_copyable_file(&st)) {
+	if (!ela_stat_is_copyable_file(&st)) {
 		if (verbose)
 			fprintf(stderr, "Skipping unsupported file type: %s\n", path);
 		return 0;
@@ -558,7 +504,7 @@ int linux_remote_copy_scan_main(int argc, char **argv)
 		return 1;
 	}
 
-	if (!path_is_allowed(path, allow_dev, allow_sysfs, allow_proc)) {
+	if (!ela_path_is_allowed(path, allow_dev, allow_sysfs, allow_proc)) {
 		fprintf(stderr, "Refusing to copy restricted path without allow flag: %s\n", path);
 		return 2;
 	}
@@ -572,7 +518,7 @@ int linux_remote_copy_scan_main(int argc, char **argv)
 			fprintf(stderr, "Symlink uploads require --output-http\n");
 			return 2;
 		}
-		if (!stat_is_copyable_file(&st)) {
+		if (!ela_stat_is_copyable_file(&st)) {
 			fprintf(stderr, "Path is not a supported file for TCP transfer: %s\n", path);
 			return 1;
 		}

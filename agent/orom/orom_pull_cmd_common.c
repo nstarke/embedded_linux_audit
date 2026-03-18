@@ -2,6 +2,7 @@
 
 #include "embedded_linux_audit_cmd.h"
 #include "orom_pull_cmd_common.h"
+#include "../util/orom_util.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -18,9 +19,6 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-#include <json.h>
-#include <csv.h>
-
 #ifndef O_CLOEXEC
 #define O_CLOEXEC 0
 #endif
@@ -33,12 +31,6 @@ static void usage(const char *prog, const char *fw_mode)
 		"  list: enumerate %s PCI option ROM candidates and emit formatted records\n",
 		prog, fw_mode, fw_mode);
 }
-
-enum orom_output_format {
-	OROM_FMT_TXT = 0,
-	OROM_FMT_CSV,
-	OROM_FMT_JSON,
-};
 
 struct orom_ctx {
 	const char *fw_mode;
@@ -54,16 +46,7 @@ struct orom_ctx {
 
 static void detect_output_format(struct orom_ctx *ctx)
 {
-	const char *fmt;
-
-	ctx->fmt = OROM_FMT_TXT;
-	fmt = getenv("ELA_OUTPUT_FORMAT");
-	if (!fmt || !*fmt)
-		return;
-	if (!strcmp(fmt, "csv"))
-		ctx->fmt = OROM_FMT_CSV;
-	else if (!strcmp(fmt, "json"))
-		ctx->fmt = OROM_FMT_JSON;
+	ctx->fmt = ela_orom_detect_output_format(getenv("ELA_OUTPUT_FORMAT"));
 }
 
 static void mirror_log_to_remote(struct orom_ctx *ctx, const char *line)
@@ -112,32 +95,6 @@ static void log_line(struct orom_ctx *ctx, bool verbose_only, const char *fmt, .
 
 	fputs(line, stderr);
 	mirror_log_to_remote(ctx, line);
-}
-
-static bool rom_matches_mode(const uint8_t *buf, size_t len, const char *fw_mode)
-{
-	bool want_efi = !strcmp(fw_mode, "efi");
-	bool saw_any = false;
-
-	if (!buf || len < 0x1c)
-		return false;
-
-	for (size_t i = 0; i + 0x18 < len; i++) {
-		if (i + 4 > len)
-			break;
-		if (memcmp(buf + i, "PCIR", 4))
-			continue;
-		saw_any = true;
-		if (i + 0x15 >= len)
-			continue;
-		if (want_efi && buf[i + 0x14] == 0x03)
-			return true;
-		if (!want_efi && buf[i + 0x14] == 0x00)
-			return true;
-	}
-
-	/* fallback: if descriptor not found, include payload for both modes */
-	return !saw_any;
 }
 
 static int read_rom_bytes(const char *rom_path, uint8_t **out, size_t *out_len)
@@ -275,29 +232,6 @@ static int send_rom_http(const char *output_uri,
 	return rc;
 }
 
-static void emit_csv_header(struct orom_ctx *ctx)
-{
-	if (!ctx || ctx->csv_header_emitted)
-		return;
-	printf("record,mode,rom_path,size,type,value\n");
-	ctx->csv_header_emitted = true;
-}
-
-static void csv_out_field(const char *s)
-{
-	const char *in = s ? s : "";
-	size_t in_len = strlen(in);
-	size_t buf_len = (in_len * 2U) + 3U;
-	char *buf = malloc(buf_len);
-	size_t written;
-
-	if (!buf)
-		return;
-	written = csv_write(buf, buf_len, in, in_len);
-	printf("%.*s", (int)written, buf);
-	free(buf);
-}
-
 static void emit_record(struct orom_ctx *ctx,
 			const char *record,
 			const char *rom_path,
@@ -305,66 +239,25 @@ static void emit_record(struct orom_ctx *ctx,
 			const char *type,
 			const char *value)
 {
-	char line[1024];
+	struct output_buffer line = {0};
 
 	if (!ctx)
 		return;
 
-	if (ctx->fmt == OROM_FMT_CSV) {
-		char size_s[32];
-		emit_csv_header(ctx);
-		snprintf(size_s, sizeof(size_s), "%zu", size);
-		csv_out_field(record); printf(",");
-		csv_out_field(ctx->fw_mode); printf(",");
-		csv_out_field(rom_path ? rom_path : ""); printf(",");
-		csv_out_field(size_s); printf(",");
-		csv_out_field(type ? type : ""); printf(",");
-		csv_out_field(value ? value : ""); printf("\n");
+	if (ctx->fmt == OROM_FMT_CSV && !ctx->csv_header_emitted) {
+		fputs("record,mode,rom_path,size,type,value\n", stdout);
 		fflush(stdout);
-		snprintf(line, sizeof(line), "%s,%s,%s,%s,%s,%s\n",
-			record ? record : "",
-			ctx->fw_mode ? ctx->fw_mode : "",
-			rom_path ? rom_path : "",
-			size_s,
-			type ? type : "",
-			value ? value : "");
-		mirror_log_to_remote(ctx, line);
-		return;
+		ctx->csv_header_emitted = true;
 	}
 
-	if (ctx->fmt == OROM_FMT_JSON) {
-		json_object *obj = json_object_new_object();
-		const char *js;
-		if (!obj)
-			return;
-		json_object_object_add(obj, "record", json_object_new_string(record ? record : ""));
-		json_object_object_add(obj, "mode", json_object_new_string(ctx->fw_mode ? ctx->fw_mode : ""));
-		if (rom_path)
-			json_object_object_add(obj, "rom_path", json_object_new_string(rom_path));
-		json_object_object_add(obj, "size", json_object_new_uint64((uint64_t)size));
-		if (type)
-			json_object_object_add(obj, "type", json_object_new_string(type));
-		if (value)
-			json_object_object_add(obj, "value", json_object_new_string(value));
-		js = json_object_to_json_string_ext(obj, JSON_C_TO_STRING_PLAIN | JSON_C_TO_STRING_NOSLASHESCAPE);
-		printf("%s\n", js);
-		fflush(stdout);
-		snprintf(line, sizeof(line), "%s\n", js);
-		mirror_log_to_remote(ctx, line);
-		json_object_put(obj);
-		return;
-	}
-
-	snprintf(line, sizeof(line), "orom %s mode=%s rom=%s size=%zu %s=%s\n",
-		record ? record : "record",
-		ctx->fw_mode ? ctx->fw_mode : "",
-		rom_path ? rom_path : "",
-		size,
-		type ? type : "type",
-		value ? value : "");
-	printf("%s", line);
+	if (ela_orom_format_record(&line, ctx->fmt, ctx->fw_mode ? ctx->fw_mode : "",
+				   record, rom_path, size, type, value) != 0)
+		goto out;
+	fwrite(line.data, 1, line.len, stdout);
 	fflush(stdout);
-	mirror_log_to_remote(ctx, line);
+	mirror_log_to_remote(ctx, line.data);
+out:
+	free(line.data);
 }
 
 static int orom_execute_pull(struct orom_ctx *ctx)
@@ -395,7 +288,7 @@ static int orom_execute_pull(struct orom_ctx *ctx)
 			continue;
 		}
 
-		if (!rom_matches_mode(rom, rom_len, ctx->fw_mode)) {
+			if (!ela_orom_rom_matches_mode(rom, rom_len, ctx->fw_mode)) {
 			free(rom);
 			continue;
 		}
@@ -456,7 +349,7 @@ static int orom_execute_list(struct orom_ctx *ctx)
 			continue;
 		}
 
-		if (!rom_matches_mode(rom, rom_len, ctx->fw_mode)) {
+			if (!ela_orom_rom_matches_mode(rom, rom_len, ctx->fw_mode)) {
 			free(rom);
 			continue;
 		}

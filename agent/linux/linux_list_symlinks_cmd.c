@@ -2,6 +2,7 @@
 
 #include "embedded_linux_audit_cmd.h"
 
+#include "util/file_scan_formatter.h"
 #include "util/output_buffer.h"
 
 #include <dirent.h>
@@ -46,37 +47,8 @@ static int emit_symlink(const char *link_path,
 	if (!link_path || !target_path || !output_format)
 		return -1;
 
-	if (!strcmp(output_format, "txt")) {
-		if (output_buffer_append(&line, link_path) != 0 ||
-		    output_buffer_append(&line, " -> ") != 0 ||
-		    output_buffer_append(&line, target_path) != 0 ||
-		    output_buffer_append(&line, "\n") != 0)
-			goto out;
-	} else if (!strcmp(output_format, "csv")) {
-		if (csv_write_to_buf(&line, link_path) != 0 ||
-		    output_buffer_append(&line, ",") != 0 ||
-		    csv_write_to_buf(&line, target_path) != 0 ||
-		    output_buffer_append(&line, "\n") != 0)
-			goto out;
-	} else if (!strcmp(output_format, "json")) {
-		json_object *obj;
-		const char *js;
-
-		obj = json_object_new_object();
-		if (!obj)
-			goto out;
-		json_object_object_add(obj, "link_path",     json_object_new_string(link_path));
-		json_object_object_add(obj, "location_path", json_object_new_string(target_path));
-		js = json_object_to_json_string_ext(obj, JSON_C_TO_STRING_PLAIN | JSON_C_TO_STRING_NOSLASHESCAPE);
-		if (output_buffer_append(&line, js) != 0 ||
-		    output_buffer_append(&line, "\n") != 0) {
-			json_object_put(obj);
-			goto out;
-		}
-		json_object_put(obj);
-	} else {
+	if (ela_format_symlink_record(&line, output_format, link_path, target_path) != 0)
 		goto out;
-	}
 
 	if (output_sock >= 0 && ela_send_all(output_sock, (const uint8_t *)line.data, line.len) < 0)
 		goto out;
@@ -300,14 +272,13 @@ int linux_list_symlinks_scan_main(int argc, char **argv)
 			goto out;
 		}
 
-		if (ela_http_post(upload_uri,
-				   (const uint8_t *)(buf.data ? buf.data : ""),
-				   buf.len,
-				   !strcmp(output_format, "csv") ? "text/csv; charset=utf-8" :
-				   (!strcmp(output_format, "json") ? "application/x-ndjson; charset=utf-8" : "text/plain; charset=utf-8"),
-				   insecure,
-				   false,
-				   errbuf,
+			if (ela_http_post(upload_uri,
+					   (const uint8_t *)(buf.data ? buf.data : ""),
+					   buf.len,
+					   ela_output_format_content_type(output_format, "text/plain; charset=utf-8"),
+					   insecure,
+					   false,
+					   errbuf,
 				   sizeof(errbuf)) < 0) {
 			fprintf(stderr, "Failed HTTP(S) POST to %s: %s\n", upload_uri, errbuf[0] ? errbuf : "unknown error");
 			ret = 1;

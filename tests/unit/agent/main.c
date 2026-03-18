@@ -10,6 +10,11 @@ int run_list_files_filter_util_tests(void);
 int run_lifecycle_formatter_tests(void);
 int run_ela_conf_util_tests(void);
 int run_interactive_parse_util_tests(void);
+int run_file_scan_formatter_tests(void);
+int run_tpm2_pcr_parse_util_tests(void);
+int run_ws_url_util_tests(void);
+int run_remote_copy_util_tests(void);
+int run_orom_util_tests(void);
 
 int main(void)
 {
@@ -25,6 +30,11 @@ int main(void)
 	rc |= run_lifecycle_formatter_tests();
 	rc |= run_ela_conf_util_tests();
 	rc |= run_interactive_parse_util_tests();
+	rc |= run_file_scan_formatter_tests();
+	rc |= run_tpm2_pcr_parse_util_tests();
+	rc |= run_ws_url_util_tests();
+	rc |= run_remote_copy_util_tests();
+	rc |= run_orom_util_tests();
 
 	return rc;
 }

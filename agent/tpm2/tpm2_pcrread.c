@@ -2,6 +2,8 @@
 
 #include "tpm2_internal.h"
 
+#include "../util/tpm2_pcr_parse_util.h"
+
 #include <inttypes.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -20,28 +22,10 @@ static void usage_pcrread(const char *prog)
 		prog, prog);
 }
 
-static int parse_pcr_bank(const char *name, TPMI_ALG_HASH *alg)
-{
-	TPM2_ALG_ID parsed = parse_hash_alg(name);
-
-	if (parsed == TPM2_ALG_ERROR)
-		return -1;
-
-	*alg = parsed;
-	return 0;
-}
-
 static int add_pcr_selection(TPML_PCR_SELECTION *selection, const char *spec)
 {
-	char *copy = NULL;
-	char *colon;
-	char *bank_name;
-	char *list;
-	char *token;
-	char *saveptr = NULL;
-	TPMI_ALG_HASH hash_alg;
-	uint32_t pcr_index;
-	size_t i;
+	struct ela_tpm2_pcr_selection parsed = {0};
+	char errbuf[256];
 
 	if (!selection || !spec || !*spec)
 		return -1;
@@ -51,50 +35,18 @@ static int add_pcr_selection(TPML_PCR_SELECTION *selection, const char *spec)
 		return -1;
 	}
 
-	copy = strdup(spec);
-	if (!copy)
-		return -1;
-
-	colon = strchr(copy, ':');
-	if (!colon) {
-		fprintf(stderr, "tpm2: PCR selector must be in alg:pcr[,pcr...] form: %s\n", spec);
-		free(copy);
+	if (ela_tpm2_add_pcr_selection(&parsed, spec, errbuf, sizeof(errbuf)) != 0) {
+		fprintf(stderr, "%s\n", errbuf);
 		return -1;
 	}
 
-	*colon = '\0';
-	bank_name = copy;
-	list = colon + 1;
-
-	if (parse_pcr_bank(bank_name, &hash_alg) != 0) {
-		fprintf(stderr, "tpm2: unsupported PCR bank: %s\n", bank_name);
-		free(copy);
-		return -1;
-	}
-
-	selection->pcrSelections[selection->count].hash = hash_alg;
+	selection->pcrSelections[selection->count].hash = (TPMI_ALG_HASH)parsed.banks[0].hash_alg;
 	selection->pcrSelections[selection->count].sizeofSelect = 3;
-	memset(selection->pcrSelections[selection->count].pcrSelect, 0, sizeof(selection->pcrSelections[selection->count].pcrSelect));
-
-	for (token = strtok_r(list, ",", &saveptr); token; token = strtok_r(NULL, ",", &saveptr)) {
-		if (parse_u32(token, &pcr_index) != 0 || pcr_index > 23) {
-			fprintf(stderr, "tpm2: invalid PCR index: %s\n", token);
-			free(copy);
-			return -1;
-		}
-		selection->pcrSelections[selection->count].pcrSelect[pcr_index / 8] |= (uint8_t)(1U << (pcr_index % 8));
-	}
-
-	for (i = 0; i < selection->count; i++) {
-		if (selection->pcrSelections[i].hash == hash_alg) {
-			fprintf(stderr, "tpm2: duplicate PCR bank requested: %s\n", bank_name);
-			free(copy);
-			return -1;
-		}
-	}
+	memcpy(selection->pcrSelections[selection->count].pcrSelect,
+	       parsed.banks[0].pcr_select,
+	       sizeof(selection->pcrSelections[selection->count].pcrSelect));
 
 	selection->count++;
-	free(copy);
 	return 0;
 }
 

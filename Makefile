@@ -399,7 +399,12 @@ AGENT_UNIT_TEST_SRC := \
 	tests/unit/agent/test_list_files_filter_util.c \
 	tests/unit/agent/test_lifecycle_formatter.c \
 	tests/unit/agent/test_ela_conf_util.c \
-	tests/unit/agent/test_interactive_parse_util.c
+	tests/unit/agent/test_interactive_parse_util.c \
+	tests/unit/agent/test_file_scan_formatter.c \
+	tests/unit/agent/test_tpm2_pcr_parse_util.c \
+	tests/unit/agent/test_ws_url_util.c \
+	tests/unit/agent/test_remote_copy_util.c \
+	tests/unit/agent/test_orom_util.c
 AGENT_UNIT_TEST_DEPS := \
 	agent/util/str_util.c \
 	agent/util/isa_util.c \
@@ -410,7 +415,12 @@ AGENT_UNIT_TEST_DEPS := \
 	agent/util/list_files_filter_util.c \
 	agent/util/lifecycle_formatter.c \
 	agent/util/interactive_parse_util.c \
+	agent/util/file_scan_formatter.c \
+	agent/util/tpm2_pcr_parse_util.c \
+	agent/util/remote_copy_util.c \
+	agent/util/orom_util.c \
 	agent/net/ela_conf_util.c \
+	agent/net/ws_url_util.c \
 	agent/util/str_util.h \
 	agent/util/isa_util.h \
 	agent/util/http_uri_util.h \
@@ -419,8 +429,13 @@ AGENT_UNIT_TEST_DEPS := \
 	agent/util/list_files_filter_util.h \
 	agent/util/lifecycle_formatter.h \
 	agent/util/interactive_parse_util.h \
+	agent/util/file_scan_formatter.h \
+	agent/util/tpm2_pcr_parse_util.h \
+	agent/util/remote_copy_util.h \
+	agent/util/orom_util.h \
 	agent/net/ela_conf_util.h \
 	agent/net/ela_conf.h \
+	agent/net/ws_url_util.h \
 	agent/embedded_linux_audit_cmd.h
 
 ZLIB_CMAKE_ARGS := $(CMAKE_CC_ARGS)
@@ -473,7 +488,7 @@ READLINE_DEPS :=
 endif
 
 TARGET := embedded_linux_audit
-SRC    := agent/embedded_linux_audit.c agent/shell/interactive.c agent/shell/script_exec.c agent/lifecycle.c agent/util/str_util.c agent/util/isa_util.c agent/util/crc32_util.c agent/util/http_uri_util.c agent/util/command_parse_util.c agent/util/record_formatter.c agent/util/list_files_filter_util.c agent/util/lifecycle_formatter.c agent/util/interactive_parse_util.c agent/net/tcp_util.c agent/net/http_client.c agent/net/ela_conf.c agent/net/ela_conf_util.c agent/device/device_scan.c agent/uboot/env/uboot_env_cmd.c agent/uboot/env/uboot_env_read_vars_cmd.c agent/uboot/env/uboot_env_write_vars_cmd.c agent/uboot/env/uboot_env_write_op.c agent/uboot/uboot_image_cmd.c agent/uboot/image/uboot_image_pull_cmd.c agent/uboot/image/uboot_image_find_address_cmd.c agent/uboot/image/uboot_image_list_commands_cmd.c agent/uboot/uboot_security_audit_cmd.c agent/uboot/audit/uboot_audit_output.c agent/linux/linux_dmesg_cmd.c agent/linux/linux_dmesg_watch_cmd.c agent/linux/linux_download_file_cmd.c agent/linux/linux_execute_command_cmd.c agent/linux/linux_grep_cmd.c agent/linux/linux_list_files_cmd.c agent/linux/linux_list_symlinks_cmd.c agent/linux/linux_remote_copy_cmd.c agent/linux/linux_ssh_cmd.c agent/tpm2/tpm2_cmd.c agent/tpm2/tpm2_util.c agent/tpm2/tpm2_output.c agent/tpm2/tpm2_getcap.c agent/tpm2/tpm2_pcrread.c agent/tpm2/tpm2_nvreadpublic.c agent/tpm2/tpm2_createprimary.c agent/orom/orom_pull_cmd_common.c agent/efi/efi_pull_orom_cmd.c agent/efi/efi_dump_vars_cmd.c agent/bios/bios_pull_orom_cmd.c \
+SRC    := agent/embedded_linux_audit.c agent/shell/interactive.c agent/shell/script_exec.c agent/lifecycle.c agent/util/str_util.c agent/util/isa_util.c agent/util/crc32_util.c agent/util/http_uri_util.c agent/util/command_parse_util.c agent/util/record_formatter.c agent/util/list_files_filter_util.c agent/util/lifecycle_formatter.c agent/util/interactive_parse_util.c agent/util/file_scan_formatter.c agent/util/tpm2_pcr_parse_util.c agent/util/remote_copy_util.c agent/util/orom_util.c agent/net/tcp_util.c agent/net/http_client.c agent/net/ela_conf.c agent/net/ela_conf_util.c agent/net/ws_url_util.c agent/device/device_scan.c agent/uboot/env/uboot_env_cmd.c agent/uboot/env/uboot_env_read_vars_cmd.c agent/uboot/env/uboot_env_write_vars_cmd.c agent/uboot/env/uboot_env_write_op.c agent/uboot/uboot_image_cmd.c agent/uboot/image/uboot_image_pull_cmd.c agent/uboot/image/uboot_image_find_address_cmd.c agent/uboot/image/uboot_image_list_commands_cmd.c agent/uboot/uboot_security_audit_cmd.c agent/uboot/audit/uboot_audit_output.c agent/linux/linux_dmesg_cmd.c agent/linux/linux_dmesg_watch_cmd.c agent/linux/linux_download_file_cmd.c agent/linux/linux_execute_command_cmd.c agent/linux/linux_grep_cmd.c agent/linux/linux_list_files_cmd.c agent/linux/linux_list_symlinks_cmd.c agent/linux/linux_remote_copy_cmd.c agent/linux/linux_ssh_cmd.c agent/tpm2/tpm2_cmd.c agent/tpm2/tpm2_util.c agent/tpm2/tpm2_output.c agent/tpm2/tpm2_getcap.c agent/tpm2/tpm2_pcrread.c agent/tpm2/tpm2_nvreadpublic.c agent/tpm2/tpm2_createprimary.c agent/orom/orom_pull_cmd_common.c agent/efi/efi_pull_orom_cmd.c agent/efi/efi_dump_vars_cmd.c agent/bios/bios_pull_orom_cmd.c \
 	  agent/uboot/audit-rules/uboot_validate_crc32_rule.c \
 	  agent/uboot/audit-rules/uboot_validate_cmdline_init_writeability_rule.c \
 	  agent/uboot/audit-rules/uboot_validate_env_security_rule.c \
@@ -813,7 +828,12 @@ $(AGENT_UNIT_TEST_BIN): $(AGENT_UNIT_TEST_SRC) $(AGENT_UNIT_TEST_DEPS) $(JSONC_L
 			agent/util/list_files_filter_util.c \
 			agent/util/lifecycle_formatter.c \
 			agent/util/interactive_parse_util.c \
+			agent/util/file_scan_formatter.c \
+			agent/util/tpm2_pcr_parse_util.c \
+			agent/util/remote_copy_util.c \
+			agent/util/orom_util.c \
 			agent/net/ela_conf_util.c \
+			agent/net/ws_url_util.c \
 			$(JSONC_LIB)
 
 test-unit-agent-c: $(AGENT_UNIT_TEST_BIN)

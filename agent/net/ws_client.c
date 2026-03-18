@@ -7,6 +7,7 @@
 
 #include "ws_client.h"
 #include "api_key.h"
+#include "ws_url_util.h"
 #include "tcp_util.h"
 #include "../embedded_linux_audit_cmd.h"
 #include "../shell/interactive.h"
@@ -215,39 +216,6 @@ static ssize_t ws_conn_write(const struct ela_ws_conn *ws,
  * Base64 encoding (for Sec-WebSocket-Key)
  * ---------------------------------------------------------------------- */
 
-static const char b64_alphabet[] =
-	"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-
-static void base64_encode(const uint8_t *in, size_t in_len,
-			  char *out, size_t out_sz)
-{
-	size_t i = 0;
-	size_t o = 0;
-	uint32_t v;
-
-	while (i + 2 < in_len && o + 4 < out_sz) {
-		v = ((uint32_t)in[i] << 16) |
-		    ((uint32_t)in[i+1] << 8) |
-		    (uint32_t)in[i+2];
-		out[o++] = b64_alphabet[(v >> 18) & 0x3F];
-		out[o++] = b64_alphabet[(v >> 12) & 0x3F];
-		out[o++] = b64_alphabet[(v >>  6) & 0x3F];
-		out[o++] = b64_alphabet[(v      ) & 0x3F];
-		i += 3;
-	}
-	if (i < in_len && o + 4 < out_sz) {
-		v = (uint32_t)in[i] << 16;
-		if (i + 1 < in_len)
-			v |= (uint32_t)in[i+1] << 8;
-		out[o++] = b64_alphabet[(v >> 18) & 0x3F];
-		out[o++] = b64_alphabet[(v >> 12) & 0x3F];
-		out[o++] = (i + 1 < in_len) ? b64_alphabet[(v >> 6) & 0x3F] : '=';
-		out[o++] = '=';
-	}
-	if (o < out_sz)
-		out[o] = '\0';
-}
-
 /* -------------------------------------------------------------------------
  * Primary MAC address discovery (same as original ws_client.c)
  * ---------------------------------------------------------------------- */
@@ -304,83 +272,6 @@ int ela_is_ws_url(const char *url)
  * Parse ws[s]://host[:port][/path] → host, port, path.
  * Returns 0 on success, -1 if the URL is malformed.
  */
-static int ws_parse_url(const char *url,
-			char *host, size_t host_sz,
-			uint16_t *port_out,
-			char *path, size_t path_sz,
-			int *is_tls_out)
-{
-	const char *p;
-	const char *host_start;
-	size_t host_len;
-	const char *port_str;
-	const char *path_start;
-
-	if (!url)
-		return -1;
-
-	if (strncmp(url, "wss://", 6) == 0) {
-		*is_tls_out = 1;
-		p = url + 6;
-		*port_out = 443;
-	} else if (strncmp(url, "ws://", 5) == 0) {
-		*is_tls_out = 0;
-		p = url + 5;
-		*port_out = 80;
-	} else {
-		return -1;
-	}
-
-	host_start = p;
-
-	/* Find end of host — either ':', '/', or end of string */
-	while (*p && *p != ':' && *p != '/')
-		p++;
-
-	host_len = (size_t)(p - host_start);
-	if (host_len == 0 || host_len >= host_sz)
-		return -1;
-	memcpy(host, host_start, host_len);
-	host[host_len] = '\0';
-
-	if (*p == ':') {
-		p++;
-		port_str = p;
-		while (*p >= '0' && *p <= '9')
-			p++;
-		if (p == port_str)
-			return -1;
-		*port_out = (uint16_t)strtoul(port_str, NULL, 10);
-	}
-
-	path_start = (*p == '/') ? p : "/";
-	if (snprintf(path, path_sz, "%s", path_start) >= (int)path_sz)
-		return -1;
-
-	return 0;
-}
-
-/* Build the full ws[s]://host[:port]/terminal/<mac> URL */
-static int build_ws_url(const char *base_url, const char *mac,
-			char *out, size_t out_sz)
-{
-	size_t scheme_len;
-	char stripped[512];
-	size_t slen;
-	int n;
-
-	scheme_len = strncmp(base_url, "wss://", 6) == 0 ? 6 : 5;
-
-	strncpy(stripped, base_url, sizeof(stripped) - 1);
-	stripped[sizeof(stripped) - 1] = '\0';
-	slen = strlen(stripped);
-	while (slen > scheme_len && stripped[slen - 1] == '/')
-		stripped[--slen] = '\0';
-
-	n = snprintf(out, out_sz, "%s/terminal/%s", stripped, mac);
-	return (n > 0 && (size_t)n < out_sz) ? 0 : -1;
-}
-
 /* -------------------------------------------------------------------------
  * WebSocket handshake
  * ---------------------------------------------------------------------- */
@@ -398,8 +289,8 @@ static void ws_make_key(char *out, size_t out_sz)
 		ssize_t n = read(fd, nonce, sizeof(nonce));
 		close(fd);
 		if (n == (ssize_t)sizeof(nonce)) {
-			base64_encode(nonce, sizeof(nonce), out, out_sz);
-			return;
+				ela_ws_base64_encode(nonce, sizeof(nonce), out, out_sz);
+				return;
 		}
 	}
 	/* fallback */
@@ -410,7 +301,7 @@ static void ws_make_key(char *out, size_t out_sz)
 			seed = seed * 1664525u + 1013904223u;
 			nonce[i] = (uint8_t)(seed >> 16);
 		}
-		base64_encode(nonce, sizeof(nonce), out, out_sz);
+			ela_ws_base64_encode(nonce, sizeof(nonce), out, out_sz);
 	}
 }
 
@@ -430,36 +321,8 @@ static int ws_do_handshake(struct ela_ws_conn *ws,
 
 	ws_make_key(key, sizeof(key));
 
-	/* Build request — include port in Host only when non-default */
-	if ((!is_tls && port != 80) || (is_tls && port != 443)) {
-		req_len = snprintf(req, sizeof(req),
-			"GET %s HTTP/1.1\r\n"
-			"Host: %s:%u\r\n"
-			"Upgrade: websocket\r\n"
-			"Connection: Upgrade\r\n"
-			"Sec-WebSocket-Key: %s\r\n"
-			"Sec-WebSocket-Version: 13\r\n"
-			"%s%s%s"
-			"\r\n",
-			path, host, (unsigned int)port, key,
-			ws->auth_token[0] ? "Authorization: Bearer " : "",
-			ws->auth_token[0] ? ws->auth_token : "",
-			ws->auth_token[0] ? "\r\n" : "");
-	} else {
-		req_len = snprintf(req, sizeof(req),
-			"GET %s HTTP/1.1\r\n"
-			"Host: %s\r\n"
-			"Upgrade: websocket\r\n"
-			"Connection: Upgrade\r\n"
-			"Sec-WebSocket-Key: %s\r\n"
-			"Sec-WebSocket-Version: 13\r\n"
-			"%s%s%s"
-			"\r\n",
-			path, host, key,
-			ws->auth_token[0] ? "Authorization: Bearer " : "",
-			ws->auth_token[0] ? ws->auth_token : "",
-			ws->auth_token[0] ? "\r\n" : "");
-	}
+	req_len = ela_ws_build_handshake_request(req, sizeof(req), host, port, path, is_tls,
+						 ws->auth_token[0] ? ws->auth_token : NULL, key);
 
 	if (req_len <= 0 || req_len >= (int)sizeof(req)) {
 		fprintf(stderr, "ws: request URL too long\n");
@@ -530,13 +393,13 @@ int ela_ws_connect(const char *base_url, int insecure,
 
 	get_primary_mac(mac, sizeof(mac));
 
-	if (build_ws_url(base_url, mac, full_url, sizeof(full_url)) != 0) {
+	if (ela_ws_build_terminal_url(base_url, mac, full_url, sizeof(full_url)) != 0) {
 		fprintf(stderr, "ws: URL too long: %s\n", base_url);
 		return -1;
 	}
 
-	if (ws_parse_url(full_url, host, sizeof(host), &port, path, sizeof(path),
-			 &is_tls) != 0) {
+	if (ela_ws_parse_url(full_url, host, sizeof(host), &port, path, sizeof(path),
+			     &is_tls) != 0) {
 		fprintf(stderr, "ws: malformed URL: %s\n", full_url);
 		return -1;
 	}

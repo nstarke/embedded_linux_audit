@@ -1,0 +1,1 @@
+orom orom_list mode=efi rom=/sys/bus/pci/devices/0000:00:01.0/rom size=4096 match=true
