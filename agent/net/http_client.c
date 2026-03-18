@@ -2,6 +2,7 @@
 
 #include "http_client.h"
 #include "api_key.h"
+#include "http_client_parse_util.h"
 #include "http_ws_policy_util.h"
 #include "tcp_util.h"
 #include "../util/http_uri_util.h"
@@ -1605,36 +1606,7 @@ static int ela_read_nameservers(char ns[][16], int max_ns)
 /* Build a DNS A-record query packet.  Returns packet length or -1. */
 static int ela_dns_build_query(const char *hostname, uint8_t *buf, int buf_len)
 {
-	int pos = 12;
-	const char *p = hostname;
-
-	if (buf_len < 32)
-		return -1;
-
-	memset(buf, 0, 12);
-	buf[0] = 0xab; buf[1] = 0xcd; /* transaction ID */
-	buf[2] = 0x01; buf[3] = 0x00; /* QR=0, RD=1 */
-	buf[4] = 0x00; buf[5] = 0x01; /* QDCOUNT = 1 */
-
-	while (*p) {
-		const char *dot = strchr(p, '.');
-		int label_len = dot ? (int)(dot - p) : (int)strlen(p);
-
-		if (pos + 1 + label_len + 4 > buf_len)
-			return -1;
-		buf[pos++] = (uint8_t)label_len;
-		memcpy(buf + pos, p, (size_t)label_len);
-		pos += label_len;
-		if (!dot)
-			break;
-		p = dot + 1;
-	}
-	if (pos + 5 > buf_len)
-		return -1;
-	buf[pos++] = 0;          /* root label */
-	buf[pos++] = 0x00; buf[pos++] = 0x01; /* QTYPE = A  */
-	buf[pos++] = 0x00; buf[pos++] = 0x01; /* QCLASS = IN */
-	return pos;
+	return ela_http_build_dns_query_packet(hostname, buf, buf_len);
 }
 
 /*
@@ -1765,43 +1737,14 @@ static int ela_udp_resolve(const char *hostname, char *ip_buf, size_t ip_buf_len
  */
 static struct curl_slist *ela_curl_resolve_list(const char *url)
 {
-	const char *authority, *authority_end, *port_sep;
 	const char *p;
 	char host[256], port_str[8], ip[16], entry[288];
-	int host_len, port_len, dots, is_numeric;
+	int dots, is_numeric;
 
 	if (!url)
 		return NULL;
-
-	authority = strstr(url, "://");
-	if (!authority)
+	if (ela_http_parse_url_authority(url, host, sizeof(host), port_str, sizeof(port_str)) != 0)
 		return NULL;
-	authority += 3;
-
-	authority_end = strchr(authority, '/');
-	if (!authority_end)
-		authority_end = authority + strlen(authority);
-
-	/* Find the last ':' in the authority — that's the port separator */
-	port_sep = NULL;
-	for (p = authority; p < authority_end; p++) {
-		if (*p == ':')
-			port_sep = p;
-	}
-	if (!port_sep)
-		return NULL;
-
-	host_len = (int)(port_sep - authority);
-	if (host_len <= 0 || host_len >= (int)sizeof(host))
-		return NULL;
-	memcpy(host, authority, (size_t)host_len);
-	host[host_len] = '\0';
-
-	port_len = (int)(authority_end - port_sep - 1);
-	if (port_len <= 0 || port_len >= (int)sizeof(port_str))
-		return NULL;
-	memcpy(port_str, port_sep + 1, (size_t)port_len);
-	port_str[port_len] = '\0';
 
 	/* Skip if host is already a numeric IPv4 address */
 	dots = 0; is_numeric = 1;
@@ -1815,7 +1758,8 @@ static struct curl_slist *ela_curl_resolve_list(const char *url)
 	if (ela_udp_resolve(host, ip, sizeof(ip)) != 0)
 		return NULL;
 
-	snprintf(entry, sizeof(entry), "%s:%s:%s", host, port_str, ip);
+	if (ela_http_build_resolve_entry(url, ip, entry, sizeof(entry)) != 0)
+		return NULL;
 	return curl_slist_append(NULL, entry);
 }
 

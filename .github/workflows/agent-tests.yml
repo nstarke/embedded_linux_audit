@@ -13,6 +13,29 @@ permissions:
   contents: read
 
 jobs:
+  agent-unit-c:
+    name: tests/agent/unit-c
+    if: ${{ github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ github.token }}
+          submodules: recursive
+          ref: ${{ github.event_name == 'workflow_run' && (github.event.workflow_run.head_branch || github.event.workflow_run.head_sha) || github.sha }}
+
+      - name: Install C unit test dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y cmake
+
+      - name: Run native C unit tests
+        run: |
+          set -euo pipefail
+          make test-unit-agent-c
+
   agent-api-jest:
     name: tests/api/agent/jest
     if: ${{ github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
@@ -123,6 +146,108 @@ jobs:
         with:
           name: ela-${{ matrix.isa }}
           path: api/data/release_binaries/${{ matrix.isa }}
+
+  build-unit-test-binaries:
+    name: build/unit-c-${{ matrix.name }}
+    if: ${{ github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 16
+      matrix:
+        include:
+          - name: arm32-le
+            zig_targets: arm-linux-musleabi
+          - name: arm32-be
+            zig_targets: armeb-linux-musleabi,armeb-linux-gnueabi
+          - name: aarch64-le
+            zig_targets: aarch64-linux-musl
+          - name: aarch64-be
+            zig_targets: aarch64_be-linux-musl
+          - name: mips-le
+            zig_targets: mipsel-linux-musleabi,mipsel-linux-musleabihf
+          - name: mips-be
+            zig_targets: mips-linux-musleabi,mips-linux-musleabihf
+          - name: mips64-le
+            zig_targets: mips64el-linux-muslabi64,mips64el-linux-gnuabi64
+          - name: mips64-be
+            zig_targets: mips64-linux-muslabi64,mips64-linux-gnuabi64
+          - name: powerpc-le
+            zig_targets: powerpc64le-linux-musl,powerpc64le-linux-gnu
+          - name: powerpc64-be
+            zig_targets: powerpc64-linux-musl,powerpc64-linux-gnu
+          - name: powerpc-be
+            zig_targets: powerpc-linux-musleabi,powerpc-linux-musleabihf,powerpc-linux-gnueabi,powerpc-linux-gnueabihf
+          - name: x86
+            zig_targets: x86-linux-musl
+          - name: x86_64
+            zig_targets: x86_64-linux-musl
+          - name: riscv32
+            zig_targets: riscv32-linux-musl,riscv32-linux-gnu
+          - name: riscv64
+            zig_targets: riscv64-linux-musl,riscv64-linux-gnu
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ github.token }}
+          submodules: recursive
+          ref: ${{ github.event_name == 'workflow_run' && (github.event.workflow_run.head_branch || github.event.workflow_run.head_sha) || github.sha }}
+
+      - name: Install cross-build tooling for unit tests
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y cmake llvm xz-utils
+
+      - name: Install Zig
+        run: |
+          set -euo pipefail
+          ZIG_VERSION=0.14.0
+          curl -fsSL -o zig.tar.xz "https://ziglang.org/download/${ZIG_VERSION}/zig-linux-x86_64-${ZIG_VERSION}.tar.xz"
+          tar -xf zig.tar.xz
+          echo "$PWD/zig-linux-x86_64-${ZIG_VERSION}" >> "$GITHUB_PATH"
+          "$PWD/zig-linux-x86_64-${ZIG_VERSION}/zig" version
+
+      - name: Build static C unit test binary
+        run: |
+          set -euo pipefail
+          export CFLAGS=
+          export CPPFLAGS=
+          export CXXFLAGS=
+          export LDFLAGS=
+          mkdir -p dist/${{ matrix.name }}
+
+          IFS=',' read -ra TARGETS <<< "${{ matrix.zig_targets }}"
+          BUILT=0
+          for T in "${TARGETS[@]}"; do
+            echo "Trying unit-test target: ${T}"
+            if make clean \
+               && make build-unit-agent-c \
+                    ELA_USE_READLINE=0 \
+                    LDFLAGS=-static \
+                    CMAKE_C_COMPILER="$(command -v zig)" \
+                    CMAKE_C_COMPILER_ARG1=cc \
+                    CMAKE_C_COMPILER_TARGET="${T}" \
+                    CC="zig cc -target ${T}"; then
+              cp generated/agent_unit_tests "dist/${{ matrix.name }}/agent_unit_tests-${{ matrix.name }}"
+              echo "Built unit-test binary successfully with target: ${T}"
+              BUILT=1
+              break
+            fi
+            echo "Unit-test target failed: ${T}"
+          done
+
+          if [ "$BUILT" -ne 1 ]; then
+            echo "All candidate unit-test targets failed for ${{ matrix.name }}"
+            exit 1
+          fi
+
+      - name: Upload unit test binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ela-unit-${{ matrix.name }}
+          path: dist/${{ matrix.name }}/agent_unit_tests-${{ matrix.name }}
 
   shell-tests:
     name: tests/agent/shell
@@ -242,7 +367,9 @@ jobs:
   qemu-tests:
     name: tests/agent/qemu-${{ matrix.isa }}
     if: ${{ github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
-    needs: build-release-binaries
+    needs:
+      - build-release-binaries
+      - build-unit-test-binaries
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -297,6 +424,12 @@ jobs:
           name: ela-${{ matrix.isa }}
           path: downloaded-release-binaries
 
+      - name: Download locally built unit test binary
+        uses: actions/download-artifact@v4
+        with:
+          name: ela-unit-${{ matrix.isa }}
+          path: downloaded-unit-tests
+
       - name: Stage downloaded release binary for qemu tests
         run: |
           set -euo pipefail
@@ -315,10 +448,22 @@ jobs:
             install -m 755 "$binary" "$dest_dir/$binary_name"
           done
 
+      - name: Stage unit test binary for qemu tests
+        run: |
+          set -euo pipefail
+          unit_bin="$(find downloaded-unit-tests -type f -name 'agent_unit_tests-*' | head -n 1)"
+          if [ -z "$unit_bin" ]; then
+            echo "error: unable to locate unit test artifact for ${{ matrix.isa }}" >&2
+            exit 1
+          fi
+
+          install -m 755 "$unit_bin" "/tmp/agent_unit_tests-${{ matrix.isa }}"
+
       - name: Run qemu ISA test
         env:
           ELA_QEMU_RUN_AS_ROOT: 1
           ELA_QEMU_REQUIRE_RELEASE_BINARIES: ${{ github.event_name == 'workflow_run' && '1' || '0' }}
+          ELA_QEMU_UNIT_TEST_BIN: /tmp/agent_unit_tests-${{ matrix.isa }}
         run: |
           set -euo pipefail
           mkdir -p qemu-logs

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later - Copyright (c) 2026 Nicholas Starke
 
 #include "embedded_linux_audit_cmd.h"
+#include "linux/remote_copy_cmd_util.h"
 #include "util/remote_copy_util.h"
 #include "util/str_util.h"
 
@@ -489,19 +490,18 @@ int linux_remote_copy_scan_main(int argc, char **argv)
 	if (output_https)
 		output_uri = output_https;
 
-	if ((!output_tcp || !*output_tcp) && (!output_uri || !*output_uri)) {
-		fprintf(stderr, "remote-copy requires one of --output-tcp or --output-http\n");
-		return 2;
-	}
-
-	if (output_tcp && output_uri) {
-		fprintf(stderr, "remote-copy accepts only one remote target at a time\n");
-		return 2;
-	}
-
 	if (stat(path, &st) != 0) {
 		fprintf(stderr, "Cannot stat %s: %s\n", path, strerror(errno));
 		return 1;
+	}
+
+	{
+		char errbuf[256];
+		if (ela_remote_copy_validate_request(path, output_tcp, output_http, output_https,
+						     st.st_mode, errbuf, sizeof(errbuf)) != 0) {
+			fprintf(stderr, "%s\n", errbuf);
+			return 2;
+		}
 	}
 
 	if (!ela_path_is_allowed(path, allow_dev, allow_sysfs, allow_proc)) {
@@ -510,14 +510,6 @@ int linux_remote_copy_scan_main(int argc, char **argv)
 	}
 
 	if (output_tcp) {
-		if (S_ISDIR(st.st_mode)) {
-			fprintf(stderr, "Directory uploads require --output-http\n");
-			return 2;
-		}
-		if (S_ISLNK(st.st_mode)) {
-			fprintf(stderr, "Symlink uploads require --output-http\n");
-			return 2;
-		}
 		if (!ela_stat_is_copyable_file(&st)) {
 			fprintf(stderr, "Path is not a supported file for TCP transfer: %s\n", path);
 			return 1;

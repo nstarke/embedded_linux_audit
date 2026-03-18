@@ -30,6 +30,11 @@ int run_uboot_env_util_tests(void);
 int run_uboot_audit_util_tests(void);
 int run_linux_dmesg_util_tests(void);
 int run_http_ws_policy_util_tests(void);
+int run_uboot_security_audit_util_tests(void);
+int run_uboot_env_scan_util_tests(void);
+int run_http_client_parse_util_tests(void);
+int run_ws_recv_util_tests(void);
+int run_remote_copy_cmd_util_tests(void);
 
 int main(void)
 {
@@ -65,6 +70,11 @@ int main(void)
 	rc |= run_uboot_audit_util_tests();
 	rc |= run_linux_dmesg_util_tests();
 	rc |= run_http_ws_policy_util_tests();
+	rc |= run_uboot_security_audit_util_tests();
+	rc |= run_uboot_env_scan_util_tests();
+	rc |= run_http_client_parse_util_tests();
+	rc |= run_ws_recv_util_tests();
+	rc |= run_remote_copy_cmd_util_tests();
 
 	return rc;
 }

@@ -8,6 +8,7 @@
 #include "ws_client.h"
 #include "api_key.h"
 #include "http_ws_policy_util.h"
+#include "ws_recv_util.h"
 #include "ws_frame_util.h"
 #include "ws_session_util.h"
 #include "ws_url_util.h"
@@ -605,8 +606,8 @@ static ssize_t ws_recv_frame(const struct ela_ws_conn *ws,
 	/* Read payload, truncating if larger than buffer */
 	if (payload_len >= buf_sz) {
 		/* Read what fits, discard the rest */
-		size_t to_read = buf_sz - 1;
-		size_t to_skip = (size_t)(payload_len - to_read);
+		size_t to_read = ela_ws_payload_copy_len(payload_len, buf_sz);
+		size_t to_skip = ela_ws_payload_skip_len(payload_len, buf_sz);
 		char   discard[64];
 
 		if (ws_conn_read(ws, buf, to_read) < 0)
