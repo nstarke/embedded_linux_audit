@@ -27,6 +27,7 @@ int run_transfer_parse_util_tests(void);
 int run_ws_session_util_tests(void);
 int run_uboot_command_extract_util_tests(void);
 int run_uboot_image_format_util_tests(void);
+int run_uboot_image_record_util_tests(void);
 int run_uboot_env_util_tests(void);
 int run_uboot_env_record_util_tests(void);
 int run_uboot_audit_util_tests(void);
@@ -77,6 +78,7 @@ int main(void)
 	rc |= run_ws_session_util_tests();
 	rc |= run_uboot_command_extract_util_tests();
 	rc |= run_uboot_image_format_util_tests();
+	rc |= run_uboot_image_record_util_tests();
 	rc |= run_uboot_env_util_tests();
 	rc |= run_uboot_env_record_util_tests();
 	rc |= run_uboot_audit_util_tests();

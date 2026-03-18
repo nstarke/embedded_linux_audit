@@ -420,6 +420,7 @@ AGENT_UNIT_TEST_SRC := \
 	tests/unit/agent/test_ws_session_util.c \
 	tests/unit/agent/test_uboot_command_extract_util.c \
 	tests/unit/agent/test_uboot_image_format_util.c \
+	tests/unit/agent/test_uboot_image_record_util.c \
 	tests/unit/agent/test_uboot_env_util.c \
 	tests/unit/agent/test_uboot_env_record_util.c \
 	tests/unit/agent/test_uboot_audit_util.c \
@@ -482,6 +483,7 @@ AGENT_UNIT_TEST_DEPS := \
 	agent/uboot/uboot_security_audit_util.c \
 	agent/uboot/image/uboot_command_extract_util.c \
 	agent/uboot/image/uboot_image_format_util.c \
+	agent/uboot/image/uboot_image_record_util.c \
 	agent/shell/script_exec_util.c \
 	agent/shell/interactive_util.c \
 	agent/util/str_util.h \
@@ -946,6 +948,7 @@ $(AGENT_UNIT_TEST_BIN): $(AGENT_UNIT_TEST_SRC) $(AGENT_UNIT_TEST_DEPS) $(JSONC_L
 			agent/uboot/uboot_security_audit_util.c \
 			agent/uboot/image/uboot_command_extract_util.c \
 			agent/uboot/image/uboot_image_format_util.c \
+			agent/uboot/image/uboot_image_record_util.c \
 			agent/shell/script_exec_util.c \
 			agent/shell/interactive_util.c \
 			$(JSONC_LIB) \

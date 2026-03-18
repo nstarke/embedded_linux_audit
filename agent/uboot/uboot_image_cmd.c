@@ -4,6 +4,7 @@
 #include "uboot/image/uboot_image_cmd.h"
 #include "uboot/image/uboot_image_format_util.h"
 #include "uboot/image/uboot_image_internal.h"
+#include "uboot/image/uboot_image_record_util.h"
 
 #include <errno.h>
 #include <arpa/inet.h>
@@ -208,78 +209,32 @@ static void detect_output_format(void)
 	g_output_format = ela_uboot_image_detect_output_format(getenv("ELA_OUTPUT_FORMAT"));
 }
 
-static void emit_image_csv_header(void)
-{
-	if (g_csv_header_emitted)
-		return;
-	out_printf("record,device,offset,type,value\n");
-	g_csv_header_emitted = true;
-}
-
-static void csv_out_field(const char *s)
-{
-	const char *in = s ? s : "";
-	size_t in_len = strlen(in);
-	size_t buf_len = (in_len * 2U) + 3U;
-	char *buf = malloc(buf_len);
-	size_t written;
-
-	if (!buf)
-		return;
-
-	written = csv_write(buf, buf_len, in, in_len);
-	out_printf("%.*s", (int)written, buf);
-	free(buf);
-}
-
 void emit_image_record(const char *record, const char *dev, uint64_t off,
 		       const char *type, const char *value)
 {
-	if (g_output_format == FW_OUTPUT_CSV) {
-		char off_s[32];
+	char *formatted = NULL;
 
-		snprintf(off_s, sizeof(off_s), "0x%jx", (uintmax_t)off);
-		emit_image_csv_header();
-		csv_out_field(record ? record : ""); out_printf(",");
-		csv_out_field(dev ? dev : ""); out_printf(",");
-		csv_out_field(off_s); out_printf(",");
-		csv_out_field(type ? type : ""); out_printf(",");
-		csv_out_field(value ? value : ""); out_printf("\n");
+	if (ela_uboot_image_format_record(g_output_format, &g_csv_header_emitted,
+					  record, dev, off, type, value, &formatted) != 0)
 		return;
-	}
-
-	if (g_output_format == FW_OUTPUT_JSON) {
-		json_object *obj = json_object_new_object();
-		if (!obj)
-			return;
-		json_object_object_add(obj, "record", json_object_new_string(record ? record : ""));
-		if (dev)
-			json_object_object_add(obj, "device", json_object_new_string(dev));
-		json_object_object_add(obj, "offset", json_object_new_uint64(off));
-		json_object_object_add(obj, "type", json_object_new_string(type ? type : ""));
-		if (value)
-			json_object_object_add(obj, "value", json_object_new_string(value));
-		out_printf("%s\n", json_object_to_json_string_ext(obj, JSON_C_TO_STRING_PLAIN | JSON_C_TO_STRING_NOSLASHESCAPE));
-		json_object_put(obj);
+	if (formatted) {
+		out_printf("%s", formatted);
+		free(formatted);
 	}
 }
 
 void emit_image_verbose(const char *dev, uint64_t off, const char *msg)
 {
-	bool emitted = false;
+	char *formatted = NULL;
 
-	if (!g_verbose || !msg)
+	if (ela_uboot_image_format_verbose(g_output_format, g_verbose, &g_csv_header_emitted,
+					   dev, off, msg, &formatted) != 0)
 		return;
-
-	if (g_output_format == FW_OUTPUT_TXT) {
-		out_printf("%s\n", msg);
-		emitted = true;
-	} else {
-		emit_image_record("verbose", dev ? dev : "", off, "log", msg);
-		emitted = true;
+	if (formatted) {
+		out_printf("%s", formatted);
+		free(formatted);
 	}
-
-	if (emitted && g_output_http_uri && g_output_http_len > 0)
+	if (formatted && g_output_http_uri && g_output_http_len > 0)
 		(void)flush_output_http_buffer();
 }
 
@@ -538,12 +493,15 @@ bool fit_find_load_address(const uint8_t *blob,
 
 static void report_signature(const char *dev, uint64_t off, const char *kind)
 {
-	if (g_output_format == FW_OUTPUT_TXT) {
-		out_printf("candidate image signature: %s offset=0x%jx type=%s\n",
-		       dev, (uintmax_t)off, kind);
+	char *formatted = NULL;
+
+	if (ela_uboot_image_format_signature(g_output_format, &g_csv_header_emitted,
+					     dev, off, kind, &formatted) != 0)
 		return;
+	if (formatted) {
+		out_printf("%s", formatted);
+		free(formatted);
 	}
-	emit_image_record("image_signature", dev, off, kind, NULL);
 }
 
 static int scan_dev_for_image(const char *dev, uint64_t step)
@@ -603,24 +561,23 @@ static int scan_dev_for_image(const char *dev, uint64_t step)
 			break;
 
 		for (size_t i = 0; i + UIMAGE_HDR_SIZE <= (size_t)n; i += 4) {
-			if (!memcmp(buf + i, uimage_magic, sizeof(uimage_magic))) {
-				if (validate_uimage_header(buf + i, off + i, size)) {
-					report_signature(dev, off + i, "uImage");
-					hits++;
-				}
-			}
-			if (!memcmp(buf + i, fit_magic, sizeof(fit_magic))) {
-				if (validate_fit_header(buf + i, off + i, size)) {
-					report_signature(dev, off + i, "FIT");
-					hits++;
-				}
+			const char *kind = ela_uboot_image_classify_signature_kind(
+				!memcmp(buf + i, uimage_magic, sizeof(uimage_magic)) &&
+					validate_uimage_header(buf + i, off + i, size),
+				!memcmp(buf + i, fit_magic, sizeof(fit_magic)) &&
+					validate_fit_header(buf + i, off + i, size),
+				false);
+			if (kind) {
+				report_signature(dev, off + i, kind);
+				hits++;
 			}
 		}
 
 		if (g_allow_text && text_pattern_len > 0) {
 			for (size_t i = 0; i + text_pattern_len <= (size_t)n; i++) {
-				if (!memcmp(buf + i, text_pattern, text_pattern_len)) {
-					report_signature(dev, off + i, "U-Boot-text");
+				if (ela_uboot_image_matches_text_pattern(buf, (size_t)n, i, text_pattern)) {
+					report_signature(dev, off + i,
+							 ela_uboot_image_classify_signature_kind(false, false, true));
 					hits++;
 				}
 			}
