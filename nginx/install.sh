@@ -365,7 +365,7 @@ if [ "$COMPILE_LOCALLY" -eq 1 ]; then
         -w /src \
         -e RELEASE_BINARIES_DIR=/out \
         "$RELEASE_BUILDER_IMAGE" \
-        /bin/bash -lc "git config --global --add safe.directory /src && /bin/bash tests/compile_release_binaries_locally.sh --clean --jobs=\"$COMPILE_JOBS\""
+        /bin/bash -lc "git config --global --add safe.directory '*' && /bin/bash tests/compile_release_binaries_locally.sh --clean --jobs=\"$COMPILE_JOBS\""
 else
     export ELA_AGENT_SKIP_ASSET_SYNC=false
     echo "Using GitHub release asset fetch for agent binaries."
