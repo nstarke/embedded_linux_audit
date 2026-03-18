@@ -603,50 +603,59 @@ int embedded_linux_audit_dispatch(int argc, char **argv)
 		}
 
 		if (ela_is_ws_url(remote_target)) {
+			struct ela_ws_conn ws;
+
+			if (ela_ws_connect(remote_target, insecure, &ws) != 0) {
+				fprintf(stderr, "--remote: failed to connect to %s\n",
+					remote_target);
+				return 1;
+			}
+
 			pid = fork();
 			if (pid < 0) {
+				ela_ws_close_parent_fd(&ws);
 				fprintf(stderr, "--remote: fork failed: %s\n", strerror(errno));
 				return 1;
 			}
 
 			if (pid > 0) {
+				/* Parent: release socket fd without disrupting the child's session */
+				ela_ws_close_parent_fd(&ws);
 				fprintf(stdout, "Remote session started (pid=%ld)\n", (long)pid);
 				return 0;
 			}
 
-			/* Daemon child: connect with retry */
+			/* Daemon child */
 			setsid();
 			{
+				bool reconnect = true;
 				int failed_attempts = 0;
-				bool had_successful_connection = false;
 				for (;;) {
-					struct ela_ws_conn ws;
+					ela_ws_run_interactive(&ws, argv[0]);
+					ela_ws_close(&ws);
 
-					if (failed_attempts > 0) {
+					if (retry_attempts == 0)
+						break;
+
+					reconnect = false;
+					for (;;) {
+						failed_attempts++;
+						if (failed_attempts > retry_attempts)
+							break;
 						fprintf(stderr,
 							"--remote: reconnect attempt %d/%d, waiting %ds\n",
 							failed_attempts, retry_attempts,
 							ELA_RETRY_DELAY_SECS);
 						sleep(ELA_RETRY_DELAY_SECS);
-					}
-
-					if (ela_ws_connect(remote_target, insecure, &ws) != 0) {
+						if (ela_ws_connect(remote_target, insecure, &ws) == 0) {
+							failed_attempts = 0;
+							reconnect = true;
+							break;
+						}
 						fprintf(stderr, "--remote: failed to connect to %s\n",
 							remote_target);
-						failed_attempts++;
-						if (failed_attempts > retry_attempts)
-							break;
-						continue;
 					}
-
-					if (had_successful_connection)
-						failed_attempts = 0;
-					had_successful_connection = true;
-
-					ela_ws_run_interactive(&ws, argv[0]);
-					ela_ws_close(&ws);
-
-					if (retry_attempts == 0)
+					if (!reconnect)
 						break;
 				}
 				fprintf(stderr,
@@ -877,7 +886,11 @@ done:
 
 int main(int argc, char **argv)
 {
+	struct ela_conf boot_conf = {0};
 	char **interactive_argv;
+
+	ela_conf_load(&boot_conf);
+	ela_conf_export_to_env(&boot_conf);
 
 	if (argc < 2 && !(getenv("ELA_SCRIPT") && *getenv("ELA_SCRIPT")))
 		return interactive_loop(argv[0]);
