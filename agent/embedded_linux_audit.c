@@ -90,7 +90,8 @@ static void usage(const char *prog)
 		prog, prog, prog, prog,
 		prog, prog, prog, prog,
 		prog, prog, prog, prog,
-		prog, prog, prog, prog);
+		prog, prog, prog, prog,
+		prog);
 }
 
 /* Declared non-static so interactive.c and script_exec.c can call it. */
