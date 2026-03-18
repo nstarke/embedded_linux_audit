@@ -89,6 +89,7 @@ static void append_output_http_buffer(const char *buf, size_t len)
 static void emit_v(FILE *stream, const char *fmt, va_list ap)
 {
 	va_list aq;
+	va_list ar;
 	char stack[1024];
 	char *dyn = NULL;
 	int needed;
@@ -97,6 +98,7 @@ static void emit_v(FILE *stream, const char *fmt, va_list ap)
 	mirror_to_remote = (stream == stdout);
 
 	va_copy(aq, ap);
+	va_copy(ar, ap);
 	vfprintf(stream, fmt, ap);
 	fflush(stream);
 
@@ -115,12 +117,13 @@ static void emit_v(FILE *stream, const char *fmt, va_list ap)
 	}
 
 	dyn = malloc((size_t)needed + 1);
-	if (!dyn)
+	if (!dyn) {
+		va_end(ar);
 		return;
+	}
 
-	va_copy(aq, ap);
-	vsnprintf(dyn, (size_t)needed + 1, fmt, aq);
-	va_end(aq);
+	vsnprintf(dyn, (size_t)needed + 1, fmt, ar);
+	va_end(ar);
 	if (mirror_to_remote) {
 		send_to_output_socket(dyn, (size_t)needed);
 		append_output_http_buffer(dyn, (size_t)needed);
