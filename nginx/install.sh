@@ -14,6 +14,8 @@
 #   ./nginx/install.sh example.com --cert /path/to/ela.crt --key /path/to/ela.key
 #   ./nginx/install.sh example.com --env-file /path/to/ela.env
 #   ./nginx/install.sh example.com --no-build
+#   ./nginx/install.sh example.com --compile-locally
+#   ./nginx/install.sh example.com --compile-locally --jobs 8
 #   ./nginx/install.sh example.com --foreground
 
 set -eu
@@ -31,6 +33,8 @@ Options:
   --github-token TOKEN  GitHub token for downloading release binaries (or set GITHUB_TOKEN env var)
   --env-file PATH       Pass an env file to docker compose
   --no-build            Skip image builds and start with existing images
+  --compile-locally     Build release binaries in a Docker builder container and disable GitHub release fetch
+  --jobs N              Set release-binary compiler job count (only valid with --compile-locally)
   --foreground          Run docker compose up in the foreground
   --pull                Pull newer base images before starting
   --help                Show this help text
@@ -49,11 +53,15 @@ SSL_DIR="$REPO_ROOT/nginx/ssl"
 BUILD=1
 DETACH=1
 PULL=0
+COMPILE_LOCALLY=0
+COMPILE_JOBS=""
 ENV_FILE=""
 HOSTNAME=""
 TLS_CERT=""
 TLS_KEY=""
 GITHUB_TOKEN="${GITHUB_TOKEN:-}"
+RELEASE_BUILDER_IMAGE="ela-release-builder:local"
+RELEASE_BUILDER_DOCKERFILE="$REPO_ROOT/tests/release-builder.Dockerfile"
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -92,6 +100,17 @@ while [ "$#" -gt 0 ]; do
         --no-build)
             BUILD=0
             ;;
+        --compile-locally)
+            COMPILE_LOCALLY=1
+            ;;
+        --jobs)
+            shift
+            if [ "$#" -eq 0 ]; then
+                echo "error: --jobs requires an integer value" >&2
+                exit 1
+            fi
+            COMPILE_JOBS="$1"
+            ;;
         --foreground)
             DETACH=0
             ;;
@@ -118,6 +137,24 @@ while [ "$#" -gt 0 ]; do
     esac
     shift
 done
+
+if [ -n "$COMPILE_JOBS" ]; then
+    case "$COMPILE_JOBS" in
+        ''|*[!0-9]*)
+            echo "error: --jobs requires a positive integer" >&2
+            exit 1
+            ;;
+        0)
+            echo "error: --jobs must be greater than zero" >&2
+            exit 1
+            ;;
+    esac
+fi
+
+if [ -n "$COMPILE_JOBS" ] && [ "$COMPILE_LOCALLY" -ne 1 ]; then
+    echo "error: --jobs can only be used with --compile-locally" >&2
+    exit 1
+fi
 
 if [ ! -f "$COMPOSE_FILE" ]; then
     echo "error: $COMPOSE_FILE not found" >&2
@@ -202,6 +239,10 @@ if [ ! -d "$ELA_DATA_DIR" ]; then
     fi
 fi
 export ELA_DATA_DIR
+
+ELA_RELEASE_BINARIES_DIR="$ELA_DATA_DIR/release_binaries"
+mkdir -p "$ELA_RELEASE_BINARIES_DIR"
+export ELA_RELEASE_BINARIES_DIR
 
 # ---------------------------------------------------------------------------
 # PostgreSQL data directory
@@ -295,6 +336,40 @@ fi
 export ELA_TLS_CERT="$TLS_CERT"
 export ELA_TLS_KEY="$TLS_KEY"
 export GITHUB_TOKEN
+
+if [ "$COMPILE_LOCALLY" -eq 1 ]; then
+    export ELA_AGENT_SKIP_ASSET_SYNC=true
+    if [ -z "$COMPILE_JOBS" ]; then
+        COMPILE_JOBS="$(nproc)"
+    fi
+
+    if [ ! -f "$RELEASE_BUILDER_DOCKERFILE" ]; then
+        echo "error: $RELEASE_BUILDER_DOCKERFILE not found" >&2
+        exit 1
+    fi
+
+    if [ "$BUILD" -eq 1 ]; then
+        echo "Building local release-binary builder image..."
+        docker build -f "$RELEASE_BUILDER_DOCKERFILE" -t "$RELEASE_BUILDER_IMAGE" "$REPO_ROOT"
+    elif ! docker image inspect "$RELEASE_BUILDER_IMAGE" >/dev/null 2>&1; then
+        echo "error: $RELEASE_BUILDER_IMAGE is not available and --no-build was requested" >&2
+        echo "       Re-run without --no-build or pre-build the image with:" >&2
+        echo "       docker build -f $RELEASE_BUILDER_DOCKERFILE -t $RELEASE_BUILDER_IMAGE $REPO_ROOT" >&2
+        exit 1
+    fi
+
+    echo "Compiling release binaries locally into $ELA_RELEASE_BINARIES_DIR ..."
+    docker run --rm \
+        -v "$REPO_ROOT:/src" \
+        -v "$ELA_RELEASE_BINARIES_DIR:/out" \
+        -w /src \
+        -e RELEASE_BINARIES_DIR=/out \
+        "$RELEASE_BUILDER_IMAGE" \
+        /bin/bash tests/compile_release_binaries_locally.sh --clean --jobs="$COMPILE_JOBS"
+else
+    export ELA_AGENT_SKIP_ASSET_SYNC=false
+    echo "Using GitHub release asset fetch for agent binaries."
+fi
 
 # Generate nginx config with hostname substituted
 sed "s/example\\.com/$HOSTNAME/g" "$NGINX_TLS_TEMPLATE" > "$GENERATED_NGINX_CONF"

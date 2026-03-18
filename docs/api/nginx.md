@@ -76,6 +76,8 @@ Common options:
 
 - `./nginx/install.sh ela.example.com --env-file /path/to/ela.env`
 - `./nginx/install.sh ela.example.com --no-build`
+- `./nginx/install.sh ela.example.com --compile-locally`
+- `./nginx/install.sh ela.example.com --compile-locally --jobs 8`
 - `./nginx/install.sh ela.example.com --foreground`
 
 The installer runs `docker compose up` against the repository's
@@ -90,6 +92,35 @@ and starts:
 It also generates a temporary nginx config for Compose by replacing
 `example.com` in [nginx/docker.conf](/home/nick/Documents/git/embedded_linux_audit/nginx/docker.conf)
 with the `HOSTNAME` argument using `sed`.
+
+## Local release binary compilation
+
+If you want to build the release binaries locally instead of downloading them
+from GitHub Releases during agent API startup, pass:
+
+```sh
+./nginx/install.sh ela.example.com --compile-locally
+```
+
+To control the compiler parallelism:
+
+```sh
+./nginx/install.sh ela.example.com --compile-locally --jobs 8
+```
+
+This does the following:
+
+- builds a local Docker builder image from [tests/release-builder.Dockerfile](/home/nick/Documents/git/embedded_linux_audit/tests/release-builder.Dockerfile)
+- runs [tests/compile_release_binaries_locally.sh](/home/nick/Documents/git/embedded_linux_audit/tests/compile_release_binaries_locally.sh) inside that container
+- writes the compiled artifacts into `$ELA_DATA_DIR/release_binaries`
+- sets `ELA_AGENT_SKIP_ASSET_SYNC=true` for the `agent-api` container so GitHub fetch is disabled
+- passes `--jobs <n>` through to the local release build script when requested
+
+`--jobs` is only valid together with `--compile-locally`.
+
+If `--compile-locally` is not set, the installer leaves release asset sync
+enabled and the `agent-api` container fetches binaries from GitHub Releases on
+startup.
 
 ## Agent API
 

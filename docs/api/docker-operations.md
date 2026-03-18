@@ -45,6 +45,19 @@ than the default `example.com`, use the installer instead:
 ./nginx/install.sh ela.example.com
 ```
 
+To compile release binaries locally in Docker and disable GitHub release
+downloads for the agent API:
+
+```bash
+./nginx/install.sh ela.example.com --compile-locally
+```
+
+To set the local release build parallelism explicitly:
+
+```bash
+./nginx/install.sh ela.example.com --compile-locally --jobs 8
+```
+
 Expected behavior on first boot:
 
 1. `postgres` initializes the `embedded_linux_audit` database.
