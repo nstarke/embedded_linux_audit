@@ -23,8 +23,6 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
-#include <json.h>
-#include <csv.h>
 #include <libuboot.h>
 
 #ifndef O_CLOEXEC
@@ -78,30 +76,6 @@ static void detect_output_format(void)
 	g_output_format = (enum uboot_output_format)ela_uboot_env_detect_output_format(getenv("ELA_OUTPUT_FORMAT"));
 }
 
-static void emit_env_csv_header(void)
-{
-	if (g_csv_header_emitted)
-		return;
-	out_printf("record,device,offset,crc_endian,mode,has_known_vars,cfg_offset,env_size,erase_size,sector_count\n");
-	g_csv_header_emitted = true;
-}
-
-static void csv_out_field(const char *s)
-{
-	const char *in = s ? s : "";
-	size_t in_len = strlen(in);
-	size_t buf_len = (in_len * 2U) + 3U;
-	char *buf = malloc(buf_len);
-	size_t written;
-
-	if (!buf)
-		return;
-
-	written = csv_write(buf, buf_len, in, in_len);
-	out_printf("%.*s", (int)written, buf);
-	free(buf);
-}
-
 static void emit_env_candidate_record(const char *dev, uint64_t off,
 				      const char *crc_endian,
 				      const char *mode,
@@ -111,139 +85,61 @@ static void emit_env_candidate_record(const char *dev, uint64_t off,
 				      uint64_t erase_size,
 				      uint64_t sector_count)
 {
-	if (g_output_format == FW_OUTPUT_CSV) {
-		char off_s[32], cfg_s[32], env_s[32], erase_s[32], sec_s[32];
+	char *formatted = NULL;
 
-		snprintf(off_s, sizeof(off_s), "0x%jx", (uintmax_t)off);
-		snprintf(cfg_s, sizeof(cfg_s), "0x%jx", (uintmax_t)cfg_off);
-		snprintf(env_s, sizeof(env_s), "0x%jx", (uintmax_t)env_size);
-		snprintf(erase_s, sizeof(erase_s), "0x%jx", (uintmax_t)erase_size);
-		snprintf(sec_s, sizeof(sec_s), "0x%jx", (uintmax_t)sector_count);
-
-		emit_env_csv_header();
-		csv_out_field("env_candidate"); out_printf(",");
-		csv_out_field(dev); out_printf(",");
-		csv_out_field(off_s); out_printf(",");
-		csv_out_field(crc_endian ? crc_endian : ""); out_printf(",");
-		csv_out_field(mode ? mode : ""); out_printf(",");
-		csv_out_field(has_known_vars ? "true" : "false"); out_printf(",");
-		csv_out_field(cfg_s); out_printf(",");
-		csv_out_field(env_s); out_printf(",");
-		csv_out_field(erase_s); out_printf(",");
-		csv_out_field(sec_s); out_printf("\n");
+	if (ela_uboot_env_format_candidate_record(g_output_format,
+						  &g_csv_header_emitted,
+						  dev,
+						  off,
+						  crc_endian,
+						  mode,
+						  has_known_vars,
+						  cfg_off,
+						  env_size,
+						  erase_size,
+						  sector_count,
+						  &formatted) != 0)
 		return;
+	if (formatted) {
+		out_printf("%s", formatted);
+		free(formatted);
 	}
-
-	if (g_output_format == FW_OUTPUT_JSON) {
-		json_object *obj = json_object_new_object();
-		if (!obj)
-			return;
-		json_object_object_add(obj, "record", json_object_new_string("env_candidate"));
-		json_object_object_add(obj, "device", json_object_new_string(dev));
-		json_object_object_add(obj, "offset", json_object_new_uint64(off));
-		json_object_object_add(obj, "crc_endian", json_object_new_string(crc_endian ? crc_endian : ""));
-		json_object_object_add(obj, "mode", json_object_new_string(mode ? mode : ""));
-		json_object_object_add(obj, "has_known_vars", json_object_new_boolean(has_known_vars));
-		json_object_object_add(obj, "cfg_offset", json_object_new_uint64(cfg_off));
-		json_object_object_add(obj, "env_size", json_object_new_uint64(env_size));
-		json_object_object_add(obj, "erase_size", json_object_new_uint64(erase_size));
-		json_object_object_add(obj, "sector_count", json_object_new_uint64(sector_count));
-		out_printf("%s\n", json_object_to_json_string_ext(obj, JSON_C_TO_STRING_PLAIN | JSON_C_TO_STRING_NOSLASHESCAPE));
-		json_object_put(obj);
-		return;
-	}
-
-	if (!strcmp(mode, "hint-only"))
-		out_printf("  candidate offset=0x%jx  mode=hint-only  (has known vars)\n", (uintmax_t)off);
-	else if (!strcmp(mode, "redundant"))
-		out_printf("  candidate offset=0x%jx  crc=%s-endian  %s (redundant-env layout)\n", (uintmax_t)off,
-			crc_endian, has_known_vars ? "(has known vars)" : "(crc ok)");
-	else
-		out_printf("  candidate offset=0x%jx  crc=%s-endian  %s\n", (uintmax_t)off,
-			crc_endian, has_known_vars ? "(has known vars)" : "(crc ok)");
-
-	out_printf("    uboot_env.config line: %s 0x%jx 0x%jx 0x%jx 0x%jx\n",
-		dev, (uintmax_t)cfg_off, (uintmax_t)env_size,
-		(uintmax_t)erase_size, (uintmax_t)sector_count);
 }
 
 static void emit_redundant_pair_record(const char *dev, uint64_t a, uint64_t b)
 {
-	if (g_output_format == FW_OUTPUT_CSV) {
-		char a_s[32], b_s[32];
+	char *formatted = NULL;
 
-		snprintf(a_s, sizeof(a_s), "0x%jx", (uintmax_t)a);
-		snprintf(b_s, sizeof(b_s), "0x%jx", (uintmax_t)b);
-
-		emit_env_csv_header();
-		csv_out_field("redundant_pair"); out_printf(",");
-		csv_out_field(dev); out_printf(",");
-		csv_out_field(a_s); out_printf(",");
-		csv_out_field(""); out_printf(",");
-		csv_out_field(""); out_printf(",");
-		csv_out_field("false"); out_printf(",");
-		csv_out_field(b_s); out_printf(",");
-		csv_out_field(""); out_printf(",");
-		csv_out_field(""); out_printf(",");
-		csv_out_field(""); out_printf("\n");
+	if (ela_uboot_env_format_redundant_pair_record(g_output_format,
+						       &g_csv_header_emitted,
+						       dev,
+						       a,
+						       b,
+						       &formatted) != 0)
 		return;
+	if (formatted) {
+		out_printf("%s", formatted);
+		free(formatted);
 	}
-
-	if (g_output_format == FW_OUTPUT_JSON) {
-		json_object *obj = json_object_new_object();
-		if (!obj)
-			return;
-		json_object_object_add(obj, "record", json_object_new_string("redundant_pair"));
-		json_object_object_add(obj, "device", json_object_new_string(dev));
-		json_object_object_add(obj, "offset_a", json_object_new_uint64(a));
-		json_object_object_add(obj, "offset_b", json_object_new_uint64(b));
-		out_printf("%s\n", json_object_to_json_string_ext(obj, JSON_C_TO_STRING_PLAIN | JSON_C_TO_STRING_NOSLASHESCAPE));
-		json_object_put(obj);
-		return;
-	}
-
-	out_printf("    redundant env candidate pair: %s 0x%jx <-> 0x%jx\n",
-		dev, (uintmax_t)a, (uintmax_t)b);
 }
 
 static void emit_env_verbose(const char *dev, uint64_t off, const char *msg)
 {
+	char *formatted = NULL;
 	bool emitted = false;
 
-	if (!g_verbose || !msg)
+	if (ela_uboot_env_format_verbose_record(g_output_format,
+						g_verbose,
+						&g_csv_header_emitted,
+						dev,
+						off,
+						msg,
+						&formatted) != 0)
 		return;
-
-	if (g_output_format == FW_OUTPUT_TXT) {
-		out_printf("%s\n", msg);
+	if (formatted) {
+		out_printf("%s", formatted);
 		emitted = true;
-	} else if (g_output_format == FW_OUTPUT_CSV) {
-		char off_s[32];
-
-		snprintf(off_s, sizeof(off_s), "0x%jx", (uintmax_t)off);
-		emit_env_csv_header();
-		csv_out_field("verbose"); out_printf(",");
-		csv_out_field(dev ? dev : ""); out_printf(",");
-		csv_out_field(off_s); out_printf(",");
-		csv_out_field(""); out_printf(",");
-		csv_out_field(msg); out_printf(",");
-		csv_out_field("false"); out_printf(",");
-		csv_out_field(""); out_printf(",");
-		csv_out_field(""); out_printf(",");
-		csv_out_field(""); out_printf(",");
-		csv_out_field(""); out_printf("\n");
-		emitted = true;
-	} else {
-		json_object *obj = json_object_new_object();
-		if (!obj)
-			return;
-		json_object_object_add(obj, "record", json_object_new_string("verbose"));
-		if (dev)
-			json_object_object_add(obj, "device", json_object_new_string(dev));
-		json_object_object_add(obj, "offset", json_object_new_uint64(off));
-		json_object_object_add(obj, "message", json_object_new_string(msg));
-		out_printf("%s\n", json_object_to_json_string_ext(obj, JSON_C_TO_STRING_PLAIN | JSON_C_TO_STRING_NOSLASHESCAPE));
-		json_object_put(obj);
-		emitted = true;
+		free(formatted);
 	}
 
 	/*
@@ -260,46 +156,25 @@ static void emit_env_scan_start_verbose(const char *dev,
 					uint64_t env_size,
 					uint64_t device_size)
 {
-	char msg[256];
-	int n;
+	char *formatted = NULL;
+	bool emitted = false;
 
-	if (!g_verbose)
+	if (ela_uboot_env_format_scan_start_record(g_output_format,
+						   g_verbose,
+						   &g_csv_header_emitted,
+						   dev,
+						   step,
+						   env_size,
+						   device_size,
+						   &formatted) != 0)
 		return;
-
-	n = snprintf(msg,
-		     sizeof(msg),
-		     "Scanning %s (step=0x%jx, env_size=0x%jx, device_size=0x%jx)",
-		     dev ? dev : "",
-		     (uintmax_t)step,
-		     (uintmax_t)env_size,
-		     (uintmax_t)device_size);
-	if (n < 0)
-		return;
-
-	if (g_output_format == FW_OUTPUT_JSON) {
-		json_object *obj = json_object_new_object();
-		if (!obj)
-			return;
-		json_object_object_add(obj, "record", json_object_new_string("verbose"));
-		if (dev)
-			json_object_object_add(obj, "device", json_object_new_string(dev));
-		json_object_object_add(obj, "offset", json_object_new_uint64(0));
-		json_object_object_add(obj, "message", json_object_new_string(msg));
-		json_object_object_add(obj, "step", json_object_new_uint64(step));
-		json_object_object_add(obj, "env_size", json_object_new_uint64(env_size));
-		json_object_object_add(obj, "device_size", json_object_new_uint64(device_size));
-		out_printf("%s\n", json_object_to_json_string_ext(obj, JSON_C_TO_STRING_PLAIN | JSON_C_TO_STRING_NOSLASHESCAPE));
-		json_object_put(obj);
-
-		if (g_output_http_uri && g_output_http_len > 0)
-			(void)flush_output_http_buffer();
-		return;
+	if (formatted) {
+		out_printf("%s", formatted);
+		emitted = true;
+		free(formatted);
 	}
-
-	emit_env_verbosef(dev,
-		0,
-		"%s",
-		msg);
+	if (emitted && g_output_http_uri && g_output_http_len > 0)
+		(void)flush_output_http_buffer();
 }
 
 static void emit_env_verbosef(const char *dev, uint64_t off, const char *fmt, ...)
@@ -779,99 +654,14 @@ static bool has_hint_var(const uint8_t *data, size_t len, const char *hint_overr
 static MAYBE_UNUSED void dump_env_vars(const char *dev, uint64_t env_off,
 				      const uint8_t *data, size_t len)
 {
-	size_t cursor = 0;
-	size_t count = 0;
-	json_object *vars_arr = NULL;
-	json_object *obj = NULL;
-	bool json_mode = (g_output_format == FW_OUTPUT_JSON);
+	char *formatted = NULL;
 
-	if (json_mode) {
-		vars_arr = json_object_new_array();
-		if (!vars_arr)
-			return;
-	}
-
-	if (!json_mode)
-		out_printf("    parsed env vars:\n");
-	while (cursor < len) {
-		const char *s;
-		size_t slen;
-		const char *eq;
-		bool printable = true;
-
-		if (data[cursor] == '\0') {
-			if ((cursor + 1 < len && data[cursor + 1] == '\0') || cursor + 1 >= len)
-				break;
-			cursor++;
-			continue;
-		}
-
-		s = (const char *)(data + cursor);
-		slen = strnlen(s, len - cursor);
-		if (slen == len - cursor)
-			break;
-
-		eq = memchr(s, '=', slen);
-		if (eq) {
-			size_t key_len = (size_t)(eq - s);
-			size_t val_len = slen - key_len - 1;
-			for (size_t i = 0; i < slen; i++) {
-				if (!isprint((unsigned char)s[i]) && s[i] != '\t') {
-					printable = false;
-					break;
-				}
-			}
-
-			if (printable) {
-				if (json_mode) {
-					json_object *kv = json_object_new_object();
-					char *key = strndup(s, key_len);
-					char *value = strndup(eq + 1, val_len);
-
-					if (kv && key && value) {
-						json_object_object_add(kv, "key", json_object_new_string(key));
-						json_object_object_add(kv, "value", json_object_new_string(value));
-						json_object_array_add(vars_arr, kv);
-						count++;
-					} else if (kv) {
-						json_object_put(kv);
-					}
-
-					free(key);
-					free(value);
-				} else {
-					out_printf("      %.*s\n", (int)slen, s);
-					count++;
-				}
-			}
-		}
-
-		cursor += slen + 1;
-		if (count >= 256) {
-			if (!json_mode)
-				out_printf("      ... truncated after 256 vars ...\n");
-			break;
-		}
-	}
-
-	if (json_mode) {
-		obj = json_object_new_object();
-		if (!obj) {
-			json_object_put(vars_arr);
-			return;
-		}
-		json_object_object_add(obj, "record", json_object_new_string("env_vars"));
-		if (dev)
-			json_object_object_add(obj, "device", json_object_new_string(dev));
-		json_object_object_add(obj, "offset", json_object_new_uint64(env_off));
-		json_object_object_add(obj, "vars", vars_arr);
-		out_printf("%s\n", json_object_to_json_string_ext(obj, JSON_C_TO_STRING_PLAIN | JSON_C_TO_STRING_NOSLASHESCAPE));
-		json_object_put(obj);
+	if (ela_uboot_env_format_vars_dump(g_output_format, dev, env_off, data, len, &formatted) != 0)
 		return;
+	if (formatted) {
+		out_printf("%s", formatted);
+		free(formatted);
 	}
-
-	if (!count)
-		out_printf("      (no parseable variables found)\n");
 }
 
 static int scan_dev(const char *dev, uint64_t step, uint64_t env_size, const char *hint_override)
@@ -987,13 +777,11 @@ static int scan_dev(const char *dev, uint64_t step, uint64_t env_size, const cha
 	}
 
 	if (cand_count >= 2 && erase_size) {
-		uint64_t expected = erase_size * (sector_count ? sector_count : 1);
 		for (size_t i = 1; i < cand_count; i++) {
 			uint64_t prev = cands[i - 1].cfg_off;
 			uint64_t curr = cands[i].cfg_off;
-			uint64_t diff = curr - prev;
 
-			if (diff != erase_size && diff != expected)
+			if (!ela_uboot_env_should_report_redundant_pair(prev, curr, erase_size, sector_count))
 				continue;
 
 			emit_redundant_pair_record(dev, prev, curr);

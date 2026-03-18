@@ -42,3 +42,17 @@ bool ela_uboot_env_is_http_write_source(const char *s)
 		return false;
 	return !strncmp(s, "http://", 7) || !strncmp(s, "https://", 8);
 }
+
+bool ela_uboot_env_should_report_redundant_pair(uint64_t prev,
+						uint64_t curr,
+						uint64_t erase_size,
+						uint64_t sector_count)
+{
+	uint64_t expected;
+
+	if (!erase_size || curr < prev)
+		return false;
+
+	expected = erase_size * (sector_count ? sector_count : 1);
+	return (curr - prev) == erase_size || (curr - prev) == expected;
+}

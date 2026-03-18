@@ -17,6 +17,9 @@ static void test_uboot_env_candidate_merge_and_http_source_helper(void)
 	ELA_ASSERT_TRUE(cands[0].crc_redundant);
 	ELA_ASSERT_TRUE(ela_uboot_env_is_http_write_source("https://ela.example/script"));
 	ELA_ASSERT_FALSE(ela_uboot_env_is_http_write_source("/tmp/write.env"));
+	ELA_ASSERT_TRUE(ela_uboot_env_should_report_redundant_pair(0x1000, 0x2000, 0x1000, 2));
+	ELA_ASSERT_TRUE(ela_uboot_env_should_report_redundant_pair(0x1000, 0x3000, 0x1000, 2));
+	ELA_ASSERT_FALSE(ela_uboot_env_should_report_redundant_pair(0x1000, 0x2800, 0x1000, 2));
 	free(cands);
 }
 
