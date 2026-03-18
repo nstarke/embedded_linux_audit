@@ -3,6 +3,8 @@
 #include "interactive.h"
 #include "../embedded_linux_audit_cmd.h"
 #include "../net/ela_conf.h"
+#include "../util/command_parse_util.h"
+#include "../util/interactive_parse_util.h"
 
 #include <ctype.h>
 #include <errno.h>
@@ -267,26 +269,6 @@ static int interactive_list_supported_variables(FILE *stream)
 		       (ela_ws_retry && *ela_ws_retry) ? ela_ws_retry : "<unset>");
 }
 
-static bool interactive_parse_bool(const char *value, const char **normalized)
-{
-	if (!value || !normalized)
-		return false;
-
-	if (!strcmp(value, "1") || !strcmp(value, "true") || !strcmp(value, "yes") ||
-	    !strcmp(value, "on")) {
-		*normalized = "true";
-		return true;
-	}
-
-	if (!strcmp(value, "0") || !strcmp(value, "false") || !strcmp(value, "no") ||
-	    !strcmp(value, "off")) {
-		*normalized = "false";
-		return true;
-	}
-
-	return false;
-}
-
 int interactive_set_command(int argc, char **argv)
 {
 	const char *normalized_bool;
@@ -335,7 +317,7 @@ int interactive_set_command(int argc, char **argv)
 	}
 
 	if (!strcmp(argv[1], "ELA_API_INSECURE")) {
-		if (!interactive_parse_bool(argv[2], &normalized_bool)) {
+		if (!ela_parse_bool_string(argv[2], &normalized_bool)) {
 			fprintf(stderr,
 				"Invalid ELA_API_INSECURE value: %s (expected true/false, 1/0, yes/no, on/off)\n",
 				argv[2]);
@@ -353,7 +335,7 @@ int interactive_set_command(int argc, char **argv)
 	}
 
 	if (!strcmp(argv[1], "ELA_QUIET")) {
-		if (!interactive_parse_bool(argv[2], &normalized_bool)) {
+		if (!ela_parse_bool_string(argv[2], &normalized_bool)) {
 			fprintf(stderr,
 				"Invalid ELA_QUIET value: %s (expected true/false, 1/0, yes/no, on/off)\n",
 				argv[2]);
@@ -442,7 +424,7 @@ int interactive_set_command(int argc, char **argv)
 	}
 
 	if (!strcmp(argv[1], "ELA_OUTPUT_INSECURE")) {
-		if (!interactive_parse_bool(argv[2], &normalized_bool)) {
+		if (!ela_parse_bool_string(argv[2], &normalized_bool)) {
 			fprintf(stderr,
 				"Invalid ELA_OUTPUT_INSECURE value: %s (expected true/false, 1/0, yes/no, on/off)\n",
 				argv[2]);
@@ -476,7 +458,7 @@ int interactive_set_command(int argc, char **argv)
 	}
 
 	if (!strcmp(argv[1], "ELA_VERBOSE")) {
-		if (!interactive_parse_bool(argv[2], &normalized_bool)) {
+		if (!ela_parse_bool_string(argv[2], &normalized_bool)) {
 			fprintf(stderr,
 				"Invalid ELA_VERBOSE value: %s (expected true/false, 1/0, yes/no, on/off)\n",
 				argv[2]);
@@ -493,7 +475,7 @@ int interactive_set_command(int argc, char **argv)
 	}
 
 	if (!strcmp(argv[1], "ELA_DEBUG")) {
-		if (!interactive_parse_bool(argv[2], &normalized_bool)) {
+		if (!ela_parse_bool_string(argv[2], &normalized_bool)) {
 			fprintf(stderr,
 				"Invalid ELA_DEBUG value: %s (expected true/false, 1/0, yes/no, on/off)\n",
 				argv[2]);
@@ -595,133 +577,6 @@ static char **interactive_completion(const char *text, int start, int end)
 	return rl_completion_matches(text, interactive_completion_generator);
 }
 #endif
-
-static int interactive_append_arg(char ***argv_out, int *argc_out, const char *start, size_t len)
-{
-	char **tmp_argv;
-	char *arg;
-
-	if (!argv_out || !argc_out)
-		return -1;
-
-	arg = malloc(len + 1);
-	if (!arg)
-		return -1;
-	memcpy(arg, start, len);
-	arg[len] = '\0';
-
-	tmp_argv = realloc(*argv_out, (size_t)(*argc_out + 2) * sizeof(*tmp_argv));
-	if (!tmp_argv) {
-		free(arg);
-		return -1;
-	}
-
-	*argv_out = tmp_argv;
-	(*argv_out)[*argc_out] = arg;
-	(*argc_out)++;
-	(*argv_out)[*argc_out] = NULL;
-	return 0;
-}
-
-void interactive_free_argv(char **argv, int argc)
-{
-	if (!argv)
-		return;
-
-	for (int i = 0; i < argc; i++)
-		free(argv[i]);
-	free(argv);
-}
-
-int interactive_parse_line(const char *line, char ***argv_out, int *argc_out)
-{
-	const char *p = line;
-	char **argv = NULL;
-	int argc = 0;
-
-	if (!argv_out || !argc_out)
-		return -1;
-
-	while (*p) {
-		const char *start;
-		char quote = '\0';
-		char *arg = NULL;
-		size_t arg_len = 0;
-		size_t arg_cap = 0;
-
-		while (*p && isspace((unsigned char)*p))
-			p++;
-		if (*p == '#')
-			break;
-		if (!*p || *p == '\n')
-			break;
-
-		start = p;
-		while (*p && (!isspace((unsigned char)*p) || quote)) {
-			char ch = *p++;
-			if (!quote && ch == '#') {
-				p--;
-				break;
-			}
-			if (!quote && (ch == '\'' || ch == '"')) {
-				quote = ch;
-				continue;
-			}
-			if (quote && ch == quote) {
-				quote = '\0';
-				continue;
-			}
-			if (ch == '\\' && *p) {
-				ch = *p++;
-			}
-			if (arg_len + 2 > arg_cap) {
-				size_t new_cap = arg_cap ? arg_cap * 2 : 32;
-				char *tmp = realloc(arg, new_cap);
-				if (!tmp) {
-					free(arg);
-					interactive_free_argv(argv, argc);
-					return -1;
-				}
-				arg = tmp;
-				arg_cap = new_cap;
-			}
-			arg[arg_len++] = ch;
-		}
-
-		if (quote) {
-			fprintf(stderr, "Unterminated quote in interactive command: %s\n", start);
-			free(arg);
-			interactive_free_argv(argv, argc);
-			return 2;
-		}
-
-		if (!arg) {
-			if (interactive_append_arg(&argv, &argc, start, (size_t)(p - start)) != 0) {
-				interactive_free_argv(argv, argc);
-				return -1;
-			}
-		} else {
-			char **tmp_argv;
-			arg[arg_len] = '\0';
-			tmp_argv = realloc(argv, (size_t)(argc + 2) * sizeof(*tmp_argv));
-			if (!tmp_argv) {
-				free(arg);
-				interactive_free_argv(argv, argc);
-				return -1;
-			}
-			argv = tmp_argv;
-			argv[argc++] = arg;
-			argv[argc] = NULL;
-		}
-
-		if (*p == '#')
-			break;
-	}
-
-	*argv_out = argv;
-	*argc_out = argc;
-	return 0;
-}
 
 static void interactive_restore_terminal(int tty_fd,
 					 const struct termios *saved_termios,

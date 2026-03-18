@@ -2,6 +2,8 @@
 
 #include "tpm2_internal.h"
 
+#include "../util/command_parse_util.h"
+
 #include <errno.h>
 #include <inttypes.h>
 #include <stdint.h>
@@ -20,19 +22,7 @@ int tpm2_rc_to_exit_code(TSS2_RC rc)
 
 int parse_u32(const char *text, uint32_t *value)
 {
-	char *end = NULL;
-	unsigned long parsed;
-
-	if (!text || !*text || !value)
-		return -1;
-
-	errno = 0;
-	parsed = strtoul(text, &end, 0);
-	if (errno != 0 || !end || *end != '\0' || parsed > UINT32_MAX)
-		return -1;
-
-	*value = (uint32_t)parsed;
-	return 0;
+	return ela_parse_u32(text, value);
 }
 
 TPM2_ALG_ID parse_hash_alg(const char *name)

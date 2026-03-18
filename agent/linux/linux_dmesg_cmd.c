@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later - Copyright (c) 2026 Nicholas Starke
 
 #include "embedded_linux_audit_cmd.h"
+#include "util/command_parse_util.h"
 
 #include <errno.h>
 #include <getopt.h>
@@ -25,25 +26,6 @@ struct line_buffer {
 	char *text;
 	size_t len;
 };
-
-static int parse_positive_line_count(const char *spec, size_t *count_out)
-{
-	char *end = NULL;
-	unsigned long value;
-
-	if (!spec || !*spec || !count_out)
-		return -1;
-	if (spec[0] == '-')
-		return -1;
-
-	errno = 0;
-	value = strtoul(spec, &end, 10);
-	if (errno != 0 || !end || *end != '\0' || value == 0 || (unsigned long)(size_t)value != value)
-		return -1;
-
-	*count_out = (size_t)value;
-	return 0;
-}
 
 static void send_to_output_socket(const char *buf, size_t len)
 {
@@ -252,13 +234,13 @@ int linux_dmesg_scan_main(int argc, char **argv)
 			usage(argv[0]);
 			return 0;
 		case 'H':
-			if (parse_positive_line_count(optarg, &head_count) != 0) {
+			if (ela_parse_positive_size_arg(optarg, &head_count) != 0) {
 				err_printf("Invalid --head value (expected positive integer): %s\n", optarg);
 				return 2;
 			}
 			break;
 		case 'T':
-			if (parse_positive_line_count(optarg, &tail_count) != 0) {
+			if (ela_parse_positive_size_arg(optarg, &tail_count) != 0) {
 				err_printf("Invalid --tail value (expected positive integer): %s\n", optarg);
 				return 2;
 			}

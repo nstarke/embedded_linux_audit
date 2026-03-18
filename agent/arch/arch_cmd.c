@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later - Copyright (c) 2026 Nicholas Starke
 
 #include "../embedded_linux_audit_cmd.h"
+#include "../util/command_parse_util.h"
 #include "../util/output_buffer.h"
+#include "../util/record_formatter.h"
 #include "../net/http_client.h"
 
-#include <csv.h>
-#include <json.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -99,27 +99,9 @@ static int arch_emit(const char *fmt, const char *subname, const char *value,
 	struct output_buffer line = {0};
 	int ret = 0;
 
-	if (!strcmp(fmt, "json")) {
-		json_object *obj = json_object_new_object();
-		const char *js;
-
-		if (!obj)
-			return -1;
-		json_object_object_add(obj, "record",     json_object_new_string("arch"));
-		json_object_object_add(obj, "subcommand", json_object_new_string(subname));
-		json_object_object_add(obj, "value",      json_object_new_string(value));
-		js = json_object_to_json_string_ext(obj,
-			JSON_C_TO_STRING_PLAIN | JSON_C_TO_STRING_NOSLASHESCAPE);
-		output_buffer_append(&line, js);
-		output_buffer_append(&line, "\n");
-		json_object_put(obj);
-	} else if (!strcmp(fmt, "csv")) {
-		csv_write_to_buf(&line, value);
-		output_buffer_append(&line, "\n");
-	} else {
-		/* txt: bare value */
-		output_buffer_append(&line, value);
-		output_buffer_append(&line, "\n");
+	if (ela_format_arch_record(&line, fmt, subname, value) != 0) {
+		ret = -1;
+		goto out;
 	}
 
 	if (!line.data) {
@@ -207,12 +189,9 @@ int arch_main(int argc, char **argv)
 		return 0;
 	}
 
-	if (!output_format || !*output_format)
-		output_format = "txt";
+	output_format = ela_output_format_or_default(output_format, "txt");
 
-	if (strcmp(output_format, "txt") &&
-	    strcmp(output_format, "csv") &&
-	    strcmp(output_format, "json")) {
+	if (!ela_output_format_is_valid(output_format)) {
 		fprintf(stderr, "Invalid output format for arch: %s\n", output_format);
 		return 2;
 	}

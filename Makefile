@@ -1,5 +1,7 @@
 CC      ?= gcc
+HOSTCC  ?= cc
 CFLAGS  ?= -O2 -Wall -Wextra
+HOSTCFLAGS ?= -O2 -Wall -Wextra -std=c11 -D_DEFAULT_SOURCE
 LDFLAGS ?=
 LDLIBS  ?=
 JOBS    ?= 4
@@ -384,6 +386,42 @@ DEFAULT_CA_BUNDLE_PEM := $(GENERATED_DIR)/cacert.pem
 CA_BUNDLE_URL ?= https://curl.se/ca/cacert.pem
 CA_BUNDLE_PEM ?= $(DEFAULT_CA_BUNDLE_PEM)
 GENERATED_CA_SRC := $(GENERATED_DIR)/ela_default_ca_bundle.c
+AGENT_UNIT_TEST_BIN := $(GENERATED_DIR)/agent_unit_tests
+AGENT_UNIT_TEST_SRC := \
+	tests/unit/agent/main.c \
+	tests/unit/agent/test_harness.c \
+	tests/unit/agent/test_str_util.c \
+	tests/unit/agent/test_isa_util.c \
+	tests/unit/agent/test_crc32_util.c \
+	tests/unit/agent/test_http_uri_util.c \
+	tests/unit/agent/test_command_parse_util.c \
+	tests/unit/agent/test_record_formatter.c \
+	tests/unit/agent/test_list_files_filter_util.c \
+	tests/unit/agent/test_lifecycle_formatter.c \
+	tests/unit/agent/test_ela_conf_util.c \
+	tests/unit/agent/test_interactive_parse_util.c
+AGENT_UNIT_TEST_DEPS := \
+	agent/util/str_util.c \
+	agent/util/isa_util.c \
+	agent/util/crc32_util.c \
+	agent/util/http_uri_util.c \
+	agent/util/command_parse_util.c \
+	agent/util/record_formatter.c \
+	agent/util/list_files_filter_util.c \
+	agent/util/lifecycle_formatter.c \
+	agent/util/interactive_parse_util.c \
+	agent/net/ela_conf_util.c \
+	agent/util/str_util.h \
+	agent/util/isa_util.h \
+	agent/util/http_uri_util.h \
+	agent/util/command_parse_util.h \
+	agent/util/record_formatter.h \
+	agent/util/list_files_filter_util.h \
+	agent/util/lifecycle_formatter.h \
+	agent/util/interactive_parse_util.h \
+	agent/net/ela_conf_util.h \
+	agent/net/ela_conf.h \
+	agent/embedded_linux_audit_cmd.h
 
 ZLIB_CMAKE_ARGS := $(CMAKE_CC_ARGS)
 ifneq ($(strip $(ZLIB_EXTRA_CFLAGS)),)
@@ -435,7 +473,7 @@ READLINE_DEPS :=
 endif
 
 TARGET := embedded_linux_audit
-SRC    := agent/embedded_linux_audit.c agent/shell/interactive.c agent/shell/script_exec.c agent/lifecycle.c agent/util/str_util.c agent/util/isa_util.c agent/util/crc32_util.c agent/net/tcp_util.c agent/net/http_client.c agent/net/ela_conf.c agent/device/device_scan.c agent/uboot/env/uboot_env_cmd.c agent/uboot/env/uboot_env_read_vars_cmd.c agent/uboot/env/uboot_env_write_vars_cmd.c agent/uboot/env/uboot_env_write_op.c agent/uboot/uboot_image_cmd.c agent/uboot/image/uboot_image_pull_cmd.c agent/uboot/image/uboot_image_find_address_cmd.c agent/uboot/image/uboot_image_list_commands_cmd.c agent/uboot/uboot_security_audit_cmd.c agent/uboot/audit/uboot_audit_output.c agent/linux/linux_dmesg_cmd.c agent/linux/linux_dmesg_watch_cmd.c agent/linux/linux_download_file_cmd.c agent/linux/linux_execute_command_cmd.c agent/linux/linux_grep_cmd.c agent/linux/linux_list_files_cmd.c agent/linux/linux_list_symlinks_cmd.c agent/linux/linux_remote_copy_cmd.c agent/linux/linux_ssh_cmd.c agent/tpm2/tpm2_cmd.c agent/tpm2/tpm2_util.c agent/tpm2/tpm2_output.c agent/tpm2/tpm2_getcap.c agent/tpm2/tpm2_pcrread.c agent/tpm2/tpm2_nvreadpublic.c agent/tpm2/tpm2_createprimary.c agent/orom/orom_pull_cmd_common.c agent/efi/efi_pull_orom_cmd.c agent/efi/efi_dump_vars_cmd.c agent/bios/bios_pull_orom_cmd.c \
+SRC    := agent/embedded_linux_audit.c agent/shell/interactive.c agent/shell/script_exec.c agent/lifecycle.c agent/util/str_util.c agent/util/isa_util.c agent/util/crc32_util.c agent/util/http_uri_util.c agent/util/command_parse_util.c agent/util/record_formatter.c agent/util/list_files_filter_util.c agent/util/lifecycle_formatter.c agent/util/interactive_parse_util.c agent/net/tcp_util.c agent/net/http_client.c agent/net/ela_conf.c agent/net/ela_conf_util.c agent/device/device_scan.c agent/uboot/env/uboot_env_cmd.c agent/uboot/env/uboot_env_read_vars_cmd.c agent/uboot/env/uboot_env_write_vars_cmd.c agent/uboot/env/uboot_env_write_op.c agent/uboot/uboot_image_cmd.c agent/uboot/image/uboot_image_pull_cmd.c agent/uboot/image/uboot_image_find_address_cmd.c agent/uboot/image/uboot_image_list_commands_cmd.c agent/uboot/uboot_security_audit_cmd.c agent/uboot/audit/uboot_audit_output.c agent/linux/linux_dmesg_cmd.c agent/linux/linux_dmesg_watch_cmd.c agent/linux/linux_download_file_cmd.c agent/linux/linux_execute_command_cmd.c agent/linux/linux_grep_cmd.c agent/linux/linux_list_files_cmd.c agent/linux/linux_list_symlinks_cmd.c agent/linux/linux_remote_copy_cmd.c agent/linux/linux_ssh_cmd.c agent/tpm2/tpm2_cmd.c agent/tpm2/tpm2_util.c agent/tpm2/tpm2_output.c agent/tpm2/tpm2_getcap.c agent/tpm2/tpm2_pcrread.c agent/tpm2/tpm2_nvreadpublic.c agent/tpm2/tpm2_createprimary.c agent/orom/orom_pull_cmd_common.c agent/efi/efi_pull_orom_cmd.c agent/efi/efi_dump_vars_cmd.c agent/bios/bios_pull_orom_cmd.c \
 	  agent/uboot/audit-rules/uboot_validate_crc32_rule.c \
 	  agent/uboot/audit-rules/uboot_validate_cmdline_init_writeability_rule.c \
 	  agent/uboot/audit-rules/uboot_validate_env_security_rule.c \
@@ -447,7 +485,7 @@ SRC    := agent/embedded_linux_audit.c agent/shell/interactive.c agent/shell/scr
 	  agent/net/ws_client.c \
 	  $(LIBCSV_SRC) $(GENERATED_CA_SRC)
 
-.PHONY: all env image static test clean check-autoconf check-autoreconf check-zig check-llvm-objcopy
+.PHONY: all env image static test test-unit-agent-c clean check-autoconf check-autoreconf check-zig check-llvm-objcopy
 
 check-zig:
 	@if [ "$(NEEDS_ZIG)" != "1" ]; then \
@@ -761,7 +799,28 @@ $(TARGET): $(TARGET_DEPS)
 
 static: all
 
+$(AGENT_UNIT_TEST_BIN): $(AGENT_UNIT_TEST_SRC) $(AGENT_UNIT_TEST_DEPS) $(JSONC_LIB) | $(GENERATED_DIR)
+	$(HOSTCC) $(HOSTCFLAGS) -I. -Iagent -Ithird_party -Ithird_party/libcsv -I$(JSONC_DIR) -I$(JSONC_BUILD) \
+		-o $@ \
+		$(AGENT_UNIT_TEST_SRC) \
+		third_party/libcsv/libcsv.c \
+		agent/util/str_util.c \
+		agent/util/isa_util.c \
+			agent/util/crc32_util.c \
+			agent/util/http_uri_util.c \
+			agent/util/command_parse_util.c \
+			agent/util/record_formatter.c \
+			agent/util/list_files_filter_util.c \
+			agent/util/lifecycle_formatter.c \
+			agent/util/interactive_parse_util.c \
+			agent/net/ela_conf_util.c \
+			$(JSONC_LIB)
+
+test-unit-agent-c: $(AGENT_UNIT_TEST_BIN)
+	./$(AGENT_UNIT_TEST_BIN)
+
 test:
+	$(MAKE) test-unit-agent-c
 	bash tests/agent/shell/test_all.sh
 
 clean:

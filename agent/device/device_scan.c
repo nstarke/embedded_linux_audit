@@ -60,25 +60,6 @@ static uint64_t read_u64_from_file(const char *path)
 	return (uint64_t)v;
 }
 
-int ela_parse_u64(const char *s, uint64_t *out)
-{
-	char *end;
-	unsigned long long v;
-
-	if (!s || !out)
-		return -1;
-
-	errno = 0;
-	v = strtoull(s, &end, 0);
-	while (*end == ' ' || *end == '\t' || *end == '\r' || *end == '\n')
-		end++;
-	if (errno || end == s || *end != '\0')
-		return -1;
-
-	*out = (uint64_t)v;
-	return 0;
-}
-
 uint32_t ela_read_be32(const uint8_t *p)
 {
 	return ((uint32_t)p[0] << 24) |
