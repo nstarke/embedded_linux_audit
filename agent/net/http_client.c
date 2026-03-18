@@ -934,8 +934,6 @@ static int simple_https_post(const char *uri,
 	char *headers = NULL;
 	char *request = NULL;
 	size_t request_len = 0;
-	size_t request_cap = 0;
-	char content_len_buf[32];
 	int status;
 
 	if (status_out)
@@ -962,31 +960,15 @@ static int simple_https_post(const char *uri,
 	if (ssl_connect_with_embedded_ca(&parsed, insecure, &ctx, &ssl, &sock, errbuf, errbuf_len) < 0)
 		return -1;
 
-	snprintf(content_len_buf, sizeof(content_len_buf), "%zu", len);
-	if (append_text(&request, &request_len, &request_cap, "POST ") != 0 ||
-	    append_text(&request, &request_len, &request_cap, parsed.path) != 0 ||
-	    append_text(&request, &request_len, &request_cap, " HTTP/1.1\r\nHost: ") != 0 ||
-	    append_text(&request, &request_len, &request_cap, parsed.host) != 0 ||
-	    append_text(&request, &request_len, &request_cap, "\r\nConnection: close\r\nContent-Type: ") != 0 ||
-	    append_text(&request, &request_len, &request_cap, content_type) != 0 ||
-	    append_text(&request, &request_len, &request_cap, "\r\nContent-Length: ") != 0 ||
-	    append_text(&request, &request_len, &request_cap, content_len_buf) != 0) {
-		if (errbuf && errbuf_len)
-			snprintf(errbuf, errbuf_len, "failed to build HTTPS request");
-		goto fail;
-	}
-
-	if (auth_key && *auth_key) {
-		if (append_text(&request, &request_len, &request_cap, "\r\nAuthorization: Bearer ") != 0 ||
-		    append_text(&request, &request_len, &request_cap, auth_key) != 0) {
-			if (errbuf && errbuf_len)
-				snprintf(errbuf, errbuf_len, "failed to build HTTPS request");
-			goto fail;
-		}
-	}
-
-	if (append_text(&request, &request_len, &request_cap, "\r\n\r\n") != 0 ||
-	    append_bytes(&request, &request_len, &request_cap, (const char *)data, len) != 0) {
+	if (ela_http_build_post_request(&request,
+					&request_len,
+					parsed.path,
+					parsed.host,
+					content_type,
+					len,
+					auth_key,
+					data,
+					len) != 0) {
 		if (errbuf && errbuf_len)
 			snprintf(errbuf, errbuf_len, "failed to build HTTPS request");
 		goto fail;
@@ -1060,7 +1042,6 @@ static int simple_https_get_to_file(const char *uri,
 	char *headers = NULL;
 	char *request = NULL;
 	size_t request_len = 0;
-	size_t request_cap = 0;
 	int status;
 
 	if (parse_http_uri(uri, &parsed) != 0 || !parsed.https) {
@@ -1092,11 +1073,7 @@ static int simple_https_get_to_file(const char *uri,
 	}
 
 	ela_set_sigill_stage("https:get:build_request");
-	if (append_text(&request, &request_len, &request_cap, "GET ") != 0 ||
-	    append_text(&request, &request_len, &request_cap, parsed.path) != 0 ||
-	    append_text(&request, &request_len, &request_cap, " HTTP/1.1\r\nHost: ") != 0 ||
-	    append_text(&request, &request_len, &request_cap, parsed.host) != 0 ||
-	    append_text(&request, &request_len, &request_cap, "\r\nConnection: close\r\nAccept-Encoding: identity\r\n\r\n") != 0) {
+	if (ela_http_build_identity_get_request(&request, &request_len, parsed.path, parsed.host) != 0) {
 		if (errbuf && errbuf_len)
 			snprintf(errbuf, errbuf_len, "failed to build HTTPS request");
 		goto fail;
