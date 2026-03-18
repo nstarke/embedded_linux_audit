@@ -3,6 +3,9 @@
 #include "test_harness.h"
 #include "../../../agent/uboot/uboot_security_audit_util.h"
 
+#include <stdlib.h>
+#include <string.h>
+
 static void test_uboot_security_audit_output_and_rule_helpers(void)
 {
 	ELA_ASSERT_TRUE(ela_uboot_buffer_has_newline("a\nb", 3));
@@ -32,6 +35,18 @@ static void test_uboot_fit_header_validation_helper(void)
 	ELA_ASSERT_TRUE(ela_uboot_fit_header_looks_valid(hdr, 0, 0x2000));
 	hdr[35] = 0x00;
 	ELA_ASSERT_FALSE(ela_uboot_fit_header_looks_valid(hdr, 0, 0x2000));
+	ELA_ASSERT_TRUE(ela_uboot_read_be32(hdr) == 0xD00DFEEDu);
+}
+
+static void test_uboot_extract_public_key_pem_helper(void)
+{
+	const char *blob = "noise-----BEGIN PUBLIC KEY-----\nABCDEF\n-----END PUBLIC KEY-----tail";
+	char *pem = NULL;
+
+	ELA_ASSERT_INT_EQ(0, ela_uboot_extract_public_key_pem(blob, strlen(blob), &pem));
+	ELA_ASSERT_STR_EQ("-----BEGIN PUBLIC KEY-----\nABCDEF\n-----END PUBLIC KEY-----\n", pem);
+	free(pem);
+	ELA_ASSERT_INT_EQ(-1, ela_uboot_extract_public_key_pem("-----BEGIN PUBLIC KEY-----", strlen("-----BEGIN PUBLIC KEY-----"), &pem));
 }
 
 int run_uboot_security_audit_util_tests(void)
@@ -39,6 +54,7 @@ int run_uboot_security_audit_util_tests(void)
 	static const struct ela_test_case cases[] = {
 		{ "uboot_security_audit_output_and_rule_helpers", test_uboot_security_audit_output_and_rule_helpers },
 		{ "uboot_fit_header_validation_helper", test_uboot_fit_header_validation_helper },
+		{ "uboot_extract_public_key_pem_helper", test_uboot_extract_public_key_pem_helper },
 	};
 
 	return ela_run_test_suite("uboot_security_audit_util", cases, sizeof(cases) / sizeof(cases[0]));

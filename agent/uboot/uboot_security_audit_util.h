@@ -12,6 +12,8 @@
 bool ela_uboot_buffer_has_newline(const char *buf, size_t len);
 bool ela_uboot_audit_rule_may_need_signature_artifacts(const char *rule_filter);
 enum uboot_output_format ela_uboot_audit_detect_output_format(const char *fmt);
+uint32_t ela_uboot_read_be32(const uint8_t *p);
 bool ela_uboot_fit_header_looks_valid(const uint8_t *p, uint64_t abs_off, uint64_t dev_size);
+int ela_uboot_extract_public_key_pem(const char *text, size_t len, char **pem_out);
 
 #endif

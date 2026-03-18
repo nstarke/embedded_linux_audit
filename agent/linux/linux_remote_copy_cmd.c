@@ -89,7 +89,7 @@ static void report_remote_copy_errno(const char *output_uri,
 		return;
 	}
 
-	n = snprintf(message, sizeof(message), fmt, path, strerror(saved_errno));
+	n = ela_remote_copy_format_errno_message(message, sizeof(message), fmt, path, saved_errno);
 	if (n < 0) {
 		return;
 	}
@@ -348,7 +348,13 @@ static int upload_path_http(const char *path,
 				rc = -1;
 				break;
 			}
-			snprintf(child, child_len, "%s/%s", path, de->d_name);
+			if (ela_remote_copy_join_child_path(path, de->d_name, child, child_len) != 0) {
+				report_remote_copy_http_error(output_uri, insecure, verbose,
+					"Unable to format recursive child path during remote-copy\n");
+				free(child);
+				rc = -1;
+				break;
+			}
 
 			if (lstat(child, &child_st) != 0) {
 				report_remote_copy_errno(output_uri, insecure, verbose,
@@ -358,7 +364,7 @@ static int upload_path_http(const char *path,
 				continue;
 			}
 
-			if (S_ISDIR(child_st.st_mode) && !recursive) {
+			if (S_ISDIR(child_st.st_mode) && !ela_remote_copy_should_recurse(child_st.st_mode, recursive)) {
 				free(child);
 				continue;
 			}

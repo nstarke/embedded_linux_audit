@@ -8,6 +8,7 @@
 #include "ws_client.h"
 #include "api_key.h"
 #include "http_ws_policy_util.h"
+#include "ws_connect_util.h"
 #include "ws_recv_util.h"
 #include "ws_frame_util.h"
 #include "ws_session_util.h"
@@ -245,12 +246,10 @@ static void get_primary_mac(char *buf, size_t buf_sz)
 				continue;
 
 			m = sll->sll_addr;
-			if (!m[0] && !m[1] && !m[2] && !m[3] && !m[4] && !m[5])
+			if (ela_ws_mac_is_zero(m))
 				continue;
 
-			snprintf(buf, buf_sz,
-				 "%02x-%02x-%02x-%02x-%02x-%02x",
-				 m[0], m[1], m[2], m[3], m[4], m[5]);
+			ela_ws_format_mac_bytes(m, buf, buf_sz);
 			freeifaddrs(ifap);
 			return;
 		}
@@ -300,12 +299,8 @@ static void ws_make_key(char *out, size_t out_sz)
 	/* fallback */
 	{
 		unsigned int seed = (unsigned int)time(NULL);
-		size_t i;
-		for (i = 0; i < sizeof(nonce); i++) {
-			seed = seed * 1664525u + 1013904223u;
-			nonce[i] = (uint8_t)(seed >> 16);
-		}
-			ela_ws_base64_encode(nonce, sizeof(nonce), out, out_sz);
+		ela_ws_fill_nonce_from_seed(seed, nonce);
+		ela_ws_base64_encode(nonce, sizeof(nonce), out, out_sz);
 	}
 }
 

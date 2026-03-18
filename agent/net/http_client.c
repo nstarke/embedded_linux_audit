@@ -3,6 +3,7 @@
 #include "http_client.h"
 #include "api_key.h"
 #include "http_client_parse_util.h"
+#include "http_client_protocol_util.h"
 #include "http_ws_policy_util.h"
 #include "tcp_util.h"
 #include "../util/http_uri_util.h"
@@ -124,8 +125,7 @@ static int read_http_status_and_headers(int sock, int *status_out)
 {
 	char headers[8192];
 	size_t used = 0;
-	char *line_end;
-	char *status_line_end;
+	size_t header_len = 0;
 
 	if (!status_out)
 		return -1;
@@ -140,8 +140,7 @@ static int read_http_status_and_headers(int sock, int *status_out)
 			return -1;
 		used += (size_t)n;
 		headers[used] = '\0';
-		line_end = strstr(headers, "\r\n\r\n");
-		if (line_end)
+		if (ela_http_parse_response_headers(headers, used, status_out, &header_len) == 0)
 			break;
 		if (used == sizeof(headers) - 1)
 			return -1;
@@ -150,19 +149,11 @@ static int read_http_status_and_headers(int sock, int *status_out)
 		used = 0;
 	}
 
-	status_line_end = strstr(headers, "\r\n");
-	if (!status_line_end)
-		return -1;
-	*status_line_end = '\0';
-	if (sscanf(headers, "HTTP/%*u.%*u %d", status_out) != 1)
-		return -1;
-
-	used = (size_t)((line_end + 4) - headers);
-	while (used) {
-		ssize_t n = recv(sock, headers, used, 0);
+	while (header_len) {
+		ssize_t n = recv(sock, headers, header_len, 0);
 		if (n <= 0)
 			return -1;
-		used -= (size_t)n;
+		header_len -= (size_t)n;
 	}
 
 	return 0;
@@ -181,8 +172,6 @@ static int simple_http_post(const char *uri,
 	struct parsed_http_uri parsed;
 	char *request = NULL;
 	size_t request_len = 0;
-	size_t request_cap = 0;
-	char content_len_buf[32];
 	int sock;
 	int status_code;
 
@@ -202,35 +191,15 @@ static int simple_http_post(const char *uri,
 		return -1;
 	}
 
-	snprintf(content_len_buf, sizeof(content_len_buf), "%zu", len);
-	if (append_text(&request, &request_len, &request_cap, "POST ") != 0 ||
-	    append_text(&request, &request_len, &request_cap, parsed.path) != 0 ||
-	    append_text(&request, &request_len, &request_cap, " HTTP/1.1\r\nHost: ") != 0 ||
-	    append_text(&request, &request_len, &request_cap, parsed.host) != 0 ||
-	    append_text(&request, &request_len, &request_cap, "\r\nConnection: close\r\nContent-Type: ") != 0 ||
-	    append_text(&request, &request_len, &request_cap, content_type) != 0 ||
-	    append_text(&request, &request_len, &request_cap, "\r\nContent-Length: ") != 0 ||
-	    append_text(&request, &request_len, &request_cap, content_len_buf) != 0) {
-		if (errbuf && errbuf_len)
-			snprintf(errbuf, errbuf_len, "failed to build HTTP request");
-		free(request);
-		close(sock);
-		return -1;
-	}
-
-	if (auth_key && *auth_key) {
-		if (append_text(&request, &request_len, &request_cap, "\r\nAuthorization: Bearer ") != 0 ||
-		    append_text(&request, &request_len, &request_cap, auth_key) != 0) {
-			if (errbuf && errbuf_len)
-				snprintf(errbuf, errbuf_len, "failed to build HTTP request");
-			free(request);
-			close(sock);
-			return -1;
-		}
-	}
-
-	if (append_text(&request, &request_len, &request_cap, "\r\n\r\n") != 0 ||
-	    append_bytes(&request, &request_len, &request_cap, (const char *)data, len) != 0) {
+	if (ela_http_build_post_request(&request,
+					&request_len,
+					parsed.path,
+					parsed.host,
+					content_type,
+					len,
+					auth_key,
+					data,
+					len) != 0) {
 		if (errbuf && errbuf_len)
 			snprintf(errbuf, errbuf_len, "failed to build HTTP request");
 		free(request);
@@ -300,8 +269,6 @@ static int simple_wolfssl_https_post(const struct parsed_http_uri *parsed,
 	char *headers = NULL;
 	char *request = NULL;
 	size_t request_len = 0;
-	size_t request_cap = 0;
-	char content_len_buf[32];
 	int status;
 	int rc;
 
@@ -369,31 +336,15 @@ static int simple_wolfssl_https_post(const struct parsed_http_uri *parsed,
 		}
 	}
 
-	snprintf(content_len_buf, sizeof(content_len_buf), "%zu", len);
-	if (append_text(&request, &request_len, &request_cap, "POST ") != 0 ||
-	    append_text(&request, &request_len, &request_cap, parsed->path) != 0 ||
-	    append_text(&request, &request_len, &request_cap, " HTTP/1.1\r\nHost: ") != 0 ||
-	    append_text(&request, &request_len, &request_cap, parsed->host) != 0 ||
-	    append_text(&request, &request_len, &request_cap, "\r\nConnection: close\r\nContent-Type: ") != 0 ||
-	    append_text(&request, &request_len, &request_cap, content_type) != 0 ||
-	    append_text(&request, &request_len, &request_cap, "\r\nContent-Length: ") != 0 ||
-	    append_text(&request, &request_len, &request_cap, content_len_buf) != 0) {
-		if (errbuf && errbuf_len)
-			snprintf(errbuf, errbuf_len, "failed to build HTTPS request");
-		goto cleanup;
-	}
-
-	if (auth_key && *auth_key) {
-		if (append_text(&request, &request_len, &request_cap, "\r\nAuthorization: Bearer ") != 0 ||
-		    append_text(&request, &request_len, &request_cap, auth_key) != 0) {
-			if (errbuf && errbuf_len)
-				snprintf(errbuf, errbuf_len, "failed to build HTTPS request");
-			goto cleanup;
-		}
-	}
-
-	if (append_text(&request, &request_len, &request_cap, "\r\n\r\n") != 0 ||
-	    append_bytes(&request, &request_len, &request_cap, (const char *)data, len) != 0) {
+	if (ela_http_build_post_request(&request,
+					&request_len,
+					parsed->path,
+					parsed->host,
+					content_type,
+					len,
+					auth_key,
+					data,
+					len) != 0) {
 		if (errbuf && errbuf_len)
 			snprintf(errbuf, errbuf_len, "failed to build HTTPS request");
 		goto cleanup;
@@ -463,7 +414,6 @@ static int simple_http_get_to_file(const char *uri,
 	struct parsed_http_uri parsed;
 	char *request = NULL;
 	size_t request_len = 0;
-	size_t request_cap = 0;
 	FILE *fp = NULL;
 	int sock = -1;
 	int status_code;
@@ -490,11 +440,7 @@ static int simple_http_get_to_file(const char *uri,
 		return -1;
 	}
 
-	if (append_text(&request, &request_len, &request_cap, "GET ") != 0 ||
-	    append_text(&request, &request_len, &request_cap, parsed.path) != 0 ||
-	    append_text(&request, &request_len, &request_cap, " HTTP/1.1\r\nHost: ") != 0 ||
-	    append_text(&request, &request_len, &request_cap, parsed.host) != 0 ||
-	    append_text(&request, &request_len, &request_cap, "\r\nConnection: close\r\n\r\n") != 0) {
+	if (ela_http_build_get_request(&request, &request_len, parsed.path, parsed.host) != 0) {
 		if (errbuf && errbuf_len)
 			snprintf(errbuf, errbuf_len, "failed to build HTTP request");
 		goto fail;

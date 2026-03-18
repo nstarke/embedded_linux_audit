@@ -2,6 +2,7 @@
 
 #include "remote_copy_cmd_util.h"
 
+#include <errno.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -66,4 +67,32 @@ int ela_remote_copy_validate_request(const char *path,
 		return -1;
 	}
 	return 0;
+}
+
+int ela_remote_copy_format_errno_message(char *buf,
+					 size_t buf_sz,
+					 const char *fmt,
+					 const char *path,
+					 int errnum)
+{
+	if (!buf || buf_sz == 0 || !fmt || !path)
+		return -1;
+
+	return snprintf(buf, buf_sz, fmt, path, strerror(errnum)) >= (int)buf_sz ? -1 : 0;
+}
+
+int ela_remote_copy_join_child_path(const char *parent,
+				    const char *name,
+				    char *buf,
+				    size_t buf_sz)
+{
+	if (!parent || !name || !buf || buf_sz == 0)
+		return -1;
+
+	return snprintf(buf, buf_sz, "%s/%s", parent, name) >= (int)buf_sz ? -1 : 0;
+}
+
+bool ela_remote_copy_should_recurse(mode_t mode, bool recursive)
+{
+	return recursive && S_ISDIR(mode);
 }

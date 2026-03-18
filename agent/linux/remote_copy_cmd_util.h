@@ -14,5 +14,15 @@ int ela_remote_copy_validate_request(const char *path,
 				     mode_t mode,
 				     char *errbuf,
 				     size_t errbuf_len);
+int ela_remote_copy_format_errno_message(char *buf,
+					 size_t buf_sz,
+					 const char *fmt,
+					 const char *path,
+					 int errnum);
+int ela_remote_copy_join_child_path(const char *parent,
+				    const char *name,
+				    char *buf,
+				    size_t buf_sz);
+bool ela_remote_copy_should_recurse(mode_t mode, bool recursive);
 
 #endif

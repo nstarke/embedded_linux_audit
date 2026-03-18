@@ -2,6 +2,7 @@
 
 #include "embedded_linux_audit_cmd.h"
 #include "uboot/env/uboot_env_internal.h"
+#include "uboot/env/uboot_env_format_util.h"
 #include "uboot/env/uboot_env_scan_util.h"
 #include "uboot/env/uboot_env_util.h"
 
@@ -68,29 +69,12 @@ static bool g_csv_header_emitted;
 
 static const char *env_http_content_type(void)
 {
-	switch (g_output_format) {
-	case FW_OUTPUT_JSON:
-		return "application/x-ndjson; charset=utf-8";
-	case FW_OUTPUT_CSV:
-		return "text/csv; charset=utf-8";
-	case FW_OUTPUT_TXT:
-	default:
-		return "text/plain; charset=utf-8";
-	}
+	return ela_uboot_env_http_content_type(g_output_format);
 }
 
 static void detect_output_format(void)
 {
-	const char *fmt = getenv("ELA_OUTPUT_FORMAT");
-
-	g_output_format = FW_OUTPUT_TXT;
-	if (!fmt || !*fmt)
-		return;
-
-	if (!strcmp(fmt, "csv"))
-		g_output_format = FW_OUTPUT_CSV;
-	else if (!strcmp(fmt, "json"))
-		g_output_format = FW_OUTPUT_JSON;
+	g_output_format = (enum uboot_output_format)ela_uboot_env_detect_output_format(getenv("ELA_OUTPUT_FORMAT"));
 }
 
 static void emit_env_csv_header(void)
@@ -564,41 +548,12 @@ static bool is_http_write_source(const char *s)
 
 bool uboot_valid_var_name(const char *name)
 {
-	if (!name || !*name)
-		return false;
-
-	for (const unsigned char *p = (const unsigned char *)name; *p; p++) {
-		if (*p == '=')
-			return false;
-		if (isspace(*p) || iscntrl(*p))
-			return false;
-	}
-
-	return true;
+	return ela_uboot_env_valid_var_name(name);
 }
 
 bool uboot_is_sensitive_env_var(const char *name)
 {
-	static const char *sensitive_vars[] = {
-		"bootcmd",
-		"altbootcmd",
-		"bootargs",
-		"boot_targets",
-		"bootdelay",
-		"preboot",
-		"stdin",
-		"stdout",
-		"stderr",
-	};
-
-	if (!name || !*name)
-		return false;
-
-	for (size_t i = 0; i < ARRAY_SIZE(sensitive_vars); i++)
-		if (!strcmp(name, sensitive_vars[i]))
-			return true;
-
-	return false;
+	return ela_uboot_env_is_sensitive_var(name);
 }
 
 bool uboot_confirm_sensitive_write(const char *name)
@@ -616,24 +571,7 @@ bool uboot_confirm_sensitive_write(const char *name)
 
 char *uboot_trim(char *s)
 {
-	char *end;
-
-	if (!s)
-		return s;
-
-	while (*s && isspace((unsigned char)*s))
-		s++;
-
-	if (!*s)
-		return s;
-
-	end = s + strlen(s) - 1;
-	while (end >= s && isspace((unsigned char)*end)) {
-		*end = '\0';
-		end--;
-	}
-
-	return s;
+	return ela_uboot_env_trim(s);
 }
 
 static MAYBE_UNUSED void free_env_kvs(struct env_kv *kvs, size_t count)
@@ -724,36 +662,13 @@ static MAYBE_UNUSED int apply_write_script(const char *script_path, struct env_k
 	}
 
 	while (fgets(line, sizeof(line), fp)) {
-		char *s;
-		char *name;
+		char *name = NULL;
 		char *value = NULL;
-		char *eq;
-		char *space;
 		bool delete_var = false;
 
 		lineno++;
-		s = uboot_trim(line);
-		if (!*s || *s == '#')
+		if (ela_uboot_env_parse_write_script_line(line, &name, &value, &delete_var) != 0)
 			continue;
-
-		eq = strchr(s, '=');
-		space = strpbrk(s, " \t");
-		if (eq && (!space || eq < space)) {
-			*eq = '\0';
-			name = uboot_trim(s);
-			value = eq + 1;
-		} else {
-			if (space) {
-				*space = '\0';
-				name = uboot_trim(s);
-				value = uboot_trim(space + 1);
-				if (!*value)
-					delete_var = true;
-			} else {
-				name = uboot_trim(s);
-				delete_var = true;
-			}
-		}
 
 		if (!uboot_valid_var_name(name)) {
 			err_printf("Invalid variable name at %s:%lu\n", script_path, lineno);
@@ -857,26 +772,7 @@ static MAYBE_UNUSED int write_env_copy(const struct uboot_cfg_entry *cfg, const 
 
 static bool has_hint_var(const uint8_t *data, size_t len, const char *hint_override)
 {
-	static const char *hints[] = {
-		"bootcmd=", "bootargs=", "baudrate=", "ethaddr=", "stdin=",
-	};
-
-	if (hint_override && *hint_override) {
-		size_t hlen = strlen(hint_override);
-		for (size_t off = 0; off + hlen <= len; off++)
-			if (!memcmp(data + off, hint_override, hlen))
-				return true;
-		return false;
-	}
-
-	for (size_t i = 0; i < ARRAY_SIZE(hints); i++) {
-		size_t hlen = strlen(hints[i]);
-		for (size_t off = 0; off + hlen <= len; off++)
-			if (!memcmp(data + off, hints[i], hlen))
-				return true;
-	}
-
-	return false;
+	return ela_uboot_env_has_hint_var(data, len, hint_override);
 }
 
 static MAYBE_UNUSED void dump_env_vars(const char *dev, uint64_t env_off,

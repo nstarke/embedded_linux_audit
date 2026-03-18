@@ -2,17 +2,33 @@
 
 #include "uboot_security_audit_util.h"
 
+#include <stdlib.h>
 #include <string.h>
 
 #define FIT_MIN_TOTAL_SIZE 0x100U
 #define FIT_MAX_TOTAL_SIZE (64U * 1024U * 1024U)
 
-static uint32_t read_be32_local(const uint8_t *p)
+uint32_t ela_uboot_read_be32(const uint8_t *p)
 {
 	return ((uint32_t)p[0] << 24) |
 	       ((uint32_t)p[1] << 16) |
 	       ((uint32_t)p[2] << 8) |
 	       (uint32_t)p[3];
+}
+
+static const char *find_bytes(const char *buf, size_t len, const char *needle, size_t needle_len)
+{
+	size_t off;
+
+	if (!buf || !needle || needle_len == 0 || needle_len > len)
+		return NULL;
+
+	for (off = 0; off + needle_len <= len; off++) {
+		if (!memcmp(buf + off, needle, needle_len))
+			return buf + off;
+	}
+
+	return NULL;
 }
 
 bool ela_uboot_buffer_has_newline(const char *buf, size_t len)
@@ -42,14 +58,14 @@ enum uboot_output_format ela_uboot_audit_detect_output_format(const char *fmt)
 
 bool ela_uboot_fit_header_looks_valid(const uint8_t *p, uint64_t abs_off, uint64_t dev_size)
 {
-	uint32_t totalsize = read_be32_local(p + 4);
-	uint32_t off_dt_struct = read_be32_local(p + 8);
-	uint32_t off_dt_strings = read_be32_local(p + 12);
-	uint32_t off_mem_rsvmap = read_be32_local(p + 16);
-	uint32_t version = read_be32_local(p + 20);
-	uint32_t last_comp_version = read_be32_local(p + 24);
-	uint32_t size_dt_strings = read_be32_local(p + 32);
-	uint32_t size_dt_struct = read_be32_local(p + 36);
+	uint32_t totalsize = ela_uboot_read_be32(p + 4);
+	uint32_t off_dt_struct = ela_uboot_read_be32(p + 8);
+	uint32_t off_dt_strings = ela_uboot_read_be32(p + 12);
+	uint32_t off_mem_rsvmap = ela_uboot_read_be32(p + 16);
+	uint32_t version = ela_uboot_read_be32(p + 20);
+	uint32_t last_comp_version = ela_uboot_read_be32(p + 24);
+	uint32_t size_dt_strings = ela_uboot_read_be32(p + 32);
+	uint32_t size_dt_struct = ela_uboot_read_be32(p + 36);
 
 	if (totalsize < FIT_MIN_TOTAL_SIZE || totalsize > FIT_MAX_TOTAL_SIZE)
 		return false;
@@ -70,4 +86,37 @@ bool ela_uboot_fit_header_looks_valid(const uint8_t *p, uint64_t abs_off, uint64
 	if (last_comp_version > version)
 		return false;
 	return true;
+}
+
+int ela_uboot_extract_public_key_pem(const char *text, size_t len, char **pem_out)
+{
+	static const char begin_marker[] = "-----BEGIN PUBLIC KEY-----";
+	static const char end_marker[] = "-----END PUBLIC KEY-----";
+	const char *begin;
+	const char *end;
+	size_t pem_len;
+	char *pem;
+
+	if (!text || !pem_out)
+		return -1;
+
+	begin = find_bytes(text, len, begin_marker, sizeof(begin_marker) - 1);
+	if (!begin)
+		return -1;
+
+	end = find_bytes(begin, len - (size_t)(begin - text), end_marker, sizeof(end_marker) - 1);
+	if (!end)
+		return -1;
+
+	pem_len = (size_t)(end - begin) + sizeof(end_marker) - 1;
+	pem = malloc(pem_len + 2);
+	if (!pem)
+		return -1;
+
+	memcpy(pem, begin, pem_len);
+	if (pem_len == 0 || pem[pem_len - 1] != '\n')
+		pem[pem_len++] = '\n';
+	pem[pem_len] = '\0';
+	*pem_out = pem;
+	return 0;
 }

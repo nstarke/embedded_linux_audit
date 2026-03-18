@@ -29,14 +29,6 @@
 #define DEFAULT_AUDIT_SIZE 0x10000ULL
 #define AUTO_SCAN_MAX_BYTES (64ULL * 1024ULL * 1024ULL)
 
-static uint32_t read_be32_local(const uint8_t *p)
-{
-	return ((uint32_t)p[0] << 24) |
-		((uint32_t)p[1] << 16) |
-		((uint32_t)p[2] << 8) |
-		(uint32_t)p[3];
-}
-
 static enum uboot_output_format g_output_format = FW_OUTPUT_TXT;
 static int g_output_sock = -1;
 static const char *g_output_http_uri;
@@ -379,7 +371,7 @@ static int find_fit_blob_in_device(const char *dev, uint64_t *off_out, uint32_t 
 		if (!fit_header_looks_valid(hdr, off, dev_size))
 			continue;
 		*off_out = off;
-		*size_out = read_be32_local(hdr + 4);
+		*size_out = ela_uboot_read_be32(hdr + 4);
 		close(fd);
 		return 0;
 	}
@@ -424,7 +416,6 @@ static int extract_region_to_file(const char *dev, uint64_t off, uint32_t size, 
 static int find_pubkey_pem_in_device(const char *dev, char **pem_out)
 {
 	static const char begin_marker[] = "-----BEGIN PUBLIC KEY-----";
-	static const char end_marker[] = "-----END PUBLIC KEY-----";
 	uint8_t chunk[1024 * 1024];
 	char *carry = NULL;
 	size_t carry_len = 0;
@@ -470,18 +461,8 @@ static int find_pubkey_pem_in_device(const char *dev, char **pem_out)
 
 		b = strstr(combined, begin_marker);
 		if (b) {
-			char *e = strstr(b, end_marker);
-			if (e) {
-				size_t pem_len = (size_t)(e - b) + strlen(end_marker);
-				char *pem = malloc(pem_len + 2);
-				if (!pem) {
-					free(combined);
-					break;
-				}
-				memcpy(pem, b, pem_len);
-				if (pem_len == 0 || pem[pem_len - 1] != '\n')
-					pem[pem_len++] = '\n';
-				pem[pem_len] = '\0';
+			char *pem = NULL;
+			if (ela_uboot_extract_public_key_pem(b, combined_len - (size_t)(b - combined), &pem) == 0) {
 				*pem_out = pem;
 				free(combined);
 				free(carry);
