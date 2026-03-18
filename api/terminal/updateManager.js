@@ -33,11 +33,19 @@ function startSessionUpdate(entry) {
     buffer: '',
   };
   entry.updateStatus = 'updating';
+  entry.updateError = null;
   if (entry.ws.readyState === entry.ws.OPEN) {
     entry.ws.send('\x15');
-    entry.ws.send('linux execute-command "echo \\"[ELA_API_URL_BEGIN]$ELA_API_URL[ELA_API_URL_END]\\""\n');
+    entry.ws.send('set\n');
   }
   return true;
+}
+
+function failUpdate(entry, reason, onUpdateFailed) {
+  entry.updateCtx = null;
+  entry.updateStatus = 'failed';
+  entry.updateError = reason;
+  onUpdateFailed(entry, reason);
 }
 
 function handleUpdateMessage(entry, text, {
@@ -52,18 +60,19 @@ function handleUpdateMessage(entry, text, {
   ctx.buffer += text;
 
   if (ctx.state === 'await-api-url') {
-    const start = ctx.buffer.indexOf('[ELA_API_URL_BEGIN]');
-    const end = ctx.buffer.indexOf('[ELA_API_URL_END]');
-    if (start < 0 || end < 0 || end <= start) {
+    const match = ctx.buffer.match(/ELA_API_URL\s+current=([^\r\n]+)/);
+    if (!match) {
       return;
     }
 
-    ctx.apiUrl = ctx.buffer.slice(start + '[ELA_API_URL_BEGIN]'.length, end).trim();
+    const currentValue = String(match[1] || '').trim();
+    ctx.apiUrl = currentValue === '<unset>' ? '' : currentValue;
     ctx.updateBaseUrl = deriveUpdateBaseUrl(ctx.apiUrl);
     if (!ctx.updateBaseUrl) {
-      entry.updateCtx = null;
-      entry.updateStatus = 'failed';
-      onUpdateFailed(entry);
+      const reason = ctx.apiUrl
+        ? `ELA_API_URL is invalid: ${ctx.apiUrl}`
+        : 'ELA_API_URL is not set';
+      failUpdate(entry, reason, onUpdateFailed);
       return;
     }
 
@@ -134,14 +143,13 @@ function handleUpdateMessage(entry, text, {
     if (text.includes('[UPDATE OK]')) {
       entry.updateCtx = null;
       entry.updateStatus = 'ok';
+      entry.updateError = null;
       onUpdateComplete(entry);
       return;
     }
 
     if (text.includes('[UPDATE FAILED]')) {
-      entry.updateCtx = null;
-      entry.updateStatus = 'failed';
-      onUpdateFailed(entry);
+      failUpdate(entry, 'remote update command failed', onUpdateFailed);
     }
   }
 }

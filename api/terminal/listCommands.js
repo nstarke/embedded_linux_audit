@@ -5,7 +5,7 @@ const LIST_COMMAND_HELP = [
   '/update                        update all connected nodes using each node\'s ELA_API_URL',
   '/shell <command>               run linux execute-command <command> on all connected nodes after confirmation',
   '/cmd <command>                 run a raw agent command on all connected nodes after confirmation',
-  '/set <key> <value>             set an agent environment variable on all connected nodes',
+  '/set <key> <value>             set an agent environment variable on all connected nodes after confirmation',
   '/exit                          run exit on all connected nodes after confirmation',
 ];
 
@@ -30,6 +30,10 @@ function unwrapQuotedArgument(value) {
   const inner = trimmed.slice(1, -1);
   const escapedQuote = new RegExp(`\\\\${quote}`, 'g');
   return inner.replace(escapedQuote, quote).replace(/\\\\/g, '\\');
+}
+
+function formatShellExecution(command) {
+  return `linux execute-command ${JSON.stringify(String(command || ''))}`;
 }
 
 function parseListCommand(input) {
@@ -111,6 +115,7 @@ function isAffirmativeResponse(input) {
 }
 
 module.exports = {
+  formatShellExecution,
   formatListCommandHelp,
   LIST_COMMAND_HELP,
   isAffirmativeResponse,

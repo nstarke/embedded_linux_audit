@@ -15,7 +15,7 @@ const {
 } = require('../lib/db/deviceRegistry');
 const { loadLegacyAliases } = require('./legacyAliases');
 const { createSessionRegistry } = require('./sessionRegistry');
-const { formatListCommandHelp, isAffirmativeResponse, parseListCommand } = require('./listCommands');
+const { formatListCommandHelp, formatShellExecution, isAffirmativeResponse, parseListCommand } = require('./listCommands');
 const { executeLocalSessionCommand } = require('./localCommands');
 const { createTerminalHttpHandler } = require('./httpRoutes');
 const { startSessionUpdate, handleUpdateMessage } = require('./updateManager');
@@ -73,8 +73,9 @@ function exitGracefully() {
 const httpServer = http.createServer(createTerminalHttpHandler());
 
 function onUpdateStateTransition(entry, message) {
+  const detail = entry.updateError ? `${message}: ${entry.updateError}` : message;
   if (tui.state === TUI_STATE.ACTIVE_SESSION && tui.activeMac === entry.mac) {
-    process.stdout.write(`\r\n[${message}]\r\n`);
+    process.stdout.write(`\r\n[${detail}]\r\n`);
   } else if (tui.state === TUI_STATE.SESSION_LIST) {
     tui.render();
   }
@@ -121,6 +122,7 @@ wss.on('connection', async (ws, req) => {
   });
   entry.updateCtx = null;
   entry.updateStatus = null;
+  entry.updateError = null;
 
   if (tui.state === TUI_STATE.SESSION_LIST) {
     tui.render();
@@ -217,7 +219,9 @@ const tui = {
         const entry = sessionRegistry.getSession(mac);
         const hb = entry.lastHeartbeat ? `  last heartbeat: ${entry.lastHeartbeat}` : '';
         const label = entry.alias ? `${entry.alias} (${mac})` : mac;
-        const statusTag = entry.updateStatus ? `  [${entry.updateStatus}]` : '';
+        const statusTag = entry.updateStatus
+          ? `  [${entry.updateError ? `${entry.updateStatus}: ${entry.updateError}` : entry.updateStatus}]`
+          : '';
         const line = `  ${label}${hb}${statusTag}`;
         out += i === this.cursor
           ? `${ANSI.reverse}${line}${ANSI.reset}\r\n`
@@ -439,14 +443,14 @@ const tui = {
         return;
       }
 
-      this._confirmPrompt = `[confirm: run "linux execute-command ${parsed.command}" on ${macs.length} node(s)? y/N]`;
+      this._confirmPrompt = `[confirm: run "${formatShellExecution(parsed.command)}" on ${macs.length} node(s)? y/N]`;
       this._confirmValue = '';
       this._confirmAction = () => {
         let started = 0;
         for (const mac of sessionRegistry.listMacs()) {
           const entry = sessionRegistry.getSession(mac);
           if (entry && entry.ws.readyState === entry.ws.OPEN) {
-            entry.ws.send(`linux execute-command ${parsed.command}\n`);
+            entry.ws.send(`${formatShellExecution(parsed.command)}\n`);
             started += 1;
           }
         }
@@ -491,16 +495,21 @@ const tui = {
         return;
       }
 
-      let started = 0;
-      for (const mac of sessionRegistry.listMacs()) {
-        const entry = sessionRegistry.getSession(mac);
-        if (entry && entry.ws.readyState === entry.ws.OPEN) {
-          entry.ws.send('\x15');
-          entry.ws.send(`set ${parsed.key} ${parsed.value}\n`);
-          started += 1;
+      this._confirmPrompt = `[confirm: run "set ${parsed.key} ${parsed.value}" on ${macs.length} node(s)? y/N]`;
+      this._confirmValue = '';
+      this._confirmAction = () => {
+        let started = 0;
+        for (const mac of sessionRegistry.listMacs()) {
+          const entry = sessionRegistry.getSession(mac);
+          if (entry && entry.ws.readyState === entry.ws.OPEN) {
+            entry.ws.send('\x15');
+            entry.ws.send(`set ${parsed.key} ${parsed.value}\n`);
+            started += 1;
+          }
         }
-      }
-      this._statusMsg = `set: dispatched "${parsed.key}" to ${started} node(s)`;
+        this._statusMsg = `set: dispatched "${parsed.key}" to ${started} node(s)`;
+        this.render();
+      };
       this.render();
       return;
     }
