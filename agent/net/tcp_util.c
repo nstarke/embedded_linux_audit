@@ -84,7 +84,7 @@ static int ela_get_default_gateway(char *buf, size_t buf_sz)
 }
 
 /* Write gateway as nameserver to /etc/resolv.conf if none is configured. */
-static void ela_ensure_dns(void)
+void ela_ensure_dns_configured(void)
 {
 	char  gw[INET_ADDRSTRLEN];
 	FILE *f;
@@ -101,6 +101,12 @@ static void ela_ensure_dns(void)
 	fclose(f);
 }
 #endif /* __linux__ */
+
+#ifndef __linux__
+void ela_ensure_dns_configured(void)
+{
+}
+#endif
 
 int connect_tcp_host_port(const char *host, uint16_t port)
 {
@@ -142,7 +148,7 @@ int connect_tcp_host_port_any(const char *host, uint16_t port)
 #ifdef __linux__
 	static int dns_ensured;
 	if (!dns_ensured) {
-		ela_ensure_dns();
+		ela_ensure_dns_configured();
 		dns_ensured = 1;
 	}
 #endif

@@ -1712,8 +1712,11 @@ static int ela_dns_query_a(const char *ns_ip, const char *hostname,
 static int ela_udp_resolve(const char *hostname, char *ip_buf, size_t ip_buf_len)
 {
 	char ns[3][16];
-	int ns_count = ela_read_nameservers(ns, 3);
+	int ns_count;
 	int i;
+
+	ela_ensure_dns_configured();
+	ns_count = ela_read_nameservers(ns, 3);
 
 	for (i = 0; i < ns_count; i++) {
 		if (ela_dns_query_a(ns[i], hostname, ip_buf, ip_buf_len) == 0)
@@ -1809,6 +1812,7 @@ static int ela_http_post_https_once(const char *effective_uri,
 	if (status_out)
 		*status_out = 0;
 
+	ela_ensure_dns_configured();
 	ela_force_conservative_crypto_caps();
 
 	if (!curl_global_ready) {
@@ -1944,6 +1948,7 @@ int ela_http_post(const char *uri, const uint8_t *data, size_t len,
 		return -1;
 	}
 
+	ela_ensure_dns_configured();
 	is_https = !strncmp(uri, "https://", 8);
 	if (!strncmp(uri, "http://", 7))
 		normalized_uri = ela_http_uri_normalize_default_port(uri, 80);

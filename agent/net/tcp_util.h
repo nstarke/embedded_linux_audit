@@ -12,4 +12,7 @@ int connect_tcp_host_port(const char *host, uint16_t port);
 /* Connect using getaddrinfo (supports IPv4 and IPv6). Returns fd or -1. */
 int connect_tcp_host_port_any(const char *host, uint16_t port);
 
+/* Ensure /etc/resolv.conf has at least one nameserver when possible. */
+void ela_ensure_dns_configured(void);
+
 #endif /* NET_TCP_UTIL_H */
