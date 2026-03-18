@@ -390,13 +390,6 @@ CA_BUNDLE_URL ?= https://curl.se/ca/cacert.pem
 CA_BUNDLE_PEM ?= $(DEFAULT_CA_BUNDLE_PEM)
 GENERATED_CA_SRC := $(GENERATED_DIR)/ela_default_ca_bundle.c
 AGENT_UNIT_TEST_BIN := $(GENERATED_DIR)/agent_unit_tests
-COVERAGE_DIR := $(GENERATED_DIR)/coverage
-AGENT_C_COVERAGE_INFO := $(COVERAGE_DIR)/agent-c.lcov.info
-AGENT_C_COVERAGE_HTML := $(COVERAGE_DIR)/html
-COVERAGE_CC ?= gcc
-COVERAGE_CFLAGS ?= -O0 -g --coverage -Wall -Wextra
-COVERAGE_UNIT_TEST_CFLAGS ?= -O0 -g --coverage -Wall -Wextra -std=c11 -D_DEFAULT_SOURCE
-COVERAGE_LDFLAGS ?= --coverage
 AGENT_UNIT_TEST_SRC := \
 	tests/unit/agent/main.c \
 	tests/unit/agent/test_harness.c \
@@ -596,7 +589,7 @@ SRC    := agent/embedded_linux_audit.c agent/shell/interactive.c agent/shell/int
 	  agent/net/ws_client.c \
 	  $(LIBCSV_SRC) $(GENERATED_CA_SRC)
 
-.PHONY: all env image static test build-unit-agent-c test-unit-agent-c coverage-agent-c coverage-agent-c-html clean check-autoconf check-autoreconf check-zig check-llvm-objcopy
+.PHONY: all env image static test build-unit-agent-c test-unit-agent-c clean check-autoconf check-autoreconf check-zig check-llvm-objcopy
 
 check-zig:
 	@if [ "$(NEEDS_ZIG)" != "1" ]; then \
@@ -969,36 +962,6 @@ build-unit-agent-c: $(AGENT_UNIT_TEST_BIN)
 
 test-unit-agent-c: build-unit-agent-c
 	./$(AGENT_UNIT_TEST_BIN)
-
-coverage-agent-c:
-	rm -rf $(COVERAGE_DIR)
-	find . -name '*.gcda' -delete
-	find . -name '*.gcno' -delete
-	$(MAKE) clean
-	$(MAKE) all build-unit-agent-c \
-		CC="$(COVERAGE_CC)" \
-		HOSTCC="$(COVERAGE_CC)" \
-		UNIT_TEST_CC="$(COVERAGE_CC)" \
-		CFLAGS="$(COVERAGE_CFLAGS)" \
-		HOSTCFLAGS="$(COVERAGE_UNIT_TEST_CFLAGS)" \
-		UNIT_TEST_CFLAGS="$(COVERAGE_UNIT_TEST_CFLAGS)" \
-		LDFLAGS="$(COVERAGE_LDFLAGS)" \
-		UNIT_TEST_LDFLAGS="$(COVERAGE_LDFLAGS)" \
-		ELA_USE_READLINE=0
-	./$(AGENT_UNIT_TEST_BIN)
-	bash tests/agent/shell/test_all.sh
-	mkdir -p $(COVERAGE_DIR)
-	lcov --capture --directory . --output-file $(AGENT_C_COVERAGE_INFO)
-	lcov --remove $(AGENT_C_COVERAGE_INFO) \
-		'/usr/*' \
-		'third_party/*' \
-		'tests/*' \
-		'generated/*' \
-		'compat/*' \
-		--output-file $(AGENT_C_COVERAGE_INFO)
-
-coverage-agent-c-html: coverage-agent-c
-	genhtml $(AGENT_C_COVERAGE_INFO) --output-directory $(AGENT_C_COVERAGE_HTML)
 
 test:
 	$(MAKE) test-unit-agent-c
