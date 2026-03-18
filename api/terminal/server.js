@@ -73,8 +73,9 @@ function exitGracefully() {
 const httpServer = http.createServer(createTerminalHttpHandler());
 
 function onUpdateStateTransition(entry, message) {
+  const detail = entry.updateError ? `${message}: ${entry.updateError}` : message;
   if (tui.state === TUI_STATE.ACTIVE_SESSION && tui.activeMac === entry.mac) {
-    process.stdout.write(`\r\n[${message}]\r\n`);
+    process.stdout.write(`\r\n[${detail}]\r\n`);
   } else if (tui.state === TUI_STATE.SESSION_LIST) {
     tui.render();
   }
@@ -121,6 +122,7 @@ wss.on('connection', async (ws, req) => {
   });
   entry.updateCtx = null;
   entry.updateStatus = null;
+  entry.updateError = null;
 
   if (tui.state === TUI_STATE.SESSION_LIST) {
     tui.render();
@@ -217,7 +219,9 @@ const tui = {
         const entry = sessionRegistry.getSession(mac);
         const hb = entry.lastHeartbeat ? `  last heartbeat: ${entry.lastHeartbeat}` : '';
         const label = entry.alias ? `${entry.alias} (${mac})` : mac;
-        const statusTag = entry.updateStatus ? `  [${entry.updateStatus}]` : '';
+        const statusTag = entry.updateStatus
+          ? `  [${entry.updateError ? `${entry.updateStatus}: ${entry.updateError}` : entry.updateStatus}]`
+          : '';
         const line = `  ${label}${hb}${statusTag}`;
         out += i === this.cursor
           ? `${ANSI.reverse}${line}${ANSI.reset}\r\n`

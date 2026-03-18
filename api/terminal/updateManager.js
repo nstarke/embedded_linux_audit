@@ -33,11 +33,19 @@ function startSessionUpdate(entry) {
     buffer: '',
   };
   entry.updateStatus = 'updating';
+  entry.updateError = null;
   if (entry.ws.readyState === entry.ws.OPEN) {
     entry.ws.send('\x15');
     entry.ws.send('set\n');
   }
   return true;
+}
+
+function failUpdate(entry, reason, onUpdateFailed) {
+  entry.updateCtx = null;
+  entry.updateStatus = 'failed';
+  entry.updateError = reason;
+  onUpdateFailed(entry, reason);
 }
 
 function handleUpdateMessage(entry, text, {
@@ -61,9 +69,10 @@ function handleUpdateMessage(entry, text, {
     ctx.apiUrl = currentValue === '<unset>' ? '' : currentValue;
     ctx.updateBaseUrl = deriveUpdateBaseUrl(ctx.apiUrl);
     if (!ctx.updateBaseUrl) {
-      entry.updateCtx = null;
-      entry.updateStatus = 'failed';
-      onUpdateFailed(entry);
+      const reason = ctx.apiUrl
+        ? `ELA_API_URL is invalid: ${ctx.apiUrl}`
+        : 'ELA_API_URL is not set';
+      failUpdate(entry, reason, onUpdateFailed);
       return;
     }
 
@@ -134,14 +143,13 @@ function handleUpdateMessage(entry, text, {
     if (text.includes('[UPDATE OK]')) {
       entry.updateCtx = null;
       entry.updateStatus = 'ok';
+      entry.updateError = null;
       onUpdateComplete(entry);
       return;
     }
 
     if (text.includes('[UPDATE FAILED]')) {
-      entry.updateCtx = null;
-      entry.updateStatus = 'failed';
-      onUpdateFailed(entry);
+      failUpdate(entry, 'remote update command failed', onUpdateFailed);
     }
   }
 }

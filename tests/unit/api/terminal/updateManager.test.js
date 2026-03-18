@@ -39,6 +39,7 @@ describe('update manager', () => {
 
     handleUpdateMessage(entry, 'Supported variables:\n  ELA_API_URL              current=https://updates.example/upload\n');
     expect(entry.updateCtx.state).toBe('await-isa');
+    expect(entry.updateError).toBeNull();
     expect(ws.send).toHaveBeenCalledWith('--output-format json arch isa\n');
 
     ws.send.mockClear();
@@ -57,6 +58,7 @@ describe('update manager', () => {
       ws: { OPEN: 1, readyState: 1, send: jest.fn() },
       updateCtx: { state: 'await-api-url', buffer: '' },
       updateStatus: 'updating',
+      updateError: null,
     };
     const onFailed = jest.fn();
 
@@ -66,7 +68,8 @@ describe('update manager', () => {
 
     expect(entry.updateCtx).toBeNull();
     expect(entry.updateStatus).toBe('failed');
-    expect(onFailed).toHaveBeenCalledWith(entry);
+    expect(entry.updateError).toBe('ELA_API_URL is not set');
+    expect(onFailed).toHaveBeenCalledWith(entry, 'ELA_API_URL is not set');
   });
 
   test('handleUpdateMessage marks successful completion', () => {
@@ -74,6 +77,7 @@ describe('update manager', () => {
       ws: { OPEN: 1, readyState: 1, send: jest.fn() },
       updateCtx: { state: 'in-progress', buffer: '' },
       updateStatus: 'updating',
+      updateError: 'stale',
       mac: 'aa:bb',
     };
     const onComplete = jest.fn();
@@ -82,6 +86,7 @@ describe('update manager', () => {
 
     expect(entry.updateCtx).toBeNull();
     expect(entry.updateStatus).toBe('ok');
+    expect(entry.updateError).toBeNull();
     expect(onComplete).toHaveBeenCalledWith(entry);
   });
 });
