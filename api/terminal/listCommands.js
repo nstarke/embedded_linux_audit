@@ -16,6 +16,22 @@ function formatListCommandHelp() {
   ].join('\r\n');
 }
 
+function unwrapQuotedArgument(value) {
+  const trimmed = String(value || '').trim();
+  if (trimmed.length < 2) {
+    return trimmed;
+  }
+
+  const quote = trimmed[0];
+  if ((quote !== '"' && quote !== '\'') || trimmed[trimmed.length - 1] !== quote) {
+    return trimmed;
+  }
+
+  const inner = trimmed.slice(1, -1);
+  const escapedQuote = new RegExp(`\\\\${quote}`, 'g');
+  return inner.replace(escapedQuote, quote).replace(/\\\\/g, '\\');
+}
+
 function parseListCommand(input) {
   const trimmed = String(input || '').trim();
   if (!trimmed) {
@@ -39,7 +55,7 @@ function parseListCommand(input) {
   }
 
   if (trimmed.startsWith('shell ')) {
-    const command = trimmed.slice(6).trim();
+    const command = unwrapQuotedArgument(trimmed.slice(6));
     return command
       ? { type: 'shell-all', command }
       : { type: 'invalid-shell' };
@@ -89,4 +105,5 @@ module.exports = {
   LIST_COMMAND_HELP,
   isAffirmativeResponse,
   parseListCommand,
+  unwrapQuotedArgument,
 };
