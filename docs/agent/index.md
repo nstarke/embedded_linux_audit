@@ -10,6 +10,7 @@ This section contains documentation for the `embedded_linux_audit` agent, organi
 ## Features
 
 - [Features Index](features/index.md)
+- [Interactive Mode](features/interactive-mode.md)
 - [Output Formats and Remote Output](features/output-formats-and-remote-output.md)
 - [`embedded_linux_audit --script` Feature](features/script-feature.md)
 

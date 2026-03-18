@@ -23,8 +23,9 @@ static void usage(const char *prog)
 	fprintf(stderr,
 		"Usage: %s [--output-format <csv|json|txt>] [--quiet] [--insecure] [--output-tcp <IPv4:port>] [--output-http <http(s)://host:port/path>] [--script <path|http(s)://...>] <group> <subcommand> [options]\n"
 		"       %s --remote <host:port>\n"
+		"       %s --interactive\n"
 		"\n"
-		"Run without arguments to enter interactive mode.\n"
+		"Run without arguments or with --interactive (-i) to enter interactive mode.\n"
 		"\n"
 		"Global options:\n"
 		"  --output-format <csv|json|txt>  Set output format for subcommands\n"
@@ -902,6 +903,9 @@ int main(int argc, char **argv)
 	ela_conf_export_to_env(&boot_conf);
 
 	if (argc < 2 && !(getenv("ELA_SCRIPT") && *getenv("ELA_SCRIPT")))
+		return interactive_loop(argv[0]);
+
+	if (argc == 2 && (!strcmp(argv[1], "--interactive") || !strcmp(argv[1], "-i")))
 		return interactive_loop(argv[0]);
 
 	interactive_argv = argv;
