@@ -390,6 +390,17 @@ CA_BUNDLE_URL ?= https://curl.se/ca/cacert.pem
 CA_BUNDLE_PEM ?= $(DEFAULT_CA_BUNDLE_PEM)
 GENERATED_CA_SRC := $(GENERATED_DIR)/ela_default_ca_bundle.c
 AGENT_UNIT_TEST_BIN := $(GENERATED_DIR)/agent_unit_tests
+<<<<<<< Updated upstream
+=======
+COVERAGE_DIR := $(GENERATED_DIR)/coverage
+AGENT_C_COVERAGE_INFO := $(COVERAGE_DIR)/agent-c.lcov.info
+AGENT_C_COVERAGE_HTML := $(COVERAGE_DIR)/html
+COVERAGE_CC ?= gcc
+COVERAGE_EXTRA_CFLAGS ?= -O0 -g --coverage
+COVERAGE_EXTRA_HOSTCFLAGS ?= -O0 -g --coverage
+COVERAGE_EXTRA_UNIT_TEST_CFLAGS ?= -O0 -g --coverage
+COVERAGE_EXTRA_LDFLAGS ?= --coverage
+>>>>>>> Stashed changes
 AGENT_UNIT_TEST_SRC := \
 	tests/unit/agent/main.c \
 	tests/unit/agent/test_harness.c \
@@ -963,6 +974,39 @@ build-unit-agent-c: $(AGENT_UNIT_TEST_BIN)
 test-unit-agent-c: build-unit-agent-c
 	./$(AGENT_UNIT_TEST_BIN)
 
+<<<<<<< Updated upstream
+=======
+coverage-agent-c:
+	rm -rf $(COVERAGE_DIR)
+	find . -name '*.gcda' -delete
+	find . -name '*.gcno' -delete
+	$(MAKE) clean
+	$(MAKE) all build-unit-agent-c \
+		CC="$(COVERAGE_CC)" \
+		HOSTCC="$(COVERAGE_CC)" \
+		UNIT_TEST_CC="$(COVERAGE_CC)" \
+		CFLAGS="$(CFLAGS) $(COVERAGE_EXTRA_CFLAGS)" \
+		HOSTCFLAGS="$(HOSTCFLAGS) $(COVERAGE_EXTRA_HOSTCFLAGS)" \
+		UNIT_TEST_CFLAGS="$(UNIT_TEST_CFLAGS) $(COVERAGE_EXTRA_UNIT_TEST_CFLAGS)" \
+		LDFLAGS="$(LDFLAGS) $(COVERAGE_EXTRA_LDFLAGS)" \
+		UNIT_TEST_LDFLAGS="$(UNIT_TEST_LDFLAGS) $(COVERAGE_EXTRA_LDFLAGS)" \
+		ELA_USE_READLINE=0
+	./$(AGENT_UNIT_TEST_BIN)
+	bash tests/agent/shell/test_all.sh
+	mkdir -p $(COVERAGE_DIR)
+	lcov --capture --directory . --output-file $(AGENT_C_COVERAGE_INFO)
+	lcov --remove $(AGENT_C_COVERAGE_INFO) \
+		'/usr/*' \
+		'third_party/*' \
+		'tests/*' \
+		'generated/*' \
+		'compat/*' \
+		--output-file $(AGENT_C_COVERAGE_INFO)
+
+coverage-agent-c-html: coverage-agent-c
+	genhtml $(AGENT_C_COVERAGE_INFO) --output-directory $(AGENT_C_COVERAGE_HTML)
+
+>>>>>>> Stashed changes
 test:
 	$(MAKE) test-unit-agent-c
 	bash tests/agent/shell/test_all.sh

@@ -3,6 +3,7 @@ nginx/ssl/
 nginx/docker.generated.conf
 embedded_linux_audit
 generated/
+generated/coverage/
 __pycache__
 release_binaries
 node_modules
@@ -16,3 +17,6 @@ logs
 package-lock.json
 .claude
 ela-aliases.json
+*.gcno
+*.gcda
+*.gcov
