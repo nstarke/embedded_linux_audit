@@ -380,7 +380,7 @@ function normalizeUpload(input) {
         metadata: row,
       }));
     }
-  } else if (['log', 'logs', 'dmesg', 'orom', 'uboot-image', 'uboot-environment'].includes(input.uploadType)) {
+  } else if (['log', 'logs', 'dmesg', 'orom', 'tpm2-getcap', 'tpm2-pcrread', 'tpm2-nvreadpublic', 'tpm2-createprimary', 'uboot-image', 'uboot-environment'].includes(input.uploadType)) {
     result.logEvents = splitLines(payloadText).map((line, index) => ({
       recordIndex: index,
       eventType: input.uploadType,
