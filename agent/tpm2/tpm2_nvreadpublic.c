@@ -5,6 +5,7 @@
 #include <inttypes.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #if defined(ELA_HAS_TPM2)
@@ -13,7 +14,9 @@ static void usage_nvreadpublic(const char *prog)
 {
 	fprintf(stderr,
 		"Usage: %s nvreadpublic <nv-index>\n"
-		"  Example: %s nvreadpublic 0x1500016\n",
+		"  Example: %s nvreadpublic 0x1500016\n"
+		"  Output honors --output-format (txt, csv, json)\n"
+		"  When --output-http is configured, POST to /:mac/upload/tpm2-nvreadpublic\n",
 		prog, prog);
 }
 
@@ -25,6 +28,7 @@ int cmd_nvreadpublic(int argc, char **argv)
 	TPM2B_NV_PUBLIC *public_info = NULL;
 	TPM2B_NAME *name = NULL;
 	TSS2_RC rc;
+	struct tpm2_output_ctx out;
 	int ret;
 
 	if (argc >= 3 && (!strcmp(argv[2], "--help") || !strcmp(argv[2], "-h"))) {
@@ -37,9 +41,13 @@ int cmd_nvreadpublic(int argc, char **argv)
 		return 2;
 	}
 
-	ret = tpm2_open(&esys, &tcti);
+	ret = tpm2_output_init(&out);
 	if (ret != 0)
 		return ret;
+
+	ret = tpm2_open(&esys, &tcti);
+	if (ret != 0)
+		goto done;
 
 	rc = Esys_NV_ReadPublic(esys,
 				ESYS_TR_NONE,
@@ -54,16 +62,38 @@ int cmd_nvreadpublic(int argc, char **argv)
 		goto done;
 	}
 
-	printf("nv-index: 0x%08" PRIx32 "\n", public_info->nvPublic.nvIndex);
-	printf("name-alg: 0x%04x\n", public_info->nvPublic.nameAlg);
-	printf("attributes: 0x%08" PRIx32 "\n", public_info->nvPublic.attributes);
-	printf("data-size: %u\n", public_info->nvPublic.dataSize);
-	printf("name: ");
-	for (uint16_t i = 0; i < name->size; i++)
-		printf("%02x", name->name[i]);
-	printf("\n");
+	{
+		char val[32];
+		char *name_hex;
+		uint16_t i;
+		size_t vlen;
 
-	ret = 0;
+		snprintf(val, sizeof(val), "0x%08" PRIx32, public_info->nvPublic.nvIndex);
+		if (tpm2_output_kv(&out, "nv-index", val) != 0) { ret = 1; goto done; }
+
+		snprintf(val, sizeof(val), "0x%04x", public_info->nvPublic.nameAlg);
+		if (tpm2_output_kv(&out, "name-alg", val) != 0) { ret = 1; goto done; }
+
+		snprintf(val, sizeof(val), "0x%08" PRIx32, public_info->nvPublic.attributes);
+		if (tpm2_output_kv(&out, "attributes", val) != 0) { ret = 1; goto done; }
+
+		snprintf(val, sizeof(val), "%u", public_info->nvPublic.dataSize);
+		if (tpm2_output_kv(&out, "data-size", val) != 0) { ret = 1; goto done; }
+
+		name_hex = malloc(name->size * 2u + 1u);
+		if (!name_hex) { ret = 1; goto done; }
+		vlen = 0;
+		for (i = 0; i < name->size; i++) {
+			snprintf(name_hex + vlen, 3, "%02x", name->name[i]);
+			vlen += 2;
+		}
+		name_hex[vlen] = '\0';
+		ret = tpm2_output_kv(&out, "name", name_hex);
+		free(name_hex);
+		if (ret != 0) { ret = 1; goto done; }
+	}
+
+	ret = tpm2_output_flush(&out, "tpm2-nvreadpublic");
 
 done:
 	if (public_info)
@@ -71,6 +101,7 @@ done:
 	if (name)
 		Esys_Free(name);
 	tpm2_close(&esys, &tcti);
+	tpm2_output_free(&out);
 	return ret;
 }
 

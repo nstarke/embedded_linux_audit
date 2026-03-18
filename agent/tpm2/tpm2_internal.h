@@ -11,6 +11,8 @@
 #include <tss2/tss2_tcti_device.h>
 #include <tss2/tss2_tpm2_types.h>
 
+#include "tpm2_output.h"
+
 /* Shared utilities implemented in tpm2_util.c */
 int tpm2_rc_to_exit_code(TSS2_RC rc);
 int parse_u32(const char *text, uint32_t *value);

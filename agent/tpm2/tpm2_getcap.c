@@ -13,7 +13,9 @@ static void usage_getcap(const char *prog)
 {
 	fprintf(stderr,
 		"Usage: %s getcap <properties-fixed|properties-variable|algorithms|commands|pcrs>\n"
-		"  Query a built-in TPM capability set using TPM2-TSS\n",
+		"  Query a built-in TPM2 capability set using TPM2-TSS\n"
+		"  Output honors --output-format (txt, csv, json)\n"
+		"  When --output-http is configured, POST to /:mac/upload/tpm2-getcap\n",
 		prog);
 }
 
@@ -27,6 +29,7 @@ int cmd_getcap(int argc, char **argv)
 	TPMI_YES_NO more_data = TPM2_NO;
 	TPMS_CAPABILITY_DATA *cap_data = NULL;
 	TSS2_RC rc;
+	struct tpm2_output_ctx out;
 	int ret;
 	UINT32 i;
 
@@ -66,9 +69,13 @@ int cmd_getcap(int argc, char **argv)
 		return 2;
 	}
 
-	ret = tpm2_open(&esys, &tcti);
+	ret = tpm2_output_init(&out);
 	if (ret != 0)
 		return ret;
+
+	ret = tpm2_open(&esys, &tcti);
+	if (ret != 0)
+		goto done;
 
 	rc = Esys_GetCapability(esys,
 				ESYS_TR_NONE,
@@ -89,26 +96,57 @@ int cmd_getcap(int argc, char **argv)
 	case TPM2_CAP_TPM_PROPERTIES:
 		for (i = 0; i < cap_data->data.tpmProperties.count; i++) {
 			const TPMS_TAGGED_PROPERTY *prop = &cap_data->data.tpmProperties.tpmProperty[i];
-			printf("0x%08" PRIx32 ": 0x%08" PRIx32 "\n", prop->property, prop->value);
+			char key[32], val[32];
+			snprintf(key, sizeof(key), "0x%08" PRIx32, prop->property);
+			snprintf(val, sizeof(val), "0x%08" PRIx32, prop->value);
+			if (tpm2_output_kv(&out, key, val) != 0) {
+				ret = 1;
+				goto done;
+			}
 		}
 		break;
 	case TPM2_CAP_ALGS:
 		for (i = 0; i < cap_data->data.algorithms.count; i++) {
 			const TPMS_ALG_PROPERTY *alg = &cap_data->data.algorithms.algProperties[i];
-			printf("0x%04x: 0x%08" PRIx32 "\n", alg->alg, alg->algProperties);
+			char key[32], val[32];
+			snprintf(key, sizeof(key), "0x%04x", alg->alg);
+			snprintf(val, sizeof(val), "0x%08" PRIx32, alg->algProperties);
+			if (tpm2_output_kv(&out, key, val) != 0) {
+				ret = 1;
+				goto done;
+			}
 		}
 		break;
 	case TPM2_CAP_COMMANDS:
-		for (i = 0; i < cap_data->data.command.count; i++)
-			printf("0x%08" PRIx32 "\n", cap_data->data.command.commandAttributes[i]);
+		for (i = 0; i < cap_data->data.command.count; i++) {
+			char key[32], val[32];
+			snprintf(key, sizeof(key), "0x%04" PRIx32,
+				cap_data->data.command.commandAttributes[i] & 0xFFFFu);
+			snprintf(val, sizeof(val), "0x%08" PRIx32,
+				cap_data->data.command.commandAttributes[i]);
+			if (tpm2_output_kv(&out, key, val) != 0) {
+				ret = 1;
+				goto done;
+			}
+		}
 		break;
 	case TPM2_CAP_PCRS:
 		for (i = 0; i < cap_data->data.assignedPCR.count; i++) {
 			const TPMS_PCR_SELECTION *sel = &cap_data->data.assignedPCR.pcrSelections[i];
-			printf("0x%04x:", sel->hash);
-			for (uint32_t byte_idx = 0; byte_idx < sel->sizeofSelect; byte_idx++)
-				printf("%s%02x", byte_idx == 0 ? "" : "", sel->pcrSelect[byte_idx]);
-			printf("\n");
+			char key[16];
+			char val[32] = {0};
+			uint32_t byte_idx;
+			size_t vlen = 0;
+
+			snprintf(key, sizeof(key), "0x%04x", sel->hash);
+			for (byte_idx = 0; byte_idx < sel->sizeofSelect && vlen < sizeof(val) - 2; byte_idx++) {
+				snprintf(val + vlen, sizeof(val) - vlen, "%02x", sel->pcrSelect[byte_idx]);
+				vlen += 2;
+			}
+			if (tpm2_output_kv(&out, key, val) != 0) {
+				ret = 1;
+				goto done;
+			}
 		}
 		break;
 	default:
@@ -120,12 +158,13 @@ int cmd_getcap(int argc, char **argv)
 	if (more_data == TPM2_YES)
 		fprintf(stderr, "tpm2: additional capability data is available but was not requested\n");
 
-	ret = 0;
+	ret = tpm2_output_flush(&out, "tpm2-getcap");
 
 done:
 	if (cap_data)
 		Esys_Free(cap_data);
 	tpm2_close(&esys, &tcti);
+	tpm2_output_free(&out);
 	return ret;
 }
 

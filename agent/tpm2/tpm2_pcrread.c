@@ -14,7 +14,9 @@ static void usage_pcrread(const char *prog)
 {
 	fprintf(stderr,
 		"Usage: %s pcrread <alg:pcr[,pcr...]> [alg:pcr[,pcr...]]...\n"
-		"  Example: %s pcrread sha256:0,1,2 sha1:0,7\n",
+		"  Example: %s pcrread sha256:0,1,2 sha1:0,7\n"
+		"  Output honors --output-format (txt, csv, json)\n"
+		"  When --output-http is configured, POST to /:mac/upload/tpm2-pcrread\n",
 		prog, prog);
 }
 
@@ -104,6 +106,7 @@ int cmd_pcrread(int argc, char **argv)
 	TPML_PCR_SELECTION *pcr_update = NULL;
 	TPML_DIGEST *values = NULL;
 	TSS2_RC rc;
+	struct tpm2_output_ctx out;
 	int ret;
 	UINT32 bank_idx;
 	UINT32 digest_idx = 0;
@@ -123,9 +126,13 @@ int cmd_pcrread(int argc, char **argv)
 			return 2;
 	}
 
-	ret = tpm2_open(&esys, &tcti);
+	ret = tpm2_output_init(&out);
 	if (ret != 0)
 		return ret;
+
+	ret = tpm2_open(&esys, &tcti);
+	if (ret != 0)
+		goto done;
 
 	rc = Esys_PCR_Read(esys,
 			   ESYS_TR_NONE,
@@ -145,6 +152,11 @@ int cmd_pcrread(int argc, char **argv)
 		const TPMS_PCR_SELECTION *bank = &pcr_update->pcrSelections[bank_idx];
 
 		for (uint32_t pcr = 0; pcr < (uint32_t)(bank->sizeofSelect * 8); pcr++) {
+			char key[32];
+			char *val;
+			uint16_t byte_idx;
+			size_t vlen;
+
 			if ((bank->pcrSelect[pcr / 8] & (1U << (pcr % 8))) == 0)
 				continue;
 			if (digest_idx >= values->count) {
@@ -153,15 +165,33 @@ int cmd_pcrread(int argc, char **argv)
 				goto done;
 			}
 
-			printf("0x%04x:%u=", bank->hash, pcr);
-			for (uint16_t byte_idx = 0; byte_idx < values->digests[digest_idx].size; byte_idx++)
-				printf("%02x", values->digests[digest_idx].buffer[byte_idx]);
-			printf("\n");
+			snprintf(key, sizeof(key), "0x%04x:%u", bank->hash, pcr);
+
+			/* hex-encode the digest into a heap buffer */
+			val = malloc(values->digests[digest_idx].size * 2u + 1u);
+			if (!val) {
+				ret = 1;
+				goto done;
+			}
+			vlen = 0;
+			for (byte_idx = 0; byte_idx < values->digests[digest_idx].size; byte_idx++) {
+				snprintf(val + vlen, 3, "%02x",
+					values->digests[digest_idx].buffer[byte_idx]);
+				vlen += 2;
+			}
+			val[vlen] = '\0';
+
+			ret = tpm2_output_kv(&out, key, val);
+			free(val);
+			if (ret != 0) {
+				ret = 1;
+				goto done;
+			}
 			digest_idx++;
 		}
 	}
 
-	ret = 0;
+	ret = tpm2_output_flush(&out, "tpm2-pcrread");
 
 done:
 	if (pcr_update)
@@ -169,6 +199,7 @@ done:
 	if (values)
 		Esys_Free(values);
 	tpm2_close(&esys, &tcti);
+	tpm2_output_free(&out);
 	return ret;
 }
 

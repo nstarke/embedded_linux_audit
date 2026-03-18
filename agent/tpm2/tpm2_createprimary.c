@@ -17,7 +17,9 @@ static void usage_createprimary(const char *prog)
 	fprintf(stderr,
 		"Usage: %s createprimary [-C <o|p|e|n>] [-g <sha1|sha256|sha384|sha512>] [-G <rsa|ecc>] [-c <context-file>]\n"
 		"  Create a primary object with a minimal built-in template.\n"
-		"  When -c is provided, the ESYS serialized handle is written to that file.\n",
+		"  When -c is provided, the ESYS serialized handle is written to that file.\n"
+		"  Output honors --output-format (txt, csv, json)\n"
+		"  When --output-http is configured, POST to /:mac/upload/tpm2-createprimary\n",
 		prog);
 }
 
@@ -129,6 +131,7 @@ int cmd_createprimary(int argc, char **argv)
 	uint8_t *serialized = NULL;
 	size_t serialized_size = 0;
 	TSS2_RC rc;
+	struct tpm2_output_ctx out;
 	int ret;
 	int opt;
 
@@ -192,9 +195,13 @@ int cmd_createprimary(int argc, char **argv)
 		return 1;
 	}
 
-	ret = tpm2_open(&esys, &tcti);
+	ret = tpm2_output_init(&out);
 	if (ret != 0)
 		return ret;
+
+	ret = tpm2_open(&esys, &tcti);
+	if (ret != 0)
+		goto done;
 
 	rc = Esys_CreatePrimary(esys,
 				hierarchy,
@@ -229,13 +236,24 @@ int cmd_createprimary(int argc, char **argv)
 		}
 	}
 
-	printf("hierarchy: 0x%08x\n", hierarchy);
-	printf("type: 0x%04x\n", out_public->publicArea.type);
-	printf("name-alg: 0x%04x\n", out_public->publicArea.nameAlg);
-	if (context_path)
-		printf("context: %s\n", context_path);
+	{
+		char val[32];
 
-	ret = 0;
+		snprintf(val, sizeof(val), "0x%08x", hierarchy);
+		if (tpm2_output_kv(&out, "hierarchy", val) != 0) { ret = 1; goto done; }
+
+		snprintf(val, sizeof(val), "0x%04x", out_public->publicArea.type);
+		if (tpm2_output_kv(&out, "type", val) != 0) { ret = 1; goto done; }
+
+		snprintf(val, sizeof(val), "0x%04x", out_public->publicArea.nameAlg);
+		if (tpm2_output_kv(&out, "name-alg", val) != 0) { ret = 1; goto done; }
+
+		if (context_path) {
+			if (tpm2_output_kv(&out, "context", context_path) != 0) { ret = 1; goto done; }
+		}
+	}
+
+	ret = tpm2_output_flush(&out, "tpm2-createprimary");
 
 done:
 	if (serialized)
@@ -251,6 +269,7 @@ done:
 	if (object_handle != ESYS_TR_NONE)
 		Esys_TR_Close(esys, &object_handle);
 	tpm2_close(&esys, &tcti);
+	tpm2_output_free(&out);
 	return ret;
 }
 
