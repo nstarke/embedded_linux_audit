@@ -141,7 +141,10 @@ int transfer_main(int argc, char **argv)
 			int reconnect = 1;
 			int failed_attempts = 0;
 			for (;;) {
-				ela_ws_run_interactive(&ws, argv[0]);
+				if (ela_ws_run_interactive(&ws, argv[0]) == ELA_WS_EXIT_CLEAN) {
+					ela_ws_close(&ws);
+					exit(0);
+				}
 				ela_ws_close(&ws);
 
 				if (retry_attempts == 0)
