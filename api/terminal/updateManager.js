@@ -35,6 +35,7 @@ function startSessionUpdate(entry) {
   entry.updateStatus = 'updating';
   entry.updateError = null;
   if (entry.ws.readyState === entry.ws.OPEN) {
+    entry.ws.send('\x03');
     entry.ws.send('\x15');
     entry.ws.send('set\n');
   }

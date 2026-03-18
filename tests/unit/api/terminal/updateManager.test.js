@@ -27,8 +27,9 @@ describe('update manager', () => {
     expect(startSessionUpdate(entry)).toBe(true);
     expect(entry.updateStatus).toBe('updating');
     expect(entry.updateCtx.state).toBe('await-api-url');
-    expect(ws.send).toHaveBeenNthCalledWith(1, '\x15');
-    expect(ws.send).toHaveBeenNthCalledWith(2, 'set\n');
+    expect(ws.send).toHaveBeenNthCalledWith(1, '\x03');
+    expect(ws.send).toHaveBeenNthCalledWith(2, '\x15');
+    expect(ws.send).toHaveBeenNthCalledWith(3, 'set\n');
   });
 
   test('handleUpdateMessage advances through api url, isa, and endianness to download', () => {
