@@ -861,6 +861,7 @@ int ela_ws_run_interactive(struct ela_ws_conn *ws, const char *prog)
 	char   read_buf[65536];
 	time_t last_ping_t;
 	char   mac[32];
+	int    child_exited = 0;
 
 	if (pipe(pipe_to_loop) != 0 || pipe(pipe_from_loop) != 0) {
 		fprintf(stderr, "ws: pipe: %s\n", strerror(errno));
@@ -904,8 +905,10 @@ int ela_ws_run_interactive(struct ela_ws_conn *ws, const char *prog)
 		uint8_t        opcode;
 		ssize_t        frame_len;
 
-		if (waitpid(child, &child_status, WNOHANG) > 0)
+		if (waitpid(child, &child_status, WNOHANG) > 0) {
+			child_exited = 1;
 			break;
+		}
 
 		/* Send a WebSocket PING every 25 s to keep NAT sessions alive.
 		 * The server's ws library automatically replies with a PONG. */
@@ -1008,5 +1011,5 @@ int ela_ws_run_interactive(struct ela_ws_conn *ws, const char *prog)
 		close(ws->sock);
 		ws->sock = -1;
 	}
-	return 0;
+	return child_exited ? ELA_WS_EXIT_CLEAN : 0;
 }

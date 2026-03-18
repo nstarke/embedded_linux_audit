@@ -45,8 +45,10 @@ void ela_ws_close(struct ela_ws_conn *ws);
  * interactive_loop() runs in a forked child process bridged via pipes.
  * Received text frames containing "_type":"heartbeat" are answered with the
  * current date and not forwarded to the REPL.
- * Returns the exit code of the interactive session.
+ * Returns 0 on connection drop/error (caller may reconnect),
+ *         ELA_WS_EXIT_CLEAN if the child process exited normally (no reconnect).
  */
+#define ELA_WS_EXIT_CLEAN 2
 int ela_ws_run_interactive(struct ela_ws_conn *ws, const char *prog);
 
 #endif /* WS_CLIENT_H */
