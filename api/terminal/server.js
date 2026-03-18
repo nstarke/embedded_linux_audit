@@ -13,6 +13,7 @@ const {
   closeTerminalConnection,
   setDeviceAlias,
 } = require('../lib/db/deviceRegistry');
+const { appendBatchOutput, renderBatchOutput } = require('./batchOutput');
 const { loadLegacyAliases } = require('./legacyAliases');
 const { formatPromptOutput } = require('./promptFormatter');
 const { createSessionRegistry } = require('./sessionRegistry');
@@ -160,6 +161,10 @@ wss.on('connection', async (ws, req) => {
       if (entry.outputBuffer.length > 500) {
         entry.outputBuffer.shift();
       }
+      if (tui.state === TUI_STATE.SESSION_LIST && tui._batchOutputActive) {
+        tui._batchOutputLines = appendBatchOutput(tui._batchOutputLines, entry, text);
+        tui.render();
+      }
     }
   });
 
@@ -202,6 +207,8 @@ const tui = {
   _confirmValue: '',
   _confirmAction: null,
   _statusMsg: null,
+  _batchOutputActive: false,
+  _batchOutputLines: [],
 
   render() {
     if (this.state !== TUI_STATE.SESSION_LIST) {
@@ -242,6 +249,9 @@ const tui = {
       if (this._listCmd !== null) {
         out += `/${this._listCmd}`;
       }
+    }
+    if (this._batchOutputLines.length > 0) {
+      out += `\r\n\r\n${ANSI.dim}${renderBatchOutput(this._batchOutputLines)}${ANSI.reset}`;
     }
     process.stdout.write(out);
   },
@@ -387,6 +397,7 @@ const tui = {
     const parsed = parseListCommand(cmd);
 
     if (parsed.type === 'help') {
+      this._batchOutputActive = false;
       this._statusMsg = formatListCommandHelp();
       this.render();
       return;
@@ -406,6 +417,7 @@ const tui = {
           started += 1;
         }
       }
+      this._batchOutputActive = false;
       this._statusMsg = `update: initiated for ${started} session(s)`;
       this.render();
       return;
@@ -430,6 +442,7 @@ const tui = {
             started += 1;
           }
         }
+        this._batchOutputActive = false;
         this._statusMsg = `exit: launched on ${started} node(s)`;
         this.render();
       };
@@ -448,6 +461,8 @@ const tui = {
       this._confirmPrompt = `[confirm: run "${formatShellExecution(parsed.command)}" on ${macs.length} node(s)? y/N]`;
       this._confirmValue = '';
       this._confirmAction = () => {
+        this._batchOutputActive = true;
+        this._batchOutputLines = [];
         let started = 0;
         for (const mac of sessionRegistry.listMacs()) {
           const entry = sessionRegistry.getSession(mac);
@@ -474,6 +489,8 @@ const tui = {
       this._confirmPrompt = `[confirm: run "${parsed.command}" on ${macs.length} node(s)? y/N]`;
       this._confirmValue = '';
       this._confirmAction = () => {
+        this._batchOutputActive = true;
+        this._batchOutputLines = [];
         let started = 0;
         for (const mac of sessionRegistry.listMacs()) {
           const entry = sessionRegistry.getSession(mac);
@@ -509,6 +526,7 @@ const tui = {
             started += 1;
           }
         }
+        this._batchOutputActive = false;
         this._statusMsg = `set: dispatched "${parsed.key}" to ${started} node(s)`;
         this.render();
       };
