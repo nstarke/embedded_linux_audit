@@ -2,6 +2,7 @@
 
 [![Build](https://github.com/nstarke/embedded_linux_audit/actions/workflows/release-cross-static.yml/badge.svg?branch=main)](https://github.com/nstarke/embedded_linux_audit/actions/workflows/release-cross-static.yml)
 [![Agent Tests](https://github.com/nstarke/embedded_linux_audit/actions/workflows/agent-tests.yml/badge.svg?branch=main)](https://github.com/nstarke/embedded_linux_audit/actions/workflows/agent-tests.yml)
+[![Coverity Scan Build Status](https://scan.coverity.com/projects/32974/badge.svg)](https://scan.coverity.com/projects/32974)
 
 ![embedded_linux_audit logo](images/logo.png)
 

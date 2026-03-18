@@ -1,0 +1,37 @@
+name: Coverity Scan
+
+on:
+  push:
+    branches:
+      - main
+  schedule:
+    - cron: '0 2 * * 1'   # weekly, Monday 02:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  coverity:
+    name: Coverity Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y gcc make
+
+      - name: Coverity Scan
+        uses: vapier/coverity-scan-action@v1
+        with:
+          project: nstarke%2Fembedded_linux_audit
+          token: ${{ secrets.COVERITY_SCAN_TOKEN }}
+          email: ${{ secrets.COVERITY_SCAN_EMAIL }}
+          build_language: cxx
+          build_platform: linux64
+          command: make
