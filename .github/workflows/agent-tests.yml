@@ -61,7 +61,14 @@ jobs:
       - name: Run agent API Jest tests
         run: |
           set -euo pipefail
-          sh tests/api/agent/test_jest.sh
+          node_modules/.bin/jest --runInBand --coverage tests/unit/api/agent tests/unit/api/lib
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: coverage/lcov.info
+          flags: agent
+          token: ${{ secrets.CODECOV_TOKEN }}
 
   terminal-api-jest:
     name: tests/api/terminal/jest
@@ -88,7 +95,14 @@ jobs:
       - name: Run terminal API Jest tests
         run: |
           set -euo pipefail
-          sh tests/api/terminal/test_jest.sh
+          node_modules/.bin/jest --runInBand --coverage tests/unit/api/terminal
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: coverage/lcov.info
+          flags: terminal
+          token: ${{ secrets.CODECOV_TOKEN }}
 
   build-release-binaries:
     name: build/release-binaries-${{ matrix.isa }}
