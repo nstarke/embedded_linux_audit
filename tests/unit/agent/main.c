@@ -20,6 +20,12 @@ int run_tcp_parse_util_tests(void);
 int run_api_key_util_tests(void);
 int run_command_io_util_tests(void);
 int run_ws_frame_util_tests(void);
+int run_ssh_parse_util_tests(void);
+int run_tpm2_output_format_util_tests(void);
+int run_tpm2_command_util_tests(void);
+int run_transfer_parse_util_tests(void);
+int run_ws_session_util_tests(void);
+int run_uboot_command_extract_util_tests(void);
 
 int main(void)
 {
@@ -45,6 +51,12 @@ int main(void)
 	rc |= run_api_key_util_tests();
 	rc |= run_command_io_util_tests();
 	rc |= run_ws_frame_util_tests();
+	rc |= run_ssh_parse_util_tests();
+	rc |= run_tpm2_output_format_util_tests();
+	rc |= run_tpm2_command_util_tests();
+	rc |= run_transfer_parse_util_tests();
+	rc |= run_ws_session_util_tests();
+	rc |= run_uboot_command_extract_util_tests();
 
 	return rc;
 }

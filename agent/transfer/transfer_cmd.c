@@ -3,6 +3,7 @@
 #include "../embedded_linux_audit_cmd.h"
 #include "../net/ws_client.h"
 #include "../shell/interactive.h"
+#include "../util/transfer_parse_util.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -35,89 +36,33 @@ static void usage(const char *prog)
 
 int transfer_main(int argc, char **argv)
 {
-	const char *target;
-	int insecure = 0;
-	int retry_attempts = TRANSFER_DEFAULT_RETRY_ATTEMPTS;
-	{
-		const char *env_retry = getenv("ELA_WS_RETRY_ATTEMPTS");
-		if (env_retry && *env_retry) {
-			char *end;
-			long v = strtol(env_retry, &end, 10);
-			if (!*end && v >= 0 && v <= 1000)
-				retry_attempts = (int)v;
-		}
-	}
+	struct ela_transfer_options options;
 	int sock;
 	int fd;
 	char buf[65536];
 	ssize_t n;
 	pid_t pid;
-	int i;
+	char errbuf[256];
 
-	if (argc < 2) {
+	if (ela_transfer_parse_args(argc, argv, getenv("ELA_WS_RETRY_ATTEMPTS"),
+				    TRANSFER_DEFAULT_RETRY_ATTEMPTS,
+				    &options, errbuf, sizeof(errbuf)) != 0) {
+		if (errbuf[0])
+			fprintf(stderr, "transfer: %s\n", errbuf);
 		usage(argv[0]);
 		return 2;
 	}
 
-	if (!strcmp(argv[1], "--help") || !strcmp(argv[1], "-h")) {
+	if (options.show_help) {
 		usage(argv[0]);
 		return 0;
 	}
 
-	/* Parse optional flags before the target */
-	target = NULL;
-	for (i = 1; i < argc; i++) {
-		if (!strcmp(argv[i], "--insecure")) {
-			insecure = 1;
-		} else if (!strcmp(argv[i], "--retry-attempts")) {
-			i++;
-			if (i >= argc) {
-				fprintf(stderr, "transfer: missing value for --retry-attempts\n");
-				usage(argv[0]);
-				return 2;
-			}
-			{
-				char *end;
-				long v = strtol(argv[i], &end, 10);
-				if (*end || v < 0 || v > 1000) {
-					fprintf(stderr, "transfer: invalid value for --retry-attempts: %s\n", argv[i]);
-					usage(argv[0]);
-					return 2;
-				}
-				retry_attempts = (int)v;
-			}
-		} else if (!strncmp(argv[i], "--retry-attempts=", 17)) {
-			char *end;
-			long v = strtol(argv[i] + 17, &end, 10);
-			if (*end || v < 0 || v > 1000) {
-				fprintf(stderr, "transfer: invalid value for --retry-attempts: %s\n", argv[i] + 17);
-				usage(argv[0]);
-				return 2;
-			}
-			retry_attempts = (int)v;
-		} else if (argv[i][0] == '-') {
-			fprintf(stderr, "transfer: unknown option: %s\n", argv[i]);
-			usage(argv[0]);
-			return 2;
-		} else if (!target) {
-			target = argv[i];
-		} else {
-			fprintf(stderr, "transfer: unexpected argument: %s\n", argv[i]);
-			usage(argv[0]);
-			return 2;
-		}
-	}
-
-	if (!target) {
-		usage(argv[0]);
-		return 2;
-	}
-
-	if (ela_is_ws_url(target)) {
+	if (ela_is_ws_url(options.target)) {
 		struct ela_ws_conn ws;
 
-		if (ela_ws_connect(target, insecure, &ws) != 0) {
-			fprintf(stderr, "transfer: failed to connect to %s\n", target);
+		if (ela_ws_connect(options.target, options.insecure, &ws) != 0) {
+			fprintf(stderr, "transfer: failed to connect to %s\n", options.target);
 			return 1;
 		}
 
@@ -147,32 +92,32 @@ int transfer_main(int argc, char **argv)
 				}
 				ela_ws_close(&ws);
 
-				if (retry_attempts == 0)
+				if (options.retry_attempts == 0)
 					break;
 
 				reconnect = 0;
 				for (;;) {
 					failed_attempts++;
-					if (failed_attempts > retry_attempts)
+					if (failed_attempts > options.retry_attempts)
 						break;
 					fprintf(stderr,
 						"transfer: reconnect attempt %d/%d, waiting %ds\n",
-						failed_attempts, retry_attempts,
+						failed_attempts, options.retry_attempts,
 						TRANSFER_RETRY_DELAY_SECS);
 					sleep(TRANSFER_RETRY_DELAY_SECS);
-					if (ela_ws_connect(target, insecure, &ws) == 0) {
+					if (ela_ws_connect(options.target, options.insecure, &ws) == 0) {
 						failed_attempts = 0;
 						reconnect = 1;
 						break;
 					}
-					fprintf(stderr, "transfer: failed to connect to %s\n", target);
+					fprintf(stderr, "transfer: failed to connect to %s\n", options.target);
 				}
 				if (!reconnect)
 					break;
 			}
 			fprintf(stderr,
 				"transfer: max retry attempts (%d) reached, exiting\n",
-				retry_attempts);
+				options.retry_attempts);
 			exit(1);
 		}
 	}
@@ -183,9 +128,9 @@ int transfer_main(int argc, char **argv)
 		return 1;
 	}
 
-	sock = ela_connect_tcp_any(target);
+	sock = ela_connect_tcp_any(options.target);
 	if (sock < 0) {
-		fprintf(stderr, "transfer: failed to connect to %s\n", target);
+		fprintf(stderr, "transfer: failed to connect to %s\n", options.target);
 		close(fd);
 		return 1;
 	}

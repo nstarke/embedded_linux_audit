@@ -8,6 +8,7 @@
 #include "ws_client.h"
 #include "api_key.h"
 #include "ws_frame_util.h"
+#include "ws_session_util.h"
 #include "ws_url_util.h"
 #include "tcp_util.h"
 #include "../embedded_linux_audit_cmd.h"
@@ -352,13 +353,8 @@ static int ws_do_handshake(struct ela_ws_conn *ws,
 	}
 	resp[resp_len] = '\0';
 
-	/* Verify 101 status */
-	if (strncmp(resp, "HTTP/1.1 101", 12) != 0) {
-		long code = 0;
-		const char *sp = strchr(resp, ' ');
-		if (sp)
-			code = strtol(sp + 1, NULL, 10);
-		if (code == 401)
+	if (ela_ws_validate_handshake_response(resp, NULL, 0) != 0) {
+		if (strstr(resp, " 401 "))
 			fprintf(stderr,
 				"ws: server returned 401 Unauthorized\n"
 				"  Set a bearer token via --api-key, ELA_API_KEY, or /tmp/ela.key\n");
@@ -660,9 +656,9 @@ static void send_heartbeat_ack(const struct ela_ws_conn *ws)
 	else
 		strncpy(date_str, "unknown", sizeof(date_str) - 1);
 
-	snprintf(ack, sizeof(ack),
-		 "{\"_type\":\"heartbeat_ack\",\"date\":\"%s\"}", date_str);
-	ws_send_text(ws, ack, strlen(ack));
+	date_str[sizeof(date_str) - 1] = '\0';
+	if (ela_ws_build_heartbeat_ack(date_str, ack, sizeof(ack)) == 0)
+		ws_send_text(ws, ack, strlen(ack));
 }
 
 /* -------------------------------------------------------------------------
@@ -673,12 +669,10 @@ static void send_heartbeat_ack(const struct ela_ws_conn *ws)
 static void ws_send_ping(const struct ela_ws_conn *ws)
 {
 	uint8_t frame[6];
+	size_t frame_len = 0;
 
-	frame[0] = 0x80 | ELA_WS_OPCODE_PING; /* FIN=1, opcode=PING */
-	frame[1] = 0x80;                   /* MASK=1, payload_len=0 */
-	frame[2] = 0; frame[3] = 0;       /* masking key (zeros) */
-	frame[4] = 0; frame[5] = 0;
-	ws_conn_write(ws, frame, 6);
+	if (ela_ws_build_zero_mask_control_frame(ELA_WS_OPCODE_PING, frame, &frame_len) == 0)
+		ws_conn_write(ws, frame, frame_len);
 }
 
 int ela_ws_run_interactive(struct ela_ws_conn *ws, const char *prog)
@@ -787,24 +781,29 @@ int ela_ws_run_interactive(struct ela_ws_conn *ws, const char *prog)
 			if (frame_len < 0)
 				break;
 
-			if (opcode == ELA_WS_OPCODE_CLOSE)
-				break;
+			{
+				struct ela_ws_frame_action action;
 
-			if (opcode == ELA_WS_OPCODE_PING) {
-				/* RFC 6455: client frames MUST be masked */
-				uint8_t pong[6];
-				pong[0] = 0x80 | ELA_WS_OPCODE_PONG;
-				pong[1] = 0x80; /* MASK=1, payload_len=0 */
-				pong[2] = 0; pong[3] = 0;
-				pong[4] = 0; pong[5] = 0; /* zero mask */
-				ws_conn_write(ws, pong, 6);
-				continue;
-			}
+				ela_ws_classify_incoming_frame(opcode, frame_buf,
+							       frame_len > 0 ? (size_t)frame_len : 0U,
+							       &action);
+				if (action.terminate_session)
+					break;
 
-			if (opcode == ELA_WS_OPCODE_TEXT && frame_len > 0) {
-				if (strstr(frame_buf, "\"_type\":\"heartbeat\"")) {
+				if (action.send_pong) {
+					uint8_t pong[6];
+					size_t pong_len = 0;
+
+					if (ela_ws_build_zero_mask_control_frame(ELA_WS_OPCODE_PONG,
+										 pong,
+										 &pong_len) == 0)
+						ws_conn_write(ws, pong, pong_len);
+					continue;
+				}
+
+				if (action.send_heartbeat_ack) {
 					send_heartbeat_ack(ws);
-				} else {
+				} else if (action.forward_to_repl) {
 					if (write(pipe_to_loop[1],
 						  frame_buf,
 						  (size_t)frame_len) < 0)
