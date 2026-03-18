@@ -2,11 +2,28 @@
 
 #include "ws_session_util.h"
 
+#include "ws_client.h"
 #include "ws_frame_util.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+bool ela_ws_response_headers_complete(const char *response, size_t response_len)
+{
+	if (!response || response_len < 4)
+		return false;
+
+	return response[response_len - 4] == '\r' &&
+	       response[response_len - 3] == '\n' &&
+	       response[response_len - 2] == '\r' &&
+	       response[response_len - 1] == '\n';
+}
+
+bool ela_ws_handshake_response_is_unauthorized(const char *response)
+{
+	return response && strstr(response, " 401 ") != NULL;
+}
 
 int ela_ws_validate_handshake_response(const char *response,
 				       char *errbuf,
@@ -91,4 +108,24 @@ int ela_ws_build_zero_mask_control_frame(uint8_t opcode,
 	frame[5] = 0;
 	*frame_len_out = 6;
 	return 0;
+}
+
+int ela_ws_build_ping_frame(uint8_t frame[6], size_t *frame_len_out)
+{
+	return ela_ws_build_zero_mask_control_frame(ELA_WS_OPCODE_PING, frame, frame_len_out);
+}
+
+bool ela_ws_child_wait_exited(int waitpid_result)
+{
+	return waitpid_result > 0;
+}
+
+bool ela_ws_child_output_should_break(ssize_t read_len)
+{
+	return read_len <= 0;
+}
+
+int ela_ws_interactive_exit_code(int child_exited)
+{
+	return child_exited ? ELA_WS_EXIT_CLEAN : 0;
 }

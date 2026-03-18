@@ -344,15 +344,13 @@ static int ws_do_handshake(struct ela_ws_conn *ws,
 			return -1;
 		}
 		resp_len++;
-		if (resp_len >= 4 &&
-		    resp[resp_len-4] == '\r' && resp[resp_len-3] == '\n' &&
-		    resp[resp_len-2] == '\r' && resp[resp_len-1] == '\n')
+		if (ela_ws_response_headers_complete(resp, resp_len))
 			break;
 	}
 	resp[resp_len] = '\0';
 
 	if (ela_ws_validate_handshake_response(resp, NULL, 0) != 0) {
-		if (strstr(resp, " 401 "))
+		if (ela_ws_handshake_response_is_unauthorized(resp))
 			fprintf(stderr,
 				"ws: server returned 401 Unauthorized\n"
 				"  Set a bearer token via --api-key, ELA_API_KEY, or /tmp/ela.key\n");
@@ -667,7 +665,7 @@ static void ws_send_ping(const struct ela_ws_conn *ws)
 	uint8_t frame[6];
 	size_t frame_len = 0;
 
-	if (ela_ws_build_zero_mask_control_frame(ELA_WS_OPCODE_PING, frame, &frame_len) == 0)
+	if (ela_ws_build_ping_frame(frame, &frame_len) == 0)
 		ws_conn_write(ws, frame, frame_len);
 }
 
@@ -724,7 +722,7 @@ int ela_ws_run_interactive(struct ela_ws_conn *ws, const char *prog)
 		uint8_t        opcode;
 		ssize_t        frame_len;
 
-		if (waitpid(child, &child_status, WNOHANG) > 0) {
+		if (ela_ws_child_wait_exited(waitpid(child, &child_status, WNOHANG))) {
 			child_exited = 1;
 			break;
 		}
@@ -812,7 +810,7 @@ int ela_ws_run_interactive(struct ela_ws_conn *ws, const char *prog)
 		if (FD_ISSET(pipe_from_loop[0], &rfds)) {
 			ssize_t n = read(pipe_from_loop[0],
 					 read_buf, sizeof(read_buf));
-			if (n <= 0)
+			if (ela_ws_child_output_should_break(n))
 				break;
 			ws_send_text(ws, read_buf, (size_t)n);
 		}
@@ -834,5 +832,5 @@ int ela_ws_run_interactive(struct ela_ws_conn *ws, const char *prog)
 		close(ws->sock);
 		ws->sock = -1;
 	}
-	return child_exited ? ELA_WS_EXIT_CLEAN : 0;
+	return ela_ws_interactive_exit_code(child_exited);
 }
