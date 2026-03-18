@@ -1,6 +1,7 @@
 'use strict';
 
 const {
+  formatShellExecution,
   formatListCommandHelp,
   LIST_COMMAND_HELP,
   isAffirmativeResponse,
@@ -62,5 +63,10 @@ describe('terminal list command helpers', () => {
     expect(unwrapQuotedArgument("'echo hello'")).toBe('echo hello');
     expect(unwrapQuotedArgument('"echo \\"hello\\""')).toBe('echo "hello"');
     expect(unwrapQuotedArgument('echo hello')).toBe('echo hello');
+  });
+
+  test('formatShellExecution wraps the command as a single execute-command argument', () => {
+    expect(formatShellExecution('cat /etc/resolv.conf')).toBe('linux execute-command "cat /etc/resolv.conf"');
+    expect(formatShellExecution('echo "hello"')).toBe('linux execute-command "echo \\"hello\\""');
   });
 });

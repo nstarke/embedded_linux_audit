@@ -15,7 +15,7 @@ const {
 } = require('../lib/db/deviceRegistry');
 const { loadLegacyAliases } = require('./legacyAliases');
 const { createSessionRegistry } = require('./sessionRegistry');
-const { formatListCommandHelp, isAffirmativeResponse, parseListCommand } = require('./listCommands');
+const { formatListCommandHelp, formatShellExecution, isAffirmativeResponse, parseListCommand } = require('./listCommands');
 const { executeLocalSessionCommand } = require('./localCommands');
 const { createTerminalHttpHandler } = require('./httpRoutes');
 const { startSessionUpdate, handleUpdateMessage } = require('./updateManager');
@@ -439,14 +439,14 @@ const tui = {
         return;
       }
 
-      this._confirmPrompt = `[confirm: run "linux execute-command ${parsed.command}" on ${macs.length} node(s)? y/N]`;
+      this._confirmPrompt = `[confirm: run "${formatShellExecution(parsed.command)}" on ${macs.length} node(s)? y/N]`;
       this._confirmValue = '';
       this._confirmAction = () => {
         let started = 0;
         for (const mac of sessionRegistry.listMacs()) {
           const entry = sessionRegistry.getSession(mac);
           if (entry && entry.ws.readyState === entry.ws.OPEN) {
-            entry.ws.send(`linux execute-command ${parsed.command}\n`);
+            entry.ws.send(`${formatShellExecution(parsed.command)}\n`);
             started += 1;
           }
         }

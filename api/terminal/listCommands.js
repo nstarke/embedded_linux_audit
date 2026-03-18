@@ -32,6 +32,10 @@ function unwrapQuotedArgument(value) {
   return inner.replace(escapedQuote, quote).replace(/\\\\/g, '\\');
 }
 
+function formatShellExecution(command) {
+  return `linux execute-command ${JSON.stringify(String(command || ''))}`;
+}
+
 function parseListCommand(input) {
   const trimmed = String(input || '').trim();
   if (!trimmed) {
@@ -111,6 +115,7 @@ function isAffirmativeResponse(input) {
 }
 
 module.exports = {
+  formatShellExecution,
   formatListCommandHelp,
   LIST_COMMAND_HELP,
   isAffirmativeResponse,
