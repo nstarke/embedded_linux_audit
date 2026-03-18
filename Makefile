@@ -103,6 +103,13 @@ ifneq ($(strip $(CMAKE_C_COMPILER_TARGET)),)
 CMAKE_CC_ARGS += -DCMAKE_C_COMPILER_TARGET=$(CMAKE_C_COMPILER_TARGET)
  CMAKE_CC_ARGS += -DCMAKE_TRY_COMPILE_TARGET_TYPE=$(CMAKE_TRY_COMPILE_TARGET_TYPE)
 endif
+# CMake 3.20+ uses the compiler to generate .d dependency files (-MF flag).
+# With zig cc and parallel builds the target directory does not yet exist when
+# compile jobs start, causing "error opening '...o.d': No such file or
+# directory".  Disable compiler-generated dep scanning for zig cc builds.
+ifeq ($(NEEDS_ZIG),1)
+CMAKE_CC_ARGS += -DCMAKE_DEPENDS_USE_COMPILER=FALSE
+endif
 WOLFSSL_CONFIGURE_HOST_ARG :=
 ifneq ($(strip $(CMAKE_C_COMPILER_TARGET)),)
 WOLFSSL_CONFIGURE_HOST_ARG := --host=$(CMAKE_C_COMPILER_TARGET)
