@@ -431,6 +431,7 @@ AGENT_UNIT_TEST_SRC := \
 	tests/unit/agent/test_http_client_parse_util.c \
 	tests/unit/agent/test_http_client_body_util.c \
 	tests/unit/agent/test_http_client_protocol_util.c \
+	tests/unit/agent/test_http_client_runtime_util.c \
 	tests/unit/agent/test_ws_connect_util.c \
 	tests/unit/agent/test_ws_interactive_util.c \
 	tests/unit/agent/test_ws_recv_util.c \
@@ -471,6 +472,7 @@ AGENT_UNIT_TEST_DEPS := \
 	agent/net/http_client_parse_util.c \
 	agent/net/http_client_body_util.c \
 	agent/net/http_client_protocol_util.c \
+	agent/net/http_client_runtime_util.c \
 	agent/net/ws_recv_util.c \
 	agent/uboot/env/uboot_env_format_util.c \
 	agent/uboot/env/uboot_env_record_util.c \
@@ -934,6 +936,7 @@ $(AGENT_UNIT_TEST_BIN): $(AGENT_UNIT_TEST_SRC) $(AGENT_UNIT_TEST_DEPS) $(JSONC_L
 			agent/net/http_client_parse_util.c \
 			agent/net/http_client_body_util.c \
 			agent/net/http_client_protocol_util.c \
+			agent/net/http_client_runtime_util.c \
 			agent/net/ws_recv_util.c \
 			agent/uboot/env/uboot_env_format_util.c \
 			agent/uboot/env/uboot_env_record_util.c \

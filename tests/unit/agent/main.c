@@ -38,6 +38,7 @@ int run_uboot_env_scan_util_tests(void);
 int run_http_client_parse_util_tests(void);
 int run_http_client_body_util_tests(void);
 int run_http_client_protocol_util_tests(void);
+int run_http_client_runtime_util_tests(void);
 int run_ws_connect_util_tests(void);
 int run_ws_interactive_util_tests(void);
 int run_ws_recv_util_tests(void);
@@ -87,6 +88,7 @@ int main(void)
 	rc |= run_http_client_parse_util_tests();
 	rc |= run_http_client_body_util_tests();
 	rc |= run_http_client_protocol_util_tests();
+	rc |= run_http_client_runtime_util_tests();
 	rc |= run_ws_connect_util_tests();
 	rc |= run_ws_interactive_util_tests();
 	rc |= run_ws_recv_util_tests();

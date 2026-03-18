@@ -5,6 +5,7 @@
 #include "http_client_body_util.h"
 #include "http_client_parse_util.h"
 #include "http_client_protocol_util.h"
+#include "http_client_runtime_util.h"
 #include "http_ws_policy_util.h"
 #include "tcp_util.h"
 #include "../util/http_uri_util.h"
@@ -235,7 +236,7 @@ static int simple_http_post(const char *uri,
 
 	if (!ela_http_status_is_success(status_code)) {
 		if (errbuf && errbuf_len)
-			snprintf(errbuf, errbuf_len, "HTTP status %d", status_code);
+			ela_http_format_status_error(status_code, errbuf, errbuf_len);
 		if (verbose)
 			fprintf(stderr, "HTTP POST response failure uri=%s status=%d\n", uri, status_code);
 		return -1;
@@ -375,7 +376,7 @@ static int simple_wolfssl_https_post(const struct parsed_http_uri *parsed,
 		*status_out = status;
 	if (status < 200 || status >= 300) {
 		if (errbuf && errbuf_len)
-			snprintf(errbuf, errbuf_len, "HTTP status %d", status);
+			ela_http_format_status_error(status, errbuf, errbuf_len);
 		goto cleanup;
 	}
 
@@ -466,7 +467,7 @@ static int simple_http_get_to_file(const char *uri,
 
 	if (status_code < 200 || status_code >= 300) {
 		if (errbuf && errbuf_len)
-			snprintf(errbuf, errbuf_len, "HTTP status %d", status_code);
+			ela_http_format_status_error(status_code, errbuf, errbuf_len);
 		if (verbose)
 			fprintf(stderr, "HTTP GET response failure uri=%s status=%d\n", uri, status_code);
 		goto fail;
@@ -719,7 +720,7 @@ static int ssl_readline(SSL *ssl, char *buf, size_t buf_sz)
 static int ssl_copy_response_body_to_file(SSL *ssl, const char *headers, FILE *fp)
 {
 	char buf[4096];
-	if (ela_http_headers_have_chunked_encoding(headers)) {
+	if (ela_http_body_is_chunked(headers)) {
 		for (;;) {
 			char line[128];
 			unsigned long chunk_len;
@@ -733,7 +734,7 @@ static int ssl_copy_response_body_to_file(SSL *ssl, const char *headers, FILE *f
 				break;
 			}
 			while (chunk_len) {
-				int want = (int)(chunk_len > sizeof(buf) ? sizeof(buf) : chunk_len);
+				int want = (int)ela_http_chunk_read_size(chunk_len, sizeof(buf));
 				int n = SSL_read(ssl, buf, want);
 				if (n <= 0)
 					return -1;
@@ -998,7 +999,7 @@ static int simple_https_post(const char *uri,
 		*status_out = status;
 	if (!ela_http_status_is_success(status)) {
 		if (errbuf && errbuf_len)
-			snprintf(errbuf, errbuf_len, "HTTP status %d", status);
+			ela_http_format_status_error(status, errbuf, errbuf_len);
 		goto fail;
 	}
 
@@ -1101,7 +1102,7 @@ static int simple_https_get_to_file(const char *uri,
 	ela_set_sigill_stage("https:get:read_body");
 	if (!ela_http_status_is_success(status)) {
 		if (errbuf && errbuf_len)
-			snprintf(errbuf, errbuf_len, "HTTP status %d", status);
+			ela_http_format_status_error(status, errbuf, errbuf_len);
 		goto fail;
 	}
 
@@ -1375,15 +1376,10 @@ int ela_http_get_upload_mac(const char *base_uri, char *mac_buf, size_t mac_buf_
 	 * the upload path away from heavier libc/network helper code on older
 	 * compatibility targets where we've seen runtime CPU faults.
 	 */
-	if (first_non_loopback_mac(mac_buf, mac_buf_len) == 0)
-		return 0;
+	if (first_non_loopback_mac(routed_mac, sizeof(routed_mac)) == 0)
+		return ela_http_choose_upload_mac_address(NULL, routed_mac, mac_buf, mac_buf_len);
 
-	/*
-	 * Final fallback: use a deterministic placeholder rather than invoking more
-	 * network stack helpers. The API accepts any syntactically valid MAC path.
-	 */
-	snprintf(mac_buf, mac_buf_len, "%s", "00:00:00:00:00:00");
-	return 0;
+	return ela_http_choose_upload_mac_address(NULL, NULL, mac_buf, mac_buf_len);
 }
 
 
@@ -1655,22 +1651,14 @@ static int ela_udp_resolve(const char *hostname, char *ip_buf, size_t ip_buf_len
  */
 static struct curl_slist *ela_curl_resolve_list(const char *url)
 {
-	const char *p;
 	char host[256], port_str[8], ip[16], entry[288];
-	int dots, is_numeric;
 
 	if (!url)
 		return NULL;
 	if (ela_http_parse_url_authority(url, host, sizeof(host), port_str, sizeof(port_str)) != 0)
 		return NULL;
 
-	/* Skip if host is already a numeric IPv4 address */
-	dots = 0; is_numeric = 1;
-	for (p = host; *p; p++) {
-		if (*p == '.')      { dots++; }
-		else if (*p < '0' || *p > '9') { is_numeric = 0; break; }
-	}
-	if (is_numeric && dots == 3)
+	if (!ela_http_should_try_udp_resolve_host(host))
 		return NULL;
 
 	if (ela_udp_resolve(host, ip, sizeof(ip)) != 0)
@@ -1790,7 +1778,7 @@ static int __attribute__((unused)) ela_http_post_https_once(const char *effectiv
 					" or use an IP address in ELA_API_URL\n");
 		}
 		if (errbuf && errbuf_len)
-			snprintf(errbuf, errbuf_len, "curl perform failed: %s", curl_easy_strerror(rc));
+			ela_http_format_curl_transport_error(curl_easy_strerror(rc), errbuf, errbuf_len);
 		curl_slist_free_all(headers);
 		curl_easy_cleanup(curl);
 		curl_slist_free_all(resolve_list);
@@ -1810,7 +1798,7 @@ static int __attribute__((unused)) ela_http_post_https_once(const char *effectiv
 			fprintf(stderr, "HTTP POST response failure uri=%s status=%ld\n",
 				effective_uri, http_code);
 		if (errbuf && errbuf_len)
-			snprintf(errbuf, errbuf_len, "HTTP status %ld", http_code);
+			ela_http_format_status_error(http_code, errbuf, errbuf_len);
 		return -1;
 	}
 
@@ -1881,7 +1869,7 @@ int ela_http_post(const char *uri, const uint8_t *data, size_t len,
 			return 0;
 		}
 		/* Retry with the next candidate key only on 401 */
-		if (status == 401)
+		if (ela_http_should_retry_with_next_api_key(status))
 			key = ela_api_key_next();
 		else
 			break;
@@ -2021,7 +2009,7 @@ int ela_http_get_to_file(const char *uri, const char *output_path,
 			fprintf(stderr, "HTTP GET transport failure uri=%s error=%s\n",
 				effective_uri, curl_easy_strerror(rc));
 		if (errbuf && errbuf_len)
-			snprintf(errbuf, errbuf_len, "curl perform failed: %s", curl_easy_strerror(rc));
+			ela_http_format_curl_transport_error(curl_easy_strerror(rc), errbuf, errbuf_len);
 		curl_easy_cleanup(curl);
 		fclose(fp);
 		unlink(output_path);
@@ -2047,7 +2035,7 @@ int ela_http_get_to_file(const char *uri, const char *output_path,
 			fprintf(stderr, "HTTP GET response failure uri=%s status=%ld\n",
 				effective_uri, http_code);
 		if (errbuf && errbuf_len)
-			snprintf(errbuf, errbuf_len, "HTTP status %ld", http_code);
+			ela_http_format_status_error(http_code, errbuf, errbuf_len);
 		unlink(output_path);
 		free(normalized_uri);
 		return -1;
