@@ -8,10 +8,12 @@
 #include <netdb.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <sys/types.h>
 #include <unistd.h>
 
@@ -21,6 +23,11 @@
  * ---------------------------------------------------------------------- */
 
 #ifdef __linux__
+static bool ela_is_loopback_ipv4(const char *ip)
+{
+	return ip && !strncmp(ip, "127.", 4);
+}
+
 static int ela_has_dns_configured(void)
 {
 	FILE *f;
@@ -81,6 +88,192 @@ static int ela_get_default_gateway(char *buf, size_t buf_sz)
 
 	fclose(f);
 	return found ? 0 : -1;
+}
+
+static int ela_read_nameservers(char ns[][16], int max_ns)
+{
+	FILE *f;
+	char line[256];
+	int count = 0;
+
+	f = fopen("/etc/resolv.conf", "r");
+	if (!f)
+		return 0;
+
+	while (count < max_ns && fgets(line, sizeof(line), f)) {
+		const char *p = line;
+		int i;
+
+		while (*p == ' ' || *p == '\t')
+			p++;
+		if (strncmp(p, "nameserver", 10) != 0)
+			continue;
+		p += 10;
+		while (*p == ' ' || *p == '\t')
+			p++;
+
+		for (i = 0; i < 15 && *p && *p != '\n' && *p != '\r' &&
+		            *p != ' ' && *p != '\t' && *p != '#'; i++) {
+			ns[count][i] = *p++;
+		}
+		ns[count][i] = '\0';
+		if (i > 0)
+			count++;
+	}
+
+	fclose(f);
+	return count;
+}
+
+static int ela_dns_build_query(const char *hostname, uint8_t *buf, int buf_len)
+{
+	int pos = 12;
+	const char *p = hostname;
+
+	if (buf_len < 32)
+		return -1;
+
+	memset(buf, 0, 12);
+	buf[0] = 0xab; buf[1] = 0xcd;
+	buf[2] = 0x01; buf[3] = 0x00;
+	buf[4] = 0x00; buf[5] = 0x01;
+
+	while (*p) {
+		const char *dot = strchr(p, '.');
+		int label_len = dot ? (int)(dot - p) : (int)strlen(p);
+
+		if (pos + 1 + label_len + 4 > buf_len)
+			return -1;
+		buf[pos++] = (uint8_t)label_len;
+		memcpy(buf + pos, p, (size_t)label_len);
+		pos += label_len;
+		if (!dot)
+			break;
+		p = dot + 1;
+	}
+
+	if (pos + 5 > buf_len)
+		return -1;
+
+	buf[pos++] = 0;
+	buf[pos++] = 0x00; buf[pos++] = 0x01;
+	buf[pos++] = 0x00; buf[pos++] = 0x01;
+	return pos;
+}
+
+static int ela_dns_query_a(const char *ns_ip, const char *hostname,
+			   char *ip_buf, size_t ip_buf_len)
+{
+	uint8_t pkt[512];
+	uint8_t resp[512];
+	struct sockaddr_in ns_addr;
+	struct timeval tv;
+	int sock;
+	int pkt_len;
+	ssize_t n;
+	int pos, qdcount, ancount, i;
+
+	pkt_len = ela_dns_build_query(hostname, pkt, (int)sizeof(pkt));
+	if (pkt_len < 0)
+		return -1;
+
+	sock = socket(AF_INET, SOCK_DGRAM, 0);
+	if (sock < 0)
+		return -1;
+
+	tv.tv_sec = 2;
+	tv.tv_usec = 0;
+	setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
+	memset(&ns_addr, 0, sizeof(ns_addr));
+	ns_addr.sin_family = AF_INET;
+	ns_addr.sin_port = htons(53);
+	if (inet_pton(AF_INET, ns_ip, &ns_addr.sin_addr) != 1) {
+		close(sock);
+		return -1;
+	}
+
+	if (sendto(sock, pkt, (size_t)pkt_len, 0,
+		   (struct sockaddr *)&ns_addr, sizeof(ns_addr)) != pkt_len) {
+		close(sock);
+		return -1;
+	}
+
+	n = recv(sock, resp, sizeof(resp), 0);
+	close(sock);
+	if (n < 12)
+		return -1;
+
+	if (!(resp[2] & 0x80) || (resp[3] & 0x0f) != 0)
+		return -1;
+
+	qdcount = (resp[4] << 8) | resp[5];
+	ancount = (resp[6] << 8) | resp[7];
+	if (ancount == 0)
+		return -1;
+
+	pos = 12;
+	for (i = 0; i < qdcount && pos < (int)n; i++) {
+		while (pos < (int)n) {
+			if (resp[pos] == 0)             { pos++; break; }
+			if ((resp[pos] & 0xC0) == 0xC0) { pos += 2; break; }
+			pos += resp[pos] + 1;
+		}
+		pos += 4;
+	}
+
+	for (i = 0; i < ancount && pos < (int)n; i++) {
+		int rtype, rdlen;
+
+		if ((resp[pos] & 0xC0) == 0xC0) {
+			pos += 2;
+		} else {
+			while (pos < (int)n) {
+				if (resp[pos] == 0)             { pos++; break; }
+				if ((resp[pos] & 0xC0) == 0xC0) { pos += 2; break; }
+				pos += resp[pos] + 1;
+			}
+		}
+
+		if (pos + 10 > (int)n)
+			break;
+		rtype = (resp[pos] << 8) | resp[pos + 1];
+		rdlen = (resp[pos + 8] << 8) | resp[pos + 9];
+		pos += 10;
+
+		if (rtype == 1 && rdlen == 4 && pos + 4 <= (int)n) {
+			snprintf(ip_buf, ip_buf_len, "%d.%d.%d.%d",
+				 resp[pos], resp[pos + 1], resp[pos + 2], resp[pos + 3]);
+			return 0;
+		}
+		pos += rdlen;
+	}
+
+	return -1;
+}
+
+static int ela_udp_resolve_ipv4(const char *hostname, char *ip_buf, size_t ip_buf_len)
+{
+	char ns[3][16];
+	char gw[INET_ADDRSTRLEN];
+	int ns_count;
+	int i;
+
+	ns_count = ela_read_nameservers(ns, 3);
+	for (i = 0; i < ns_count; i++) {
+		if (!ns[i][0] || ela_is_loopback_ipv4(ns[i]))
+			continue;
+		if (ela_dns_query_a(ns[i], hostname, ip_buf, ip_buf_len) == 0)
+			return 0;
+	}
+
+	if (ela_get_default_gateway(gw, sizeof(gw)) == 0 &&
+	    !ela_is_loopback_ipv4(gw) &&
+	    ela_dns_query_a(gw, hostname, ip_buf, ip_buf_len) == 0) {
+		return 0;
+	}
+
+	return -1;
 }
 
 /* Write gateway as nameserver to /etc/resolv.conf if none is configured. */
@@ -161,8 +354,15 @@ int connect_tcp_host_port_any(const char *host, uint16_t port)
 	hints.ai_socktype = SOCK_STREAM;
 	snprintf(portbuf, sizeof(portbuf), "%u", (unsigned int)port);
 	rc = getaddrinfo(host, portbuf, &hints, &res);
-	if (rc != 0 || !res)
+	if (rc != 0 || !res) {
+#ifdef __linux__
+		char ip[INET_ADDRSTRLEN];
+
+		if (ela_udp_resolve_ipv4(host, ip, sizeof(ip)) == 0)
+			return connect_tcp_host_port(ip, port);
+#endif
 		return -1;
+	}
 
 	for (ai = res; ai; ai = ai->ai_next) {
 		sock = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
