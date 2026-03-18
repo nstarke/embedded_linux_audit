@@ -105,7 +105,7 @@ function createUploadHandler(deps) {
       return;
     }
 
-    if (normalizedContentType === 'application/json' && !['arch', 'cmd'].includes(uploadType)) {
+    if (normalizedContentType === 'application/json' && !['arch', 'cmd', 'tpm2-getcap', 'tpm2-pcrread', 'tpm2-nvreadpublic', 'tpm2-createprimary'].includes(uploadType)) {
       const allowed = Object.keys(validContentTypes)
         .filter((type) => type !== 'application/json')
         .sort()
