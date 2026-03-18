@@ -9,6 +9,7 @@
 
 #include <arpa/inet.h>
 #include <ctype.h>
+#include <sys/time.h>
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -1533,6 +1534,257 @@ int ela_http_post_log_message(const char *base_uri, const char *message,
 	return rc;
 }
 
+/* -------------------------------------------------------------------------
+ * Minimal UDP DNS resolver — used as a fallback for statically linked
+ * glibc builds where getaddrinfo() does not consult /etc/resolv.conf.
+ * ---------------------------------------------------------------------- */
+
+/* Read up to max_ns IPv4 nameserver strings from /etc/resolv.conf. */
+static int ela_read_nameservers(char ns[][16], int max_ns)
+{
+	FILE *f;
+	char line[256];
+	int count = 0;
+
+	f = fopen("/etc/resolv.conf", "r");
+	if (!f)
+		return 0;
+
+	while (count < max_ns && fgets(line, (int)sizeof(line), f)) {
+		const char *p = line;
+		int i;
+
+		while (*p == ' ' || *p == '\t') p++;
+		if (strncmp(p, "nameserver", 10) != 0)
+			continue;
+		p += 10;
+		while (*p == ' ' || *p == '\t') p++;
+
+		for (i = 0; i < 15 && *p && *p != '\n' && *p != '\r' &&
+		            *p != ' ' && *p != '\t' && *p != '#'; i++)
+			ns[count][i] = *p++;
+		ns[count][i] = '\0';
+		if (i > 0)
+			count++;
+	}
+	fclose(f);
+	return count;
+}
+
+/* Build a DNS A-record query packet.  Returns packet length or -1. */
+static int ela_dns_build_query(const char *hostname, uint8_t *buf, int buf_len)
+{
+	int pos = 12;
+	const char *p = hostname;
+
+	if (buf_len < 32)
+		return -1;
+
+	memset(buf, 0, 12);
+	buf[0] = 0xab; buf[1] = 0xcd; /* transaction ID */
+	buf[2] = 0x01; buf[3] = 0x00; /* QR=0, RD=1 */
+	buf[4] = 0x00; buf[5] = 0x01; /* QDCOUNT = 1 */
+
+	while (*p) {
+		const char *dot = strchr(p, '.');
+		int label_len = dot ? (int)(dot - p) : (int)strlen(p);
+
+		if (pos + 1 + label_len + 4 > buf_len)
+			return -1;
+		buf[pos++] = (uint8_t)label_len;
+		memcpy(buf + pos, p, (size_t)label_len);
+		pos += label_len;
+		if (!dot)
+			break;
+		p = dot + 1;
+	}
+	if (pos + 5 > buf_len)
+		return -1;
+	buf[pos++] = 0;          /* root label */
+	buf[pos++] = 0x00; buf[pos++] = 0x01; /* QTYPE = A  */
+	buf[pos++] = 0x00; buf[pos++] = 0x01; /* QCLASS = IN */
+	return pos;
+}
+
+/*
+ * Send a DNS A-record query to ns_ip:53 and return the first IPv4 result.
+ * Returns 0 on success (ip_buf filled), -1 on failure.
+ */
+static int ela_dns_query_a(const char *ns_ip, const char *hostname,
+			   char *ip_buf, size_t ip_buf_len)
+{
+	uint8_t pkt[512];
+	uint8_t resp[512];
+	struct sockaddr_in ns_addr;
+	struct timeval tv;
+	int sock;
+	int pkt_len;
+	ssize_t n;
+	int pos, qdcount, ancount, i;
+
+	pkt_len = ela_dns_build_query(hostname, pkt, (int)sizeof(pkt));
+	if (pkt_len < 0)
+		return -1;
+
+	sock = socket(AF_INET, SOCK_DGRAM, 0);
+	if (sock < 0)
+		return -1;
+
+	tv.tv_sec  = 2;
+	tv.tv_usec = 0;
+	setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
+	memset(&ns_addr, 0, sizeof(ns_addr));
+	ns_addr.sin_family = AF_INET;
+	ns_addr.sin_port   = htons(53);
+	if (inet_pton(AF_INET, ns_ip, &ns_addr.sin_addr) != 1) {
+		close(sock);
+		return -1;
+	}
+
+	if (sendto(sock, pkt, (size_t)pkt_len, 0,
+		   (struct sockaddr *)&ns_addr, sizeof(ns_addr)) != pkt_len) {
+		close(sock);
+		return -1;
+	}
+
+	n = recv(sock, resp, sizeof(resp), 0);
+	close(sock);
+	if (n < 12)
+		return -1;
+
+	/* Must be a response with RCODE=0 */
+	if (!(resp[2] & 0x80) || (resp[3] & 0x0f) != 0)
+		return -1;
+
+	qdcount = (resp[4] << 8) | resp[5];
+	ancount = (resp[6] << 8) | resp[7];
+	if (ancount == 0)
+		return -1;
+
+	/* Skip questions */
+	pos = 12;
+	for (i = 0; i < qdcount && pos < (int)n; i++) {
+		while (pos < (int)n) {
+			if (resp[pos] == 0)             { pos++; break; }
+			if ((resp[pos] & 0xC0) == 0xC0) { pos += 2; break; }
+			pos += resp[pos] + 1;
+		}
+		pos += 4; /* QTYPE + QCLASS */
+	}
+
+	/* Parse answer records, return the first A record */
+	for (i = 0; i < ancount && pos < (int)n; i++) {
+		int rtype, rdlen;
+
+		if ((resp[pos] & 0xC0) == 0xC0) {
+			pos += 2;
+		} else {
+			while (pos < (int)n) {
+				if (resp[pos] == 0)             { pos++; break; }
+				if ((resp[pos] & 0xC0) == 0xC0) { pos += 2; break; }
+				pos += resp[pos] + 1;
+			}
+		}
+
+		if (pos + 10 > (int)n)
+			break;
+		rtype = (resp[pos] << 8) | resp[pos + 1];
+		/* skip class (2) + ttl (4) */
+		rdlen = (resp[pos + 8] << 8) | resp[pos + 9];
+		pos += 10;
+
+		if (rtype == 1 /* A */ && rdlen == 4 && pos + 4 <= (int)n) {
+			snprintf(ip_buf, ip_buf_len, "%d.%d.%d.%d",
+				 resp[pos], resp[pos+1], resp[pos+2], resp[pos+3]);
+			return 0;
+		}
+		pos += rdlen;
+	}
+	return -1;
+}
+
+/*
+ * Try to resolve hostname → dotted-decimal IPv4 by querying nameservers
+ * from /etc/resolv.conf directly over UDP.  Works in statically linked
+ * glibc builds where getaddrinfo() does not consult DNS.
+ */
+static int ela_udp_resolve(const char *hostname, char *ip_buf, size_t ip_buf_len)
+{
+	char ns[3][16];
+	int ns_count = ela_read_nameservers(ns, 3);
+	int i;
+
+	for (i = 0; i < ns_count; i++) {
+		if (ela_dns_query_a(ns[i], hostname, ip_buf, ip_buf_len) == 0)
+			return 0;
+	}
+	return -1;
+}
+
+/*
+ * Parse hostname and port from a normalised URL and return a curl_slist
+ * entry "host:port:ip" for CURLOPT_RESOLVE so curl uses the pre-resolved
+ * IP (bypassing glibc NSS) while keeping the original hostname for TLS SNI
+ * and the Host header.  Returns NULL when resolution is unnecessary (numeric
+ * host) or fails.  Caller must free with curl_slist_free_all().
+ */
+static struct curl_slist *ela_curl_resolve_list(const char *url)
+{
+	const char *authority, *authority_end, *port_sep;
+	const char *p;
+	char host[256], port_str[8], ip[16], entry[288];
+	int host_len, port_len, dots, is_numeric;
+
+	if (!url)
+		return NULL;
+
+	authority = strstr(url, "://");
+	if (!authority)
+		return NULL;
+	authority += 3;
+
+	authority_end = strchr(authority, '/');
+	if (!authority_end)
+		authority_end = authority + strlen(authority);
+
+	/* Find the last ':' in the authority — that's the port separator */
+	port_sep = NULL;
+	for (p = authority; p < authority_end; p++) {
+		if (*p == ':')
+			port_sep = p;
+	}
+	if (!port_sep)
+		return NULL;
+
+	host_len = (int)(port_sep - authority);
+	if (host_len <= 0 || host_len >= (int)sizeof(host))
+		return NULL;
+	memcpy(host, authority, (size_t)host_len);
+	host[host_len] = '\0';
+
+	port_len = (int)(authority_end - port_sep - 1);
+	if (port_len <= 0 || port_len >= (int)sizeof(port_str))
+		return NULL;
+	memcpy(port_str, port_sep + 1, (size_t)port_len);
+	port_str[port_len] = '\0';
+
+	/* Skip if host is already a numeric IPv4 address */
+	dots = 0; is_numeric = 1;
+	for (p = host; *p; p++) {
+		if (*p == '.')      { dots++; }
+		else if (*p < '0' || *p > '9') { is_numeric = 0; break; }
+	}
+	if (is_numeric && dots == 3)
+		return NULL;
+
+	if (ela_udp_resolve(host, ip, sizeof(ip)) != 0)
+		return NULL;
+
+	snprintf(entry, sizeof(entry), "%s:%s:%s", host, port_str, ip);
+	return curl_slist_append(NULL, entry);
+}
+
 /*
  * Single HTTPS POST attempt via curl.  Returns 0 on success, -1 on failure.
  * *status_out is set to the HTTP response code when a response is received.
@@ -1549,6 +1801,7 @@ static int ela_http_post_https_once(const char *effective_uri,
 	CURLcode rc;
 	long http_code = 0;
 	struct curl_slist *headers = NULL;
+	struct curl_slist *resolve_list = NULL;
 	char header_line[256 + ELA_API_KEY_MAX_LEN];
 	static bool curl_global_ready;
 	struct curl_ssl_ctx_error_data ssl_ctx_err = { errbuf, errbuf_len };
@@ -1625,6 +1878,10 @@ static int ela_http_post_https_once(const char *effective_uri,
 		}
 	}
 
+	resolve_list = ela_curl_resolve_list(effective_uri);
+	if (resolve_list)
+		curl_easy_setopt(curl, CURLOPT_RESOLVE, resolve_list);
+
 	rc = curl_easy_perform(curl);
 	if (rc != CURLE_OK) {
 		if (verbose) {
@@ -1639,12 +1896,14 @@ static int ela_http_post_https_once(const char *effective_uri,
 			snprintf(errbuf, errbuf_len, "curl perform failed: %s", curl_easy_strerror(rc));
 		curl_slist_free_all(headers);
 		curl_easy_cleanup(curl);
+		curl_slist_free_all(resolve_list);
 		return -1;
 	}
 
 	curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
 	curl_slist_free_all(headers);
 	curl_easy_cleanup(curl);
+	curl_slist_free_all(resolve_list);
 
 	if (status_out)
 		*status_out = (int)http_code;
