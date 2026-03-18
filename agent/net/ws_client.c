@@ -9,6 +9,7 @@
 #include "api_key.h"
 #include "http_ws_policy_util.h"
 #include "ws_connect_util.h"
+#include "ws_interactive_util.h"
 #include "ws_recv_util.h"
 #include "ws_frame_util.h"
 #include "ws_session_util.h"
@@ -542,12 +543,10 @@ static int ws_send_text(const struct ela_ws_conn *ws,
 		ssize_t n = read(fd, mask, 4);
 		close(fd);
 		if (n != 4) {
-			mask[0] = 0xDE; mask[1] = 0xAD;
-			mask[2] = 0xBE; mask[3] = 0xEF;
+			ela_ws_default_mask_key(mask);
 		}
 	} else {
-		mask[0] = 0xDE; mask[1] = 0xAD;
-		mask[2] = 0xBE; mask[3] = 0xEF;
+		ela_ws_default_mask_key(mask);
 	}
 
 	if (ela_ws_build_masked_frame(ELA_WS_OPCODE_TEXT, mask, payload, payload_len, &frame, &frame_len) != 0)
@@ -763,16 +762,15 @@ int ela_ws_run_interactive(struct ela_ws_conn *ws, const char *prog)
 		 * pending bytes too. */
 		{
 			int ws_readable = FD_ISSET(ws->sock, &rfds);
+			int pending_bytes = 0;
 			if (!ws_readable && ws->is_tls && ws->ssl) {
 #ifdef ELA_HAS_WOLFSSL
-				ws_readable = wolfSSL_pending(
-						(ws_ssl_t *)ws->ssl) > 0;
+				pending_bytes = wolfSSL_pending((ws_ssl_t *)ws->ssl);
 #else
-				ws_readable = SSL_pending(
-						(ws_ssl_t *)ws->ssl) > 0;
+				pending_bytes = SSL_pending((ws_ssl_t *)ws->ssl);
 #endif
 			}
-		if (ws_readable) {
+		if (ela_ws_socket_readable(ws_readable, ws->is_tls != 0, pending_bytes)) {
 			frame_len = ws_recv_frame(ws, &opcode,
 						  frame_buf, sizeof(frame_buf));
 			if (frame_len < 0)

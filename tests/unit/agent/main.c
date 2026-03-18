@@ -26,7 +26,9 @@ int run_tpm2_command_util_tests(void);
 int run_transfer_parse_util_tests(void);
 int run_ws_session_util_tests(void);
 int run_uboot_command_extract_util_tests(void);
+int run_uboot_image_format_util_tests(void);
 int run_uboot_env_util_tests(void);
+int run_uboot_env_record_util_tests(void);
 int run_uboot_audit_util_tests(void);
 int run_linux_dmesg_util_tests(void);
 int run_http_ws_policy_util_tests(void);
@@ -34,10 +36,14 @@ int run_uboot_security_audit_util_tests(void);
 int run_uboot_env_format_util_tests(void);
 int run_uboot_env_scan_util_tests(void);
 int run_http_client_parse_util_tests(void);
+int run_http_client_body_util_tests(void);
 int run_http_client_protocol_util_tests(void);
 int run_ws_connect_util_tests(void);
+int run_ws_interactive_util_tests(void);
 int run_ws_recv_util_tests(void);
 int run_remote_copy_cmd_util_tests(void);
+int run_script_exec_util_tests(void);
+int run_interactive_util_tests(void);
 
 int main(void)
 {
@@ -69,7 +75,9 @@ int main(void)
 	rc |= run_transfer_parse_util_tests();
 	rc |= run_ws_session_util_tests();
 	rc |= run_uboot_command_extract_util_tests();
+	rc |= run_uboot_image_format_util_tests();
 	rc |= run_uboot_env_util_tests();
+	rc |= run_uboot_env_record_util_tests();
 	rc |= run_uboot_audit_util_tests();
 	rc |= run_linux_dmesg_util_tests();
 	rc |= run_http_ws_policy_util_tests();
@@ -77,10 +85,14 @@ int main(void)
 	rc |= run_uboot_env_format_util_tests();
 	rc |= run_uboot_env_scan_util_tests();
 	rc |= run_http_client_parse_util_tests();
+	rc |= run_http_client_body_util_tests();
 	rc |= run_http_client_protocol_util_tests();
 	rc |= run_ws_connect_util_tests();
+	rc |= run_ws_interactive_util_tests();
 	rc |= run_ws_recv_util_tests();
 	rc |= run_remote_copy_cmd_util_tests();
+	rc |= run_script_exec_util_tests();
+	rc |= run_interactive_util_tests();
 
 	return rc;
 }

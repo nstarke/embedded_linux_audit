@@ -2,6 +2,7 @@
 
 #include "embedded_linux_audit_cmd.h"
 #include "uboot/image/uboot_image_cmd.h"
+#include "uboot/image/uboot_image_format_util.h"
 #include "uboot/image/uboot_image_internal.h"
 
 #include <errno.h>
@@ -84,15 +85,7 @@ int flush_output_http_buffer(void)
 
 static const char *image_http_content_type(void)
 {
-	switch (g_output_format) {
-	case FW_OUTPUT_JSON:
-		return "application/x-ndjson; charset=utf-8";
-	case FW_OUTPUT_CSV:
-		return "text/csv; charset=utf-8";
-	case FW_OUTPUT_TXT:
-	default:
-		return "text/plain; charset=utf-8";
-	}
+	return ela_uboot_image_http_content_type(g_output_format);
 }
 
 static void emit_v(FILE *stream, const char *fmt, va_list ap)
@@ -212,16 +205,7 @@ void uboot_img_err_printf(const char *fmt, ...)
 
 static void detect_output_format(void)
 {
-	const char *fmt = getenv("ELA_OUTPUT_FORMAT");
-
-	g_output_format = FW_OUTPUT_TXT;
-	if (!fmt || !*fmt)
-		return;
-
-	if (!strcmp(fmt, "csv"))
-		g_output_format = FW_OUTPUT_CSV;
-	else if (!strcmp(fmt, "json"))
-		g_output_format = FW_OUTPUT_JSON;
+	g_output_format = ela_uboot_image_detect_output_format(getenv("ELA_OUTPUT_FORMAT"));
 }
 
 static void emit_image_csv_header(void)
@@ -301,26 +285,12 @@ void emit_image_verbose(const char *dev, uint64_t off, const char *msg)
 
 static size_t align_up_4(size_t v)
 {
-	return (v + 3U) & ~((size_t)3U);
+	return ela_uboot_image_align_up_4(v);
 }
 
 static bool str_contains_token_ci(const char *haystack, const char *needle)
 {
-	size_t needle_len;
-
-	if (!haystack || !needle)
-		return false;
-
-	needle_len = strlen(needle);
-	if (!needle_len)
-		return true;
-
-	for (const char *p = haystack; *p; p++) {
-		if (!strncasecmp(p, needle, needle_len))
-			return true;
-	}
-
-	return false;
+	return ela_uboot_image_str_contains_token_ci(haystack, needle);
 }
 
 bool validate_fit_header(const uint8_t *p, uint64_t abs_off, uint64_t dev_size)

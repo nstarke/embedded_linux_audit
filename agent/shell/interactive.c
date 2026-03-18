@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later - Copyright (c) 2026 Nicholas Starke
 
 #include "interactive.h"
+#include "interactive_util.h"
 #include "../embedded_linux_audit_cmd.h"
 #include "../net/ela_conf.h"
 #include "../util/command_parse_util.h"
@@ -27,98 +28,9 @@
 /* Forward declaration: defined in embedded_linux_audit.c (non-static) */
 int embedded_linux_audit_dispatch(int argc, char **argv);
 
-static const char *const interactive_top_level_commands[] = {
-	"help",
-	"quit",
-	"exit",
-	"set",
-	"arch",
-	"uboot",
-	"linux",
-	"efi",
-	"bios",
-	"tpm2",
-	"transfer",
-	NULL,
-};
-
-static const char *const interactive_group_arch[] = {
-	"bit",
-	"isa",
-	"endianness",
-	NULL,
-};
-
-static const char *const interactive_group_uboot[] = {
-	"env",
-	"image",
-	"audit",
-	NULL,
-};
-
-static const char *const interactive_group_linux[] = {
-	"dmesg",
-	"download-file",
-	"execute-command",
-	"grep",
-	"list-files",
-	"list-symlinks",
-	"remote-copy",
-	"ssh",
-	NULL,
-};
-
-static const char *const interactive_group_efi[] = {
-	"orom",
-	"dump-vars",
-	NULL,
-};
-
-static const char *const interactive_group_bios[] = {
-	"orom",
-	NULL,
-};
-
-static const char *const interactive_set_variables[] = {
-	"ELA_API_URL",
-	"ELA_API_INSECURE",
-	"ELA_QUIET",
-	"ELA_OUTPUT_FORMAT",
-	"ELA_OUTPUT_TCP",
-	"ELA_SCRIPT",
-	"ELA_OUTPUT_HTTP",
-	"ELA_OUTPUT_INSECURE",
-	"ELA_API_KEY",
-	"ELA_VERBOSE",
-	"ELA_DEBUG",
-	"ELA_WS_RETRY_ATTEMPTS",
-	NULL,
-};
-
 static const char *const *interactive_candidates_for_position(int argc, char **argv)
 {
-	if (argc <= 1)
-		return interactive_top_level_commands;
-
-	if (!strcmp(argv[0], "arch"))
-		return interactive_group_arch;
-
-	if (!strcmp(argv[0], "uboot"))
-		return interactive_group_uboot;
-
-	if (!strcmp(argv[0], "linux"))
-		return interactive_group_linux;
-
-	if (!strcmp(argv[0], "efi"))
-		return interactive_group_efi;
-
-	if (!strcmp(argv[0], "bios"))
-		return interactive_group_bios;
-
-	if (!strcmp(argv[0], "set") && argc == 2)
-		return interactive_set_variables;
-
-	return NULL;
+	return ela_interactive_candidates_for_position(argc, argv);
 }
 
 #if defined(ELA_HAS_READLINE)
@@ -228,6 +140,7 @@ static void print_set_values(void)
 
 static int interactive_list_supported_variables(FILE *stream)
 {
+	char buf[2048];
 	const char *ela_api_url        = getenv("ELA_API_URL");
 	const char *ela_api_insecure   = getenv("ELA_API_INSECURE");
 	const char *ela_quiet          = getenv("ELA_QUIET");
@@ -241,32 +154,13 @@ static int interactive_list_supported_variables(FILE *stream)
 	const char *ela_debug          = getenv("ELA_DEBUG");
 	const char *ela_ws_retry       = getenv("ELA_WS_RETRY_ATTEMPTS");
 
-	return fprintf(stream,
-		       "Supported variables:\n"
-		       "  ELA_API_URL              current=%s\n"
-		       "  ELA_API_INSECURE         current=%s\n"
-		       "  ELA_QUIET                current=%s\n"
-		       "  ELA_OUTPUT_FORMAT        current=%s\n"
-		       "  ELA_OUTPUT_TCP           current=%s\n"
-		       "  ELA_SCRIPT               current=%s\n"
-		       "  ELA_OUTPUT_HTTP          current=%s\n"
-		       "  ELA_OUTPUT_INSECURE      current=%s\n"
-		       "  ELA_API_KEY              current=%s\n"
-		       "  ELA_VERBOSE              current=%s\n"
-		       "  ELA_DEBUG                current=%s\n"
-		       "  ELA_WS_RETRY_ATTEMPTS    current=%s\n",
-		       (ela_api_url && *ela_api_url) ? ela_api_url : "<unset>",
-		       (ela_api_insecure && *ela_api_insecure) ? ela_api_insecure : "<unset>",
-		       (ela_quiet && *ela_quiet) ? ela_quiet : "<unset>",
-		       (ela_output_format && *ela_output_format) ? ela_output_format : "<unset>",
-		       (ela_output_tcp && *ela_output_tcp) ? ela_output_tcp : "<unset>",
-		       (ela_script && *ela_script) ? ela_script : "<unset>",
-		       (ela_output_http && *ela_output_http) ? ela_output_http : "<unset>",
-		       (ela_output_insecure && *ela_output_insecure) ? ela_output_insecure : "<unset>",
-		       (ela_api_key && *ela_api_key) ? "<set>" : "<unset>",
-		       (ela_verbose && *ela_verbose) ? ela_verbose : "<unset>",
-		       (ela_debug && *ela_debug) ? ela_debug : "<unset>",
-		       (ela_ws_retry && *ela_ws_retry) ? ela_ws_retry : "<unset>");
+	if (ela_interactive_format_supported_variables(buf, sizeof(buf),
+						       ela_api_url, ela_api_insecure, ela_quiet,
+						       ela_output_format, ela_output_tcp, ela_script,
+						       ela_output_http, ela_output_insecure, ela_api_key,
+						       ela_verbose, ela_debug, ela_ws_retry) != 0)
+		return -1;
+	return fputs(buf, stream);
 }
 
 int interactive_set_command(int argc, char **argv)

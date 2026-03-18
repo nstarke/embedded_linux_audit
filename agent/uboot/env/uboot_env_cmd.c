@@ -3,6 +3,7 @@
 #include "embedded_linux_audit_cmd.h"
 #include "uboot/env/uboot_env_internal.h"
 #include "uboot/env/uboot_env_format_util.h"
+#include "uboot/env/uboot_env_record_util.h"
 #include "uboot/env/uboot_env_scan_util.h"
 #include "uboot/env/uboot_env_util.h"
 
@@ -962,7 +963,7 @@ static int scan_dev(const char *dev, uint64_t step, uint64_t env_size, const cha
 		if (g_bruteforce)
 			emit_env_candidate_record(dev, (uint64_t)off, "", "hint-only", true,
 				cfg_off, env_size, erase_size, sector_count);
-		else if (crc_ok_redund && !crc_ok_std)
+		else if (!strcmp(ela_uboot_env_candidate_mode(g_bruteforce, crc_ok_std, crc_ok_redund), "redundant"))
 			emit_env_candidate_record(dev, (uint64_t)off,
 				(calc_redund == stored_le) ? "LE" : "BE", "redundant", hint_ok_redund,
 				cfg_off, env_size, erase_size, sector_count);
@@ -976,10 +977,9 @@ static int scan_dev(const char *dev, uint64_t step, uint64_t env_size, const cha
 				(uintmax_t)erase_size, (uintmax_t)sector_count);
 		}
 		if (g_parse_vars) {
-			if (crc_ok_redund && !crc_ok_std && env_size > 5)
-				dump_env_vars(dev, (uint64_t)off, buf + 5, (size_t)env_size - 5);
-			else if (env_size > 4)
-				dump_env_vars(dev, (uint64_t)off, buf + 4, (size_t)env_size - 4);
+			size_t data_off = ela_uboot_env_data_offset(crc_ok_std, crc_ok_redund);
+			if (env_size > data_off)
+				dump_env_vars(dev, (uint64_t)off, buf + data_off, (size_t)env_size - data_off);
 			else
 				out_printf("    parsed env vars:\n      (no parseable variables found)\n");
 		}

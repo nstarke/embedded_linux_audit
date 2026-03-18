@@ -2,6 +2,7 @@
 
 #include "http_client.h"
 #include "api_key.h"
+#include "http_client_body_util.h"
 #include "http_client_parse_util.h"
 #include "http_client_protocol_util.h"
 #include "http_ws_policy_util.h"
@@ -635,11 +636,7 @@ static int simple_wolfssl_https_get_to_file(const struct parsed_http_uri *parsed
 		goto cleanup;
 	}
 
-	if (append_text(&request, &request_len, &request_cap, "GET ") != 0 ||
-	    append_text(&request, &request_len, &request_cap, parsed->path) != 0 ||
-	    append_text(&request, &request_len, &request_cap, " HTTP/1.1\r\nHost: ") != 0 ||
-	    append_text(&request, &request_len, &request_cap, parsed->host) != 0 ||
-	    append_text(&request, &request_len, &request_cap, "\r\nConnection: close\r\nAccept-Encoding: identity\r\n\r\n") != 0) {
+	if (ela_http_build_identity_get_request(&request, &request_len, parsed->path, parsed->host) != 0) {
 		if (errbuf && errbuf_len)
 			snprintf(errbuf, errbuf_len, "failed to build HTTPS request");
 		goto cleanup;
@@ -726,11 +723,9 @@ static int ssl_copy_response_body_to_file(SSL *ssl, const char *headers, FILE *f
 		for (;;) {
 			char line[128];
 			unsigned long chunk_len;
-			char *end;
 			if (ssl_readline(ssl, line, sizeof(line)) < 0)
 				return -1;
-			chunk_len = strtoul(line, &end, 16);
-			if (end == line)
+			if (ela_http_parse_chunk_size_line(line, &chunk_len) != 0)
 				return -1;
 			if (chunk_len == 0) {
 				if (ssl_readline(ssl, line, sizeof(line)) < 0)
