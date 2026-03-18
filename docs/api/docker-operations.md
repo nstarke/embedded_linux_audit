@@ -23,6 +23,13 @@ Traffic flow:
 - Enough free disk space for PostgreSQL data and uploaded binary artifacts
 - A free listener on TCP port `80`
 
+On Debian/Ubuntu systems you can install the required Docker packages with:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y docker.io docker-buildx docker-compose-v2
+```
+
 ## First Startup
 
 From the repository root:

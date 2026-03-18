@@ -30,6 +30,13 @@ still connect.
 - `openssl` on the host (only needed when not supplying your own cert)
 - `docker-proxy` with `cap_net_bind_service` (see below)
 
+On Debian/Ubuntu systems you can install the container runtime and Compose plugins with:
+
+```sh
+sudo apt-get update
+sudo apt-get install -y docker.io docker-buildx docker-compose-v2
+```
+
 ## Privileged port capability
 
 Docker binds host ports through `docker-proxy`, which must hold
