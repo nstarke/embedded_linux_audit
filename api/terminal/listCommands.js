@@ -5,7 +5,7 @@ const LIST_COMMAND_HELP = [
   '/update                        update all connected nodes using each node\'s ELA_API_URL',
   '/shell <command>               run linux execute-command <command> on all connected nodes after confirmation',
   '/cmd <command>                 run a raw agent command on all connected nodes after confirmation',
-  '/set <key> <value>             set an agent environment variable on all connected nodes',
+  '/set <key> <value>             set an agent environment variable on all connected nodes after confirmation',
   '/exit                          run exit on all connected nodes after confirmation',
 ];
 
