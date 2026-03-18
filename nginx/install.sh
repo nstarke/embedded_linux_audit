@@ -310,21 +310,28 @@ if [ "$PULL" -eq 1 ]; then
     "$@" pull
 fi
 
+echo "Starting database and API containers before nginx..."
+if [ "$BUILD" -eq 1 ]; then
+    "$@" up -d --build postgres agent-api terminal-api
+else
+    "$@" up -d postgres agent-api terminal-api
+fi
+
 if [ "$DETACH" -eq 1 ]; then
+    echo "Restarting nginx after upstream services are ready..."
+    "$@" rm -sf nginx >/dev/null 2>&1 || true
     if [ "$BUILD" -eq 1 ]; then
-        echo "Building and starting embedded_linux_audit containers in the background..."
-        "$@" up -d --build
+        "$@" up -d --build nginx
     else
-        echo "Starting embedded_linux_audit containers in the background..."
-        "$@" up -d
+        "$@" up -d nginx
     fi
 else
+    echo "Starting nginx in the foreground after upstream services are ready..."
+    "$@" rm -sf nginx >/dev/null 2>&1 || true
     if [ "$BUILD" -eq 1 ]; then
-        echo "Building and starting embedded_linux_audit containers in the foreground..."
-        "$@" up --build
+        "$@" up --build nginx
     else
-        echo "Starting embedded_linux_audit containers in the foreground..."
-        "$@" up
+        "$@" up nginx
     fi
 fi
 

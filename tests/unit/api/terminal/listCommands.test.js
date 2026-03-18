@@ -5,6 +5,7 @@ const {
   LIST_COMMAND_HELP,
   isAffirmativeResponse,
   parseListCommand,
+  unwrapQuotedArgument,
 } = require('../../../../api/terminal/listCommands');
 
 describe('terminal list command helpers', () => {
@@ -13,6 +14,14 @@ describe('terminal list command helpers', () => {
     expect(parseListCommand('update')).toEqual({ type: 'update' });
     expect(parseListCommand('exit')).toEqual({ type: 'exit' });
     expect(parseListCommand('shell uname -a')).toEqual({
+      type: 'shell-all',
+      command: 'uname -a',
+    });
+    expect(parseListCommand('shell "uname -a"')).toEqual({
+      type: 'shell-all',
+      command: 'uname -a',
+    });
+    expect(parseListCommand("shell 'uname -a'")).toEqual({
       type: 'shell-all',
       command: 'uname -a',
     });
@@ -46,5 +55,12 @@ describe('terminal list command helpers', () => {
     expect(isAffirmativeResponse(' yes ')).toBe(true);
     expect(isAffirmativeResponse('n')).toBe(false);
     expect(isAffirmativeResponse('')).toBe(false);
+  });
+
+  test('unwrapQuotedArgument removes a single matching quote pair', () => {
+    expect(unwrapQuotedArgument('"echo hello"')).toBe('echo hello');
+    expect(unwrapQuotedArgument("'echo hello'")).toBe('echo hello');
+    expect(unwrapQuotedArgument('"echo \\"hello\\""')).toBe('echo "hello"');
+    expect(unwrapQuotedArgument('echo hello')).toBe('echo hello');
   });
 });
