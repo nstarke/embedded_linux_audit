@@ -20,3 +20,7 @@ Keep out of this layer unless first refactored behind seams:
 - TLS handshakes
 - `popen()`/shell execution
 - architecture-specific runtime probing
+
+Coverage:
+- `make test-unit-agent-c` runs the fast native helper/unit layer only.
+- `make coverage-agent-c` builds a native gcc `--coverage` agent and unit-test binary, runs the C unit suite plus the shell suite, and writes [`generated/coverage/agent-c.lcov.info`](/home/nick/Documents/git/embedded_linux_audit/generated/coverage/agent-c.lcov.info) for Codecov.
