@@ -63,6 +63,24 @@ GITHUB_TOKEN="${GITHUB_TOKEN:-}"
 RELEASE_BUILDER_IMAGE="ela-release-builder:local"
 RELEASE_BUILDER_DOCKERFILE="$REPO_ROOT/tests/release-builder.Dockerfile"
 
+copy_compiled_release_binaries() {
+    src_root="$1"
+    copied_count=0
+
+    for src_path in "$src_root"/*/ela-*; do
+        [ -f "$src_path" ] || continue
+        file_name="$(basename "$src_path")"
+        cp "$src_path" "$src_root/$file_name"
+        copied_count=$((copied_count + 1))
+        echo "Copied $(basename "$(dirname "$src_path")")/$file_name into $src_root/$file_name"
+    done
+
+    if [ "$copied_count" -eq 0 ]; then
+        echo "error: local release compile finished but no binaries were copied into $src_root" >&2
+        return 1
+    fi
+}
+
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --github-token)
@@ -366,6 +384,10 @@ if [ "$COMPILE_LOCALLY" -eq 1 ]; then
         -e RELEASE_BINARIES_DIR=/out \
         "$RELEASE_BUILDER_IMAGE" \
         /bin/bash -lc "git config --global --add safe.directory '*' && /bin/bash tests/compile_release_binaries_locally.sh --clean --jobs=\"$COMPILE_JOBS\""
+
+    # The helper API serves binaries from the top-level release_binaries
+    # directory, while the local compiler writes /out/<isa>/ela-<isa>.
+    copy_compiled_release_binaries "$ELA_RELEASE_BINARIES_DIR"
 else
     export ELA_AGENT_SKIP_ASSET_SYNC=false
     echo "Using GitHub release asset fetch for agent binaries."
