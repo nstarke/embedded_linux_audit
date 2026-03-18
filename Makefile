@@ -2,6 +2,9 @@ CC      ?= gcc
 HOSTCC  ?= cc
 CFLAGS  ?= -O2 -Wall -Wextra
 HOSTCFLAGS ?= -O2 -Wall -Wextra -std=c11 -D_DEFAULT_SOURCE
+UNIT_TEST_CC ?= $(HOSTCC)
+UNIT_TEST_CFLAGS ?= $(HOSTCFLAGS)
+UNIT_TEST_LDFLAGS ?=
 LDFLAGS ?=
 LDLIBS  ?=
 JOBS    ?= 4
@@ -894,7 +897,7 @@ $(TARGET): $(TARGET_DEPS)
 static: all
 
 $(AGENT_UNIT_TEST_BIN): $(AGENT_UNIT_TEST_SRC) $(AGENT_UNIT_TEST_DEPS) $(JSONC_LIB) | $(GENERATED_DIR)
-	$(HOSTCC) $(HOSTCFLAGS) -I. -Iagent -Ithird_party -Ithird_party/libcsv -I$(JSONC_DIR) -I$(JSONC_BUILD) \
+	$(UNIT_TEST_CC) $(UNIT_TEST_CFLAGS) -I. -Iagent -Ithird_party -Ithird_party/libcsv -I$(JSONC_DIR) -I$(JSONC_BUILD) \
 		-o $@ \
 		$(AGENT_UNIT_TEST_SRC) \
 		third_party/libcsv/libcsv.c \
@@ -942,7 +945,8 @@ $(AGENT_UNIT_TEST_BIN): $(AGENT_UNIT_TEST_SRC) $(AGENT_UNIT_TEST_DEPS) $(JSONC_L
 			agent/uboot/image/uboot_image_format_util.c \
 			agent/shell/script_exec_util.c \
 			agent/shell/interactive_util.c \
-			$(JSONC_LIB)
+			$(JSONC_LIB) \
+			$(UNIT_TEST_LDFLAGS)
 
 build-unit-agent-c: $(AGENT_UNIT_TEST_BIN)
 
