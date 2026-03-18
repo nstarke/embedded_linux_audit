@@ -2,6 +2,7 @@
 
 #include "embedded_linux_audit_cmd.h"
 
+#include "util/command_io_util.h"
 #include "util/command_parse_util.h"
 #include "util/output_buffer.h"
 #include "util/record_formatter.h"
@@ -299,8 +300,7 @@ int linux_execute_command_scan_main(int argc, char **argv)
 			goto out;
 		}
 
-		content_type = !strcmp(output_format, "csv") ? "text/csv; charset=utf-8" :
-			(!strcmp(output_format, "json") ? "application/json; charset=utf-8" : "text/plain; charset=utf-8");
+			content_type = ela_execute_command_content_type(output_format);
 
 		if (ela_http_post(upload_uri,
 				   (const uint8_t *)(formatted.data ? formatted.data : ""),

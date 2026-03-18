@@ -4,6 +4,7 @@
 #include "api_key.h"
 #include "tcp_util.h"
 #include "../util/http_uri_util.h"
+#include "../util/http_protocol_util.h"
 #include "../util/str_util.h"
 #include "../util/isa_util.h"
 #include "../embedded_linux_audit_cmd.h"
@@ -60,8 +61,6 @@
 #ifndef PATH_MAX
 #define PATH_MAX 4096
 #endif
-
-static int parse_status_code_from_headers(const char *headers);
 
 static int ssl_ctx_add_embedded_ca_store(X509_STORE *store, char *errbuf, size_t errbuf_len)
 {
@@ -417,7 +416,7 @@ static int simple_wolfssl_https_post(const struct parsed_http_uri *parsed,
 		goto cleanup;
 	}
 
-	status = parse_status_code_from_headers(headers);
+	status = ela_http_parse_status_code_from_headers(headers);
 	if (status_out)
 		*status_out = status;
 	if (status < 200 || status >= 300) {
@@ -712,7 +711,7 @@ static int simple_wolfssl_https_get_to_file(const struct parsed_http_uri *parsed
 	ela_set_sigill_stage("https:wolfssl_read_headers");
 	if (wolfssl_read_headers(ssl, &headers) != 0)
 		goto cleanup;
-	status = parse_status_code_from_headers(headers);
+	status = ela_http_parse_status_code_from_headers(headers);
 	if (status < 200 || status >= 300) {
 		if (errbuf && errbuf_len)
 			snprintf(errbuf, errbuf_len, "HTTP status %d", status);
@@ -754,21 +753,6 @@ cleanup:
 }
 #endif
 
-static int parse_status_code_from_headers(const char *headers)
-{
-	int status = 0;
-	if (!headers)
-		return -1;
-	if (sscanf(headers, "HTTP/%*u.%*u %d", &status) != 1)
-		return -1;
-	return status;
-}
-
-static bool headers_have_chunked_encoding(const char *headers)
-{
-	return headers && strstr(headers, "\nTransfer-Encoding: chunked\r") != NULL;
-}
-
 static int ssl_readline(SSL *ssl, char *buf, size_t buf_sz)
 {
 	size_t len = 0;
@@ -790,7 +774,7 @@ static int ssl_readline(SSL *ssl, char *buf, size_t buf_sz)
 static int ssl_copy_response_body_to_file(SSL *ssl, const char *headers, FILE *fp)
 {
 	char buf[4096];
-	if (headers_have_chunked_encoding(headers)) {
+	if (ela_http_headers_have_chunked_encoding(headers)) {
 		for (;;) {
 			char line[128];
 			unsigned long chunk_len;
@@ -1083,7 +1067,7 @@ static int simple_https_post(const char *uri,
 		goto fail;
 	}
 
-	status = parse_status_code_from_headers(headers);
+	status = ela_http_parse_status_code_from_headers(headers);
 	if (status_out)
 		*status_out = status;
 	if (status < 200 || status >= 300) {
@@ -1191,7 +1175,7 @@ static int simple_https_get_to_file(const char *uri,
 		goto fail;
 	}
 
-	status = parse_status_code_from_headers(headers);
+	status = ela_http_parse_status_code_from_headers(headers);
 	ela_set_sigill_stage("https:get:read_body");
 	if (status < 200 || status >= 300) {
 		if (errbuf && errbuf_len)
@@ -1271,32 +1255,6 @@ static CURLcode curl_ssl_ctx_load_embedded_ca(CURL *curl, void *sslctx, void *pa
 		return CURLE_SSL_CERTPROBLEM;
 
 	return CURLE_OK;
-}
-
-static bool is_valid_mac_address_string(const char *value)
-{
-	int i;
-
-	if (!value)
-		return false;
-
-	for (i = 0; i < 17; i++) {
-		char ch = value[i];
-
-		if (i % 3 == 2) {
-			if (ch != ':')
-				return false;
-		} else if (!isxdigit((unsigned char)ch)) {
-			return false;
-		}
-	}
-
-	return value[17] == '\0';
-}
-
-static bool is_zero_mac_address_string(const char *value)
-{
-	return value && !strcmp(value, "00:00:00:00:00:00");
 }
 
 static int __attribute__((unused)) resolve_uri_ipv4(const char *base_uri, struct in_addr *addr_out)
@@ -1450,9 +1408,9 @@ static int first_non_loopback_mac(char *mac_buf, size_t mac_buf_len)
 		fclose(fp);
 
 		addr[strcspn(addr, "\r\n")] = '\0';
-		if (is_zero_mac_address_string(addr))
+		if (ela_http_is_zero_mac_address_string(addr))
 			continue;
-		if (!is_valid_mac_address_string(addr))
+		if (!ela_http_is_valid_mac_address_string(addr))
 			continue;
 
 		snprintf(mac_buf, mac_buf_len, "%s", addr);
@@ -1484,8 +1442,8 @@ int ela_http_get_upload_mac(const char *base_uri, char *mac_buf, size_t mac_buf_
 	    resolve_uri_ipv4(base_uri, &dest_addr) == 0 &&
 	    route_iface_for_ipv4(dest_addr, ifname, sizeof(ifname)) == 0 &&
 	    mac_for_interface(ifname, routed_mac, sizeof(routed_mac)) == 0 &&
-	    is_valid_mac_address_string(routed_mac) &&
-	    !is_zero_mac_address_string(routed_mac)) {
+	    ela_http_is_valid_mac_address_string(routed_mac) &&
+	    !ela_http_is_zero_mac_address_string(routed_mac)) {
 		snprintf(mac_buf, mac_buf_len, "%s", routed_mac);
 		return 0;
 	}

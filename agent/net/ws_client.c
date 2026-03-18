@@ -7,6 +7,7 @@
 
 #include "ws_client.h"
 #include "api_key.h"
+#include "ws_frame_util.h"
 #include "ws_url_util.h"
 #include "tcp_util.h"
 #include "../embedded_linux_audit_cmd.h"
@@ -533,20 +534,13 @@ void ela_ws_close(struct ela_ws_conn *ws)
  *  [payload]
  * ---------------------------------------------------------------------- */
 
-#define WS_OPCODE_TEXT   0x01
-#define WS_OPCODE_CLOSE  0x08
-#define WS_OPCODE_PING   0x09
-#define WS_OPCODE_PONG   0x0A
-
 /* Send a single text frame (FIN=1, MASK=1 as required for client frames) */
 static int ws_send_text(const struct ela_ws_conn *ws,
 			const char *payload, size_t payload_len)
 {
-	uint8_t  header[10];
 	uint8_t  mask[4];
-	uint8_t *masked;
-	size_t   hdr_len = 2;
-	size_t   i;
+	uint8_t *frame = NULL;
+	size_t   frame_len = 0;
 	int      fd;
 
 	/* Build masking key from /dev/urandom or fallback */
@@ -563,41 +557,13 @@ static int ws_send_text(const struct ela_ws_conn *ws,
 		mask[2] = 0xBE; mask[3] = 0xEF;
 	}
 
-	header[0] = 0x80 | WS_OPCODE_TEXT; /* FIN=1, opcode=text */
-
-	if (payload_len < 126) {
-		header[1] = 0x80 | (uint8_t)payload_len;
-	} else if (payload_len < 65536) {
-		header[1] = 0x80 | 126;
-		header[2] = (uint8_t)(payload_len >> 8);
-		header[3] = (uint8_t)(payload_len);
-		hdr_len   = 4;
-	} else {
-		header[1] = 0x80 | 127;
-		header[2] = 0; header[3] = 0; header[4] = 0; header[5] = 0;
-		header[6] = (uint8_t)(payload_len >> 24);
-		header[7] = (uint8_t)(payload_len >> 16);
-		header[8] = (uint8_t)(payload_len >> 8);
-		header[9] = (uint8_t)(payload_len);
-		hdr_len   = 10;
-	}
-
-	if (ws_conn_write(ws, header, hdr_len) < 0)
+	if (ela_ws_build_masked_frame(ELA_WS_OPCODE_TEXT, mask, payload, payload_len, &frame, &frame_len) != 0)
 		return -1;
-	if (ws_conn_write(ws, mask, 4) < 0)
-		return -1;
-
-	masked = malloc(payload_len);
-	if (!masked)
-		return -1;
-	for (i = 0; i < payload_len; i++)
-		masked[i] = (uint8_t)payload[i] ^ mask[i & 3];
-
-	if (ws_conn_write(ws, masked, payload_len) < 0) {
-		free(masked);
+	if (ws_conn_write(ws, frame, frame_len) < 0) {
+		free(frame);
 		return -1;
 	}
-	free(masked);
+	free(frame);
 	return 0;
 }
 
@@ -708,7 +674,7 @@ static void ws_send_ping(const struct ela_ws_conn *ws)
 {
 	uint8_t frame[6];
 
-	frame[0] = 0x80 | WS_OPCODE_PING; /* FIN=1, opcode=PING */
+	frame[0] = 0x80 | ELA_WS_OPCODE_PING; /* FIN=1, opcode=PING */
 	frame[1] = 0x80;                   /* MASK=1, payload_len=0 */
 	frame[2] = 0; frame[3] = 0;       /* masking key (zeros) */
 	frame[4] = 0; frame[5] = 0;
@@ -821,13 +787,13 @@ int ela_ws_run_interactive(struct ela_ws_conn *ws, const char *prog)
 			if (frame_len < 0)
 				break;
 
-			if (opcode == WS_OPCODE_CLOSE)
+			if (opcode == ELA_WS_OPCODE_CLOSE)
 				break;
 
-			if (opcode == WS_OPCODE_PING) {
+			if (opcode == ELA_WS_OPCODE_PING) {
 				/* RFC 6455: client frames MUST be masked */
 				uint8_t pong[6];
-				pong[0] = 0x80 | WS_OPCODE_PONG;
+				pong[0] = 0x80 | ELA_WS_OPCODE_PONG;
 				pong[1] = 0x80; /* MASK=1, payload_len=0 */
 				pong[2] = 0; pong[3] = 0;
 				pong[4] = 0; pong[5] = 0; /* zero mask */
@@ -835,7 +801,7 @@ int ela_ws_run_interactive(struct ela_ws_conn *ws, const char *prog)
 				continue;
 			}
 
-			if (opcode == WS_OPCODE_TEXT && frame_len > 0) {
+			if (opcode == ELA_WS_OPCODE_TEXT && frame_len > 0) {
 				if (strstr(frame_buf, "\"_type\":\"heartbeat\"")) {
 					send_heartbeat_ack(ws);
 				} else {

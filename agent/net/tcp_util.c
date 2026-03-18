@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later - Copyright (c) 2026 Nicholas Starke
 
 #include "tcp_util.h"
+#include "tcp_parse_util.h"
 #include "../embedded_linux_audit_cmd.h"
 
 #include <arpa/inet.h>
@@ -125,42 +126,6 @@ static int ela_read_nameservers(char ns[][16], int max_ns)
 	return count;
 }
 
-static int ela_dns_build_query(const char *hostname, uint8_t *buf, int buf_len)
-{
-	int pos = 12;
-	const char *p = hostname;
-
-	if (buf_len < 32)
-		return -1;
-
-	memset(buf, 0, 12);
-	buf[0] = 0xab; buf[1] = 0xcd;
-	buf[2] = 0x01; buf[3] = 0x00;
-	buf[4] = 0x00; buf[5] = 0x01;
-
-	while (*p) {
-		const char *dot = strchr(p, '.');
-		int label_len = dot ? (int)(dot - p) : (int)strlen(p);
-
-		if (pos + 1 + label_len + 4 > buf_len)
-			return -1;
-		buf[pos++] = (uint8_t)label_len;
-		memcpy(buf + pos, p, (size_t)label_len);
-		pos += label_len;
-		if (!dot)
-			break;
-		p = dot + 1;
-	}
-
-	if (pos + 5 > buf_len)
-		return -1;
-
-	buf[pos++] = 0;
-	buf[pos++] = 0x00; buf[pos++] = 0x01;
-	buf[pos++] = 0x00; buf[pos++] = 0x01;
-	return pos;
-}
-
 static int ela_dns_query_a(const char *ns_ip, const char *hostname,
 			   char *ip_buf, size_t ip_buf_len)
 {
@@ -171,9 +136,8 @@ static int ela_dns_query_a(const char *ns_ip, const char *hostname,
 	int sock;
 	int pkt_len;
 	ssize_t n;
-	int pos, qdcount, ancount, i;
 
-	pkt_len = ela_dns_build_query(hostname, pkt, (int)sizeof(pkt));
+	pkt_len = ela_dns_build_query_packet(hostname, pkt, (int)sizeof(pkt));
 	if (pkt_len < 0)
 		return -1;
 
@@ -207,49 +171,7 @@ static int ela_dns_query_a(const char *ns_ip, const char *hostname,
 	if (!(resp[2] & 0x80) || (resp[3] & 0x0f) != 0)
 		return -1;
 
-	qdcount = (resp[4] << 8) | resp[5];
-	ancount = (resp[6] << 8) | resp[7];
-	if (ancount == 0)
-		return -1;
-
-	pos = 12;
-	for (i = 0; i < qdcount && pos < (int)n; i++) {
-		while (pos < (int)n) {
-			if (resp[pos] == 0)             { pos++; break; }
-			if ((resp[pos] & 0xC0) == 0xC0) { pos += 2; break; }
-			pos += resp[pos] + 1;
-		}
-		pos += 4;
-	}
-
-	for (i = 0; i < ancount && pos < (int)n; i++) {
-		int rtype, rdlen;
-
-		if ((resp[pos] & 0xC0) == 0xC0) {
-			pos += 2;
-		} else {
-			while (pos < (int)n) {
-				if (resp[pos] == 0)             { pos++; break; }
-				if ((resp[pos] & 0xC0) == 0xC0) { pos += 2; break; }
-				pos += resp[pos] + 1;
-			}
-		}
-
-		if (pos + 10 > (int)n)
-			break;
-		rtype = (resp[pos] << 8) | resp[pos + 1];
-		rdlen = (resp[pos + 8] << 8) | resp[pos + 9];
-		pos += 10;
-
-		if (rtype == 1 && rdlen == 4 && pos + 4 <= (int)n) {
-			snprintf(ip_buf, ip_buf_len, "%d.%d.%d.%d",
-				 resp[pos], resp[pos + 1], resp[pos + 2], resp[pos + 3]);
-			return 0;
-		}
-		pos += rdlen;
-	}
-
-	return -1;
+	return ela_dns_extract_first_a_record(resp, (size_t)n, ip_buf, ip_buf_len);
 }
 
 static int ela_udp_resolve_ipv4(const char *hostname, char *ip_buf, size_t ip_buf_len)
@@ -381,55 +303,33 @@ int connect_tcp_host_port_any(const char *host, uint16_t port)
 int ela_connect_tcp_any(const char *spec)
 {
 	char host[256];
-	char *colon;
-	char *end;
-	unsigned long port_ul;
+	uint16_t port;
 
 	if (!spec || !*spec)
 		return -1;
 
-	strncpy(host, spec, sizeof(host) - 1);
-	host[sizeof(host) - 1] = '\0';
-	colon = strrchr(host, ':');
-	if (!colon || colon == host || *(colon + 1) == '\0')
+	if (ela_parse_tcp_target(spec, host, sizeof(host), &port) != 0)
 		return -1;
 
-	*colon = '\0';
-	errno = 0;
-	port_ul = strtoul(colon + 1, &end, 10);
-	if (errno || *end || port_ul == 0 || port_ul > 65535)
-		return -1;
-
-	return connect_tcp_host_port_any(host, (uint16_t)port_ul);
+	return connect_tcp_host_port_any(host, port);
 }
 
 int ela_connect_tcp_ipv4(const char *spec)
 {
 	char host[64];
-	char *colon;
-	char *end;
-	unsigned long port_ul;
+	uint16_t port;
 	int sock;
 	struct sockaddr_in sa;
 
 	if (!spec || !*spec)
 		return -1;
 
-	strncpy(host, spec, sizeof(host) - 1);
-	host[sizeof(host) - 1] = '\0';
-	colon = strrchr(host, ':');
-	if (!colon || colon == host || *(colon + 1) == '\0')
-		return -1;
-
-	*colon = '\0';
-	errno = 0;
-	port_ul = strtoul(colon + 1, &end, 10);
-	if (errno || *end || port_ul == 0 || port_ul > 65535)
+	if (ela_parse_tcp_target(spec, host, sizeof(host), &port) != 0)
 		return -1;
 
 	memset(&sa, 0, sizeof(sa));
 	sa.sin_family = AF_INET;
-	sa.sin_port = htons((uint16_t)port_ul);
+	sa.sin_port = htons(port);
 	if (inet_pton(AF_INET, host, &sa.sin_addr) != 1)
 		return -1;
 
@@ -447,28 +347,7 @@ int ela_connect_tcp_ipv4(const char *spec)
 
 bool ela_is_valid_tcp_output_target(const char *spec)
 {
-	char host[64];
-	char *colon;
-	char *end;
-	unsigned long port_ul;
-	struct in_addr addr;
-
-	if (!spec || !*spec)
-		return false;
-
-	strncpy(host, spec, sizeof(host) - 1);
-	host[sizeof(host) - 1] = '\0';
-	colon = strrchr(host, ':');
-	if (!colon || colon == host || *(colon + 1) == '\0')
-		return false;
-
-	*colon = '\0';
-	errno = 0;
-	port_ul = strtoul(colon + 1, &end, 10);
-	if (errno || *end || port_ul == 0 || port_ul > 65535)
-		return false;
-
-	return inet_pton(AF_INET, host, &addr) == 1;
+	return ela_is_valid_ipv4_tcp_target(spec);
 }
 
 int ela_send_all(int sock, const uint8_t *buf, size_t len)
