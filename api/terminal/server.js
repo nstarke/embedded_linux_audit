@@ -14,6 +14,7 @@ const {
   setDeviceAlias,
 } = require('../lib/db/deviceRegistry');
 const { loadLegacyAliases } = require('./legacyAliases');
+const { formatPromptOutput } = require('./promptFormatter');
 const { createSessionRegistry } = require('./sessionRegistry');
 const { formatListCommandHelp, formatShellExecution, isAffirmativeResponse, parseListCommand } = require('./listCommands');
 const { executeLocalSessionCommand } = require('./localCommands');
@@ -129,10 +130,11 @@ wss.on('connection', async (ws, req) => {
   }
 
   ws.on('message', (data) => {
-    const text = data.toString();
+    const rawText = data.toString();
+    const text = formatPromptOutput(rawText, mac);
 
     try {
-      const msg = JSON.parse(text);
+      const msg = JSON.parse(rawText);
       if (msg._type === 'heartbeat_ack') {
         entry.lastHeartbeat = msg.date || new Date().toISOString();
         if (entry.connectionId) {
@@ -146,7 +148,7 @@ wss.on('connection', async (ws, req) => {
       // raw output path
     }
 
-    handleUpdateMessage(entry, text, {
+    handleUpdateMessage(entry, rawText, {
       onUpdateComplete: (sessionEntry) => onUpdateStateTransition(sessionEntry, 'update complete'),
       onUpdateFailed: (sessionEntry) => onUpdateStateTransition(sessionEntry, 'update failed'),
     });
