@@ -28,10 +28,7 @@ describe('update manager', () => {
     expect(entry.updateStatus).toBe('updating');
     expect(entry.updateCtx.state).toBe('await-api-url');
     expect(ws.send).toHaveBeenNthCalledWith(1, '\x15');
-    expect(ws.send).toHaveBeenNthCalledWith(
-      2,
-      'linux execute-command "echo \\"[ELA_API_URL_BEGIN]$ELA_API_URL[ELA_API_URL_END]\\""\n',
-    );
+    expect(ws.send).toHaveBeenNthCalledWith(2, 'set\n');
   });
 
   test('handleUpdateMessage advances through api url, isa, and endianness to download', () => {
@@ -40,7 +37,7 @@ describe('update manager', () => {
     startSessionUpdate(entry);
     ws.send.mockClear();
 
-    handleUpdateMessage(entry, '[ELA_API_URL_BEGIN]https://updates.example/upload[ELA_API_URL_END]');
+    handleUpdateMessage(entry, 'Supported variables:\n  ELA_API_URL              current=https://updates.example/upload\n');
     expect(entry.updateCtx.state).toBe('await-isa');
     expect(ws.send).toHaveBeenCalledWith('--output-format json arch isa\n');
 
@@ -63,7 +60,7 @@ describe('update manager', () => {
     };
     const onFailed = jest.fn();
 
-    handleUpdateMessage(entry, '[ELA_API_URL_BEGIN][ELA_API_URL_END]', {
+    handleUpdateMessage(entry, 'Supported variables:\n  ELA_API_URL              current=<unset>\n', {
       onUpdateFailed: onFailed,
     });
 

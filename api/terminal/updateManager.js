@@ -35,7 +35,7 @@ function startSessionUpdate(entry) {
   entry.updateStatus = 'updating';
   if (entry.ws.readyState === entry.ws.OPEN) {
     entry.ws.send('\x15');
-    entry.ws.send('linux execute-command "echo \\"[ELA_API_URL_BEGIN]$ELA_API_URL[ELA_API_URL_END]\\""\n');
+    entry.ws.send('set\n');
   }
   return true;
 }
@@ -52,13 +52,13 @@ function handleUpdateMessage(entry, text, {
   ctx.buffer += text;
 
   if (ctx.state === 'await-api-url') {
-    const start = ctx.buffer.indexOf('[ELA_API_URL_BEGIN]');
-    const end = ctx.buffer.indexOf('[ELA_API_URL_END]');
-    if (start < 0 || end < 0 || end <= start) {
+    const match = ctx.buffer.match(/ELA_API_URL\s+current=([^\r\n]+)/);
+    if (!match) {
       return;
     }
 
-    ctx.apiUrl = ctx.buffer.slice(start + '[ELA_API_URL_BEGIN]'.length, end).trim();
+    const currentValue = String(match[1] || '').trim();
+    ctx.apiUrl = currentValue === '<unset>' ? '' : currentValue;
     ctx.updateBaseUrl = deriveUpdateBaseUrl(ctx.apiUrl);
     if (!ctx.updateBaseUrl) {
       entry.updateCtx = null;
