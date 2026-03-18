@@ -362,6 +362,10 @@ static int simple_http_post(const char *uri,
 }
 
 #ifdef ELA_HAS_WOLFSSL
+static int wolfssl_read_headers(WOLFSSL *ssl, char **headers_out);
+#endif
+
+#ifdef ELA_HAS_WOLFSSL
 static int simple_wolfssl_https_post(const struct parsed_http_uri *parsed,
 				     const char *uri,
 				     const uint8_t *data,
