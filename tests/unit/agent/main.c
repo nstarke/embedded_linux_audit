@@ -58,6 +58,8 @@ int run_linux_grep_util_tests(void);
 int run_linux_list_files_util_tests(void);
 int run_linux_list_symlinks_util_tests(void);
 int run_device_scan_tests(void);
+int run_dispatch_util_tests(void);
+int run_dispatch_parse_util_tests(void);
 
 int main(void)
 {
@@ -121,6 +123,8 @@ int main(void)
 	rc |= run_linux_list_files_util_tests();
 	rc |= run_linux_list_symlinks_util_tests();
 	rc |= run_device_scan_tests();
+	rc |= run_dispatch_util_tests();
+	rc |= run_dispatch_parse_util_tests();
 
 	return rc;
 }

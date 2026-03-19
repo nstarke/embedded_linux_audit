@@ -459,7 +459,9 @@ AGENT_UNIT_TEST_SRC := \
 	tests/unit/agent/test_linux_grep_util.c \
 	tests/unit/agent/test_linux_list_files_util.c \
 	tests/unit/agent/test_linux_list_symlinks_util.c \
-	tests/unit/agent/test_device_scan.c
+	tests/unit/agent/test_device_scan.c \
+	tests/unit/agent/test_dispatch_util.c \
+	tests/unit/agent/test_dispatch_parse_util.c
 AGENT_UNIT_TEST_DEPS := \
 	agent/util/str_util.c \
 	agent/util/isa_util.c \
@@ -519,6 +521,8 @@ AGENT_UNIT_TEST_DEPS := \
 	agent/device/device_scan.c \
 	agent/shell/script_exec_util.c \
 	agent/shell/interactive_util.c \
+	agent/util/dispatch_util.c \
+	agent/util/dispatch_parse_util.c \
 	agent/util/str_util.h \
 	agent/util/isa_util.h \
 	agent/util/http_uri_util.h \
@@ -565,7 +569,9 @@ AGENT_UNIT_TEST_DEPS := \
 	agent/uboot/uboot_security_audit_util.h \
 	agent/uboot/image/uboot_command_extract_util.h \
 	agent/uboot/image/uboot_image_internal.h \
-	agent/embedded_linux_audit_cmd.h
+	agent/embedded_linux_audit_cmd.h \
+	agent/util/dispatch_util.h \
+	agent/util/dispatch_parse_util.h
 
 ZLIB_CMAKE_ARGS := $(CMAKE_CC_ARGS)
 ifneq ($(strip $(ZLIB_EXTRA_CFLAGS)),)
@@ -1016,6 +1022,8 @@ $(AGENT_UNIT_TEST_BIN): $(AGENT_UNIT_TEST_SRC) $(AGENT_UNIT_TEST_DEPS) $(JSONC_L
 			agent/device/device_scan.c \
 			agent/shell/script_exec_util.c \
 			agent/shell/interactive_util.c \
+			agent/util/dispatch_util.c \
+			agent/util/dispatch_parse_util.c \
 			$(JSONC_LIB) \
 			$(UNIT_TEST_LDFLAGS)
 
