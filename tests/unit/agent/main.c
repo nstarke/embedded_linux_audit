@@ -15,6 +15,7 @@ int run_tpm2_pcr_parse_util_tests(void);
 int run_ws_url_util_tests(void);
 int run_remote_copy_util_tests(void);
 int run_orom_util_tests(void);
+int run_orom_pull_cmd_util_tests(void);
 int run_http_protocol_util_tests(void);
 int run_tcp_parse_util_tests(void);
 int run_tcp_runtime_util_tests(void);
@@ -75,6 +76,7 @@ int main(void)
 	rc |= run_ws_url_util_tests();
 	rc |= run_remote_copy_util_tests();
 	rc |= run_orom_util_tests();
+	rc |= run_orom_pull_cmd_util_tests();
 	rc |= run_http_protocol_util_tests();
 	rc |= run_tcp_parse_util_tests();
 	rc |= run_tcp_runtime_util_tests();

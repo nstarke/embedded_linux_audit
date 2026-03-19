@@ -417,6 +417,7 @@ AGENT_UNIT_TEST_SRC := \
 	tests/unit/agent/test_ws_url_util.c \
 	tests/unit/agent/test_remote_copy_util.c \
 	tests/unit/agent/test_orom_util.c \
+	tests/unit/agent/test_orom_pull_cmd_util.c \
 	tests/unit/agent/test_http_protocol_util.c \
 	tests/unit/agent/test_tcp_parse_util.c \
 	tests/unit/agent/test_tcp_runtime_util.c \
@@ -471,6 +472,7 @@ AGENT_UNIT_TEST_DEPS := \
 	agent/util/tpm2_pcr_parse_util.c \
 	agent/util/remote_copy_util.c \
 	agent/util/orom_util.c \
+	agent/orom/orom_pull_cmd_util.c \
 	agent/util/http_protocol_util.c \
 	agent/util/command_io_util.c \
 	agent/util/ssh_parse_util.c \
@@ -964,6 +966,7 @@ $(AGENT_UNIT_TEST_BIN): $(AGENT_UNIT_TEST_SRC) $(AGENT_UNIT_TEST_DEPS) $(JSONC_L
 			agent/util/tpm2_pcr_parse_util.c \
 			agent/util/remote_copy_util.c \
 			agent/util/orom_util.c \
+			agent/orom/orom_pull_cmd_util.c \
 			agent/util/http_protocol_util.c \
 			agent/util/command_io_util.c \
 			agent/util/ssh_parse_util.c \
