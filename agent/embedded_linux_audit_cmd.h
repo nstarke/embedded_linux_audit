@@ -53,6 +53,7 @@ uint32_t ela_read_be32(const uint8_t *p);
 const char *ela_detect_isa(void);
 bool ela_isa_supported_for_efi_bios(const char *isa);
 bool ela_is_valid_tcp_output_target(const char *spec);
+int ela_is_ws_url(const char *url);
 int ela_connect_tcp_ipv4(const char *spec);
 int ela_connect_tcp_any(const char *spec);
 int ela_send_all(int sock, const uint8_t *buf, size_t len);
