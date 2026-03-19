@@ -997,7 +997,7 @@ coverage-agent-c:
 		UNIT_TEST_LDFLAGS="$(COVERAGE_EXTRA_LDFLAGS)" \
 		ELA_USE_READLINE=0
 	./$(AGENT_UNIT_TEST_BIN)
-	bash tests/agent/shell/test_all.sh
+	BIN="./$(TARGET)" bash tests/agent/shell/test_all.sh
 	mkdir -p $(COVERAGE_DIR)
 	lcov --capture --directory . --output-file $(AGENT_C_COVERAGE_INFO)
 	lcov --remove $(AGENT_C_COVERAGE_INFO) \
