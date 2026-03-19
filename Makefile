@@ -410,6 +410,7 @@ AGENT_UNIT_TEST_SRC := \
 	tests/unit/agent/test_record_formatter.c \
 	tests/unit/agent/test_list_files_filter_util.c \
 	tests/unit/agent/test_lifecycle_formatter.c \
+	tests/unit/agent/test_lifecycle_util.c \
 	tests/unit/agent/test_ela_conf_util.c \
 	tests/unit/agent/test_interactive_parse_util.c \
 	tests/unit/agent/test_file_scan_formatter.c \
@@ -468,6 +469,7 @@ AGENT_UNIT_TEST_DEPS := \
 	agent/util/record_formatter.c \
 	agent/util/list_files_filter_util.c \
 	agent/util/lifecycle_formatter.c \
+	agent/util/lifecycle_util.c \
 	agent/util/interactive_parse_util.c \
 	agent/util/file_scan_formatter.c \
 	agent/util/tpm2_pcr_parse_util.c \
@@ -524,6 +526,7 @@ AGENT_UNIT_TEST_DEPS := \
 	agent/util/record_formatter.h \
 	agent/util/list_files_filter_util.h \
 	agent/util/lifecycle_formatter.h \
+	agent/util/lifecycle_util.h \
 	agent/util/interactive_parse_util.h \
 	agent/util/file_scan_formatter.h \
 	agent/util/tpm2_pcr_parse_util.h \
@@ -963,6 +966,7 @@ $(AGENT_UNIT_TEST_BIN): $(AGENT_UNIT_TEST_SRC) $(AGENT_UNIT_TEST_DEPS) $(JSONC_L
 			agent/util/record_formatter.c \
 			agent/util/list_files_filter_util.c \
 			agent/util/lifecycle_formatter.c \
+			agent/util/lifecycle_util.c \
 			agent/util/interactive_parse_util.c \
 			agent/util/file_scan_formatter.c \
 			agent/util/tpm2_pcr_parse_util.c \

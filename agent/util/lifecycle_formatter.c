@@ -7,6 +7,22 @@
 #include <json.h>
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
+
+int ela_format_utc_timestamp(time_t now, char *buf, size_t buf_size)
+{
+	struct tm tm_now;
+
+	if (!buf || buf_size == 0)
+		return -1;
+	if (gmtime_r(&now, &tm_now) == NULL)
+		return -1;
+	snprintf(buf, buf_size, "%04d-%02d-%02dT%02d:%02d:%02dZ",
+		 (int)(tm_now.tm_year + 1900), (int)(tm_now.tm_mon + 1),
+		 (int)tm_now.tm_mday, (int)tm_now.tm_hour,
+		 (int)tm_now.tm_min, (int)tm_now.tm_sec);
+	return 0;
+}
 
 int ela_format_lifecycle_record(struct output_buffer *out,
 				const char *format,

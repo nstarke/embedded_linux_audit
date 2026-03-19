@@ -5,6 +5,11 @@
 
 #include "output_buffer.h"
 
+#include <stddef.h>
+#include <time.h>
+
+int ela_format_utc_timestamp(time_t now, char *buf, size_t buf_size);
+
 int ela_format_lifecycle_record(struct output_buffer *out,
 				const char *format,
 				const char *agent_timestamp,
