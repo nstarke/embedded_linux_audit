@@ -449,7 +449,8 @@ AGENT_UNIT_TEST_SRC := \
 	tests/unit/agent/test_remote_copy_cmd_util.c \
 	tests/unit/agent/test_script_exec_util.c \
 	tests/unit/agent/test_interactive_util.c \
-	tests/unit/agent/test_linux_execute_command_util.c
+	tests/unit/agent/test_linux_execute_command_util.c \
+	tests/unit/agent/test_linux_download_file_util.c
 AGENT_UNIT_TEST_DEPS := \
 	agent/util/str_util.c \
 	agent/util/isa_util.c \
@@ -496,6 +497,7 @@ AGENT_UNIT_TEST_DEPS := \
 	agent/uboot/image/uboot_command_extract_util.c \
 	agent/uboot/image/uboot_image_format_util.c \
 	agent/uboot/image/uboot_image_record_util.c \
+	agent/linux/linux_download_file_util.c \
 	agent/linux/linux_execute_command_util.c \
 	agent/shell/script_exec_util.c \
 	agent/shell/interactive_util.c \
@@ -518,6 +520,7 @@ AGENT_UNIT_TEST_DEPS := \
 	agent/util/tpm2_command_util.h \
 	agent/util/transfer_parse_util.h \
 	agent/linux/linux_dmesg_util.h \
+	agent/linux/linux_download_file_util.h \
 	agent/linux/remote_copy_cmd_util.h \
 	agent/linux/linux_execute_command_util.h \
 	agent/net/ela_conf_util.h \
@@ -975,6 +978,7 @@ $(AGENT_UNIT_TEST_BIN): $(AGENT_UNIT_TEST_SRC) $(AGENT_UNIT_TEST_DEPS) $(JSONC_L
 			agent/uboot/image/uboot_command_extract_util.c \
 			agent/uboot/image/uboot_image_format_util.c \
 			agent/uboot/image/uboot_image_record_util.c \
+			agent/linux/linux_download_file_util.c \
 			agent/linux/linux_execute_command_util.c \
 			agent/shell/script_exec_util.c \
 			agent/shell/interactive_util.c \
