@@ -4,8 +4,8 @@
 #include "uboot/image/uboot_command_extract_util.h"
 #include "uboot/image/uboot_image_cmd.h"
 #include "uboot/image/uboot_image_internal.h"
+#include "uboot/image/uboot_image_list_commands_util.h"
 
-#include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <getopt.h>
@@ -110,197 +110,6 @@ int uboot_image_list_commands_main(int argc, char **argv)
 	return uboot_image_finish(rc);
 }
 
-static bool is_printable_ascii(uint8_t c)
-{
-	return c >= 0x20 && c <= 0x7e;
-}
-
-static bool token_in_list_ci(const char *token, const char *const *list, size_t list_count)
-{
-	for (size_t i = 0; i < list_count; i++) {
-		if (!strcasecmp(token, list[i]))
-			return true;
-	}
-	return false;
-}
-
-static bool bytes_contains_token_ci(const uint8_t *buf, size_t len, const char *needle)
-{
-	size_t nlen;
-
-	if (!buf || !needle)
-		return false;
-
-	nlen = strlen(needle);
-	if (!nlen || len < nlen)
-		return false;
-
-	for (size_t i = 0; i + nlen <= len; i++) {
-		size_t j = 0;
-		for (; j < nlen; j++) {
-			if (tolower((unsigned char)buf[i + j]) != tolower((unsigned char)needle[j]))
-				break;
-		}
-		if (j == nlen)
-			return true;
-	}
-
-	return false;
-}
-
-static bool token_has_command_context(const uint8_t *buf, size_t len, size_t start, size_t end)
-{
-	static const char *const ctx_needles[] = {
-		"unknown command",
-		"list of commands",
-		"commands",
-		"usage:",
-		"help",
-		"cmd"
-	};
-	size_t lo = (start > 96U) ? (start - 96U) : 0U;
-	size_t hi = end + 96U;
-
-	if (hi > len)
-		hi = len;
-	if (hi <= lo)
-		return false;
-
-	for (size_t i = 0; i < ARRAY_SIZE(ctx_needles); i++) {
-		if (bytes_contains_token_ci(buf + lo, hi - lo, ctx_needles[i]))
-			return true;
-	}
-
-	return false;
-}
-
-static bool token_looks_like_command_name(const char *s)
-{
-	size_t len;
-	bool has_alpha = false;
-
-	if (!s)
-		return false;
-
-	len = strlen(s);
-	if (len < 2 || len > 32)
-		return false;
-
-	for (size_t i = 0; i < len; i++) {
-		unsigned char c = (unsigned char)s[i];
-		if (!(isalnum(c) || c == '_' || c == '-' || c == '.'))
-			return false;
-		if (isalpha(c))
-			has_alpha = true;
-	}
-
-	if (!has_alpha)
-		return false;
-	if (!isalpha((unsigned char)s[0]))
-		return false;
-
-	return true;
-}
-
-static int find_extracted_command(struct extracted_command *cmds, size_t count, const char *name)
-{
-	for (size_t i = 0; i < count; i++) {
-		if (!strcmp(cmds[i].name, name))
-			return (int)i;
-	}
-	return -1;
-}
-
-static int add_extracted_command(struct extracted_command **cmds,
-				 size_t *count,
-				 const char *name,
-				 int occ_score,
-				 bool known,
-				 bool context_seen)
-{
-	int idx = find_extracted_command(*cmds, *count, name);
-
-	if (idx >= 0) {
-		struct extracted_command *c = &(*cmds)[(size_t)idx];
-		c->hits++;
-		if (occ_score > c->best_occ_score)
-			c->best_occ_score = occ_score;
-		if (known)
-			c->known = true;
-		if (context_seen)
-			c->context_seen = true;
-		return 0;
-	}
-
-	struct extracted_command *tmp = realloc(*cmds, (*count + 1U) * sizeof(**cmds));
-	if (!tmp)
-		return -1;
-	*cmds = tmp;
-
-	tmp[*count].name = strdup(name);
-	if (!tmp[*count].name)
-		return -1;
-	tmp[*count].hits = 1;
-	tmp[*count].best_occ_score = occ_score;
-	tmp[*count].known = known;
-	tmp[*count].context_seen = context_seen;
-	(*count)++;
-
-	return 0;
-}
-
-static int extracted_command_final_score(const struct extracted_command *c)
-{
-	int score;
-
-	if (!c)
-		return 0;
-
-	score = c->best_occ_score;
-	if (c->known)
-		score += 2;
-	if (c->context_seen)
-		score += 1;
-	if (c->hits > 1) {
-		unsigned int extra = c->hits - 1;
-		if (extra > 3)
-			extra = 3;
-		score += (int)extra;
-	}
-
-	return score;
-}
-
-static const char *confidence_from_score(int score)
-{
-	if (score >= 10)
-		return "high";
-	if (score >= 7)
-		return "medium";
-	return "low";
-}
-
-static int extracted_command_cmp(const void *a, const void *b)
-{
-	const struct extracted_command *ca = (const struct extracted_command *)a;
-	const struct extracted_command *cb = (const struct extracted_command *)b;
-	int sa = extracted_command_final_score(ca);
-	int sb = extracted_command_final_score(cb);
-
-	if (sa != sb)
-		return sb - sa;
-
-	return strcmp(ca->name, cb->name);
-}
-
-static int extract_commands_from_blob(const uint8_t *blob,
-				      size_t blob_len,
-				      struct extracted_command **out_cmds,
-				      size_t *out_count)
-{
-	return ela_uboot_extract_commands_from_blob(blob, blob_len, out_cmds, out_count);
-}
-
 int list_image_commands(const char *dev, uint64_t offset)
 {
 	uint8_t hdr[UIMAGE_HDR_SIZE];
@@ -380,19 +189,15 @@ int list_image_commands(const char *dev, uint64_t offset)
 					    &uboot_off,
 					    &uboot_off_found);
 
-		if (uboot_off_found && uboot_off < image_len) {
-			payload = image_blob + (size_t)uboot_off;
-			payload_len = image_len - (size_t)uboot_off;
-		} else {
-			payload = image_blob;
-			payload_len = image_len;
-		}
+		ela_uboot_image_list_select_payload(image_blob, image_len,
+						    uboot_off_found, uboot_off,
+						    &payload, &payload_len);
 	} else {
 		uboot_img_err_printf("Unknown image format at offset 0x%jx\n", (uintmax_t)offset);
 		goto out;
 	}
 
-	if (extract_commands_from_blob(payload, payload_len, &cmds, &cmd_count) < 0) {
+	if (ela_uboot_extract_commands_from_blob(payload, payload_len, &cmds, &cmd_count) < 0) {
 		uboot_img_err_printf("Failed command extraction from image payload\n");
 		goto out;
 	}
