@@ -19,6 +19,7 @@ KEY_PATH="$REPO_ROOT/tools/certs/localhost.key"
 if [ ! -f "$CERT_PATH" ] || [ ! -f "$KEY_PATH" ]; then
     echo "[SKIP] https integration requires tools/certs/localhost.crt and localhost.key"
     finish_tests
+    exit
 fi
 
 run_https_capture_case() {
@@ -26,6 +27,13 @@ run_https_capture_case() {
     mode="$2"
     command_template="$3"
     payload_path="${4:-}"
+
+    HTTPS_CASE_RC=1
+    HTTPS_CASE_REQ_PATH=
+    HTTPS_CASE_REQ_TYPE=
+    HTTPS_CASE_REQ_BODY=
+    HTTPS_CASE_SERVER_LOG=
+    HTTPS_CASE_CMD_LOG=
 
     req_path="$(mktemp /tmp/ela_https_req_path.XXXXXX)"
     req_type="$(mktemp /tmp/ela_https_req_type.XXXXXX)"
