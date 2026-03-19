@@ -6,6 +6,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <unistd.h>
 
 bool ela_script_is_http_source(const char *value)
 {
@@ -128,6 +131,44 @@ char *ela_script_trim(char *s)
 bool ela_script_line_is_ignorable(const char *trimmed)
 {
 	return !trimmed || !*trimmed || *trimmed == '#';
+}
+
+bool ela_script_local_file_exists(const char *path)
+{
+	struct stat st;
+
+	if (!path || !*path)
+		return false;
+
+	return stat(path, &st) == 0 && S_ISREG(st.st_mode);
+}
+
+int ela_script_create_temp_path(char *dir_path, size_t dir_path_len,
+				char *file_path, size_t file_path_len,
+				const char *script_source)
+{
+	const char *script_name;
+	int n;
+
+	if (!dir_path || dir_path_len == 0 || !file_path || file_path_len == 0)
+		return -1;
+
+	script_name = ela_script_basename(script_source);
+	if (!script_name || !*script_name)
+		script_name = "script.txt";
+
+	snprintf(dir_path, dir_path_len, "/tmp/embedded_linux_audit_script.XXXXXX");
+	if (!mkdtemp(dir_path))
+		return -1;
+
+	n = snprintf(file_path, file_path_len, "%s/%s", dir_path, script_name);
+	if (n < 0 || (size_t)n >= file_path_len) {
+		rmdir(dir_path);
+		dir_path[0] = '\0';
+		return -1;
+	}
+
+	return 0;
 }
 
 int ela_script_plan_dispatch(int argc,
