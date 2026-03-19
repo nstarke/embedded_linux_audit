@@ -2,6 +2,7 @@
 
 #include "embedded_linux_audit_cmd.h"
 #include "uboot/audit/uboot_audit_internal.h"
+#include "uboot/audit/uboot_audit_output_util.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -13,15 +14,7 @@
 
 const char *audit_http_content_type(enum uboot_output_format fmt)
 {
-	switch (fmt) {
-	case FW_OUTPUT_JSON:
-		return "application/x-ndjson; charset=utf-8";
-	case FW_OUTPUT_CSV:
-		return "text/csv; charset=utf-8";
-	case FW_OUTPUT_TXT:
-	default:
-		return "text/plain; charset=utf-8";
-	}
+	return ela_uboot_audit_http_content_type(fmt);
 }
 
 int send_artifact_network_record(enum uboot_output_format fmt,
@@ -41,18 +34,11 @@ int send_artifact_network_record(enum uboot_output_format fmt,
 	if (!artifact_name || !artifact_value)
 		return 0;
 
-	if (fmt == FW_OUTPUT_JSON) {
-		plen = snprintf(payload, sizeof(payload),
-			"{\"record\":\"audit_artifact\",\"artifact\":\"%s\",\"value\":\"%s\"}\n",
-			artifact_name, artifact_value);
-	} else if (fmt == FW_OUTPUT_CSV) {
-		plen = snprintf(payload, sizeof(payload), "audit_artifact,%s,%s\n", artifact_name, artifact_value);
-	} else {
-		plen = snprintf(payload, sizeof(payload), "audit artifact %s=%s\n", artifact_name, artifact_value);
-	}
-
-	if (plen <= 0 || (size_t)plen >= sizeof(payload))
+	if (ela_uboot_audit_format_artifact(fmt, artifact_name, artifact_value,
+					    payload, sizeof(payload)) != 0)
 		return -1;
+
+	plen = (int)strlen(payload);
 
 	if (output_tcp_target && *output_tcp_target) {
 		int sock = ela_connect_tcp_ipv4(output_tcp_target);
@@ -95,13 +81,7 @@ int send_artifact_network_record(enum uboot_output_format fmt,
 
 bool rule_name_selected(const char *filter, const struct embedded_linux_audit_rule *rule)
 {
-	if (!rule || !rule->name || !*rule->name)
-		return false;
-
-	if (!filter || !*filter)
-		return true;
-
-	return !strcmp(filter, rule->name);
+	return ela_uboot_audit_rule_name_selected(filter, rule);
 }
 
 void print_rule_record(enum uboot_output_format fmt,
@@ -109,7 +89,7 @@ void print_rule_record(enum uboot_output_format fmt,
 		       int rc,
 		       const char *message)
 {
-	const char *status = (rc == 0) ? "pass" : ((rc > 0) ? "fail" : "error");
+	const char *status = ela_uboot_audit_rc_to_status(rc);
 
 	if (fmt == FW_OUTPUT_CSV) {
 		uboot_audit_out_printf("audit_rule,%s,%s,%s\n",

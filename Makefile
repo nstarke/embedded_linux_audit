@@ -465,7 +465,8 @@ AGENT_UNIT_TEST_SRC := \
 	tests/unit/agent/test_uboot_image_scan_util.c \
 	tests/unit/agent/test_uboot_image_pull_util.c \
 	tests/unit/agent/test_uboot_image_list_commands_util.c \
-	tests/unit/agent/test_uboot_image_find_address_util.c
+	tests/unit/agent/test_uboot_image_find_address_util.c \
+	tests/unit/agent/test_uboot_audit_output_util.c
 AGENT_UNIT_TEST_DEPS := \
 	agent/util/str_util.c \
 	agent/util/isa_util.c \
@@ -516,6 +517,7 @@ AGENT_UNIT_TEST_DEPS := \
 	agent/uboot/env/uboot_env_util.c \
 	agent/uboot/env/uboot_env_scan_util.c \
 	agent/uboot/audit-rules/uboot_audit_util.c \
+	agent/uboot/audit/uboot_audit_output_util.c \
 	agent/uboot/uboot_security_audit_util.c \
 	agent/uboot/image/uboot_command_extract_util.c \
 	agent/uboot/image/uboot_image_format_util.c \
@@ -574,6 +576,7 @@ AGENT_UNIT_TEST_DEPS := \
 	agent/uboot/env/uboot_env_util.h \
 	agent/uboot/env/uboot_env_scan_util.h \
 	agent/uboot/audit-rules/uboot_audit_util.h \
+	agent/uboot/audit/uboot_audit_output_util.h \
 	agent/uboot/uboot_security_audit_util.h \
 	agent/uboot/image/uboot_command_extract_util.h \
 	agent/uboot/image/uboot_image_internal.h \
@@ -717,6 +720,7 @@ SRC := \
 	agent/uboot/uboot_security_audit_cmd.c \
 	agent/uboot/uboot_security_audit_util.c \
 	agent/uboot/audit/uboot_audit_output.c \
+	agent/uboot/audit/uboot_audit_output_util.c \
 	agent/uboot/audit-rules/uboot_audit_util.c \
 	agent/uboot/audit-rules/uboot_validate_crc32_rule.c \
 	agent/uboot/audit-rules/uboot_validate_cmdline_init_writeability_rule.c \
@@ -1125,6 +1129,7 @@ $(AGENT_UNIT_TEST_BIN): $(AGENT_UNIT_TEST_SRC) $(AGENT_UNIT_TEST_DEPS) $(JSONC_L
 			agent/uboot/env/uboot_env_util.c \
 			agent/uboot/env/uboot_env_scan_util.c \
 			agent/uboot/audit-rules/uboot_audit_util.c \
+			agent/uboot/audit/uboot_audit_output_util.c \
 			agent/uboot/uboot_security_audit_util.c \
 			agent/uboot/image/uboot_command_extract_util.c \
 			agent/uboot/image/uboot_image_format_util.c \

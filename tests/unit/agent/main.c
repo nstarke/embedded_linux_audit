@@ -64,6 +64,7 @@ int run_uboot_image_scan_util_tests(void);
 int run_uboot_image_pull_util_tests(void);
 int run_uboot_image_list_commands_util_tests(void);
 int run_uboot_image_find_address_util_tests(void);
+int run_uboot_audit_output_util_tests(void);
 
 int main(void)
 {
@@ -133,6 +134,7 @@ int main(void)
 	rc |= run_uboot_image_pull_util_tests();
 	rc |= run_uboot_image_list_commands_util_tests();
 	rc |= run_uboot_image_find_address_util_tests();
+	rc |= run_uboot_audit_output_util_tests();
 
 	return rc;
 }
