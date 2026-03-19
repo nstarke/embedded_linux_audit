@@ -62,12 +62,18 @@ function loadTerminalServer(options = {}) {
   };
   const httpServer = {
     listen: jest.fn(),
+    close: jest.fn((cb) => {
+      if (cb) cb();
+    }),
   };
   const WebSocketServer = jest.fn(function WebSocketServer(opts) {
     this.options = opts;
     this.handlers = new Map();
     this.on = jest.fn((event, handler) => {
       this.handlers.set(event, handler);
+    });
+    this.close = jest.fn((cb) => {
+      if (cb) cb();
     });
   });
   const auth = {
@@ -203,6 +209,7 @@ function loadTerminalServer(options = {}) {
     readlineMock,
     httpServer,
     WebSocketServer,
+    wssClose: server.wss.close,
     auth,
     initializeDatabase,
     runMigrations,
@@ -250,6 +257,23 @@ describe('terminal server orchestration', () => {
     expect(done).toHaveBeenCalledWith(true);
   });
 
+  test('verifyClient rejects missing auth, malformed auth, and empty terminal mac paths', () => {
+    const { server, auth } = loadTerminalServer();
+    const verifyClient = server.wss.options.verifyClient;
+    const done = jest.fn();
+
+    auth.checkBearer.mockReturnValueOnce(false);
+    verifyClient({ req: { url: '/terminal/aa:bb', headers: {} } }, done);
+    expect(done).toHaveBeenCalledWith(false, 401, 'Unauthorized');
+
+    auth.checkBearer.mockReturnValueOnce(false);
+    verifyClient({ req: { url: '/terminal/aa:bb', headers: { authorization: 'Basic nope' } } }, done);
+    expect(done).toHaveBeenCalledWith(false, 401, 'Unauthorized');
+
+    verifyClient({ req: { url: '/terminal/', headers: { authorization: 'Bearer ok' } } }, done);
+    expect(done).toHaveBeenCalledWith(false, 404, 'Not Found');
+  });
+
   test('replaces an existing session when the same MAC reconnects', async () => {
     const { server, sessionRegistry, recordTerminalConnection } = loadTerminalServer();
     const onConnection = server.wss.handlers.get('connection');
@@ -265,6 +289,22 @@ describe('terminal server orchestration', () => {
     expect(firstWs.close).toHaveBeenCalledTimes(1);
     expect(sessionRegistry.getSession('aa:bb').ws).toBe(secondWs);
     expect(sessionRegistry.getSession('aa:bb').connectionId).toBe(202);
+  });
+
+  test('replaces an existing session even when the previous socket throws during close', async () => {
+    const { server, sessionRegistry } = loadTerminalServer();
+    const onConnection = server.wss.handlers.get('connection');
+    const firstWs = createFakeWs();
+    const secondWs = createFakeWs();
+    firstWs.close.mockImplementationOnce(() => {
+      throw new Error('socket already closed');
+    });
+
+    await onConnection(firstWs, { url: '/terminal/aa:bb', socket: { remoteAddress: '10.0.0.1' } });
+    await onConnection(secondWs, { url: '/terminal/aa:bb', socket: { remoteAddress: '10.0.0.2' } });
+
+    expect(process.stderr.write).toHaveBeenCalledWith('Warning: failed to close existing terminal session for aa:bb: socket already closed\n');
+    expect(sessionRegistry.getSession('aa:bb').ws).toBe(secondWs);
   });
 
   test('closes the socket with code 1011 when terminal registration fails', async () => {
@@ -296,6 +336,55 @@ describe('terminal server orchestration', () => {
 
     expect(entry.lastHeartbeat).toBe('2026-03-19T12:34:56.000Z');
     expect(touchTerminalHeartbeat).toHaveBeenCalledWith(101, new Date('2026-03-19T12:34:56.000Z'));
+  });
+
+  test('treats invalid JSON and non-heartbeat JSON payloads as normal buffered output', async () => {
+    const { server, sessionRegistry, handleUpdateMessage, formatPromptOutput } = loadTerminalServer();
+    const onConnection = server.wss.handlers.get('connection');
+    const ws = createFakeWs();
+
+    server.tui.state = server.TUI_STATE.SESSION_LIST;
+    await onConnection(ws, { url: '/terminal/aa:bb', socket: { remoteAddress: '10.0.0.1' } });
+    const entry = sessionRegistry.getSession('aa:bb');
+
+    ws.handlers.get('message')(Buffer.from('{"broken":'));
+    ws.handlers.get('message')(Buffer.from('{"_type":"status","value":"ok"}'));
+
+    expect(formatPromptOutput).toHaveBeenCalledWith('{"broken":', 'aa:bb');
+    expect(formatPromptOutput).toHaveBeenCalledWith('{"_type":"status","value":"ok"}', 'aa:bb');
+    expect(handleUpdateMessage).toHaveBeenCalledWith(entry, '{"broken":', expect.any(Object));
+    expect(handleUpdateMessage).toHaveBeenCalledWith(entry, '{"_type":"status","value":"ok"}', expect.any(Object));
+    expect(entry.outputBuffer).toEqual([
+      'formatted:aa:bb:{"broken":',
+      'formatted:aa:bb:{"_type":"status","value":"ok"}',
+    ]);
+  });
+
+  test('heartbeat ack failure logging does not render or buffer output for non-active sessions', async () => {
+    const { server, sessionRegistry, touchTerminalHeartbeat } = loadTerminalServer({
+      registry: {
+        touchTerminalHeartbeat: async () => {
+          throw new Error('hb write failed');
+        },
+      },
+    });
+    const onConnection = server.wss.handlers.get('connection');
+    const ws = createFakeWs();
+    jest.spyOn(server.tui, 'render').mockImplementation(() => {});
+
+    server.tui.state = server.TUI_STATE.SESSION_LIST;
+    await onConnection(ws, { url: '/terminal/aa:bb', socket: { remoteAddress: '10.0.0.1' } });
+    const entry = sessionRegistry.getSession('aa:bb');
+
+    ws.handlers.get('message')(Buffer.from('{"_type":"heartbeat_ack","date":"2026-03-19T13:00:00.000Z"}'));
+    await flush();
+
+    expect(entry.lastHeartbeat).toBe('2026-03-19T13:00:00.000Z');
+    expect(entry.outputBuffer).toEqual([]);
+    expect(server.tui.render).toHaveBeenCalledTimes(1);
+    expect(process.stdout.write).not.toHaveBeenCalledWith(expect.stringContaining('heartbeat_ack'));
+    expect(touchTerminalHeartbeat).toHaveBeenCalledWith(101, new Date('2026-03-19T13:00:00.000Z'));
+    expect(process.stderr.write).toHaveBeenCalledWith('Warning: failed to update heartbeat for aa:bb: hb write failed\n');
   });
 
   test('buffers non-json output and updates batch output in session-list mode', async () => {
@@ -382,6 +471,30 @@ describe('terminal server orchestration', () => {
     expect(sessionRegistry.getSession('cc:dd')).toBeUndefined();
   });
 
+  test('close and error handlers tolerate unknown sessions and close-terminal rejection', async () => {
+    const { server, sessionRegistry, closeTerminalConnection } = loadTerminalServer({
+      registry: {
+        closeTerminalConnection: async () => {
+          throw new Error('close failed');
+        },
+      },
+    });
+    const onConnection = server.wss.handlers.get('connection');
+    const ws = createFakeWs();
+    jest.spyOn(server.tui, 'render').mockImplementation(() => {});
+
+    server.tui.state = server.TUI_STATE.SESSION_LIST;
+    await onConnection(ws, { url: '/terminal/aa:bb', socket: { remoteAddress: '10.0.0.1' } });
+
+    sessionRegistry.removeSession('aa:bb');
+    expect(() => ws.handlers.get('close')()).not.toThrow();
+    await flush();
+    expect(closeTerminalConnection).toHaveBeenCalledWith(101);
+    expect(process.stderr.write).toHaveBeenCalledWith('Warning: failed to close terminal connection for aa:bb: close failed\n');
+
+    expect(() => ws.handlers.get('error')()).not.toThrow();
+  });
+
   test('importLegacyAliases imports non-empty aliases and logs partial failures', async () => {
     const { server, setDeviceAlias, loadLegacyAliases } = loadTerminalServer({
       loadLegacyAliases: () => ({
@@ -455,6 +568,52 @@ describe('terminal server orchestration', () => {
     expect(server.tui.render).toHaveBeenCalled();
   });
 
+  test('render shows the exact empty-state view and resets cursor after session list shrink', () => {
+    const { server, sessionRegistry } = loadTerminalServer();
+
+    server.tui.cursor = 4;
+    server.tui.render();
+    expect(process.stdout.write).toHaveBeenCalledWith(
+      expect.stringContaining('ela-terminal'),
+    );
+    expect(process.stdout.write).toHaveBeenCalledWith(
+      expect.stringContaining('  (no connected devices)'),
+    );
+
+    sessionRegistry.addSession('aa:bb', createFakeWs(), {});
+    sessionRegistry.addSession('bb:cc', createFakeWs(), {});
+    server.tui.cursor = 1;
+    sessionRegistry.removeSession('bb:cc');
+    jest.spyOn(server.tui, 'render').mockImplementation(() => {});
+
+    server.tui.detach();
+
+    expect(server.tui.cursor).toBe(0);
+  });
+
+  test('render includes alias, raw mac, and heartbeat details in the session list and attach header', () => {
+    const { server, sessionRegistry } = loadTerminalServer();
+    const aliased = sessionRegistry.addSession('aa:bb', createFakeWs(), { alias: 'router' });
+    const plain = sessionRegistry.addSession('cc:dd', createFakeWs(), {});
+    aliased.lastHeartbeat = '2026-03-19T14:00:00.000Z';
+    plain.lastHeartbeat = null;
+
+    server.tui.cursor = 0;
+    server.tui.render();
+
+    expect(process.stdout.write).toHaveBeenCalledWith(expect.stringContaining('router (aa:bb)  last heartbeat: 2026-03-19T14:00:00.000Z'));
+    expect(process.stdout.write).toHaveBeenCalledWith(expect.stringContaining('  cc:dd'));
+
+    process.stdout.write.mockClear();
+    server.tui.attach('aa:bb');
+    expect(process.stdout.write).toHaveBeenCalledWith(expect.stringContaining('Attached to router (aa:bb)'));
+
+    process.stdout.write.mockClear();
+    server.tui.detach();
+    server.tui.attach('cc:dd');
+    expect(process.stdout.write).toHaveBeenCalledWith(expect.stringContaining('Attached to cc:dd'));
+  });
+
   test('list-mode key handling navigates sessions and opens command mode', () => {
     const { server, sessionRegistry } = loadTerminalServer();
     sessionRegistry.addSession('aa:bb', createFakeWs(), {});
@@ -501,6 +660,31 @@ describe('terminal server orchestration', () => {
     parseListCommand.mockReturnValueOnce({ type: 'unknown', raw: 'weird' });
     server.tui._executeListCommand('weird');
     expect(server.tui._statusMsg).toBe('unknown command: /weird');
+  });
+
+  test('list command edge cases handle empty lists and unopened sockets cleanly', () => {
+    const { server, sessionRegistry, parseListCommand, startSessionUpdate } = loadTerminalServer({
+      startSessionUpdate: () => false,
+    });
+    const closedWs = createFakeWs();
+    closedWs.readyState = 0;
+    sessionRegistry.addSession('aa:bb', closedWs, {});
+    jest.spyOn(server.tui, 'render').mockImplementation(() => {});
+
+    parseListCommand.mockReturnValueOnce({ type: 'update' });
+    server.tui._executeListCommand('update');
+    expect(startSessionUpdate).toHaveBeenCalledTimes(1);
+    expect(server.tui._statusMsg).toBe('update: initiated for 0 session(s)');
+
+    parseListCommand.mockReturnValueOnce({ type: 'shell-all', command: 'uname -a' });
+    server.tui._executeListCommand('shell uname -a');
+    server.tui._confirmAction();
+    expect(server.tui._statusMsg).toBe('shell: launched on 0 node(s)');
+
+    parseListCommand.mockReturnValueOnce({ type: 'set-all', key: 'FOO', value: 'bar' });
+    server.tui._executeListCommand('set FOO bar');
+    server.tui._confirmAction();
+    expect(server.tui._statusMsg).toBe('set: dispatched "FOO" to 0 node(s)');
   });
 
   test('list command confirm flows dispatch update, shell-all, exit, and set-all actions', () => {
@@ -569,6 +753,30 @@ describe('terminal server orchestration', () => {
     expect(process.stdout.write).toHaveBeenCalledWith('\r\n[cancelled]\r\n');
   });
 
+  test('confirm prompts accept uppercase answers, cancel empty answers, and ignore repeated backspace at column zero', () => {
+    const { server } = loadTerminalServer();
+    const action = jest.fn();
+    jest.spyOn(server.tui, 'render').mockImplementation(() => {});
+
+    server.tui._confirmPrompt = '[confirm]';
+    server.tui._confirmValue = '';
+    server.tui._confirmAction = action;
+    server.tui.handleKey('', 'backspace', false);
+    server.tui.handleKey('', 'backspace', false);
+    expect(server.tui._confirmValue).toBe('');
+
+    server.tui.handleKey('Y', undefined, false);
+    server.tui.handleKey('', 'return', false);
+    expect(action).toHaveBeenCalledTimes(1);
+
+    server.tui._confirmPrompt = '[confirm]';
+    server.tui._confirmValue = '';
+    server.tui._confirmAction = jest.fn();
+    process.stdout.write.mockClear();
+    server.tui.handleKey('', 'return', false);
+    expect(process.stdout.write).toHaveBeenCalledWith('\r\n[cancelled]\r\n');
+  });
+
   test('session key handling executes local commands, enters passthrough, and relays keys', async () => {
     const { server, sessionRegistry, executeLocalSessionCommand, shouldEnterPassthrough, setDeviceAlias } = loadTerminalServer();
     const ws = createFakeWs();
@@ -599,6 +807,22 @@ describe('terminal server orchestration', () => {
 
     server.tui.handleKey('', 'backspace', false);
     expect(ws.send).toHaveBeenCalledWith('\x7f');
+  });
+
+  test('attached-session unknown slash commands fall through to remote input without crashing', async () => {
+    const { server, sessionRegistry, executeLocalSessionCommand } = loadTerminalServer();
+    const ws = createFakeWs();
+    sessionRegistry.addSession('aa:bb', ws, {});
+    server.tui.state = server.TUI_STATE.ACTIVE_SESSION;
+    server.tui.activeMac = 'aa:bb';
+    server.tui._localCmdBuf = '/weird';
+
+    executeLocalSessionCommand.mockResolvedValueOnce(false);
+    await server.tui._handleSessionKey('', 'return', false);
+
+    expect(executeLocalSessionCommand).toHaveBeenCalledWith(expect.objectContaining({ cmd: '/weird' }));
+    expect(ws.send).toHaveBeenCalledWith('\n');
+    expect(server.tui._localCmdBuf).toBe('');
   });
 
   test('passthrough and local-command error handling write user-facing messages', async () => {
@@ -696,6 +920,44 @@ describe('terminal server orchestration', () => {
     expect(process.stdin.setRawMode).toHaveBeenCalledWith(true);
     expect(process.stdout.write).toHaveBeenCalledWith('ELA terminal API listening on ws://127.0.0.1:8080\n');
     expect(server.tui.render).toHaveBeenCalledTimes(1);
+  });
+
+  test('listen callback surfaces setupInput failures directly', async () => {
+    const { server, httpServer } = loadTerminalServer();
+    process.stdin.isTTY = true;
+    process.stdin.setRawMode.mockImplementationOnce(() => {
+      throw new Error('tty unavailable');
+    });
+
+    await server.main();
+
+    const listenCallback = httpServer.listen.mock.calls[0][2];
+    expect(() => listenCallback()).toThrow('tty unavailable');
+  });
+
+  test('cleanup ignores websocket/http server close failures and exitGracefully tolerates raw-mode errors', async () => {
+    const { server, sessionRegistry, httpServer, wssClose, closeDatabase } = loadTerminalServer();
+    process.stdin.isTTY = true;
+    process.stdin.setRawMode.mockImplementation(() => {
+      throw new Error('tty reset failed');
+    });
+    httpServer.close.mockImplementationOnce(() => {
+      throw new Error('http close failed');
+    });
+    wssClose.mockImplementationOnce(() => {
+      throw new Error('ws close failed');
+    });
+    sessionRegistry.addSession('aa:bb', createFakeWs(), { connectionId: 77 });
+
+    await expect(server.cleanup()).resolves.toBeUndefined();
+    expect(process.stdout.write).toHaveBeenCalledWith(`${server.ANSI.reset}\r\n`);
+
+    process.stdout.write.mockClear();
+    server.exitGracefully();
+    await flush();
+    await flush();
+    expect(closeDatabase).toHaveBeenCalled();
+    expect(process.exit).toHaveBeenCalledWith(0);
   });
 
   test('main propagates startup failures and start() logs, closes DB, and exits', async () => {

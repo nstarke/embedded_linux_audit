@@ -1,143 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later - Copyright (c) 2026 Nicholas Starke
 
 #include "embedded_linux_audit_cmd.h"
+#include "linux_execute_command_util.h"
 
 #include "util/command_io_util.h"
 #include "util/command_parse_util.h"
-#include "util/output_buffer.h"
-#include "util/record_formatter.h"
 
-#include <errno.h>
-#include <fcntl.h>
-#include <getopt.h>
 #include <stdbool.h>
-#include <stdint.h>
 #include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <sys/select.h>
-#include <sys/socket.h>
-#include <sys/wait.h>
 #include <unistd.h>
-
-#ifdef __linux__
-#include <pty.h>
-#endif
-
-/*
- * Run a command interactively: allocate a PTY so the child sees a real
- * terminal (enabling interactive shells, readline, echo, etc.), then
- * bridge stdin (WebSocket input pipe) <-> PTY master and PTY output ->
- * stdout (WebSocket output pipe) until the child exits.
- */
-static int run_command_interactive(const char *command)
-{
-#ifdef __linux__
-	int     master_fd = -1;
-	pid_t   pid;
-	int     status = 0;
-	char    buf[4096];
-	ssize_t n;
-
-	fflush(stdout);
-	fflush(stderr);
-
-	pid = forkpty(&master_fd, NULL, NULL, NULL);
-	if (pid < 0) {
-		fprintf(stderr, "execute-command: forkpty: %s\n", strerror(errno));
-		return 1;
-	}
-
-	if (pid == 0) {
-		/* Child: PTY slave is our controlling terminal */
-		execl("/bin/sh", "/bin/sh", "-c", command, NULL);
-		fprintf(stderr, "execute-command: execl: %s\n", strerror(errno));
-		_exit(127);
-	}
-
-	/* Parent: bridge WebSocket pipe <-> PTY master */
-	for (;;) {
-		fd_set         rfds;
-		struct timeval tv;
-		int            sel;
-		int            maxfd;
-
-		if (waitpid(pid, &status, WNOHANG) > 0) {
-			/* Drain any remaining PTY output */
-			while ((n = read(master_fd, buf, sizeof(buf))) > 0)
-				(void)write(STDOUT_FILENO, buf, (size_t)n);
-			goto done;
-		}
-
-		FD_ZERO(&rfds);
-		FD_SET(STDIN_FILENO,  &rfds);
-		FD_SET(master_fd, &rfds);
-		maxfd = master_fd > STDIN_FILENO ? master_fd : STDIN_FILENO;
-
-		tv.tv_sec  = 0;
-		tv.tv_usec = 100000; /* 100 ms */
-
-		sel = select(maxfd + 1, &rfds, NULL, NULL, &tv);
-		if (sel < 0) {
-			if (errno == EINTR)
-				continue;
-			break;
-		}
-
-		/* PTY output -> stdout (to WebSocket) */
-		if (FD_ISSET(master_fd, &rfds)) {
-			n = read(master_fd, buf, sizeof(buf));
-			if (n <= 0)
-				break; /* EIO: slave closed (child exited) */
-			if (write(STDOUT_FILENO, buf, (size_t)n) < 0)
-				break;
-		}
-
-		/* stdin (from WebSocket) -> PTY master (to child) */
-		if (FD_ISSET(STDIN_FILENO, &rfds)) {
-			n = read(STDIN_FILENO, buf, sizeof(buf));
-			if (n <= 0)
-				break;
-			if (write(master_fd, buf, (size_t)n) < 0)
-				break;
-		}
-	}
-
-	waitpid(pid, &status, 0);
-done:
-	close(master_fd);
-	if (WIFEXITED(status))
-		return WEXITSTATUS(status);
-	if (WIFSIGNALED(status))
-		return 128 + WTERMSIG(status);
-	return 0;
-
-#else
-	/* Non-Linux fallback: fork with inherited stdin/stdout/stderr */
-	pid_t pid;
-	int   status = 0;
-
-	fflush(stdout);
-	fflush(stderr);
-
-	pid = fork();
-	if (pid < 0) {
-		fprintf(stderr, "execute-command: fork: %s\n", strerror(errno));
-		return 1;
-	}
-	if (pid == 0) {
-		execl("/bin/sh", "/bin/sh", "-c", command, NULL);
-		_exit(127);
-	}
-	while (waitpid(pid, &status, 0) < 0 && errno == EINTR)
-		;
-	if (WIFEXITED(status))
-		return WEXITSTATUS(status);
-	if (WIFSIGNALED(status))
-		return 128 + WTERMSIG(status);
-	return 0;
-#endif
-}
 
 static void usage(const char *prog)
 {
@@ -151,187 +22,41 @@ static void usage(const char *prog)
 
 int linux_execute_command_scan_main(int argc, char **argv)
 {
-	const char *output_format = getenv("ELA_OUTPUT_FORMAT");
-	const char *output_tcp = getenv("ELA_OUTPUT_TCP");
-	const char *output_http = getenv("ELA_OUTPUT_HTTP");
-	const char *output_https = getenv("ELA_OUTPUT_HTTPS");
-	const char *parsed_output_http = NULL;
-	const char *parsed_output_https = NULL;
-	const char *output_uri = NULL;
-	const char *command = NULL;
-	const char *content_type;
-	bool insecure = getenv("ELA_OUTPUT_INSECURE") && !strcmp(getenv("ELA_OUTPUT_INSECURE"), "1");
-	int output_sock = -1;
-	struct output_buffer raw = {0};
-	struct output_buffer formatted = {0};
-	char *upload_uri = NULL;
-	char errbuf[256];
-	FILE *fp = NULL;
-	int ret = 0;
-	int opt;
-
-	static const struct option long_opts[] = {
-		{ "help", no_argument, NULL, 'h' },
-		{ 0, 0, 0, 0 }
+	struct ela_execute_command_env env = {
+		.output_format = getenv("ELA_OUTPUT_FORMAT"),
+		.output_tcp = getenv("ELA_OUTPUT_TCP"),
+		.output_http = getenv("ELA_OUTPUT_HTTP"),
+		.output_https = getenv("ELA_OUTPUT_HTTPS"),
+		.insecure = getenv("ELA_OUTPUT_INSECURE") && !strcmp(getenv("ELA_OUTPUT_INSECURE"), "1"),
 	};
+	struct ela_execute_command_request request;
+	char errbuf[256];
 
-	output_format = ela_output_format_or_default(output_format, "txt");
-
-	optind = 1;
-	while ((opt = getopt_long(argc, argv, "h", long_opts, NULL)) != -1) {
-		switch (opt) {
-		case 'h':
-			usage(argv[0]);
-			return 0;
-		default:
-			usage(argv[0]);
-			return 2;
+	errbuf[0] = '\0';
+	if (ela_execute_command_prepare_request(argc, argv, &env, isatty(STDOUT_FILENO), NULL,
+						&request, errbuf, sizeof(errbuf)) != 0) {
+		if (errbuf[0]) {
+			fprintf(stderr, "%s\n", errbuf);
 		}
-	}
-
-	if (optind >= argc) {
-		fprintf(stderr, "execute-command requires a command string\n");
 		usage(argv[0]);
 		return 2;
 	}
 
-	command = argv[optind++];
-	if (optind < argc) {
-		fprintf(stderr, "Unexpected argument: %s\n", argv[optind]);
+	if (request.show_help) {
 		usage(argv[0]);
-		return 2;
+		return 0;
 	}
 
-	if (!ela_output_format_is_valid(output_format)) {
-		fprintf(stderr, "Invalid output format for execute-command: %s\n", output_format);
-		return 2;
-	}
+	if (ela_execute_command_should_run_interactive(&request, isatty(STDOUT_FILENO)))
+		return ela_execute_command_run_interactive_with_ops(request.command, NULL);
 
-	if (output_http && *output_http &&
-	    ela_parse_http_output_uri(output_http,
-					    &parsed_output_http,
-					    &parsed_output_https,
-					    errbuf,
-					    sizeof(errbuf)) < 0) {
-		fprintf(stderr, "%s\n", errbuf);
-		return 2;
-	}
-
-	if (output_http && output_https) {
-		fprintf(stderr, "Use only one of --output-http or --output-https\n");
-		return 2;
-	}
-
-	if (parsed_output_http)
-		output_uri = parsed_output_http;
-	if (parsed_output_https)
-		output_uri = parsed_output_https;
-	if (output_https)
-		output_uri = output_https;
-
-	if (output_tcp && *output_tcp) {
-		output_sock = ela_connect_tcp_ipv4(output_tcp);
-		if (output_sock < 0) {
-			fprintf(stderr, "Invalid/failed output target (expected IPv4:port): %s\n", output_tcp);
-			return 2;
+	errbuf[0] = '\0';
+	if (ela_execute_command_run_capture(&request, NULL, errbuf, sizeof(errbuf)) != 0) {
+		if (errbuf[0]) {
+			fprintf(stderr, "%s\n", errbuf);
 		}
+		return 1;
 	}
 
-	/*
-	 * Interactive mode: no output redirection configured and stdout is a
-	 * real terminal.  Run the command with a PTY so interactive processes
-	 * (shells, editors, etc.) see a real terminal, then stream I/O
-	 * directly through the WebSocket pipes.  When stdout is not a TTY
-	 * (e.g. redirected to a file or pipe) skip the PTY and fall through
-	 * to the popen path so output is captured reliably.
-	 */
-	if (!output_uri && output_sock < 0 && isatty(STDOUT_FILENO))
-		return run_command_interactive(command);
-
-	fp = popen(command, "r");
-	if (!fp) {
-		fprintf(stderr, "Failed to execute command '%s': %s\n", command, strerror(errno));
-		ret = 1;
-		goto out;
-	}
-
-	for (;;) {
-		char chunk[4096];
-		size_t got = fread(chunk, 1, sizeof(chunk), fp);
-		if (got > 0 && output_buffer_append_len(&raw, chunk, got) != 0) {
-			fprintf(stderr, "Out of memory while capturing command output\n");
-			ret = 1;
-			goto out;
-		}
-		if (got < sizeof(chunk)) {
-			if (ferror(fp)) {
-				fprintf(stderr, "Failed while reading command output for '%s'\n", command);
-				ret = 1;
-				goto out;
-			}
-			break;
-		}
-	}
-
-	if (ela_format_execute_command_record(&formatted,
-					      output_format,
-					      command,
-					      raw.data ? raw.data : "") != 0) {
-		fprintf(stderr, "Failed to format command output\n");
-		ret = 1;
-		goto out;
-	}
-
-	if (formatted.len && fwrite(formatted.data, 1, formatted.len, stdout) != formatted.len) {
-		fprintf(stderr, "Failed to write formatted command output\n");
-		ret = 1;
-		goto out;
-	}
-
-	if (output_sock >= 0 && formatted.len && ela_send_all(output_sock, (const uint8_t *)formatted.data, formatted.len) < 0) {
-		fprintf(stderr, "Failed sending bytes to %s\n", output_tcp);
-		ret = 1;
-		goto out;
-	}
-
-	if (output_uri) {
-		upload_uri = ela_http_build_upload_uri(output_uri, "cmd", NULL);
-		if (!upload_uri) {
-			fprintf(stderr, "Unable to build upload URI for command output\n");
-			ret = 1;
-			goto out;
-		}
-
-			content_type = ela_execute_command_content_type(output_format);
-
-		if (ela_http_post(upload_uri,
-				   (const uint8_t *)(formatted.data ? formatted.data : ""),
-				   formatted.len,
-				   content_type,
-				   insecure,
-				   false,
-				   errbuf,
-				   sizeof(errbuf)) < 0) {
-			fprintf(stderr, "Failed HTTP(S) POST to %s: %s\n", upload_uri, errbuf[0] ? errbuf : "unknown error");
-			ret = 1;
-			goto out;
-		}
-	}
-
-	if (fp) {
-		int status = pclose(fp);
-		fp = NULL;
-		if (status == -1 || (WIFEXITED(status) && WEXITSTATUS(status) != 0) || WIFSIGNALED(status))
-			ret = 1;
-	}
-
-out:
-	if (fp)
-		(void)pclose(fp);
-	if (output_sock >= 0)
-		close(output_sock);
-	free(upload_uri);
-	free(raw.data);
-	free(formatted.data);
-	return ret;
+	return 0;
 }

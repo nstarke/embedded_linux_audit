@@ -59,9 +59,31 @@ async function cleanup() {
     }
     sessionRegistry.removeSession(mac);
   }
+  if (typeof wss.close === 'function') {
+    closeOps.push(new Promise((resolve) => {
+      try {
+        wss.close(() => resolve());
+      } catch {
+        resolve();
+      }
+    }));
+  }
+  if (typeof httpServer.close === 'function') {
+    closeOps.push(new Promise((resolve) => {
+      try {
+        httpServer.close(() => resolve());
+      } catch {
+        resolve();
+      }
+    }));
+  }
   await Promise.all(closeOps);
   if (process.stdin.isTTY) {
-    process.stdin.setRawMode(false);
+    try {
+      process.stdin.setRawMode(false);
+    } catch {
+      // ignore TTY shutdown errors during cleanup
+    }
   }
   process.stdout.write(ANSI.reset + '\r\n');
 }
@@ -87,7 +109,7 @@ const wss = new WebSocketServer({
   server: httpServer,
   verifyClient(info, done) {
     const url = info.req.url || '';
-    if (!url.startsWith('/terminal/')) {
+    if (!/^\/terminal\/[^/]+$/.test(url)) {
       done(false, 404, 'Not Found');
       return;
     }
@@ -105,7 +127,11 @@ wss.on('connection', async (ws, req) => {
 
   const existing = sessionRegistry.getSession(mac);
   if (existing) {
-    existing.ws.close();
+    try {
+      existing.ws.close();
+    } catch (err) {
+      process.stderr.write(`Warning: failed to close existing terminal session for ${mac}: ${err.message}\n`);
+    }
     sessionRegistry.removeSession(mac);
   }
 
