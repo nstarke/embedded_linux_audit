@@ -49,6 +49,7 @@ int run_script_exec_util_tests(void);
 int run_interactive_util_tests(void);
 int run_linux_execute_command_util_tests(void);
 int run_linux_download_file_util_tests(void);
+int run_linux_grep_util_tests(void);
 
 int main(void)
 {
@@ -103,6 +104,7 @@ int main(void)
 	rc |= run_interactive_util_tests();
 	rc |= run_linux_execute_command_util_tests();
 	rc |= run_linux_download_file_util_tests();
+	rc |= run_linux_grep_util_tests();
 
 	return rc;
 }
