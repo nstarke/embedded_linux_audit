@@ -1,17 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later - Copyright (c) 2026 Nicholas Starke
 
 #include "embedded_linux_audit_cmd.h"
+#include "linux_download_file_util.h"
 #include "util/command_io_util.h"
 
-#include <errno.h>
-#include <getopt.h>
-#include <inttypes.h>
 #include <stdbool.h>
-#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/stat.h>
 
 static void usage(const char *prog)
 {
@@ -23,41 +19,17 @@ static void usage(const char *prog)
 
 int linux_download_file_scan_main(int argc, char **argv)
 {
-	const char *url = NULL;
-	const char *output_path = NULL;
-	bool insecure = getenv("ELA_OUTPUT_INSECURE") && !strcmp(getenv("ELA_OUTPUT_INSECURE"), "1");
-	bool verbose = getenv("ELA_VERBOSE") && !strcmp(getenv("ELA_VERBOSE"), "1");
+	struct ela_download_file_env env = {
+		.insecure = getenv("ELA_OUTPUT_INSECURE") && !strcmp(getenv("ELA_OUTPUT_INSECURE"), "1"),
+		.verbose = getenv("ELA_VERBOSE") && !strcmp(getenv("ELA_VERBOSE"), "1"),
+	};
+	struct ela_download_file_request request;
+	struct ela_download_file_result result;
 	char errbuf[256];
-	struct stat st;
-	uint64_t downloaded_bytes = 0;
-	bool success = false;
-	int opt;
+	char summary[512];
 	int ret = 0;
 
-	static const struct option long_opts[] = {
-		{ "help", no_argument, NULL, 'h' },
-		{ 0, 0, 0, 0 }
-	};
-
-	optind = 1;
-	while ((opt = getopt_long(argc, argv, "h", long_opts, NULL)) != -1) {
-		switch (opt) {
-		case 'h':
-			usage(argv[0]);
-			return 0;
-		default:
-			usage(argv[0]);
-			return 2;
-		}
-	}
-
-	if (optind >= argc) {
-		fprintf(stderr, "download-file requires a URL beginning with http:// or https://\n");
-		usage(argv[0]);
-		return 2;
-	}
-
-	if (ela_parse_download_file_args(argc - optind, argv + optind, &url, &output_path, errbuf, sizeof(errbuf)) != 0) {
+	if (ela_download_file_prepare_request(argc, argv, &env, &request, errbuf, sizeof(errbuf)) != 0) {
 		fprintf(stderr, "%s\n", errbuf);
 		if (strstr(errbuf, "Unexpected argument:") == NULL &&
 		    strstr(errbuf, "non-empty output path") == NULL &&
@@ -66,29 +38,20 @@ int linux_download_file_scan_main(int argc, char **argv)
 		return 2;
 	}
 
-	if (ela_http_get_to_file(url, output_path, insecure, verbose, errbuf, sizeof(errbuf)) < 0) {
-		fprintf(stderr, "Failed to download %s to %s: %s\n",
-			url,
-			output_path,
-			errbuf[0] ? errbuf : "unknown error");
-		ret = 1;
-	} else if (stat(output_path, &st) != 0) {
-		fprintf(stderr, "Downloaded %s but failed to stat %s: %s\n",
-			url,
-			output_path,
-			strerror(errno));
-		ret = 1;
-	} else {
-		downloaded_bytes = (uint64_t)st.st_size;
-		success = true;
+	if (request.show_help) {
+		usage(argv[0]);
+		return 0;
 	}
 
-	fprintf(stderr,
-		"download-file downloaded %" PRIu64 " bytes success=%s url=%s output=%s\n",
-		downloaded_bytes,
-		success ? "true" : "false",
-		url,
-		output_path);
+	errbuf[0] = '\0';
+	ret = ela_download_file_run(&request, NULL, &result, errbuf, sizeof(errbuf));
+	if (ret != 0 && errbuf[0]) {
+		fprintf(stderr, "%s\n", errbuf);
+	}
+
+	if (ela_download_file_format_summary(summary, sizeof(summary), &result, &request) == 0) {
+		fprintf(stderr, "%s", summary);
+	}
 
 	return ret;
 }

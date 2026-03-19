@@ -1,0 +1,11 @@
+coverage:
+  status:
+    project:
+      default:
+        # Allow up to 15% drop to accommodate coverage measurement expansions
+        # (e.g. when new source files are added to the coverage report).
+        threshold: 15%
+        informational: true
+    patch:
+      default:
+        target: 50%

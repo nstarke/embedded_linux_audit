@@ -4,6 +4,7 @@ CFLAGS  ?= -O2 -Wall -Wextra
 HOSTCFLAGS ?= -O2 -Wall -Wextra -std=c11 -D_DEFAULT_SOURCE
 UNIT_TEST_CC ?= $(HOSTCC)
 UNIT_TEST_CFLAGS ?= $(HOSTCFLAGS)
+override UNIT_TEST_CFLAGS += -DELA_AGENT_UNIT_TESTS=1
 UNIT_TEST_LDFLAGS ?=
 LDFLAGS ?=
 LDLIBS  ?=
@@ -426,6 +427,7 @@ AGENT_UNIT_TEST_SRC := \
 	tests/unit/agent/test_tpm2_output_format_util.c \
 	tests/unit/agent/test_tpm2_command_util.c \
 	tests/unit/agent/test_transfer_parse_util.c \
+	tests/unit/agent/test_transfer_cmd_util.c \
 	tests/unit/agent/test_ws_session_util.c \
 	tests/unit/agent/test_uboot_command_extract_util.c \
 	tests/unit/agent/test_uboot_image_format_util.c \
@@ -442,12 +444,19 @@ AGENT_UNIT_TEST_SRC := \
 	tests/unit/agent/test_http_client_body_util.c \
 	tests/unit/agent/test_http_client_protocol_util.c \
 	tests/unit/agent/test_http_client_runtime_util.c \
+	tests/unit/agent/test_http_client_transfer_util.c \
 	tests/unit/agent/test_ws_connect_util.c \
+	tests/unit/agent/test_ws_client_runtime_util.c \
 	tests/unit/agent/test_ws_interactive_util.c \
 	tests/unit/agent/test_ws_recv_util.c \
 	tests/unit/agent/test_remote_copy_cmd_util.c \
 	tests/unit/agent/test_script_exec_util.c \
-	tests/unit/agent/test_interactive_util.c
+	tests/unit/agent/test_interactive_util.c \
+	tests/unit/agent/test_linux_execute_command_util.c \
+	tests/unit/agent/test_linux_download_file_util.c \
+	tests/unit/agent/test_linux_grep_util.c \
+	tests/unit/agent/test_linux_list_files_util.c \
+	tests/unit/agent/test_linux_list_symlinks_util.c
 AGENT_UNIT_TEST_DEPS := \
 	agent/util/str_util.c \
 	agent/util/isa_util.c \
@@ -468,8 +477,12 @@ AGENT_UNIT_TEST_DEPS := \
 	agent/util/tpm2_output_format_util.c \
 	agent/util/tpm2_command_util.c \
 	agent/util/transfer_parse_util.c \
+	agent/transfer/transfer_cmd_util.c \
 	agent/linux/linux_dmesg_util.c \
 	agent/linux/remote_copy_cmd_util.c \
+	agent/linux/linux_grep_util.c \
+	agent/linux/linux_list_files_util.c \
+	agent/linux/linux_list_symlinks_util.c \
 	agent/net/ela_conf_util.c \
 	agent/net/ws_url_util.c \
 	agent/net/ws_connect_util.c \
@@ -484,7 +497,9 @@ AGENT_UNIT_TEST_DEPS := \
 	agent/net/http_client_body_util.c \
 	agent/net/http_client_protocol_util.c \
 	agent/net/http_client_runtime_util.c \
+	agent/net/http_client_transfer_util.c \
 	agent/net/ws_recv_util.c \
+	agent/net/ws_client_runtime_util.c \
 	agent/uboot/env/uboot_env_format_util.c \
 	agent/uboot/env/uboot_env_record_util.c \
 	agent/uboot/env/uboot_env_util.c \
@@ -494,6 +509,8 @@ AGENT_UNIT_TEST_DEPS := \
 	agent/uboot/image/uboot_command_extract_util.c \
 	agent/uboot/image/uboot_image_format_util.c \
 	agent/uboot/image/uboot_image_record_util.c \
+	agent/linux/linux_download_file_util.c \
+	agent/linux/linux_execute_command_util.c \
 	agent/shell/script_exec_util.c \
 	agent/shell/interactive_util.c \
 	agent/util/str_util.h \
@@ -514,8 +531,14 @@ AGENT_UNIT_TEST_DEPS := \
 	agent/util/tpm2_output_format_util.h \
 	agent/util/tpm2_command_util.h \
 	agent/util/transfer_parse_util.h \
+	agent/transfer/transfer_cmd_util.h \
 	agent/linux/linux_dmesg_util.h \
+	agent/linux/linux_download_file_util.h \
+	agent/linux/linux_grep_util.h \
+	agent/linux/linux_list_files_util.h \
+	agent/linux/linux_list_symlinks_util.h \
 	agent/linux/remote_copy_cmd_util.h \
+	agent/linux/linux_execute_command_util.h \
 	agent/net/ela_conf_util.h \
 	agent/net/ela_conf.h \
 	agent/net/ws_url_util.h \
@@ -526,7 +549,9 @@ AGENT_UNIT_TEST_DEPS := \
 	agent/net/ws_session_util.h \
 	agent/net/http_ws_policy_util.h \
 	agent/net/http_client_parse_util.h \
+	agent/net/http_client_transfer_util.h \
 	agent/net/ws_recv_util.h \
+	agent/net/ws_client_runtime_util.h \
 	agent/uboot/env/uboot_env_util.h \
 	agent/uboot/env/uboot_env_scan_util.h \
 	agent/uboot/audit-rules/uboot_audit_util.h \
@@ -584,8 +609,14 @@ else
 READLINE_DEPS :=
 endif
 
+# Allow callers (e.g. coverage-agent-c) to append extra flags without
+# expanding CC-path-dependent variables in the outer make context.
+CFLAGS           += $(CFLAGS_APPEND)
+HOSTCFLAGS       += $(HOSTCFLAGS_APPEND)
+UNIT_TEST_CFLAGS += $(UNIT_TEST_CFLAGS_APPEND)
+
 TARGET := embedded_linux_audit
-SRC    := agent/embedded_linux_audit.c agent/shell/interactive.c agent/shell/interactive_util.c agent/shell/script_exec.c agent/shell/script_exec_util.c agent/lifecycle.c agent/util/str_util.c agent/util/isa_util.c agent/util/crc32_util.c agent/util/http_uri_util.c agent/util/command_parse_util.c agent/util/record_formatter.c agent/util/list_files_filter_util.c agent/util/lifecycle_formatter.c agent/util/interactive_parse_util.c agent/util/file_scan_formatter.c agent/util/tpm2_pcr_parse_util.c agent/util/remote_copy_util.c agent/util/orom_util.c agent/util/http_protocol_util.c agent/util/command_io_util.c agent/util/ssh_parse_util.c agent/util/tpm2_output_format_util.c agent/util/tpm2_command_util.c agent/util/transfer_parse_util.c agent/net/tcp_util.c agent/net/tcp_runtime_util.c agent/net/http_client.c agent/net/http_client_parse_util.c agent/net/http_client_body_util.c agent/net/http_client_protocol_util.c agent/net/http_client_runtime_util.c agent/net/ela_conf.c agent/net/ela_conf_util.c agent/net/ws_url_util.c agent/net/ws_connect_util.c agent/net/ws_interactive_util.c agent/net/tcp_parse_util.c agent/net/api_key_util.c agent/net/ws_frame_util.c agent/net/ws_recv_util.c agent/net/ws_session_util.c agent/net/http_ws_policy_util.c agent/device/device_scan.c agent/uboot/env/uboot_env_cmd.c agent/uboot/env/uboot_env_format_util.c agent/uboot/env/uboot_env_record_util.c agent/uboot/env/uboot_env_util.c agent/uboot/env/uboot_env_scan_util.c agent/uboot/env/uboot_env_read_vars_cmd.c agent/uboot/env/uboot_env_write_vars_cmd.c agent/uboot/env/uboot_env_write_op.c agent/uboot/uboot_image_cmd.c agent/uboot/image/uboot_image_format_util.c agent/uboot/image/uboot_image_record_util.c agent/uboot/image/uboot_image_pull_cmd.c agent/uboot/image/uboot_image_find_address_cmd.c agent/uboot/image/uboot_image_list_commands_cmd.c agent/uboot/image/uboot_command_extract_util.c agent/uboot/uboot_security_audit_cmd.c agent/uboot/uboot_security_audit_util.c agent/uboot/audit/uboot_audit_output.c agent/uboot/audit-rules/uboot_audit_util.c agent/linux/linux_dmesg_cmd.c agent/linux/linux_dmesg_util.c agent/linux/linux_dmesg_watch_cmd.c agent/linux/linux_download_file_cmd.c agent/linux/linux_execute_command_cmd.c agent/linux/linux_grep_cmd.c agent/linux/linux_list_files_cmd.c agent/linux/linux_list_symlinks_cmd.c agent/linux/linux_remote_copy_cmd.c agent/linux/remote_copy_cmd_util.c agent/linux/linux_ssh_cmd.c agent/tpm2/tpm2_cmd.c agent/tpm2/tpm2_util.c agent/tpm2/tpm2_output.c agent/tpm2/tpm2_getcap.c agent/tpm2/tpm2_pcrread.c agent/tpm2/tpm2_nvreadpublic.c agent/tpm2/tpm2_createprimary.c agent/orom/orom_pull_cmd_common.c agent/efi/efi_pull_orom_cmd.c agent/efi/efi_dump_vars_cmd.c agent/bios/bios_pull_orom_cmd.c \
+SRC    := agent/embedded_linux_audit.c agent/shell/interactive.c agent/shell/interactive_util.c agent/shell/script_exec.c agent/shell/script_exec_util.c agent/lifecycle.c agent/util/str_util.c agent/util/isa_util.c agent/util/crc32_util.c agent/util/http_uri_util.c agent/util/command_parse_util.c agent/util/record_formatter.c agent/util/list_files_filter_util.c agent/util/lifecycle_formatter.c agent/util/interactive_parse_util.c agent/util/file_scan_formatter.c agent/util/tpm2_pcr_parse_util.c agent/util/remote_copy_util.c agent/util/orom_util.c agent/util/http_protocol_util.c agent/util/command_io_util.c agent/util/ssh_parse_util.c agent/util/tpm2_output_format_util.c agent/util/tpm2_command_util.c agent/util/transfer_parse_util.c agent/transfer/transfer_cmd_util.c agent/net/tcp_util.c agent/net/tcp_runtime_util.c agent/net/http_client.c agent/net/http_client_parse_util.c agent/net/http_client_body_util.c agent/net/http_client_protocol_util.c agent/net/http_client_runtime_util.c agent/net/http_client_transfer_util.c agent/net/ela_conf.c agent/net/ela_conf_util.c agent/net/ws_url_util.c agent/net/ws_connect_util.c agent/net/ws_client_runtime_util.c agent/net/ws_interactive_util.c agent/net/tcp_parse_util.c agent/net/api_key_util.c agent/net/ws_frame_util.c agent/net/ws_recv_util.c agent/net/ws_session_util.c agent/net/http_ws_policy_util.c agent/device/device_scan.c agent/uboot/env/uboot_env_cmd.c agent/uboot/env/uboot_env_format_util.c agent/uboot/env/uboot_env_record_util.c agent/uboot/env/uboot_env_util.c agent/uboot/env/uboot_env_scan_util.c agent/uboot/env/uboot_env_read_vars_cmd.c agent/uboot/env/uboot_env_write_vars_cmd.c agent/uboot/env/uboot_env_write_op.c agent/uboot/uboot_image_cmd.c agent/uboot/image/uboot_image_format_util.c agent/uboot/image/uboot_image_record_util.c agent/uboot/image/uboot_image_pull_cmd.c agent/uboot/image/uboot_image_find_address_cmd.c agent/uboot/image/uboot_image_list_commands_cmd.c agent/uboot/image/uboot_command_extract_util.c agent/uboot/uboot_security_audit_cmd.c agent/uboot/uboot_security_audit_util.c agent/uboot/audit/uboot_audit_output.c agent/uboot/audit-rules/uboot_audit_util.c agent/linux/linux_dmesg_cmd.c agent/linux/linux_dmesg_util.c agent/linux/linux_dmesg_watch_cmd.c agent/linux/linux_download_file_cmd.c agent/linux/linux_download_file_util.c agent/linux/linux_execute_command_cmd.c agent/linux/linux_execute_command_util.c agent/linux/linux_grep_cmd.c agent/linux/linux_grep_util.c agent/linux/linux_list_files_cmd.c agent/linux/linux_list_files_util.c agent/linux/linux_list_symlinks_cmd.c agent/linux/linux_list_symlinks_util.c agent/linux/linux_remote_copy_cmd.c agent/linux/remote_copy_cmd_util.c agent/linux/linux_ssh_cmd.c agent/tpm2/tpm2_cmd.c agent/tpm2/tpm2_util.c agent/tpm2/tpm2_output.c agent/tpm2/tpm2_getcap.c agent/tpm2/tpm2_pcrread.c agent/tpm2/tpm2_nvreadpublic.c agent/tpm2/tpm2_createprimary.c agent/orom/orom_pull_cmd_common.c agent/efi/efi_pull_orom_cmd.c agent/efi/efi_dump_vars_cmd.c agent/bios/bios_pull_orom_cmd.c \
 	  agent/uboot/audit-rules/uboot_validate_crc32_rule.c \
 	  agent/uboot/audit-rules/uboot_validate_cmdline_init_writeability_rule.c \
 	  agent/uboot/audit-rules/uboot_validate_env_security_rule.c \
@@ -759,7 +790,11 @@ $(TPM2_TSS_BUILD_STAMP): $(OPENSSL_SSL_LIB)
 		mkdir -p "$(TPM2_TSS_DIR)/m4"; \
 		cp build_support/tpm2-tss/ela_fallbacks.m4 "$(TPM2_TSS_DIR)/m4/ela_fallbacks.m4"; \
 		cp build_support/tpm2-tss/aminclude_static.am "$(TPM2_TSS_DIR)/aminclude_static.am"; \
-		cd $(TPM2_TSS_DIR) && ACLOCAL='aclocal -I m4' ./bootstrap; \
+		cd $(TPM2_TSS_DIR) && \
+			AUTORECONF='autoreconf -I m4' \
+			ACLOCAL='aclocal -I m4' \
+			ACLOCAL_PATH="$(abspath $(TPM2_TSS_DIR))/m4$${ACLOCAL_PATH:+:$${ACLOCAL_PATH}}" \
+			./bootstrap; \
 	fi
 	rm -rf $(TPM2_TSS_BUILD)
 	mkdir -p $(TPM2_TSS_BUILD)
@@ -935,8 +970,12 @@ $(AGENT_UNIT_TEST_BIN): $(AGENT_UNIT_TEST_SRC) $(AGENT_UNIT_TEST_DEPS) $(JSONC_L
 			agent/util/tpm2_output_format_util.c \
 			agent/util/tpm2_command_util.c \
 			agent/util/transfer_parse_util.c \
+			agent/transfer/transfer_cmd_util.c \
 			agent/linux/linux_dmesg_util.c \
 			agent/linux/remote_copy_cmd_util.c \
+			agent/linux/linux_grep_util.c \
+			agent/linux/linux_list_files_util.c \
+			agent/linux/linux_list_symlinks_util.c \
 			agent/net/ela_conf_util.c \
 			agent/net/ws_url_util.c \
 			agent/net/ws_connect_util.c \
@@ -951,7 +990,9 @@ $(AGENT_UNIT_TEST_BIN): $(AGENT_UNIT_TEST_SRC) $(AGENT_UNIT_TEST_DEPS) $(JSONC_L
 			agent/net/http_client_body_util.c \
 			agent/net/http_client_protocol_util.c \
 			agent/net/http_client_runtime_util.c \
+			agent/net/http_client_transfer_util.c \
 			agent/net/ws_recv_util.c \
+			agent/net/ws_client_runtime_util.c \
 			agent/uboot/env/uboot_env_format_util.c \
 			agent/uboot/env/uboot_env_record_util.c \
 			agent/uboot/env/uboot_env_util.c \
@@ -961,6 +1002,8 @@ $(AGENT_UNIT_TEST_BIN): $(AGENT_UNIT_TEST_SRC) $(AGENT_UNIT_TEST_DEPS) $(JSONC_L
 			agent/uboot/image/uboot_command_extract_util.c \
 			agent/uboot/image/uboot_image_format_util.c \
 			agent/uboot/image/uboot_image_record_util.c \
+			agent/linux/linux_download_file_util.c \
+			agent/linux/linux_execute_command_util.c \
 			agent/shell/script_exec_util.c \
 			agent/shell/interactive_util.c \
 			$(JSONC_LIB) \
@@ -980,14 +1023,14 @@ coverage-agent-c:
 		CC="$(COVERAGE_CC)" \
 		HOSTCC="$(COVERAGE_CC)" \
 		UNIT_TEST_CC="$(COVERAGE_CC)" \
-		CFLAGS="$(CFLAGS) $(COVERAGE_EXTRA_CFLAGS)" \
-		HOSTCFLAGS="$(HOSTCFLAGS) $(COVERAGE_EXTRA_HOSTCFLAGS)" \
-		UNIT_TEST_CFLAGS="$(UNIT_TEST_CFLAGS) $(COVERAGE_EXTRA_UNIT_TEST_CFLAGS)" \
-		LDFLAGS="$(LDFLAGS) $(COVERAGE_EXTRA_LDFLAGS)" \
-		UNIT_TEST_LDFLAGS="$(UNIT_TEST_LDFLAGS) $(COVERAGE_EXTRA_LDFLAGS)" \
+		CFLAGS_APPEND="$(COVERAGE_EXTRA_CFLAGS)" \
+		HOSTCFLAGS_APPEND="$(COVERAGE_EXTRA_HOSTCFLAGS)" \
+		UNIT_TEST_CFLAGS_APPEND="$(COVERAGE_EXTRA_UNIT_TEST_CFLAGS)" \
+		LDFLAGS="$(COVERAGE_EXTRA_LDFLAGS)" \
+		UNIT_TEST_LDFLAGS="$(COVERAGE_EXTRA_LDFLAGS)" \
 		ELA_USE_READLINE=0
 	./$(AGENT_UNIT_TEST_BIN)
-	bash tests/agent/shell/test_all.sh
+	BIN="./$(TARGET)" bash tests/agent/shell/test_all.sh
 	mkdir -p $(COVERAGE_DIR)
 	lcov --capture --directory . --output-file $(AGENT_C_COVERAGE_INFO)
 	lcov --remove $(AGENT_C_COVERAGE_INFO) \
@@ -996,7 +1039,8 @@ coverage-agent-c:
 		'tests/*' \
 		'generated/*' \
 		'compat/*' \
-		--output-file $(AGENT_C_COVERAGE_INFO)
+		--output-file $(AGENT_C_COVERAGE_INFO) || \
+		{ _lcov_rc=$$?; test "$$_lcov_rc" -eq 25; }
 
 coverage-agent-c-html: coverage-agent-c
 	genhtml $(AGENT_C_COVERAGE_INFO) --output-directory $(AGENT_C_COVERAGE_HTML)

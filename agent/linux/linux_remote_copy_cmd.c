@@ -42,15 +42,11 @@ static void usage(const char *prog)
 		prog);
 }
 
-static void print_verbose_copy_summary(const char *path, uint64_t copied_files)
+static int write_stderr_message(const char *message)
 {
-	char message[PATH_MAX + 96];
-
-	if (!path)
-		return;
-
-	if (ela_format_remote_copy_summary(message, sizeof(message), path, copied_files) == 0)
-		fputs(message, stderr);
+	if (!message)
+		return -1;
+	return fputs(message, stderr) < 0 ? -1 : 0;
 }
 
 static void report_remote_copy_http_error(const char *output_uri,
@@ -400,141 +396,45 @@ static int upload_path_http(const char *path,
 
 int linux_remote_copy_scan_main(int argc, char **argv)
 {
-	const char *output_tcp = getenv("ELA_OUTPUT_TCP");
-	const char *output_http = getenv("ELA_OUTPUT_HTTP");
-	const char *output_https = getenv("ELA_OUTPUT_HTTPS");
-	const char *output_uri = NULL;
-	const char *path = NULL;
-	struct stat st;
-	bool recursive = false;
-	bool allow_dev = false;
-	bool allow_sysfs = false;
-	bool allow_proc = false;
-	bool allow_symlinks = false;
-	bool insecure = getenv("ELA_OUTPUT_INSECURE") && !strcmp(getenv("ELA_OUTPUT_INSECURE"), "1");
-	bool verbose = getenv("ELA_VERBOSE") && !strcmp(getenv("ELA_VERBOSE"), "1");
-	uint64_t copied_files = 0;
-	int opt;
-
-	static const struct option long_opts[] = {
-		{ "help", no_argument, NULL, 'h' },
-		{ "recursive", no_argument, NULL, 'r' },
-		{ "allow-dev", no_argument, NULL, 'D' },
-		{ "allow-sysfs", no_argument, NULL, 'S' },
-		{ "allow-proc", no_argument, NULL, 'P' },
-		{ "allow-symlinks", no_argument, NULL, 'L' },
-		{ 0, 0, 0, 0 }
+	struct ela_remote_copy_env env = {
+		.output_tcp = getenv("ELA_OUTPUT_TCP"),
+		.output_http = getenv("ELA_OUTPUT_HTTP"),
+		.output_https = getenv("ELA_OUTPUT_HTTPS"),
+		.insecure = getenv("ELA_OUTPUT_INSECURE") && !strcmp(getenv("ELA_OUTPUT_INSECURE"), "1"),
+		.verbose = getenv("ELA_VERBOSE") && !strcmp(getenv("ELA_VERBOSE"), "1"),
 	};
+	struct ela_remote_copy_request request;
+	struct ela_remote_copy_execution_result result;
+	struct ela_remote_copy_execution_ops ops = {
+		.stat_fn = stat,
+		.validate_request_fn = ela_remote_copy_validate_request,
+		.path_is_allowed_fn = ela_path_is_allowed,
+		.stat_is_copyable_file_fn = ela_stat_is_copyable_file,
+		.send_file_to_tcp_fn = send_file_to_tcp,
+		.upload_path_http_fn = upload_path_http,
+		.format_summary_fn = ela_format_remote_copy_summary,
+		.write_stderr_fn = write_stderr_message,
+	};
+	char errbuf[256];
+	int rc;
 
-	optind = 1;
-	while ((opt = getopt_long(argc, argv, "hrDSPL", long_opts, NULL)) != -1) {
-		switch (opt) {
-		case 'h':
+	rc = ela_remote_copy_prepare_request(argc, argv, &env, &request, errbuf, sizeof(errbuf));
+	if (rc != 0) {
+		fprintf(stderr, "%s\n", errbuf);
+		if (strstr(errbuf, "Unexpected argument:") == NULL &&
+		    strstr(errbuf, "absolute file path:") == NULL &&
+		    strstr(errbuf, "Use only one of --output-http or --output-https") == NULL)
 			usage(argv[0]);
-			return 0;
-		case 'r':
-			recursive = true;
-			break;
-		case 'D':
-			allow_dev = true;
-			break;
-		case 'S':
-			allow_sysfs = true;
-			break;
-		case 'P':
-			allow_proc = true;
-			break;
-		case 'L':
-			allow_symlinks = true;
-			break;
-		default:
-			usage(argv[0]);
-			return 2;
-		}
+		return 2;
 	}
 
-	if (optind >= argc) {
-		fprintf(stderr, "remote-copy requires an absolute file path\n");
+	if (request.show_help) {
 		usage(argv[0]);
-		return 2;
-	}
-
-	path = argv[optind];
-	if (!path || path[0] != '/') {
-		fprintf(stderr, "remote-copy requires an absolute file path: %s\n", path ? path : "(null)");
-		return 2;
-	}
-
-	if (optind + 1 < argc) {
-		fprintf(stderr, "Unexpected argument: %s\n", argv[optind + 1]);
-		usage(argv[0]);
-		return 2;
-	}
-
-	if (getenv("ELA_OUTPUT_HTTP") && getenv("ELA_OUTPUT_HTTPS")) {
-		fprintf(stderr, "Use only one of --output-http or --output-https\n");
-		return 2;
-	}
-
-	if (output_http && strncmp(output_http, "http://", 7)) {
-		fprintf(stderr, "Invalid --output-http URI (expected http://host:port/...): %s\n", output_http);
-		return 2;
-	}
-
-	if (output_https && strncmp(output_https, "https://", 8)) {
-		fprintf(stderr, "Invalid --output-https URI (expected https://host:port/...): %s\n", output_https);
-		return 2;
-	}
-
-	if (output_http && output_https) {
-		fprintf(stderr, "Use only one of --output-http or --output-https\n");
-		return 2;
-	}
-
-	if (output_http)
-		output_uri = output_http;
-	if (output_https)
-		output_uri = output_https;
-
-	if (stat(path, &st) != 0) {
-		fprintf(stderr, "Cannot stat %s: %s\n", path, strerror(errno));
-		return 1;
-	}
-
-	{
-		char errbuf[256];
-		if (ela_remote_copy_validate_request(path, output_tcp, output_http, output_https,
-						     st.st_mode, errbuf, sizeof(errbuf)) != 0) {
-			fprintf(stderr, "%s\n", errbuf);
-			return 2;
-		}
-	}
-
-	if (!ela_path_is_allowed(path, allow_dev, allow_sysfs, allow_proc)) {
-		fprintf(stderr, "Refusing to copy restricted path without allow flag: %s\n", path);
-		return 2;
-	}
-
-	if (output_tcp) {
-		if (!ela_stat_is_copyable_file(&st)) {
-			fprintf(stderr, "Path is not a supported file for TCP transfer: %s\n", path);
-			return 1;
-		}
-		if (send_file_to_tcp(path, output_tcp, verbose) != 0)
-			return 1;
-		copied_files = 1;
-		if (verbose)
-			print_verbose_copy_summary(path, copied_files);
 		return 0;
 	}
 
-	if (upload_path_http(path, output_uri, insecure, verbose,
-			recursive, allow_dev, allow_sysfs, allow_proc, allow_symlinks,
-			&copied_files) != 0)
-		return 1;
-
-	if (verbose)
-		print_verbose_copy_summary(path, copied_files);
-
-	return 0;
+	rc = ela_remote_copy_execute(&request, &ops, &result, errbuf, sizeof(errbuf));
+	if (rc != 0 && errbuf[0])
+		fprintf(stderr, "%s\n", errbuf);
+	return rc;
 }
