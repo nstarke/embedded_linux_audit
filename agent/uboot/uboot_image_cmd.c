@@ -312,12 +312,8 @@ bool fit_find_load_address(const uint8_t *blob,
 			   uint64_t *uboot_off_out,
 			   bool *uboot_off_found_out)
 {
-	const uint32_t FDT_BEGIN_NODE = 1;
-	const uint32_t FDT_END_NODE = 2;
-	const uint32_t FDT_PROP = 3;
-	const uint32_t FDT_NOP = 4;
-	const uint32_t FDT_END = 9;
-	const int MAX_DEPTH = 64;
+	enum { FDT_BEGIN_NODE = 1, FDT_END_NODE = 2, FDT_PROP = 3, FDT_NOP = 4, FDT_END = 9 };
+	enum { MAX_DEPTH = 64 };
 	uint32_t off_dt_struct;
 	uint32_t off_dt_strings;
 	uint32_t total_size;
