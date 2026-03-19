@@ -3,6 +3,7 @@
 #include "transfer_cmd_util.h"
 
 #include "../embedded_linux_audit_cmd.h"
+#include "../net/ws_url_util.h"
 #include "../shell/interactive.h"
 
 #include <errno.h>
