@@ -46,6 +46,7 @@ for test_script in \
     "$SCRIPT_DIR/linux/test_linux_download_file_args.sh" \
     "$SCRIPT_DIR/linux/test_linux_execute_command_args.sh" \
     "$SCRIPT_DIR/linux/test_linux_grep_args.sh" \
+    "$SCRIPT_DIR/test_http_output_integration.sh" \
     "$SCRIPT_DIR/test_scripts.sh" \
     "$SCRIPT_DIR/linux/test_linux_list_files_args.sh" \
     "$SCRIPT_DIR/linux/test_linux_list_symlinks_args.sh" \
