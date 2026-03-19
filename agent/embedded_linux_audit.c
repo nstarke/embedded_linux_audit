@@ -4,6 +4,7 @@
 #include "net/api_key.h"
 #include "net/ela_conf.h"
 #include "net/ws_client.h"
+#include "net/ws_url_util.h"
 #include "shell/interactive.h"
 #include "shell/script_exec.h"
 #include "util/dispatch_util.h"
