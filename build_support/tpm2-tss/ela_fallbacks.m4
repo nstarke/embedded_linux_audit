@@ -90,6 +90,16 @@ AC_DEFUN([AX_ADD_AM_MACRO_STATIC], [
     :
 ])
 
+dnl LT_LIB_DLLOAD is defined in ltdl.m4 (libltdl-dev).  Since we build with
+dnl --enable-nodl the actual dlopen path is unused; stub it out so autoreconf
+dnl works without requiring libltdl-dev to be installed.
+AC_DEFUN([LT_LIB_DLLOAD], [
+    LIBLTDL=
+    LTDLINCL=
+    AC_SUBST([LIBLTDL])
+    AC_SUBST([LTDLINCL])
+])
+
 AC_DEFUN([DX_DOXYGEN_FEATURE], [:])
 AC_DEFUN([DX_DOT_FEATURE], [:])
 AC_DEFUN([DX_HTML_FEATURE], [:])
