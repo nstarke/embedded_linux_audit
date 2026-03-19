@@ -20,6 +20,7 @@ WS_MODULE_DIR="$REPO_ROOT/api/terminal/node_modules/ws"
 if [ -z "$NODE_BIN" ] || [ ! -f "$WS_SERVER_JS" ] || [ ! -d "$WS_MODULE_DIR" ]; then
     echo "[SKIP] websocket integration requires node and api/terminal/node_modules/ws"
     finish_tests
+    exit
 fi
 
 run_ws_case() {
