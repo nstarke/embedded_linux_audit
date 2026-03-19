@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later - Copyright (c) 2026 Nicholas Starke
 
 #include "tpm2_internal.h"
+#include "../util/tpm2_command_util.h"
 
 #include <errno.h>
 #include <getopt.h>
@@ -23,20 +24,6 @@ static void usage_createprimary(const char *prog)
 		prog);
 }
 
-static TPMI_RH_HIERARCHY parse_hierarchy(const char *name)
-{
-	if (!name)
-		return TPM2_RH_NULL;
-	if (!strcmp(name, "o") || !strcmp(name, "owner"))
-		return TPM2_RH_OWNER;
-	if (!strcmp(name, "p") || !strcmp(name, "platform"))
-		return TPM2_RH_PLATFORM;
-	if (!strcmp(name, "e") || !strcmp(name, "endorsement"))
-		return TPM2_RH_ENDORSEMENT;
-	if (!strcmp(name, "n") || !strcmp(name, "null"))
-		return TPM2_RH_NULL;
-	return 0;
-}
 
 static int write_serialized_handle(const char *path, const uint8_t *buf, size_t len)
 {
@@ -155,13 +142,16 @@ int cmd_createprimary(int argc, char **argv)
 		case 'h':
 			usage_createprimary(argv[0]);
 			return 0;
-		case 'C':
-			hierarchy = parse_hierarchy(optarg);
-			if (hierarchy == 0) {
+		case 'C': {
+			uint32_t h = 0;
+
+			if (ela_tpm2_parse_hierarchy(optarg, &h) != 0) {
 				fprintf(stderr, "tpm2: unsupported hierarchy: %s\n", optarg);
 				return 2;
 			}
+			hierarchy = (TPMI_RH_HIERARCHY)h;
 			break;
+		}
 		case 'g':
 			name_alg = parse_hash_alg(optarg);
 			if (name_alg == TPM2_ALG_ERROR) {

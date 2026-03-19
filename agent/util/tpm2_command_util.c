@@ -2,6 +2,7 @@
 
 #include "tpm2_command_util.h"
 
+#include <stdint.h>
 #include <string.h>
 
 static const struct ela_tpm2_command_desc g_tpm2_supported_commands[] = {
@@ -38,6 +39,36 @@ int ela_tpm2_find_command_index(const char *name)
 	for (i = 0; i < count; i++) {
 		if (!strcmp(name, commands[i].name))
 			return (int)i;
+	}
+
+	return -1;
+}
+
+int ela_tpm2_parse_hierarchy(const char *name, uint32_t *out)
+{
+	if (!out)
+		return -1;
+
+	if (!name) {
+		*out = ELA_TPM2_RH_NULL;
+		return 0;
+	}
+
+	if (!strcmp(name, "o") || !strcmp(name, "owner")) {
+		*out = ELA_TPM2_RH_OWNER;
+		return 0;
+	}
+	if (!strcmp(name, "p") || !strcmp(name, "platform")) {
+		*out = ELA_TPM2_RH_PLATFORM;
+		return 0;
+	}
+	if (!strcmp(name, "e") || !strcmp(name, "endorsement")) {
+		*out = ELA_TPM2_RH_ENDORSEMENT;
+		return 0;
+	}
+	if (!strcmp(name, "n") || !strcmp(name, "null")) {
+		*out = ELA_TPM2_RH_NULL;
+		return 0;
 	}
 
 	return -1;

@@ -3,6 +3,7 @@
 #include "tpm2_internal.h"
 
 #include "../util/command_parse_util.h"
+#include "../util/tpm2_pcr_parse_util.h"
 
 #include <errno.h>
 #include <inttypes.h>
@@ -27,17 +28,11 @@ int parse_u32(const char *text, uint32_t *value)
 
 TPM2_ALG_ID parse_hash_alg(const char *name)
 {
-	if (!name)
+	uint16_t alg;
+
+	if (ela_tpm2_parse_pcr_bank(name, &alg) != 0)
 		return TPM2_ALG_ERROR;
-	if (!strcmp(name, "sha1"))
-		return TPM2_ALG_SHA1;
-	if (!strcmp(name, "sha256"))
-		return TPM2_ALG_SHA256;
-	if (!strcmp(name, "sha384"))
-		return TPM2_ALG_SHA384;
-	if (!strcmp(name, "sha512"))
-		return TPM2_ALG_SHA512;
-	return TPM2_ALG_ERROR;
+	return (TPM2_ALG_ID)alg;
 }
 
 int tpm2_open(ESYS_CONTEXT **esys, TSS2_TCTI_CONTEXT **tcti)
