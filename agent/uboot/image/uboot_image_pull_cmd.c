@@ -3,6 +3,7 @@
 #include "embedded_linux_audit_cmd.h"
 #include "uboot/image/uboot_image_cmd.h"
 #include "uboot/image/uboot_image_internal.h"
+#include "uboot/image/uboot_image_pull_util.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -142,24 +143,23 @@ static int pull_image_to_output_tcp(const char *dev, uint64_t offset, const char
 		return 1;
 	}
 
-	if (!memcmp(hdr, "\x27\x05\x19\x56", 4)) {
-		if (!validate_uimage_header(hdr, offset, dev_size ? dev_size : UINT64_MAX)) {
+	{
+		int det = ela_uboot_image_pull_detect_size(
+			hdr, offset, dev_size ? dev_size : UINT64_MAX,
+			g_crc32_table, &total_size);
+		if (det == -1) {
+			uboot_img_err_printf("Unknown image format at offset 0x%jx\n", (uintmax_t)offset);
+			close(fd);
+			return 1;
+		} else if (det == -2) {
 			uboot_img_err_printf("uImage header validation failed at offset 0x%jx\n", (uintmax_t)offset);
 			close(fd);
 			return 1;
-		}
-		total_size = UIMAGE_HDR_SIZE + ela_read_be32(hdr + 12);
-	} else if (!memcmp(hdr, "\xD0\x0D\xFE\xED", 4)) {
-		if (!validate_fit_header(hdr, offset, dev_size ? dev_size : UINT64_MAX)) {
+		} else if (det == -3) {
 			uboot_img_err_printf("FIT header validation failed at offset 0x%jx\n", (uintmax_t)offset);
 			close(fd);
 			return 1;
 		}
-		total_size = ela_read_be32(hdr + 4);
-	} else {
-		uboot_img_err_printf("Unknown image format at offset 0x%jx\n", (uintmax_t)offset);
-		close(fd);
-		return 1;
 	}
 
 	sock = ela_connect_tcp_ipv4(output_tcp_target);
@@ -219,24 +219,23 @@ static int pull_image_to_output_http(const char *dev, uint64_t offset, const cha
 		return 1;
 	}
 
-	if (!memcmp(hdr, "\x27\x05\x19\x56", 4)) {
-		if (!validate_uimage_header(hdr, offset, dev_size ? dev_size : UINT64_MAX)) {
+	{
+		int det = ela_uboot_image_pull_detect_size(
+			hdr, offset, dev_size ? dev_size : UINT64_MAX,
+			g_crc32_table, &total_size);
+		if (det == -1) {
+			uboot_img_err_printf("Unknown image format at offset 0x%jx\n", (uintmax_t)offset);
+			close(fd);
+			return 1;
+		} else if (det == -2) {
 			uboot_img_err_printf("uImage header validation failed at offset 0x%jx\n", (uintmax_t)offset);
 			close(fd);
 			return 1;
-		}
-		total_size = UIMAGE_HDR_SIZE + ela_read_be32(hdr + 12);
-	} else if (!memcmp(hdr, "\xD0\x0D\xFE\xED", 4)) {
-		if (!validate_fit_header(hdr, offset, dev_size ? dev_size : UINT64_MAX)) {
+		} else if (det == -3) {
 			uboot_img_err_printf("FIT header validation failed at offset 0x%jx\n", (uintmax_t)offset);
 			close(fd);
 			return 1;
 		}
-		total_size = ela_read_be32(hdr + 4);
-	} else {
-		uboot_img_err_printf("Unknown image format at offset 0x%jx\n", (uintmax_t)offset);
-		close(fd);
-		return 1;
 	}
 
 	img = malloc((size_t)total_size);
@@ -253,7 +252,7 @@ static int pull_image_to_output_http(const char *dev, uint64_t offset, const cha
 		return 1;
 	}
 
-	snprintf(file_path, sizeof(file_path), "%s@0x%jx.bin", dev, (uintmax_t)offset);
+	ela_uboot_image_pull_build_file_path(dev, offset, file_path, sizeof(file_path));
 	upload_uri = ela_http_build_upload_uri(output_http_uri, "uboot-image", file_path);
 	if (!upload_uri) {
 		uboot_img_err_printf("Failed to build upload URI for %s\n", dev);
