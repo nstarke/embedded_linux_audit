@@ -427,6 +427,7 @@ AGENT_UNIT_TEST_SRC := \
 	tests/unit/agent/test_tpm2_output_format_util.c \
 	tests/unit/agent/test_tpm2_command_util.c \
 	tests/unit/agent/test_transfer_parse_util.c \
+	tests/unit/agent/test_transfer_cmd_util.c \
 	tests/unit/agent/test_ws_session_util.c \
 	tests/unit/agent/test_uboot_command_extract_util.c \
 	tests/unit/agent/test_uboot_image_format_util.c \
@@ -474,6 +475,7 @@ AGENT_UNIT_TEST_DEPS := \
 	agent/util/tpm2_output_format_util.c \
 	agent/util/tpm2_command_util.c \
 	agent/util/transfer_parse_util.c \
+	agent/transfer/transfer_cmd_util.c \
 	agent/linux/linux_dmesg_util.c \
 	agent/linux/remote_copy_cmd_util.c \
 	agent/linux/linux_grep_util.c \
@@ -525,6 +527,7 @@ AGENT_UNIT_TEST_DEPS := \
 	agent/util/tpm2_output_format_util.h \
 	agent/util/tpm2_command_util.h \
 	agent/util/transfer_parse_util.h \
+	agent/transfer/transfer_cmd_util.h \
 	agent/linux/linux_dmesg_util.h \
 	agent/linux/linux_download_file_util.h \
 	agent/linux/linux_grep_util.h \
@@ -961,6 +964,7 @@ $(AGENT_UNIT_TEST_BIN): $(AGENT_UNIT_TEST_SRC) $(AGENT_UNIT_TEST_DEPS) $(JSONC_L
 			agent/util/tpm2_output_format_util.c \
 			agent/util/tpm2_command_util.c \
 			agent/util/transfer_parse_util.c \
+			agent/transfer/transfer_cmd_util.c \
 			agent/linux/linux_dmesg_util.c \
 			agent/linux/remote_copy_cmd_util.c \
 			agent/linux/linux_grep_util.c \
