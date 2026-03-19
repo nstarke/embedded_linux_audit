@@ -57,6 +57,9 @@ function loadTerminalServer(options = {}) {
   jest.resetModules();
 
   const sessionRegistry = createFakeSessionRegistry();
+  const readlineMock = {
+    emitKeypressEvents: jest.fn(),
+  };
   const httpServer = {
     listen: jest.fn(),
   };
@@ -132,8 +135,7 @@ function loadTerminalServer(options = {}) {
   if (options.appendBatchOutput) {
     appendBatchOutput.mockImplementation(options.appendBatchOutput);
   }
-
-  jest.spyOn(process, 'on').mockImplementation(() => process);
+  const processOn = jest.spyOn(process, 'on').mockImplementation(() => process);
   jest.spyOn(process.stdout, 'write').mockImplementation(() => true);
   jest.spyOn(process.stderr, 'write').mockImplementation(() => true);
   jest.spyOn(process, 'exit').mockImplementation(() => undefined);
@@ -145,9 +147,7 @@ function loadTerminalServer(options = {}) {
   jest.doMock('http', () => ({
     createServer: jest.fn(() => httpServer),
   }), { virtual: true });
-  jest.doMock('readline', () => ({
-    emitKeypressEvents: jest.fn(),
-  }), { virtual: true });
+  jest.doMock('readline', () => readlineMock, { virtual: true });
   jest.doMock('ws', () => ({ WebSocketServer }), { virtual: true });
   jest.doMock('../../../../api/auth', () => auth);
   jest.doMock('../../../../api/lib/config', () => ({
@@ -200,6 +200,7 @@ function loadTerminalServer(options = {}) {
   return {
     server,
     sessionRegistry,
+    readlineMock,
     httpServer,
     WebSocketServer,
     auth,
@@ -222,6 +223,7 @@ function loadTerminalServer(options = {}) {
     startSessionUpdate,
     shouldEnterPassthrough: sessionInput.shouldEnterPassthrough,
     remoteInputForKeypress: sessionInput.remoteInputForKeypress,
+    processOn,
   };
 }
 
@@ -619,5 +621,95 @@ describe('terminal server orchestration', () => {
     server.tui._localCmdBuf = 'alias new-name';
     await server.tui._handleSessionKey('', 'return', false);
     expect(process.stdout.write).toHaveBeenCalledWith('\r\n[failed to save alias: alias save failed]\r\n');
+  });
+
+  test('setupInput warns when stdin is not a TTY', () => {
+    const { server, readlineMock } = loadTerminalServer();
+    process.stdin.isTTY = false;
+
+    server.setupInput();
+
+    expect(process.stderr.write).toHaveBeenCalledWith('Warning: stdin is not a TTY; interactive TUI unavailable.\n');
+    expect(readlineMock.emitKeypressEvents).not.toHaveBeenCalled();
+    expect(process.stdin.setRawMode).not.toHaveBeenCalled();
+    expect(process.stdin.on).not.toHaveBeenCalled();
+  });
+
+  test('setupInput enables raw mode and forwards keypresses to the TUI when stdin is a TTY', () => {
+    const { server, readlineMock } = loadTerminalServer();
+    process.stdin.isTTY = true;
+    const handleKeySpy = jest.spyOn(server.tui, 'handleKey').mockImplementation(() => {});
+
+    server.setupInput();
+
+    expect(readlineMock.emitKeypressEvents).toHaveBeenCalledWith(process.stdin);
+    expect(process.stdin.setRawMode).toHaveBeenCalledWith(true);
+    expect(process.stdin.on).toHaveBeenCalledWith('keypress', expect.any(Function));
+
+    const keypressHandler = process.stdin.on.mock.calls[0][1];
+    keypressHandler('a', { name: 'a', ctrl: false });
+    expect(handleKeySpy).toHaveBeenCalledWith('a', 'a', false);
+  });
+
+  test('registers SIGINT and SIGTERM handlers at module load', () => {
+    const { processOn } = loadTerminalServer();
+
+    expect(processOn).toHaveBeenCalledWith('SIGINT', expect.any(Function));
+    expect(processOn).toHaveBeenCalledWith('SIGTERM', expect.any(Function));
+  });
+
+  test('main exits immediately when validate-key auth initialization fails', async () => {
+    const { server, auth, initializeDatabase } = loadTerminalServer({
+      auth: {
+        init: jest.fn(() => false),
+      },
+    });
+    auth.init.mockImplementation(() => false);
+    const exitError = new Error('exit');
+    process.exit.mockImplementationOnce(() => {
+      throw exitError;
+    });
+
+    await expect(server.main()).rejects.toBe(exitError);
+
+    expect(process.stderr.write).toHaveBeenCalledWith('error: --validate-key is set but ela.key is missing or contains no valid tokens\n');
+    expect(initializeDatabase).not.toHaveBeenCalled();
+  });
+
+  test('main starts the HTTP server end-to-end and renders the TUI after listen callback', async () => {
+    const { server, auth, initializeDatabase, runMigrations, loadLegacyAliases, httpServer, readlineMock } = loadTerminalServer();
+    process.stdin.isTTY = true;
+    jest.spyOn(server.tui, 'render').mockImplementation(() => {});
+
+    await server.main();
+
+    expect(auth.init).toHaveBeenCalledWith('/tmp/ela.key', false);
+    expect(initializeDatabase).toHaveBeenCalledTimes(1);
+    expect(runMigrations).toHaveBeenCalledTimes(1);
+    expect(loadLegacyAliases).toHaveBeenCalledWith(server.LEGACY_ALIASES_FILE);
+    expect(httpServer.listen).toHaveBeenCalledWith(8080, '127.0.0.1', expect.any(Function));
+
+    const listenCallback = httpServer.listen.mock.calls[0][2];
+    listenCallback();
+
+    expect(readlineMock.emitKeypressEvents).toHaveBeenCalledWith(process.stdin);
+    expect(process.stdin.setRawMode).toHaveBeenCalledWith(true);
+    expect(process.stdout.write).toHaveBeenCalledWith('ELA terminal API listening on ws://127.0.0.1:8080\n');
+    expect(server.tui.render).toHaveBeenCalledTimes(1);
+  });
+
+  test('main propagates startup failures and start() logs, closes DB, and exits', async () => {
+    const failure = new Error('legacy alias load failed');
+    const { server, closeDatabase } = loadTerminalServer({
+      loadLegacyAliases: () => {
+        throw failure;
+      },
+    });
+
+    await server.start();
+
+    expect(process.stderr.write).toHaveBeenCalledWith(expect.stringContaining('legacy alias load failed'));
+    expect(closeDatabase).toHaveBeenCalledTimes(1);
+    expect(process.exit).toHaveBeenCalledWith(1);
   });
 });
