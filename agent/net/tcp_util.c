@@ -28,67 +28,40 @@
 static int ela_has_dns_configured(void)
 {
 	FILE *f;
-	char  line[256];
+	int rc;
 
 	f = fopen("/etc/resolv.conf", "r");
 	if (!f)
 		return 0;
-	while (fgets(line, sizeof(line), f)) {
-		char nameserver[16];
-
-		if (ela_tcp_parse_nameserver_line(line, nameserver, sizeof(nameserver)) == 0) {
-			fclose(f);
-			return 1;
-		}
-	}
+	rc = ela_tcp_has_nameserver_in_file(f);
 	fclose(f);
-	return 0;
+	return rc;
 }
 
 /* Read /proc/net/route; return the default gateway as a dotted string.
  * Returns 0 on success, -1 if not found. */
 static int ela_get_default_gateway(char *buf, size_t buf_sz)
 {
-	FILE        *f;
-	char         line[256];
-	int          found = 0;
+	FILE *f;
+	int rc;
 
 	f = fopen("/proc/net/route", "r");
 	if (!f)
 		return -1;
-
-	/* skip header */
-	if (!fgets(line, sizeof(line), f)) {
-		fclose(f);
-		return -1;
-	}
-
-	while (fgets(line, sizeof(line), f)) {
-		if (ela_tcp_parse_default_gateway_line(line, buf, buf_sz) == 0) {
-			found = 1;
-			break;
-		}
-	}
-
+	rc = ela_tcp_get_gateway_from_route_file(f, buf, buf_sz);
 	fclose(f);
-	return found ? 0 : -1;
+	return rc;
 }
 
 static int ela_read_nameservers(char ns[][16], int max_ns)
 {
 	FILE *f;
-	char line[256];
-	int count = 0;
+	int count;
 
 	f = fopen("/etc/resolv.conf", "r");
 	if (!f)
 		return 0;
-
-	while (count < max_ns && fgets(line, sizeof(line), f)) {
-		if (ela_tcp_parse_nameserver_line(line, ns[count], sizeof(ns[count])) == 0)
-			count++;
-	}
-
+	count = ela_tcp_read_nameservers_from_file(f, ns, max_ns);
 	fclose(f);
 	return count;
 }

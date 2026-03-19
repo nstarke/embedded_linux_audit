@@ -65,7 +65,7 @@ int ela_dns_build_query_packet(const char *hostname, uint8_t *buf, int buf_len)
 		const char *dot = strchr(p, '.');
 		int label_len = dot ? (int)(dot - p) : (int)strlen(p);
 
-		if (label_len <= 0 || pos + 1 + label_len + 4 > buf_len)
+		if (label_len <= 0 || label_len > 63 || pos + 1 + label_len + 4 > buf_len)
 			return -1;
 		buf[pos++] = (uint8_t)label_len;
 		memcpy(buf + pos, p, (size_t)label_len);
