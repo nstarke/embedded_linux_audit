@@ -12,6 +12,8 @@ enum uboot_output_format {
 	FW_OUTPUT_JSON,
 };
 
+struct embedded_linux_audit_rule;
+
 /* Shared internal function declarations (defined in uboot_security_audit_cmd.c) */
 void uboot_audit_out_printf(const char *fmt, ...);
 void uboot_audit_err_printf(const char *fmt, ...);

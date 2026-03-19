@@ -5,8 +5,8 @@
 #if defined(ELA_HAS_TPM2)
 
 #include "../embedded_linux_audit_cmd.h"
+#include "../util/tpm2_output_format_util.h"
 
-#include <json.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -27,9 +27,7 @@ int tpm2_output_init(struct tpm2_output_ctx *ctx)
 
 	ctx->format = (output_format && *output_format) ? output_format : "txt";
 
-	if (strcmp(ctx->format, "txt") &&
-	    strcmp(ctx->format, "csv") &&
-	    strcmp(ctx->format, "json")) {
+	if (!ela_tpm2_is_valid_output_format(ctx->format)) {
 		fprintf(stderr, "tpm2: invalid output format: %s\n", ctx->format);
 		return 2;
 	}
@@ -76,43 +74,7 @@ int tpm2_output_kv(struct tpm2_output_ctx *ctx, const char *key, const char *val
 	if (!ctx || !key || !value)
 		return -1;
 
-	if (!strcmp(ctx->format, "txt")) {
-		if (output_buffer_append(&ctx->buf, key)   != 0 ||
-		    output_buffer_append(&ctx->buf, ": ")  != 0 ||
-		    output_buffer_append(&ctx->buf, value) != 0 ||
-		    output_buffer_append(&ctx->buf, "\n")  != 0)
-			return -1;
-		return 0;
-	}
-
-	if (!strcmp(ctx->format, "csv")) {
-		if (csv_write_to_buf(&ctx->buf, key)      != 0 ||
-		    output_buffer_append(&ctx->buf, ",")   != 0 ||
-		    csv_write_to_buf(&ctx->buf, value)     != 0 ||
-		    output_buffer_append(&ctx->buf, "\n")  != 0)
-			return -1;
-		return 0;
-	}
-
-	if (!strcmp(ctx->format, "json")) {
-		json_object *obj = json_object_new_object();
-		const char  *js;
-		int          err;
-
-		if (!obj)
-			return -1;
-		json_object_object_add(obj, "key",   json_object_new_string(key));
-		json_object_object_add(obj, "value", json_object_new_string(value));
-		js  = json_object_to_json_string_ext(obj,
-		          JSON_C_TO_STRING_PLAIN | JSON_C_TO_STRING_NOSLASHESCAPE);
-		err = output_buffer_append(&ctx->buf, js);
-		if (err == 0)
-			err = output_buffer_append(&ctx->buf, "\n");
-		json_object_put(obj);
-		return err;
-	}
-
-	return -1;
+	return ela_tpm2_format_kv_record(&ctx->buf, ctx->format, key, value);
 }
 
 int tpm2_output_flush(struct tpm2_output_ctx *ctx, const char *upload_type)
@@ -135,20 +97,14 @@ int tpm2_output_flush(struct tpm2_output_ctx *ctx, const char *upload_type)
 
 	if (ctx->output_uri && upload_type) {
 		char       *upload_uri = ela_http_build_upload_uri(ctx->output_uri, upload_type, NULL);
-		const char *content_type;
-
 		if (!upload_uri) {
 			fprintf(stderr, "tpm2: unable to build upload URI\n");
 			return 1;
 		}
 
-		content_type = !strcmp(ctx->format, "csv")  ? "text/csv; charset=utf-8" :
-		               !strcmp(ctx->format, "json") ? "application/json; charset=utf-8" :
-		                                              "text/plain; charset=utf-8";
-
 		if (ela_http_post(upload_uri,
 		                  (const uint8_t *)data, len,
-		                  content_type,
+		                  ela_tpm2_output_content_type(ctx->format),
 		                  ctx->insecure,
 		                  false,
 		                  errbuf, sizeof(errbuf)) < 0) {

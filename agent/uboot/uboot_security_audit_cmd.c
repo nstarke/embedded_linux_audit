@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later - Copyright (c) 2026 Nicholas Starke
 
 #include "embedded_linux_audit_cmd.h"
+#include "uboot/uboot_security_audit_util.h"
 #include "uboot/audit/uboot_audit_internal.h"
 
 #include <errno.h>
@@ -28,14 +29,6 @@
 #define DEFAULT_AUDIT_SIZE 0x10000ULL
 #define AUTO_SCAN_MAX_BYTES (64ULL * 1024ULL * 1024ULL)
 
-static uint32_t read_be32_local(const uint8_t *p)
-{
-	return ((uint32_t)p[0] << 24) |
-		((uint32_t)p[1] << 16) |
-		((uint32_t)p[2] << 8) |
-		(uint32_t)p[3];
-}
-
 static enum uboot_output_format g_output_format = FW_OUTPUT_TXT;
 static int g_output_sock = -1;
 static const char *g_output_http_uri;
@@ -47,34 +40,19 @@ static bool g_http_verbose;
 
 static bool buffer_has_newline(const char *buf, size_t len)
 {
-	if (!buf || !len)
-		return false;
-
-	return memchr(buf, '\n', len) != NULL;
+	return ela_uboot_buffer_has_newline(buf, len);
 }
 
 static int flush_output_http_buffer(void);
 
 static bool audit_rule_may_need_signature_artifacts(const char *rule_filter)
 {
-	if (!rule_filter || !*rule_filter)
-		return true;
-
-	return !strcmp(rule_filter, "uboot_validate_secureboot");
+	return ela_uboot_audit_rule_may_need_signature_artifacts(rule_filter);
 }
 
 static enum uboot_output_format detect_output_format(void)
 {
-	const char *fmt = getenv("ELA_OUTPUT_FORMAT");
-
-	if (!fmt || !*fmt || !strcmp(fmt, "txt"))
-		return FW_OUTPUT_TXT;
-	if (!strcmp(fmt, "csv"))
-		return FW_OUTPUT_CSV;
-	if (!strcmp(fmt, "json"))
-		return FW_OUTPUT_JSON;
-
-	return FW_OUTPUT_TXT;
+	return ela_uboot_audit_detect_output_format(getenv("ELA_OUTPUT_FORMAT"));
 }
 
 static void send_to_output_socket(const char *buf, size_t len)
@@ -357,35 +335,7 @@ static const char *resolve_first_readable_glob(const char *pattern, char **owned
 
 static bool fit_header_looks_valid(const uint8_t *p, uint64_t abs_off, uint64_t dev_size)
 {
-	uint32_t totalsize = read_be32_local(p + 4);
-	uint32_t off_dt_struct = read_be32_local(p + 8);
-	uint32_t off_dt_strings = read_be32_local(p + 12);
-	uint32_t off_mem_rsvmap = read_be32_local(p + 16);
-	uint32_t version = read_be32_local(p + 20);
-	uint32_t last_comp_version = read_be32_local(p + 24);
-	uint32_t size_dt_strings = read_be32_local(p + 32);
-	uint32_t size_dt_struct = read_be32_local(p + 36);
-
-	if (totalsize < FIT_MIN_TOTAL_SIZE || totalsize > FIT_MAX_TOTAL_SIZE)
-		return false;
-	if (abs_off + totalsize > dev_size)
-		return false;
-	if (off_mem_rsvmap < 40 || off_mem_rsvmap >= totalsize)
-		return false;
-	if (off_dt_struct >= totalsize || off_dt_strings >= totalsize)
-		return false;
-	if (size_dt_struct == 0 || size_dt_strings == 0)
-		return false;
-	if ((uint64_t)off_dt_struct + size_dt_struct > totalsize)
-		return false;
-	if ((uint64_t)off_dt_strings + size_dt_strings > totalsize)
-		return false;
-	if (version < 16 || version > 17)
-		return false;
-	if (last_comp_version > version)
-		return false;
-
-	return true;
+	return ela_uboot_fit_header_looks_valid(p, abs_off, dev_size);
 }
 
 static int find_fit_blob_in_device(const char *dev, uint64_t *off_out, uint32_t *size_out)
@@ -421,7 +371,7 @@ static int find_fit_blob_in_device(const char *dev, uint64_t *off_out, uint32_t 
 		if (!fit_header_looks_valid(hdr, off, dev_size))
 			continue;
 		*off_out = off;
-		*size_out = read_be32_local(hdr + 4);
+		*size_out = ela_uboot_read_be32(hdr + 4);
 		close(fd);
 		return 0;
 	}
@@ -466,7 +416,6 @@ static int extract_region_to_file(const char *dev, uint64_t off, uint32_t size, 
 static int find_pubkey_pem_in_device(const char *dev, char **pem_out)
 {
 	static const char begin_marker[] = "-----BEGIN PUBLIC KEY-----";
-	static const char end_marker[] = "-----END PUBLIC KEY-----";
 	uint8_t chunk[1024 * 1024];
 	char *carry = NULL;
 	size_t carry_len = 0;
@@ -512,18 +461,8 @@ static int find_pubkey_pem_in_device(const char *dev, char **pem_out)
 
 		b = strstr(combined, begin_marker);
 		if (b) {
-			char *e = strstr(b, end_marker);
-			if (e) {
-				size_t pem_len = (size_t)(e - b) + strlen(end_marker);
-				char *pem = malloc(pem_len + 2);
-				if (!pem) {
-					free(combined);
-					break;
-				}
-				memcpy(pem, b, pem_len);
-				if (pem_len == 0 || pem[pem_len - 1] != '\n')
-					pem[pem_len++] = '\n';
-				pem[pem_len] = '\0';
+			char *pem = NULL;
+			if (ela_uboot_extract_public_key_pem(b, combined_len - (size_t)(b - combined), &pem) == 0) {
 				*pem_out = pem;
 				free(combined);
 				free(carry);

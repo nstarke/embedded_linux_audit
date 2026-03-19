@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later - Copyright (c) 2026 Nicholas Starke
 
 #include "embedded_linux_audit_cmd.h"
+#include "util/file_scan_formatter.h"
+#include "util/output_buffer.h"
 
 #include <dirent.h>
 #include <errno.h>
@@ -19,12 +21,6 @@
 #define PATH_MAX 4096
 #endif
 
-struct output_buffer {
-	char *data;
-	size_t len;
-	size_t cap;
-};
-
 static void usage(const char *prog)
 {
 	fprintf(stderr,
@@ -36,41 +32,6 @@ static void usage(const char *prog)
 		prog);
 }
 
-static int output_buffer_append_len(struct output_buffer *buf, const char *text, size_t text_len)
-{
-	size_t need;
-	char *tmp;
-	size_t new_cap;
-
-	if (!buf || (!text && text_len != 0))
-		return -1;
-
-	need = buf->len + text_len + 1;
-	if (need > buf->cap) {
-		new_cap = buf->cap ? buf->cap : 1024;
-		while (new_cap < need)
-			new_cap *= 2;
-		tmp = realloc(buf->data, new_cap);
-		if (!tmp)
-			return -1;
-		buf->data = tmp;
-		buf->cap = new_cap;
-	}
-
-	if (text_len > 0)
-		memcpy(buf->data + buf->len, text, text_len);
-	buf->len += text_len;
-	buf->data[buf->len] = '\0';
-	return 0;
-}
-
-static int output_buffer_append(struct output_buffer *buf, const char *text)
-{
-	if (!text)
-		return -1;
-	return output_buffer_append_len(buf, text, strlen(text));
-}
-
 static int emit_match(const char *path,
 			     unsigned long line_no,
 			     const char *line,
@@ -79,23 +40,13 @@ static int emit_match(const char *path,
 			     struct output_buffer *buf)
 {
 	struct output_buffer out = {0};
-	char prefix[PATH_MAX + 64];
-	int n;
 	int ret = -1;
 
 	if (!path || !line)
 		return -1;
 
-	n = snprintf(prefix, sizeof(prefix), "%s:%lu:", path, line_no);
-	if (n < 0 || (size_t)n >= sizeof(prefix))
+	if (ela_format_grep_match_record(&out, path, line_no, line) != 0)
 		goto out;
-
-	if (output_buffer_append(&out, prefix) != 0 || output_buffer_append(&out, line) != 0)
-		goto out;
-	if (out.len == 0 || out.data[out.len - 1] != '\n') {
-		if (output_buffer_append(&out, "\n") != 0)
-			goto out;
-	}
 
 	if (output_sock >= 0 && ela_send_all(output_sock, (const uint8_t *)out.data, out.len) < 0)
 		goto out;

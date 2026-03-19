@@ -5,6 +5,7 @@ set -u
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 RELEASE_BUILD_SCRIPT="$REPO_ROOT/tests/compile_release_binaries_locally.sh"
+UNIT_TEST_BIN_DIR="$REPO_ROOT/generated/qemu_unit_tests"
 
 # shellcheck source=tests/agent/qemu/common.sh
 . "$SCRIPT_DIR/common.sh"
@@ -12,6 +13,7 @@ RELEASE_BUILD_SCRIPT="$REPO_ROOT/tests/compile_release_binaries_locally.sh"
 usage() {
     echo "Usage: $0 [--clean] [--jobs N] [qemu-test-args...]" >&2
     echo "  --clean    rebuild all release binaries before running tests" >&2
+    echo "             and rebuild all per-ISA C unit test binaries" >&2
     echo "  --jobs N   run up to N ISA tests in parallel (default: 1)" >&2
     exit 1
 }
@@ -27,6 +29,94 @@ count_matches() {
     log_path="$2"
 
     grep -c -- "$pattern" "$log_path" 2>/dev/null || true
+}
+
+unit_test_zig_targets() {
+    isa="$1"
+
+    case "$isa" in
+        arm32-le) echo "arm-linux-musleabi" ;;
+        arm32-be) echo "armeb-linux-musleabi,armeb-linux-gnueabi" ;;
+        aarch64-le) echo "aarch64-linux-musl" ;;
+        aarch64-be) echo "aarch64_be-linux-musl" ;;
+        mips-le) echo "mipsel-linux-musleabi,mipsel-linux-musleabihf" ;;
+        mips-be) echo "mips-linux-musleabi,mips-linux-musleabihf" ;;
+        mips64-le) echo "mips64el-linux-muslabi64,mips64el-linux-gnuabi64" ;;
+        mips64-be) echo "mips64-linux-muslabi64,mips64-linux-gnuabi64" ;;
+        powerpc-le) echo "powerpc64le-linux-musl,powerpc64le-linux-gnu" ;;
+        powerpc-be) echo "powerpc-linux-musleabi,powerpc-linux-musleabihf,powerpc-linux-gnueabi,powerpc-linux-gnueabihf" ;;
+        x86) echo "x86-linux-musl" ;;
+        x86_64) echo "x86_64-linux-musl" ;;
+        riscv32) echo "riscv32-linux-musl,riscv32-linux-gnu" ;;
+        riscv64) echo "riscv64-linux-musl,riscv64-linux-gnu" ;;
+        *)
+            echo ""
+            return 1
+            ;;
+    esac
+}
+
+unit_test_bin_path() {
+    isa="$1"
+    echo "$UNIT_TEST_BIN_DIR/$isa/agent_unit_tests-$isa"
+}
+
+ensure_qemu_unit_test_binary() {
+    isa="$1"
+    clean_build="${2:-0}"
+    unit_bin="$(unit_test_bin_path "$isa")"
+    zig_path="$(command -v zig 2>/dev/null || true)"
+
+    if [ "$clean_build" -ne 1 ] && [ -x "$unit_bin" ]; then
+        return 0
+    fi
+
+    if [ -z "$zig_path" ]; then
+        echo "error: zig is required to build per-ISA C unit test binaries for QEMU" >&2
+        exit 1
+    fi
+
+    targets="$(unit_test_zig_targets "$isa")"
+    if [ -z "$targets" ]; then
+        echo "error: unsupported ISA for QEMU C unit test build: $isa" >&2
+        exit 1
+    fi
+
+    mkdir -p "$UNIT_TEST_BIN_DIR/$isa"
+    rm -f "$unit_bin"
+
+    OLD_IFS="$IFS"
+    IFS=','
+    set -- $targets
+    IFS="$OLD_IFS"
+
+    for target in "$@"; do
+        echo "Building QEMU C unit test binary for $isa via target $target"
+        if make clean \
+            && make build-unit-agent-c \
+                ELA_USE_READLINE=0 \
+                LDFLAGS=-static \
+                UNIT_TEST_CC="zig cc -target $target" \
+                UNIT_TEST_CFLAGS="-O2 -Wall -Wextra -std=c11 -D_DEFAULT_SOURCE" \
+                UNIT_TEST_LDFLAGS=-static \
+                CMAKE_C_COMPILER="$zig_path" \
+                CMAKE_C_COMPILER_ARG1=cc \
+                CMAKE_C_COMPILER_TARGET="$target" \
+                CC="zig cc -target $target"; then
+            cp "$REPO_ROOT/generated/agent_unit_tests" "$unit_bin"
+            chmod +x "$unit_bin"
+            return 0
+        fi
+        echo "warning: failed building QEMU C unit test binary for $isa via target $target" >&2
+    done
+
+    echo "error: failed to build any per-ISA C unit test binary for $isa" >&2
+    exit 1
+}
+
+test_script_isa() {
+    test_script="$1"
+    basename "$test_script" .sh
 }
 
 while [ "$#" -gt 0 ]; do
@@ -94,13 +184,20 @@ TEST_SCRIPTS=(
     "$SCRIPT_DIR/riscv64.sh"
 )
 
+for test_script in "${TEST_SCRIPTS[@]}"; do
+    isa_name="$(test_script_isa "$test_script")"
+    ensure_qemu_unit_test_binary "$isa_name" "$clean_release_binaries"
+done
+
 if [ "$jobs_limit" -eq 1 ]; then
     # Sequential: stream output in real time (original behavior)
     for test_script in "${TEST_SCRIPTS[@]}"; do
+        isa_name="$(test_script_isa "$test_script")"
+        unit_bin="$(unit_test_bin_path "$isa_name")"
         echo
         echo "===== Running $(basename "$test_script") ====="
         test_log="$(mktemp /tmp/ela-qemu-test-all.XXXXXX)"
-        /bin/sh "$test_script" "$@" 2>&1 | tee "$test_log"
+        ELA_QEMU_UNIT_TEST_BIN="$unit_bin" /bin/sh "$test_script" "$@" 2>&1 | tee "$test_log"
         test_rc=${PIPESTATUS[0]}
 
         test_passes="$(count_matches '^\[PASS\]' "$test_log")"
@@ -156,6 +253,8 @@ else
 
     for test_script in "${TEST_SCRIPTS[@]}"; do
         name="$(basename "$test_script")"
+        isa_name="$(test_script_isa "$test_script")"
+        unit_bin="$(unit_test_bin_path "$isa_name")"
         log="$(mktemp /tmp/ela-qemu-test-all.XXXXXX)"
 
         # Wait for a free slot
@@ -165,7 +264,7 @@ else
         done
 
         printf "  [starting] %s\n" "$name"
-        /bin/sh "$test_script" "$@" >"$log" 2>&1 &
+        ELA_QEMU_UNIT_TEST_BIN="$unit_bin" /bin/sh "$test_script" "$@" >"$log" 2>&1 &
         idx="${#job_pids[@]}"
         job_pids[$idx]=$!
         job_logs[$idx]="$log"

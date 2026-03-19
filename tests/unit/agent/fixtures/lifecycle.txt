@@ -1,0 +1,1 @@
+log agent_timestamp=2026-03-18T12:34:56Z phase=start command=linux execute-command echo,hi rc=0

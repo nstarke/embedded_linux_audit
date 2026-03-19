@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later - Copyright (c) 2026 Nicholas Starke
 
 #include "embedded_linux_audit_cmd.h"
+#include "uboot/image/uboot_command_extract_util.h"
 #include "uboot/image/uboot_image_cmd.h"
 #include "uboot/image/uboot_image_internal.h"
 
@@ -297,95 +298,7 @@ static int extract_commands_from_blob(const uint8_t *blob,
 				      struct extracted_command **out_cmds,
 				      size_t *out_count)
 {
-	static const char *const known_cmds[] = {
-		"help", "printenv", "setenv", "env", "saveenv", "run", "echo", "version",
-		"bdinfo", "boot", "bootm", "booti", "bootz", "bootd", "source", "reset",
-		"mm", "mw", "md", "cmp", "cp", "go", "load", "loadb", "loadx", "loady",
-		"fatload", "fatls", "ext4load", "ext4ls", "nand", "ubi", "ubifsmount",
-		"ubifsls", "ubifsload", "sf", "mmc", "usb", "dhcp", "tftpboot", "ping",
-		"crc32", "iminfo", "imls", "fdt", "itest", "true", "false", "sleep"
-	};
-	static const char *const stop_tokens[] = {
-		"u-boot", "usage", "unknown", "command", "commands", "description",
-		"firmware", "images", "image", "load", "data", "hash", "signature", "algo"
-	};
-	struct extracted_command *cmds = NULL;
-	size_t count = 0;
-	char token[64];
-
-	if (!blob || !blob_len || !out_cmds || !out_count)
-		return -1;
-
-	for (size_t i = 0; i < blob_len;) {
-		size_t start = i;
-		size_t end;
-		size_t len;
-		bool known;
-		bool context_seen;
-		bool has_upper = false;
-		bool has_sep = false;
-		int occ_score = 0;
-
-		if (!is_printable_ascii(blob[i])) {
-			i++;
-			continue;
-		}
-
-		while (i < blob_len && is_printable_ascii(blob[i]))
-			i++;
-		end = i;
-		len = end - start;
-
-		if (len >= sizeof(token))
-			continue;
-
-		memcpy(token, blob + start, len);
-		token[len] = '\0';
-
-		if (!token_looks_like_command_name(token))
-			continue;
-
-		for (size_t j = 0; j < len; j++) {
-			if (isupper((unsigned char)token[j]))
-				has_upper = true;
-			if (token[j] == '-' || token[j] == '_')
-				has_sep = true;
-		}
-
-		if (token_in_list_ci(token, stop_tokens, ARRAY_SIZE(stop_tokens)))
-			continue;
-
-		known = token_in_list_ci(token, known_cmds, ARRAY_SIZE(known_cmds));
-		context_seen = token_has_command_context(blob, blob_len, start, end);
-
-		if (known)
-			occ_score += 3;
-		if (context_seen)
-			occ_score += 3;
-		if (!has_upper)
-			occ_score += 1;
-		if (len >= 3 && len <= 12)
-			occ_score += 1;
-		if (has_sep)
-			occ_score += 1;
-
-		if (occ_score < 2)
-			continue;
-
-		if (add_extracted_command(&cmds, &count, token, occ_score, known, context_seen) < 0) {
-			for (size_t k = 0; k < count; k++)
-				free(cmds[k].name);
-			free(cmds);
-			return -1;
-		}
-	}
-
-	if (count)
-		qsort(cmds, count, sizeof(*cmds), extracted_command_cmp);
-
-	*out_cmds = cmds;
-	*out_count = count;
-	return 0;
+	return ela_uboot_extract_commands_from_blob(blob, blob_len, out_cmds, out_count);
 }
 
 int list_image_commands(const char *dev, uint64_t offset)
@@ -495,8 +408,8 @@ int list_image_commands(const char *dev, uint64_t offset)
 
 	bool emitted_any = false;
 	for (size_t i = 0; i < cmd_count; i++) {
-		int score = extracted_command_final_score(&cmds[i]);
-		const char *confidence = confidence_from_score(score);
+		int score = ela_uboot_extracted_command_final_score(&cmds[i]);
+		const char *confidence = ela_uboot_confidence_from_score(score);
 
 		if (score < 5)
 			continue;
@@ -520,9 +433,7 @@ int list_image_commands(const char *dev, uint64_t offset)
 	rc = 0;
 
 out:
-	for (size_t i = 0; i < cmd_count; i++)
-		free(cmds[i].name);
-	free(cmds);
+	ela_uboot_free_extracted_commands(cmds, cmd_count);
 	free(image_blob);
 	close(fd);
 	return rc;

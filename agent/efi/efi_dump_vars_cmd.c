@@ -2,11 +2,12 @@
 
 #include "embedded_linux_audit_cmd.h"
 
+#include "util/command_parse_util.h"
 #include "util/output_buffer.h"
+#include "util/record_formatter.h"
 
 #include <errno.h>
 #include <getopt.h>
-#include <json.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -85,51 +86,13 @@ static int emit_record(const char *output_format,
 
 	snprintf(attr_buf, sizeof(attr_buf), "0x%08x", attributes);
 	snprintf(size_buf, sizeof(size_buf), "%zu", data_size);
-
-	if (!strcmp(output_format, "txt")) {
-		if (output_buffer_append(&line, "guid=") != 0 ||
-		    output_buffer_append(&line, guid_str) != 0 ||
-		    output_buffer_append(&line, " name=") != 0 ||
-		    output_buffer_append(&line, name) != 0 ||
-		    output_buffer_append(&line, " attributes=") != 0 ||
-		    output_buffer_append(&line, attr_buf) != 0 ||
-		    output_buffer_append(&line, " size=") != 0 ||
-		    output_buffer_append(&line, size_buf) != 0 ||
-		    output_buffer_append(&line, " data_hex=") != 0 ||
-		    output_buffer_append(&line, hex_data) != 0 ||
-		    output_buffer_append(&line, "\n") != 0)
-			goto out;
-	} else if (!strcmp(output_format, "csv")) {
-		if (csv_write_to_buf(&line, guid_str) != 0 ||
-		    output_buffer_append(&line, ",") != 0 ||
-		    csv_write_to_buf(&line, name) != 0 ||
-		    output_buffer_append(&line, ",") != 0 ||
-		    csv_write_to_buf(&line, attr_buf) != 0 ||
-		    output_buffer_append(&line, ",") != 0 ||
-		    csv_write_to_buf(&line, size_buf) != 0 ||
-		    output_buffer_append(&line, ",") != 0 ||
-		    csv_write_to_buf(&line, hex_data) != 0 ||
-		    output_buffer_append(&line, "\n") != 0)
-			goto out;
-	} else if (!strcmp(output_format, "json")) {
-		json_object *obj = json_object_new_object();
-		const char *js;
-
-		if (!obj)
-			goto out;
-		json_object_object_add(obj, "record", json_object_new_string("efi_var"));
-		json_object_object_add(obj, "guid", json_object_new_string(guid_str));
-		json_object_object_add(obj, "name", json_object_new_string(name));
-		json_object_object_add(obj, "attributes", json_object_new_uint64((uint64_t)attributes));
-		json_object_object_add(obj, "size", json_object_new_uint64((uint64_t)data_size));
-		json_object_object_add(obj, "data_hex", json_object_new_string(hex_data));
-		js = json_object_to_json_string_ext(obj, JSON_C_TO_STRING_PLAIN | JSON_C_TO_STRING_NOSLASHESCAPE);
-		if (output_buffer_append(&line, js) != 0 || output_buffer_append(&line, "\n") != 0) {
-			json_object_put(obj);
-			goto out;
-		}
-		json_object_put(obj);
-	} else {
+	if (ela_format_efi_var_record(&line,
+				      output_format,
+				      guid_str,
+				      name,
+				      attributes,
+				      data_size,
+				      hex_data) != 0) {
 		goto out;
 	}
 
@@ -175,8 +138,7 @@ int efi_dump_vars_main(int argc, char **argv)
 		{ 0, 0, 0, 0 }
 	};
 
-	if (!output_format || !*output_format)
-		output_format = "txt";
+	output_format = ela_output_format_or_default(output_format, "txt");
 
 	optind = 1;
 	while ((opt = getopt_long(argc, argv, "h", long_opts, NULL)) != -1) {
@@ -196,7 +158,7 @@ int efi_dump_vars_main(int argc, char **argv)
 		return 2;
 	}
 
-	if (strcmp(output_format, "txt") && strcmp(output_format, "csv") && strcmp(output_format, "json")) {
+	if (!ela_output_format_is_valid(output_format)) {
 		fprintf(stderr, "Invalid output format for efi dump-vars: %s\n", output_format);
 		return 2;
 	}

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later - Copyright (c) 2026 Nicholas Starke
 
 #include "embedded_linux_audit_cmd.h"
+#include "linux/linux_dmesg_util.h"
+#include "util/command_parse_util.h"
 
 #include <errno.h>
 #include <getopt.h>
@@ -25,25 +27,6 @@ struct line_buffer {
 	char *text;
 	size_t len;
 };
-
-static int parse_positive_line_count(const char *spec, size_t *count_out)
-{
-	char *end = NULL;
-	unsigned long value;
-
-	if (!spec || !*spec || !count_out)
-		return -1;
-	if (spec[0] == '-')
-		return -1;
-
-	errno = 0;
-	value = strtoul(spec, &end, 10);
-	if (errno != 0 || !end || *end != '\0' || value == 0 || (unsigned long)(size_t)value != value)
-		return -1;
-
-	*count_out = (size_t)value;
-	return 0;
-}
 
 static void send_to_output_socket(const char *buf, size_t len)
 {
@@ -228,6 +211,7 @@ int linux_dmesg_scan_main(int argc, char **argv)
 	size_t tail_seen = 0;
 	size_t head_count = 0;
 	size_t head_seen = 0;
+	enum ela_dmesg_mode mode = ELA_DMESG_MODE_ALL;
 	int ret = 0;
 	int opt;
 
@@ -252,13 +236,13 @@ int linux_dmesg_scan_main(int argc, char **argv)
 			usage(argv[0]);
 			return 0;
 		case 'H':
-			if (parse_positive_line_count(optarg, &head_count) != 0) {
+			if (ela_parse_positive_size_arg(optarg, &head_count) != 0) {
 				err_printf("Invalid --head value (expected positive integer): %s\n", optarg);
 				return 2;
 			}
 			break;
 		case 'T':
-			if (parse_positive_line_count(optarg, &tail_count) != 0) {
+			if (ela_parse_positive_size_arg(optarg, &tail_count) != 0) {
 				err_printf("Invalid --tail value (expected positive integer): %s\n", optarg);
 				return 2;
 			}
@@ -269,8 +253,8 @@ int linux_dmesg_scan_main(int argc, char **argv)
 		}
 	}
 
-	if (head_count && tail_count) {
-		err_printf("Use only one of --head or --tail\n");
+	if (ela_dmesg_determine_mode(head_count, tail_count, &mode, line, sizeof(line)) != 0) {
+		err_printf("%s\n", line);
 		return 2;
 	}
 
@@ -318,7 +302,7 @@ int linux_dmesg_scan_main(int argc, char **argv)
 	if (g_verbose)
 		err_printf("Collecting dmesg output\n");
 
-	if (tail_count) {
+	if (mode == ELA_DMESG_MODE_TAIL) {
 		tail_lines = calloc(tail_count, sizeof(*tail_lines));
 		if (!tail_lines) {
 			err_printf("Out of memory while preparing tail buffer\n");
@@ -335,7 +319,7 @@ int linux_dmesg_scan_main(int argc, char **argv)
 	}
 
 	while (fgets(line, sizeof(line), fp)) {
-		if (head_count) {
+		if (mode == ELA_DMESG_MODE_HEAD) {
 			if (head_seen < head_count)
 				out_printf("%s", line);
 			head_seen++;
@@ -344,7 +328,7 @@ int linux_dmesg_scan_main(int argc, char **argv)
 			continue;
 		}
 
-		if (tail_count) {
+		if (mode == ELA_DMESG_MODE_TAIL) {
 			size_t slot = tail_seen % tail_count;
 			char *copy = strdup(line);
 
@@ -368,13 +352,12 @@ int linux_dmesg_scan_main(int argc, char **argv)
 		ret = 1;
 	fp = NULL;
 
-	if (ret == 0 && tail_count) {
+	if (ret == 0 && mode == ELA_DMESG_MODE_TAIL) {
 		size_t start;
 		size_t emit_count;
 		size_t i;
 
-		emit_count = tail_seen < tail_count ? tail_seen : tail_count;
-		start = tail_seen < tail_count ? 0 : (tail_seen % tail_count);
+		ela_dmesg_tail_window(tail_seen, tail_count, &start, &emit_count);
 		for (i = 0; i < emit_count; i++) {
 			size_t slot = (start + i) % tail_count;
 			if (tail_lines[slot].text)

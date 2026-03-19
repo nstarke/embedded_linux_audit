@@ -1,0 +1,1 @@
+guid=12345678-1234-1234-1234-1234567890ab name=Boot0001 attributes=0x00000007 size=4 data_hex=deadbeef

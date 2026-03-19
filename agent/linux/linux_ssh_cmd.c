@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later - Copyright (c) 2026 Nicholas Starke
 
 #include "embedded_linux_audit_cmd.h"
+#include "../util/ssh_parse_util.h"
 
 #include <dirent.h>
 #include <errno.h>
@@ -120,10 +121,8 @@ static const char *linux_ssh_default_user(void)
 	const char *user = getenv("USER");
 	struct passwd *pw;
 
-	if (user && *user)
-		return user;
 	pw = getpwuid(getuid());
-	return (pw && pw->pw_name && *pw->pw_name) ? pw->pw_name : "root";
+	return ela_ssh_effective_user(user, (pw && pw->pw_name) ? pw->pw_name : NULL);
 }
 
 static int linux_ssh_connect_session(const char *host, uint16_t port, ssh_session *session_out)
@@ -206,26 +205,7 @@ static int linux_ssh_ensure_remote_dir(sftp_session sftp, const char *dir)
 
 static int linux_ssh_parent_dir(const char *path, char *out, size_t out_sz)
 {
-	const char *slash;
-	size_t len;
-
-	if (!path || !*path || !out || out_sz < 2)
-		return -1;
-	slash = strrchr(path, '/');
-	if (!slash) {
-		snprintf(out, out_sz, ".");
-		return 0;
-	}
-	len = (size_t)(slash - path);
-	if (len == 0) {
-		snprintf(out, out_sz, "/");
-		return 0;
-	}
-	if (len + 1 > out_sz)
-		return -1;
-	memcpy(out, path, len);
-	out[len] = '\0';
-	return 0;
+	return ela_ssh_parent_dir(path, out, out_sz);
 }
 
 static int linux_ssh_copy_file(sftp_session sftp, const char *local_path, const char *remote_path)
@@ -546,16 +526,19 @@ static int linux_ssh_socks_main(int argc, char **argv)
 			usage(argv[0]);
 			return 0;
 		case 'p':
-			port = (uint16_t)strtoul(optarg, NULL, 10);
+			if (ela_ssh_parse_port(optarg, &port) != 0)
+				return 2;
 			break;
 		case 'r':
 			remote_host = optarg;
 			break;
 		case 't':
-			remote_port = (uint16_t)strtoul(optarg, NULL, 10);
+			if (ela_ssh_parse_port(optarg, &remote_port) != 0)
+				return 2;
 			break;
 		case 'l':
-			local_port = (uint16_t)strtoul(optarg, NULL, 10);
+			if (ela_ssh_parse_port(optarg, &local_port) != 0)
+				return 2;
 			break;
 		default:
 			return 2;
@@ -640,7 +623,10 @@ static int linux_ssh_client_main(int argc, char **argv)
 	while ((opt = getopt_long(argc, argv, "hp:", long_opts, NULL)) != -1) {
 		switch (opt) {
 		case 'h': usage(argv[0]); return 0;
-		case 'p': port = (uint16_t)strtoul(optarg, NULL, 10); break;
+		case 'p':
+			if (ela_ssh_parse_port(optarg, &port) != 0)
+				return 2;
+			break;
 		default: return 2;
 		}
 	}
@@ -680,7 +666,10 @@ static int linux_ssh_copy_main(int argc, char **argv)
 	while ((opt = getopt_long(argc, argv, "hp:l:o:r", long_opts, NULL)) != -1) {
 		switch (opt) {
 		case 'h': usage(argv[0]); return 0;
-		case 'p': port = (uint16_t)strtoul(optarg, NULL, 10); break;
+		case 'p':
+			if (ela_ssh_parse_port(optarg, &port) != 0)
+				return 2;
+			break;
 		case 'l': local_path = optarg; break;
 		case 'o': remote_path = optarg; break;
 		case 'r': recursive = true; break;
@@ -734,7 +723,10 @@ static int linux_ssh_tunnel_main(int argc, char **argv)
 	while ((opt = getopt_long(argc, argv, "hp:", long_opts, NULL)) != -1) {
 		switch (opt) {
 		case 'h': usage(argv[0]); return 0;
-		case 'p': port = (uint16_t)strtoul(optarg, NULL, 10); break;
+		case 'p':
+			if (ela_ssh_parse_port(optarg, &port) != 0)
+				return 2;
+			break;
 		default: return 2;
 		}
 	}

@@ -7,6 +7,13 @@
 
 #include "ws_client.h"
 #include "api_key.h"
+#include "http_ws_policy_util.h"
+#include "ws_connect_util.h"
+#include "ws_interactive_util.h"
+#include "ws_recv_util.h"
+#include "ws_frame_util.h"
+#include "ws_session_util.h"
+#include "ws_url_util.h"
 #include "tcp_util.h"
 #include "../embedded_linux_audit_cmd.h"
 #include "../shell/interactive.h"
@@ -215,39 +222,6 @@ static ssize_t ws_conn_write(const struct ela_ws_conn *ws,
  * Base64 encoding (for Sec-WebSocket-Key)
  * ---------------------------------------------------------------------- */
 
-static const char b64_alphabet[] =
-	"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-
-static void base64_encode(const uint8_t *in, size_t in_len,
-			  char *out, size_t out_sz)
-{
-	size_t i = 0;
-	size_t o = 0;
-	uint32_t v;
-
-	while (i + 2 < in_len && o + 4 < out_sz) {
-		v = ((uint32_t)in[i] << 16) |
-		    ((uint32_t)in[i+1] << 8) |
-		    (uint32_t)in[i+2];
-		out[o++] = b64_alphabet[(v >> 18) & 0x3F];
-		out[o++] = b64_alphabet[(v >> 12) & 0x3F];
-		out[o++] = b64_alphabet[(v >>  6) & 0x3F];
-		out[o++] = b64_alphabet[(v      ) & 0x3F];
-		i += 3;
-	}
-	if (i < in_len && o + 4 < out_sz) {
-		v = (uint32_t)in[i] << 16;
-		if (i + 1 < in_len)
-			v |= (uint32_t)in[i+1] << 8;
-		out[o++] = b64_alphabet[(v >> 18) & 0x3F];
-		out[o++] = b64_alphabet[(v >> 12) & 0x3F];
-		out[o++] = (i + 1 < in_len) ? b64_alphabet[(v >> 6) & 0x3F] : '=';
-		out[o++] = '=';
-	}
-	if (o < out_sz)
-		out[o] = '\0';
-}
-
 /* -------------------------------------------------------------------------
  * Primary MAC address discovery (same as original ws_client.c)
  * ---------------------------------------------------------------------- */
@@ -273,12 +247,10 @@ static void get_primary_mac(char *buf, size_t buf_sz)
 				continue;
 
 			m = sll->sll_addr;
-			if (!m[0] && !m[1] && !m[2] && !m[3] && !m[4] && !m[5])
+			if (ela_ws_mac_is_zero(m))
 				continue;
 
-			snprintf(buf, buf_sz,
-				 "%02x-%02x-%02x-%02x-%02x-%02x",
-				 m[0], m[1], m[2], m[3], m[4], m[5]);
+			ela_ws_format_mac_bytes(m, buf, buf_sz);
 			freeifaddrs(ifap);
 			return;
 		}
@@ -304,83 +276,6 @@ int ela_is_ws_url(const char *url)
  * Parse ws[s]://host[:port][/path] → host, port, path.
  * Returns 0 on success, -1 if the URL is malformed.
  */
-static int ws_parse_url(const char *url,
-			char *host, size_t host_sz,
-			uint16_t *port_out,
-			char *path, size_t path_sz,
-			int *is_tls_out)
-{
-	const char *p;
-	const char *host_start;
-	size_t host_len;
-	const char *port_str;
-	const char *path_start;
-
-	if (!url)
-		return -1;
-
-	if (strncmp(url, "wss://", 6) == 0) {
-		*is_tls_out = 1;
-		p = url + 6;
-		*port_out = 443;
-	} else if (strncmp(url, "ws://", 5) == 0) {
-		*is_tls_out = 0;
-		p = url + 5;
-		*port_out = 80;
-	} else {
-		return -1;
-	}
-
-	host_start = p;
-
-	/* Find end of host — either ':', '/', or end of string */
-	while (*p && *p != ':' && *p != '/')
-		p++;
-
-	host_len = (size_t)(p - host_start);
-	if (host_len == 0 || host_len >= host_sz)
-		return -1;
-	memcpy(host, host_start, host_len);
-	host[host_len] = '\0';
-
-	if (*p == ':') {
-		p++;
-		port_str = p;
-		while (*p >= '0' && *p <= '9')
-			p++;
-		if (p == port_str)
-			return -1;
-		*port_out = (uint16_t)strtoul(port_str, NULL, 10);
-	}
-
-	path_start = (*p == '/') ? p : "/";
-	if (snprintf(path, path_sz, "%s", path_start) >= (int)path_sz)
-		return -1;
-
-	return 0;
-}
-
-/* Build the full ws[s]://host[:port]/terminal/<mac> URL */
-static int build_ws_url(const char *base_url, const char *mac,
-			char *out, size_t out_sz)
-{
-	size_t scheme_len;
-	char stripped[512];
-	size_t slen;
-	int n;
-
-	scheme_len = strncmp(base_url, "wss://", 6) == 0 ? 6 : 5;
-
-	strncpy(stripped, base_url, sizeof(stripped) - 1);
-	stripped[sizeof(stripped) - 1] = '\0';
-	slen = strlen(stripped);
-	while (slen > scheme_len && stripped[slen - 1] == '/')
-		stripped[--slen] = '\0';
-
-	n = snprintf(out, out_sz, "%s/terminal/%s", stripped, mac);
-	return (n > 0 && (size_t)n < out_sz) ? 0 : -1;
-}
-
 /* -------------------------------------------------------------------------
  * WebSocket handshake
  * ---------------------------------------------------------------------- */
@@ -398,19 +293,15 @@ static void ws_make_key(char *out, size_t out_sz)
 		ssize_t n = read(fd, nonce, sizeof(nonce));
 		close(fd);
 		if (n == (ssize_t)sizeof(nonce)) {
-			base64_encode(nonce, sizeof(nonce), out, out_sz);
-			return;
+				ela_ws_base64_encode(nonce, sizeof(nonce), out, out_sz);
+				return;
 		}
 	}
 	/* fallback */
 	{
 		unsigned int seed = (unsigned int)time(NULL);
-		size_t i;
-		for (i = 0; i < sizeof(nonce); i++) {
-			seed = seed * 1664525u + 1013904223u;
-			nonce[i] = (uint8_t)(seed >> 16);
-		}
-		base64_encode(nonce, sizeof(nonce), out, out_sz);
+		ela_ws_fill_nonce_from_seed(seed, nonce);
+		ela_ws_base64_encode(nonce, sizeof(nonce), out, out_sz);
 	}
 }
 
@@ -430,36 +321,8 @@ static int ws_do_handshake(struct ela_ws_conn *ws,
 
 	ws_make_key(key, sizeof(key));
 
-	/* Build request — include port in Host only when non-default */
-	if ((!is_tls && port != 80) || (is_tls && port != 443)) {
-		req_len = snprintf(req, sizeof(req),
-			"GET %s HTTP/1.1\r\n"
-			"Host: %s:%u\r\n"
-			"Upgrade: websocket\r\n"
-			"Connection: Upgrade\r\n"
-			"Sec-WebSocket-Key: %s\r\n"
-			"Sec-WebSocket-Version: 13\r\n"
-			"%s%s%s"
-			"\r\n",
-			path, host, (unsigned int)port, key,
-			ws->auth_token[0] ? "Authorization: Bearer " : "",
-			ws->auth_token[0] ? ws->auth_token : "",
-			ws->auth_token[0] ? "\r\n" : "");
-	} else {
-		req_len = snprintf(req, sizeof(req),
-			"GET %s HTTP/1.1\r\n"
-			"Host: %s\r\n"
-			"Upgrade: websocket\r\n"
-			"Connection: Upgrade\r\n"
-			"Sec-WebSocket-Key: %s\r\n"
-			"Sec-WebSocket-Version: 13\r\n"
-			"%s%s%s"
-			"\r\n",
-			path, host, key,
-			ws->auth_token[0] ? "Authorization: Bearer " : "",
-			ws->auth_token[0] ? ws->auth_token : "",
-			ws->auth_token[0] ? "\r\n" : "");
-	}
+	req_len = ela_ws_build_handshake_request(req, sizeof(req), host, port, path, is_tls,
+						 ws->auth_token[0] ? ws->auth_token : NULL, key);
 
 	if (req_len <= 0 || req_len >= (int)sizeof(req)) {
 		fprintf(stderr, "ws: request URL too long\n");
@@ -481,20 +344,13 @@ static int ws_do_handshake(struct ela_ws_conn *ws,
 			return -1;
 		}
 		resp_len++;
-		if (resp_len >= 4 &&
-		    resp[resp_len-4] == '\r' && resp[resp_len-3] == '\n' &&
-		    resp[resp_len-2] == '\r' && resp[resp_len-1] == '\n')
+		if (ela_ws_response_headers_complete(resp, resp_len))
 			break;
 	}
 	resp[resp_len] = '\0';
 
-	/* Verify 101 status */
-	if (strncmp(resp, "HTTP/1.1 101", 12) != 0) {
-		long code = 0;
-		const char *sp = strchr(resp, ' ');
-		if (sp)
-			code = strtol(sp + 1, NULL, 10);
-		if (code == 401)
+	if (ela_ws_validate_handshake_response(resp, NULL, 0) != 0) {
+		if (ela_ws_handshake_response_is_unauthorized(resp))
 			fprintf(stderr,
 				"ws: server returned 401 Unauthorized\n"
 				"  Set a bearer token via --api-key, ELA_API_KEY, or /tmp/ela.key\n");
@@ -530,13 +386,13 @@ int ela_ws_connect(const char *base_url, int insecure,
 
 	get_primary_mac(mac, sizeof(mac));
 
-	if (build_ws_url(base_url, mac, full_url, sizeof(full_url)) != 0) {
+	if (ela_ws_build_terminal_url(base_url, mac, full_url, sizeof(full_url)) != 0) {
 		fprintf(stderr, "ws: URL too long: %s\n", base_url);
 		return -1;
 	}
 
-	if (ws_parse_url(full_url, host, sizeof(host), &port, path, sizeof(path),
-			 &is_tls) != 0) {
+	if (ela_ws_parse_url(full_url, host, sizeof(host), &port, path, sizeof(path),
+			     &is_tls) != 0) {
 		fprintf(stderr, "ws: malformed URL: %s\n", full_url);
 		return -1;
 	}
@@ -670,20 +526,13 @@ void ela_ws_close(struct ela_ws_conn *ws)
  *  [payload]
  * ---------------------------------------------------------------------- */
 
-#define WS_OPCODE_TEXT   0x01
-#define WS_OPCODE_CLOSE  0x08
-#define WS_OPCODE_PING   0x09
-#define WS_OPCODE_PONG   0x0A
-
 /* Send a single text frame (FIN=1, MASK=1 as required for client frames) */
 static int ws_send_text(const struct ela_ws_conn *ws,
 			const char *payload, size_t payload_len)
 {
-	uint8_t  header[10];
 	uint8_t  mask[4];
-	uint8_t *masked;
-	size_t   hdr_len = 2;
-	size_t   i;
+	uint8_t *frame = NULL;
+	size_t   frame_len = 0;
 	int      fd;
 
 	/* Build masking key from /dev/urandom or fallback */
@@ -692,49 +541,19 @@ static int ws_send_text(const struct ela_ws_conn *ws,
 		ssize_t n = read(fd, mask, 4);
 		close(fd);
 		if (n != 4) {
-			mask[0] = 0xDE; mask[1] = 0xAD;
-			mask[2] = 0xBE; mask[3] = 0xEF;
+			ela_ws_default_mask_key(mask);
 		}
 	} else {
-		mask[0] = 0xDE; mask[1] = 0xAD;
-		mask[2] = 0xBE; mask[3] = 0xEF;
+		ela_ws_default_mask_key(mask);
 	}
 
-	header[0] = 0x80 | WS_OPCODE_TEXT; /* FIN=1, opcode=text */
-
-	if (payload_len < 126) {
-		header[1] = 0x80 | (uint8_t)payload_len;
-	} else if (payload_len < 65536) {
-		header[1] = 0x80 | 126;
-		header[2] = (uint8_t)(payload_len >> 8);
-		header[3] = (uint8_t)(payload_len);
-		hdr_len   = 4;
-	} else {
-		header[1] = 0x80 | 127;
-		header[2] = 0; header[3] = 0; header[4] = 0; header[5] = 0;
-		header[6] = (uint8_t)(payload_len >> 24);
-		header[7] = (uint8_t)(payload_len >> 16);
-		header[8] = (uint8_t)(payload_len >> 8);
-		header[9] = (uint8_t)(payload_len);
-		hdr_len   = 10;
-	}
-
-	if (ws_conn_write(ws, header, hdr_len) < 0)
+	if (ela_ws_build_masked_frame(ELA_WS_OPCODE_TEXT, mask, payload, payload_len, &frame, &frame_len) != 0)
 		return -1;
-	if (ws_conn_write(ws, mask, 4) < 0)
-		return -1;
-
-	masked = malloc(payload_len);
-	if (!masked)
-		return -1;
-	for (i = 0; i < payload_len; i++)
-		masked[i] = (uint8_t)payload[i] ^ mask[i & 3];
-
-	if (ws_conn_write(ws, masked, payload_len) < 0) {
-		free(masked);
+	if (ws_conn_write(ws, frame, frame_len) < 0) {
+		free(frame);
 		return -1;
 	}
-	free(masked);
+	free(frame);
 	return 0;
 }
 
@@ -779,8 +598,8 @@ static ssize_t ws_recv_frame(const struct ela_ws_conn *ws,
 	/* Read payload, truncating if larger than buffer */
 	if (payload_len >= buf_sz) {
 		/* Read what fits, discard the rest */
-		size_t to_read = buf_sz - 1;
-		size_t to_skip = (size_t)(payload_len - to_read);
+		size_t to_read = ela_ws_payload_copy_len(payload_len, buf_sz);
+		size_t to_skip = ela_ws_payload_skip_len(payload_len, buf_sz);
 		char   discard[64];
 
 		if (ws_conn_read(ws, buf, to_read) < 0)
@@ -831,9 +650,9 @@ static void send_heartbeat_ack(const struct ela_ws_conn *ws)
 	else
 		strncpy(date_str, "unknown", sizeof(date_str) - 1);
 
-	snprintf(ack, sizeof(ack),
-		 "{\"_type\":\"heartbeat_ack\",\"date\":\"%s\"}", date_str);
-	ws_send_text(ws, ack, strlen(ack));
+	date_str[sizeof(date_str) - 1] = '\0';
+	if (ela_ws_build_heartbeat_ack(date_str, ack, sizeof(ack)) == 0)
+		ws_send_text(ws, ack, strlen(ack));
 }
 
 /* -------------------------------------------------------------------------
@@ -844,12 +663,10 @@ static void send_heartbeat_ack(const struct ela_ws_conn *ws)
 static void ws_send_ping(const struct ela_ws_conn *ws)
 {
 	uint8_t frame[6];
+	size_t frame_len = 0;
 
-	frame[0] = 0x80 | WS_OPCODE_PING; /* FIN=1, opcode=PING */
-	frame[1] = 0x80;                   /* MASK=1, payload_len=0 */
-	frame[2] = 0; frame[3] = 0;       /* masking key (zeros) */
-	frame[4] = 0; frame[5] = 0;
-	ws_conn_write(ws, frame, 6);
+	if (ela_ws_build_ping_frame(frame, &frame_len) == 0)
+		ws_conn_write(ws, frame, frame_len);
 }
 
 int ela_ws_run_interactive(struct ela_ws_conn *ws, const char *prog)
@@ -905,7 +722,7 @@ int ela_ws_run_interactive(struct ela_ws_conn *ws, const char *prog)
 		uint8_t        opcode;
 		ssize_t        frame_len;
 
-		if (waitpid(child, &child_status, WNOHANG) > 0) {
+		if (ela_ws_child_wait_exited(waitpid(child, &child_status, WNOHANG))) {
 			child_exited = 1;
 			break;
 		}
@@ -914,7 +731,7 @@ int ela_ws_run_interactive(struct ela_ws_conn *ws, const char *prog)
 		 * The server's ws library automatically replies with a PONG. */
 		{
 			time_t now = time(NULL);
-			if (now - last_ping_t >= 25) {
+			if (ela_ws_should_send_keepalive(now, last_ping_t, 25)) {
 				ws_send_ping(ws);
 				last_ping_t = now;
 			}
@@ -943,39 +760,43 @@ int ela_ws_run_interactive(struct ela_ws_conn *ws, const char *prog)
 		 * pending bytes too. */
 		{
 			int ws_readable = FD_ISSET(ws->sock, &rfds);
+			int pending_bytes = 0;
 			if (!ws_readable && ws->is_tls && ws->ssl) {
 #ifdef ELA_HAS_WOLFSSL
-				ws_readable = wolfSSL_pending(
-						(ws_ssl_t *)ws->ssl) > 0;
+				pending_bytes = wolfSSL_pending((ws_ssl_t *)ws->ssl);
 #else
-				ws_readable = SSL_pending(
-						(ws_ssl_t *)ws->ssl) > 0;
+				pending_bytes = SSL_pending((ws_ssl_t *)ws->ssl);
 #endif
 			}
-		if (ws_readable) {
+		if (ela_ws_socket_readable(ws_readable, ws->is_tls != 0, pending_bytes)) {
 			frame_len = ws_recv_frame(ws, &opcode,
 						  frame_buf, sizeof(frame_buf));
 			if (frame_len < 0)
 				break;
 
-			if (opcode == WS_OPCODE_CLOSE)
-				break;
+			{
+				struct ela_ws_frame_action action;
 
-			if (opcode == WS_OPCODE_PING) {
-				/* RFC 6455: client frames MUST be masked */
-				uint8_t pong[6];
-				pong[0] = 0x80 | WS_OPCODE_PONG;
-				pong[1] = 0x80; /* MASK=1, payload_len=0 */
-				pong[2] = 0; pong[3] = 0;
-				pong[4] = 0; pong[5] = 0; /* zero mask */
-				ws_conn_write(ws, pong, 6);
-				continue;
-			}
+				ela_ws_classify_incoming_frame(opcode, frame_buf,
+							       frame_len > 0 ? (size_t)frame_len : 0U,
+							       &action);
+				if (action.terminate_session)
+					break;
 
-			if (opcode == WS_OPCODE_TEXT && frame_len > 0) {
-				if (strstr(frame_buf, "\"_type\":\"heartbeat\"")) {
+				if (action.send_pong) {
+					uint8_t pong[6];
+					size_t pong_len = 0;
+
+					if (ela_ws_build_zero_mask_control_frame(ELA_WS_OPCODE_PONG,
+										 pong,
+										 &pong_len) == 0)
+						ws_conn_write(ws, pong, pong_len);
+					continue;
+				}
+
+				if (action.send_heartbeat_ack) {
 					send_heartbeat_ack(ws);
-				} else {
+				} else if (action.forward_to_repl) {
 					if (write(pipe_to_loop[1],
 						  frame_buf,
 						  (size_t)frame_len) < 0)
@@ -989,7 +810,7 @@ int ela_ws_run_interactive(struct ela_ws_conn *ws, const char *prog)
 		if (FD_ISSET(pipe_from_loop[0], &rfds)) {
 			ssize_t n = read(pipe_from_loop[0],
 					 read_buf, sizeof(read_buf));
-			if (n <= 0)
+			if (ela_ws_child_output_should_break(n))
 				break;
 			ws_send_text(ws, read_buf, (size_t)n);
 		}
@@ -1011,5 +832,5 @@ int ela_ws_run_interactive(struct ela_ws_conn *ws, const char *prog)
 		close(ws->sock);
 		ws->sock = -1;
 	}
-	return child_exited ? ELA_WS_EXIT_CLEAN : 0;
+	return ela_ws_interactive_exit_code(child_exited);
 }

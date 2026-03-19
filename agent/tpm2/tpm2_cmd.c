@@ -2,6 +2,7 @@
 
 #include "embedded_linux_audit_cmd.h"
 #include "tpm2_internal.h"
+#include "../util/tpm2_command_util.h"
 
 #include <getopt.h>
 #include <stdbool.h>
@@ -53,21 +54,12 @@ int tpm2_scan_main(int argc, char **argv)
 
 #else
 
-struct tpm2_command_desc {
-	const char *name;
-	const char *summary;
-};
-
-static const struct tpm2_command_desc supported_commands[] = {
-	{ "createprimary", "Create a primary object and optionally serialize the ESYS context" },
-	{ "getcap", "Query a small built-in set of TPM2 capabilities" },
-	{ "nvreadpublic", "Read the public metadata for an NV index" },
-	{ "pcrread", "Read PCR values for one or more PCR banks" },
-};
-
 static void usage(const char *prog)
 {
 	size_t i;
+	size_t command_count;
+	const struct ela_tpm2_command_desc *supported_commands =
+		ela_tpm2_supported_commands(&command_count);
 
 	fprintf(stderr,
 		"Usage: %s <command> [command-options]\n"
@@ -76,7 +68,7 @@ static void usage(const char *prog)
 		"Built-in TPM2 commands implemented through TPM2-TSS:\n",
 		prog, prog);
 
-	for (i = 0; i < sizeof(supported_commands) / sizeof(supported_commands[0]); i++)
+	for (i = 0; i < command_count; i++)
 		fprintf(stderr, "  %-13s %s\n", supported_commands[i].name, supported_commands[i].summary);
 
 	fprintf(stderr,
@@ -92,13 +84,16 @@ static void usage(const char *prog)
 static int cmd_list_commands(int argc)
 {
 	size_t i;
+	size_t command_count;
+	const struct ela_tpm2_command_desc *supported_commands =
+		ela_tpm2_supported_commands(&command_count);
 
 	if (argc != 2) {
 		fprintf(stderr, "tpm2: list-commands does not accept additional arguments\n");
 		return 2;
 	}
 
-	for (i = 0; i < sizeof(supported_commands) / sizeof(supported_commands[0]); i++)
+	for (i = 0; i < command_count; i++)
 		printf("%s\n", supported_commands[i].name);
 
 	return 0;
@@ -129,20 +124,20 @@ int tpm2_scan_main(int argc, char **argv)
 		return 2;
 	}
 
-	if (!strcmp(argv[optind], "help") || !strcmp(argv[optind], "--help") || !strcmp(argv[optind], "-h")) {
+	if (ela_tpm2_is_help_token(argv[optind])) {
 		usage(argv[0]);
 		return 0;
 	}
 
 	if (!strcmp(argv[optind], "list-commands"))
 		return cmd_list_commands(argc - optind + 1);
-	if (!strcmp(argv[optind], "getcap"))
+	if (ela_tpm2_find_command_index(argv[optind]) == 1)
 		return cmd_getcap(argc, argv);
-	if (!strcmp(argv[optind], "pcrread"))
+	if (ela_tpm2_find_command_index(argv[optind]) == 3)
 		return cmd_pcrread(argc, argv);
-	if (!strcmp(argv[optind], "nvreadpublic"))
+	if (ela_tpm2_find_command_index(argv[optind]) == 2)
 		return cmd_nvreadpublic(argc, argv);
-	if (!strcmp(argv[optind], "createprimary"))
+	if (ela_tpm2_find_command_index(argv[optind]) == 0)
 		return cmd_createprimary(argc, argv);
 
 	fprintf(stderr, "tpm2: unsupported TPM2 command: %s\n", argv[optind]);

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later - Copyright (c) 2026 Nicholas Starke
 
 #include "api_key.h"
+#include "api_key_util.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -18,29 +19,10 @@ static int  key_confirmed = 0;
  * Internal helpers
  * ---------------------------------------------------------------------- */
 
-static int key_already_added(const char *k)
-{
-	int i;
-	for (i = 0; i < key_count; i++) {
-		if (!strcmp(keys[i], k))
-			return 1;
-	}
-	return 0;
-}
-
 static void add_key(const char *k)
 {
-	if (!k || !*k)
+	if (ela_api_key_add_unique(keys, &key_count, MAX_KEYS, k) != 0)
 		return;
-	if (strlen(k) > ELA_API_KEY_MAX_LEN)
-		return;
-	if (key_count >= MAX_KEYS)
-		return;
-	if (key_already_added(k))
-		return;
-	strncpy(keys[key_count], k, ELA_API_KEY_MAX_LEN);
-	keys[key_count][ELA_API_KEY_MAX_LEN] = '\0';
-	key_count++;
 }
 
 static void load_key_file(const char *path)
@@ -53,9 +35,8 @@ static void load_key_file(const char *path)
 		return;
 	while (fgets(line, (int)sizeof(line), f)) {
 		len = strlen(line);
-		while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r'))
-			line[--len] = '\0';
-		if (len > 0)
+		(void)len;
+		if (ela_api_key_line_normalize(line) == 0)
 			add_key(line);
 	}
 	fclose(f);

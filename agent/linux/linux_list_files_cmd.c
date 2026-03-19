@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later - Copyright (c) 2026 Nicholas Starke
 
 #include "embedded_linux_audit_cmd.h"
+#include "util/list_files_filter_util.h"
+#include "util/output_buffer.h"
 
 #include <dirent.h>
 #include <errno.h>
@@ -26,40 +28,6 @@
 #define PATH_MAX 4096
 #endif
 
-struct output_buffer {
-	char *data;
-	size_t len;
-	size_t cap;
-};
-
-enum permission_filter_kind {
-	PERMISSION_FILTER_NONE = 0,
-	PERMISSION_FILTER_EXACT,
-	PERMISSION_FILTER_SYMBOLIC,
-};
-
-struct symbolic_permission_clause {
-	mode_t affected_mask;
-	mode_t value_mask;
-	char op;
-};
-
-struct permissions_filter {
-	enum permission_filter_kind kind;
-	mode_t exact_mode;
-	struct symbolic_permission_clause clauses[16];
-	size_t clause_count;
-};
-
-struct list_files_filters {
-	bool suid_only;
-	bool user_set;
-	uid_t uid;
-	bool group_set;
-	gid_t gid;
-	struct permissions_filter permissions;
-};
-
 static void usage(const char *prog)
 {
 	fprintf(stderr,
@@ -72,22 +40,6 @@ static void usage(const char *prog)
 		"  When --group is set, only files owned by that group name or numeric gid are returned\n"
 		"  When global --output-http is configured, POST the list to /:mac/upload/file-list\n",
 		prog);
-}
-
-static bool is_octal_string(const char *s)
-{
-	const unsigned char *p = (const unsigned char *)s;
-
-	if (!s || !*s)
-		return false;
-
-	while (*p) {
-		if (*p < '0' || *p > '7')
-			return false;
-		p++;
-	}
-
-	return true;
 }
 
 static int resolve_user_filter(const char *spec, uid_t *uid_out)
@@ -135,221 +87,6 @@ static int resolve_group_filter(const char *spec, gid_t *gid_out)
 		return -1;
 
 	*gid_out = grp->gr_gid;
-	return 0;
-}
-
-static mode_t who_bits_to_mask(unsigned int who_mask)
-{
-	mode_t mask = 0;
-
-	if (who_mask & 0x1)
-		mask |= S_IRUSR | S_IWUSR | S_IXUSR | S_ISUID;
-	if (who_mask & 0x2)
-		mask |= S_IRGRP | S_IWGRP | S_IXGRP | S_ISGID;
-	if (who_mask & 0x4)
-		mask |= S_IROTH | S_IWOTH | S_IXOTH | S_ISVTX;
-
-	return mask;
-}
-
-static int parse_symbolic_permissions(const char *spec, struct permissions_filter *filter)
-{
-	const char *p = spec;
-
-	if (!spec || !*spec || !filter)
-		return -1;
-
-	filter->kind = PERMISSION_FILTER_SYMBOLIC;
-	filter->clause_count = 0;
-
-	while (*p) {
-		unsigned int who_mask = 0;
-		mode_t value_mask = 0;
-		mode_t affected_mask;
-		char op;
-		bool saw_who = false;
-		bool saw_perm = false;
-
-		while (*p == 'u' || *p == 'g' || *p == 'o' || *p == 'a') {
-			saw_who = true;
-			if (*p == 'u')
-				who_mask |= 0x1;
-			else if (*p == 'g')
-				who_mask |= 0x2;
-			else if (*p == 'o')
-				who_mask |= 0x4;
-			else
-				who_mask |= 0x1 | 0x2 | 0x4;
-			p++;
-		}
-
-		if (!saw_who)
-			who_mask = 0x1 | 0x2 | 0x4;
-
-		op = *p;
-		if (op != '+' && op != '-' && op != '=')
-			return -1;
-		p++;
-
-		affected_mask = who_bits_to_mask(who_mask);
-		while (*p && *p != ',') {
-			saw_perm = true;
-			switch (*p) {
-			case 'r':
-				if (who_mask & 0x1)
-					value_mask |= S_IRUSR;
-				if (who_mask & 0x2)
-					value_mask |= S_IRGRP;
-				if (who_mask & 0x4)
-					value_mask |= S_IROTH;
-				break;
-			case 'w':
-				if (who_mask & 0x1)
-					value_mask |= S_IWUSR;
-				if (who_mask & 0x2)
-					value_mask |= S_IWGRP;
-				if (who_mask & 0x4)
-					value_mask |= S_IWOTH;
-				break;
-			case 'x':
-				if (who_mask & 0x1)
-					value_mask |= S_IXUSR;
-				if (who_mask & 0x2)
-					value_mask |= S_IXGRP;
-				if (who_mask & 0x4)
-					value_mask |= S_IXOTH;
-				break;
-			case 's':
-				if (who_mask & 0x1)
-					value_mask |= S_ISUID;
-				if (who_mask & 0x2)
-					value_mask |= S_ISGID;
-				break;
-			case 't':
-				if (who_mask & 0x4)
-					value_mask |= S_ISVTX;
-				break;
-			default:
-				return -1;
-			}
-			p++;
-		}
-
-		if (!saw_perm || filter->clause_count >= (sizeof(filter->clauses) / sizeof(filter->clauses[0])))
-			return -1;
-
-		filter->clauses[filter->clause_count].affected_mask = affected_mask;
-		filter->clauses[filter->clause_count].value_mask = value_mask;
-		filter->clauses[filter->clause_count].op = op;
-		filter->clause_count++;
-
-		if (*p == ',')
-			p++;
-	}
-
-	return 0;
-}
-
-static int parse_permissions_filter(const char *spec, struct permissions_filter *filter)
-{
-	char *end = NULL;
-	unsigned long value;
-
-	if (!spec || !*spec || !filter)
-		return -1;
-
-	memset(filter, 0, sizeof(*filter));
-	if (is_octal_string(spec)) {
-		errno = 0;
-		value = strtoul(spec, &end, 8);
-		if (errno != 0 || !end || *end != '\0' || value > 07777UL)
-			return -1;
-		filter->kind = PERMISSION_FILTER_EXACT;
-		filter->exact_mode = (mode_t)value;
-		return 0;
-	}
-
-	return parse_symbolic_permissions(spec, filter);
-}
-
-static bool permissions_match(const struct permissions_filter *filter, mode_t mode)
-{
-	size_t i;
-	mode_t perm_mode = mode & 07777;
-
-	if (!filter || filter->kind == PERMISSION_FILTER_NONE)
-		return true;
-
-	if (filter->kind == PERMISSION_FILTER_EXACT)
-		return perm_mode == filter->exact_mode;
-
-	for (i = 0; i < filter->clause_count; i++) {
-		const struct symbolic_permission_clause *clause = &filter->clauses[i];
-
-		switch (clause->op) {
-		case '+':
-			if ((perm_mode & clause->value_mask) != clause->value_mask)
-				return false;
-			break;
-		case '-':
-			if (perm_mode & clause->value_mask)
-				return false;
-			break;
-		case '=':
-			if ((perm_mode & clause->affected_mask) != clause->value_mask)
-				return false;
-			break;
-		default:
-			return false;
-		}
-	}
-
-	return true;
-}
-
-static bool entry_matches_filters(const struct stat *st, const struct list_files_filters *filters)
-{
-	if (!st || !filters)
-		return false;
-
-	if (filters->suid_only && !(st->st_mode & S_ISUID))
-		return false;
-	if (filters->user_set && st->st_uid != filters->uid)
-		return false;
-	if (filters->group_set && st->st_gid != filters->gid)
-		return false;
-	if (!permissions_match(&filters->permissions, st->st_mode))
-		return false;
-
-	return true;
-}
-
-static int output_buffer_append(struct output_buffer *buf, const char *text)
-{
-	size_t need;
-	char *tmp;
-	size_t new_cap;
-	size_t text_len;
-
-	if (!buf || !text)
-		return -1;
-
-	text_len = strlen(text);
-	need = buf->len + text_len + 1;
-	if (need > buf->cap) {
-		new_cap = buf->cap ? buf->cap : 1024;
-		while (new_cap < need)
-			new_cap *= 2;
-		tmp = realloc(buf->data, new_cap);
-		if (!tmp)
-			return -1;
-		buf->data = tmp;
-		buf->cap = new_cap;
-	}
-
-	memcpy(buf->data + buf->len, text, text_len);
-	buf->len += text_len;
-	buf->data[buf->len] = '\0';
 	return 0;
 }
 
@@ -451,7 +188,7 @@ static int list_files_recursive(const char *dir_path,
 			continue;
 		}
 
-		if (!entry_matches_filters(&st, filters))
+		if (!ela_list_files_entry_matches_filters(&st, filters))
 			continue;
 
 		if (emit_path(child, output_sock, capture, buf) != 0) {
@@ -539,7 +276,7 @@ int linux_list_files_scan_main(int argc, char **argv)
 		return 2;
 	}
 
-	if (permissions_arg && parse_permissions_filter(permissions_arg, &filters.permissions) != 0) {
+	if (permissions_arg && ela_parse_permissions_filter(permissions_arg, &filters.permissions) != 0) {
 		fprintf(stderr, "Invalid --permissions value: %s\n", permissions_arg);
 		return 2;
 	}

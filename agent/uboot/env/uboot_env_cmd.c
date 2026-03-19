@@ -2,6 +2,10 @@
 
 #include "embedded_linux_audit_cmd.h"
 #include "uboot/env/uboot_env_internal.h"
+#include "uboot/env/uboot_env_format_util.h"
+#include "uboot/env/uboot_env_record_util.h"
+#include "uboot/env/uboot_env_scan_util.h"
+#include "uboot/env/uboot_env_util.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -19,8 +23,6 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
-#include <json.h>
-#include <csv.h>
 #include <libuboot.h>
 
 #ifndef O_CLOEXEC
@@ -40,19 +42,6 @@
 #else
 #define MAYBE_UNUSED
 #endif
-
-struct env_kv {
-	char *name;
-	char *value;
-};
-
-struct uboot_cfg_entry {
-	char dev[256];
-	uint64_t off;
-	uint64_t env_size;
-	uint64_t erase_size;
-	uint64_t sectors;
-};
 
 static uint32_t crc32_table[256];
 static bool g_verbose;
@@ -79,53 +68,12 @@ static bool g_csv_header_emitted;
 
 static const char *env_http_content_type(void)
 {
-	switch (g_output_format) {
-	case FW_OUTPUT_JSON:
-		return "application/x-ndjson; charset=utf-8";
-	case FW_OUTPUT_CSV:
-		return "text/csv; charset=utf-8";
-	case FW_OUTPUT_TXT:
-	default:
-		return "text/plain; charset=utf-8";
-	}
+	return ela_uboot_env_http_content_type(g_output_format);
 }
 
 static void detect_output_format(void)
 {
-	const char *fmt = getenv("ELA_OUTPUT_FORMAT");
-
-	g_output_format = FW_OUTPUT_TXT;
-	if (!fmt || !*fmt)
-		return;
-
-	if (!strcmp(fmt, "csv"))
-		g_output_format = FW_OUTPUT_CSV;
-	else if (!strcmp(fmt, "json"))
-		g_output_format = FW_OUTPUT_JSON;
-}
-
-static void emit_env_csv_header(void)
-{
-	if (g_csv_header_emitted)
-		return;
-	out_printf("record,device,offset,crc_endian,mode,has_known_vars,cfg_offset,env_size,erase_size,sector_count\n");
-	g_csv_header_emitted = true;
-}
-
-static void csv_out_field(const char *s)
-{
-	const char *in = s ? s : "";
-	size_t in_len = strlen(in);
-	size_t buf_len = (in_len * 2U) + 3U;
-	char *buf = malloc(buf_len);
-	size_t written;
-
-	if (!buf)
-		return;
-
-	written = csv_write(buf, buf_len, in, in_len);
-	out_printf("%.*s", (int)written, buf);
-	free(buf);
+	g_output_format = (enum uboot_output_format)ela_uboot_env_detect_output_format(getenv("ELA_OUTPUT_FORMAT"));
 }
 
 static void emit_env_candidate_record(const char *dev, uint64_t off,
@@ -137,139 +85,61 @@ static void emit_env_candidate_record(const char *dev, uint64_t off,
 				      uint64_t erase_size,
 				      uint64_t sector_count)
 {
-	if (g_output_format == FW_OUTPUT_CSV) {
-		char off_s[32], cfg_s[32], env_s[32], erase_s[32], sec_s[32];
+	char *formatted = NULL;
 
-		snprintf(off_s, sizeof(off_s), "0x%jx", (uintmax_t)off);
-		snprintf(cfg_s, sizeof(cfg_s), "0x%jx", (uintmax_t)cfg_off);
-		snprintf(env_s, sizeof(env_s), "0x%jx", (uintmax_t)env_size);
-		snprintf(erase_s, sizeof(erase_s), "0x%jx", (uintmax_t)erase_size);
-		snprintf(sec_s, sizeof(sec_s), "0x%jx", (uintmax_t)sector_count);
-
-		emit_env_csv_header();
-		csv_out_field("env_candidate"); out_printf(",");
-		csv_out_field(dev); out_printf(",");
-		csv_out_field(off_s); out_printf(",");
-		csv_out_field(crc_endian ? crc_endian : ""); out_printf(",");
-		csv_out_field(mode ? mode : ""); out_printf(",");
-		csv_out_field(has_known_vars ? "true" : "false"); out_printf(",");
-		csv_out_field(cfg_s); out_printf(",");
-		csv_out_field(env_s); out_printf(",");
-		csv_out_field(erase_s); out_printf(",");
-		csv_out_field(sec_s); out_printf("\n");
+	if (ela_uboot_env_format_candidate_record(g_output_format,
+						  &g_csv_header_emitted,
+						  dev,
+						  off,
+						  crc_endian,
+						  mode,
+						  has_known_vars,
+						  cfg_off,
+						  env_size,
+						  erase_size,
+						  sector_count,
+						  &formatted) != 0)
 		return;
+	if (formatted) {
+		out_printf("%s", formatted);
+		free(formatted);
 	}
-
-	if (g_output_format == FW_OUTPUT_JSON) {
-		json_object *obj = json_object_new_object();
-		if (!obj)
-			return;
-		json_object_object_add(obj, "record", json_object_new_string("env_candidate"));
-		json_object_object_add(obj, "device", json_object_new_string(dev));
-		json_object_object_add(obj, "offset", json_object_new_uint64(off));
-		json_object_object_add(obj, "crc_endian", json_object_new_string(crc_endian ? crc_endian : ""));
-		json_object_object_add(obj, "mode", json_object_new_string(mode ? mode : ""));
-		json_object_object_add(obj, "has_known_vars", json_object_new_boolean(has_known_vars));
-		json_object_object_add(obj, "cfg_offset", json_object_new_uint64(cfg_off));
-		json_object_object_add(obj, "env_size", json_object_new_uint64(env_size));
-		json_object_object_add(obj, "erase_size", json_object_new_uint64(erase_size));
-		json_object_object_add(obj, "sector_count", json_object_new_uint64(sector_count));
-		out_printf("%s\n", json_object_to_json_string_ext(obj, JSON_C_TO_STRING_PLAIN | JSON_C_TO_STRING_NOSLASHESCAPE));
-		json_object_put(obj);
-		return;
-	}
-
-	if (!strcmp(mode, "hint-only"))
-		out_printf("  candidate offset=0x%jx  mode=hint-only  (has known vars)\n", (uintmax_t)off);
-	else if (!strcmp(mode, "redundant"))
-		out_printf("  candidate offset=0x%jx  crc=%s-endian  %s (redundant-env layout)\n", (uintmax_t)off,
-			crc_endian, has_known_vars ? "(has known vars)" : "(crc ok)");
-	else
-		out_printf("  candidate offset=0x%jx  crc=%s-endian  %s\n", (uintmax_t)off,
-			crc_endian, has_known_vars ? "(has known vars)" : "(crc ok)");
-
-	out_printf("    uboot_env.config line: %s 0x%jx 0x%jx 0x%jx 0x%jx\n",
-		dev, (uintmax_t)cfg_off, (uintmax_t)env_size,
-		(uintmax_t)erase_size, (uintmax_t)sector_count);
 }
 
 static void emit_redundant_pair_record(const char *dev, uint64_t a, uint64_t b)
 {
-	if (g_output_format == FW_OUTPUT_CSV) {
-		char a_s[32], b_s[32];
+	char *formatted = NULL;
 
-		snprintf(a_s, sizeof(a_s), "0x%jx", (uintmax_t)a);
-		snprintf(b_s, sizeof(b_s), "0x%jx", (uintmax_t)b);
-
-		emit_env_csv_header();
-		csv_out_field("redundant_pair"); out_printf(",");
-		csv_out_field(dev); out_printf(",");
-		csv_out_field(a_s); out_printf(",");
-		csv_out_field(""); out_printf(",");
-		csv_out_field(""); out_printf(",");
-		csv_out_field("false"); out_printf(",");
-		csv_out_field(b_s); out_printf(",");
-		csv_out_field(""); out_printf(",");
-		csv_out_field(""); out_printf(",");
-		csv_out_field(""); out_printf("\n");
+	if (ela_uboot_env_format_redundant_pair_record(g_output_format,
+						       &g_csv_header_emitted,
+						       dev,
+						       a,
+						       b,
+						       &formatted) != 0)
 		return;
+	if (formatted) {
+		out_printf("%s", formatted);
+		free(formatted);
 	}
-
-	if (g_output_format == FW_OUTPUT_JSON) {
-		json_object *obj = json_object_new_object();
-		if (!obj)
-			return;
-		json_object_object_add(obj, "record", json_object_new_string("redundant_pair"));
-		json_object_object_add(obj, "device", json_object_new_string(dev));
-		json_object_object_add(obj, "offset_a", json_object_new_uint64(a));
-		json_object_object_add(obj, "offset_b", json_object_new_uint64(b));
-		out_printf("%s\n", json_object_to_json_string_ext(obj, JSON_C_TO_STRING_PLAIN | JSON_C_TO_STRING_NOSLASHESCAPE));
-		json_object_put(obj);
-		return;
-	}
-
-	out_printf("    redundant env candidate pair: %s 0x%jx <-> 0x%jx\n",
-		dev, (uintmax_t)a, (uintmax_t)b);
 }
 
 static void emit_env_verbose(const char *dev, uint64_t off, const char *msg)
 {
+	char *formatted = NULL;
 	bool emitted = false;
 
-	if (!g_verbose || !msg)
+	if (ela_uboot_env_format_verbose_record(g_output_format,
+						g_verbose,
+						&g_csv_header_emitted,
+						dev,
+						off,
+						msg,
+						&formatted) != 0)
 		return;
-
-	if (g_output_format == FW_OUTPUT_TXT) {
-		out_printf("%s\n", msg);
+	if (formatted) {
+		out_printf("%s", formatted);
 		emitted = true;
-	} else if (g_output_format == FW_OUTPUT_CSV) {
-		char off_s[32];
-
-		snprintf(off_s, sizeof(off_s), "0x%jx", (uintmax_t)off);
-		emit_env_csv_header();
-		csv_out_field("verbose"); out_printf(",");
-		csv_out_field(dev ? dev : ""); out_printf(",");
-		csv_out_field(off_s); out_printf(",");
-		csv_out_field(""); out_printf(",");
-		csv_out_field(msg); out_printf(",");
-		csv_out_field("false"); out_printf(",");
-		csv_out_field(""); out_printf(",");
-		csv_out_field(""); out_printf(",");
-		csv_out_field(""); out_printf(",");
-		csv_out_field(""); out_printf("\n");
-		emitted = true;
-	} else {
-		json_object *obj = json_object_new_object();
-		if (!obj)
-			return;
-		json_object_object_add(obj, "record", json_object_new_string("verbose"));
-		if (dev)
-			json_object_object_add(obj, "device", json_object_new_string(dev));
-		json_object_object_add(obj, "offset", json_object_new_uint64(off));
-		json_object_object_add(obj, "message", json_object_new_string(msg));
-		out_printf("%s\n", json_object_to_json_string_ext(obj, JSON_C_TO_STRING_PLAIN | JSON_C_TO_STRING_NOSLASHESCAPE));
-		json_object_put(obj);
-		emitted = true;
+		free(formatted);
 	}
 
 	/*
@@ -286,46 +156,25 @@ static void emit_env_scan_start_verbose(const char *dev,
 					uint64_t env_size,
 					uint64_t device_size)
 {
-	char msg[256];
-	int n;
+	char *formatted = NULL;
+	bool emitted = false;
 
-	if (!g_verbose)
+	if (ela_uboot_env_format_scan_start_record(g_output_format,
+						   g_verbose,
+						   &g_csv_header_emitted,
+						   dev,
+						   step,
+						   env_size,
+						   device_size,
+						   &formatted) != 0)
 		return;
-
-	n = snprintf(msg,
-		     sizeof(msg),
-		     "Scanning %s (step=0x%jx, env_size=0x%jx, device_size=0x%jx)",
-		     dev ? dev : "",
-		     (uintmax_t)step,
-		     (uintmax_t)env_size,
-		     (uintmax_t)device_size);
-	if (n < 0)
-		return;
-
-	if (g_output_format == FW_OUTPUT_JSON) {
-		json_object *obj = json_object_new_object();
-		if (!obj)
-			return;
-		json_object_object_add(obj, "record", json_object_new_string("verbose"));
-		if (dev)
-			json_object_object_add(obj, "device", json_object_new_string(dev));
-		json_object_object_add(obj, "offset", json_object_new_uint64(0));
-		json_object_object_add(obj, "message", json_object_new_string(msg));
-		json_object_object_add(obj, "step", json_object_new_uint64(step));
-		json_object_object_add(obj, "env_size", json_object_new_uint64(env_size));
-		json_object_object_add(obj, "device_size", json_object_new_uint64(device_size));
-		out_printf("%s\n", json_object_to_json_string_ext(obj, JSON_C_TO_STRING_PLAIN | JSON_C_TO_STRING_NOSLASHESCAPE));
-		json_object_put(obj);
-
-		if (g_output_http_uri && g_output_http_len > 0)
-			(void)flush_output_http_buffer();
-		return;
+	if (formatted) {
+		out_printf("%s", formatted);
+		emitted = true;
+		free(formatted);
 	}
-
-	emit_env_verbosef(dev,
-		0,
-		"%s",
-		msg);
+	if (emitted && g_output_http_uri && g_output_http_len > 0)
+		(void)flush_output_http_buffer();
 }
 
 static void emit_env_verbosef(const char *dev, uint64_t off, const char *fmt, ...)
@@ -376,29 +225,8 @@ struct env_candidate {
 static int add_or_merge_candidate(struct env_candidate **cands, size_t *count,
 					  uint64_t cfg_off, bool crc_standard, bool crc_redundant)
 {
-	struct env_candidate *tmp;
-
-	if (!cands || !count)
-		return -1;
-
-	for (size_t i = 0; i < *count; i++) {
-		if ((*cands)[i].cfg_off != cfg_off)
-			continue;
-		(*cands)[i].crc_standard = (*cands)[i].crc_standard || crc_standard;
-		(*cands)[i].crc_redundant = (*cands)[i].crc_redundant || crc_redundant;
-		return 0;
-	}
-
-	tmp = realloc(*cands, (*count + 1) * sizeof(**cands));
-	if (!tmp)
-		return -1;
-
-	*cands = tmp;
-	(*cands)[*count].cfg_off = cfg_off;
-	(*cands)[*count].crc_standard = crc_standard;
-	(*cands)[*count].crc_redundant = crc_redundant;
-	(*count)++;
-	return 0;
+	return ela_uboot_env_add_or_merge_candidate((struct ela_uboot_env_candidate **)cands,
+						    count, cfg_off, crc_standard, crc_redundant);
 }
 
 static void append_output_http_buffer(const char *buf, size_t len)
@@ -591,49 +419,17 @@ static bool file_exists(const char *path)
 
 static bool is_http_write_source(const char *s)
 {
-	if (!s)
-		return false;
-
-	return !strncmp(s, "http://", 7) || !strncmp(s, "https://", 8);
+	return ela_uboot_env_is_http_write_source(s);
 }
 
 bool uboot_valid_var_name(const char *name)
 {
-	if (!name || !*name)
-		return false;
-
-	for (const unsigned char *p = (const unsigned char *)name; *p; p++) {
-		if (*p == '=')
-			return false;
-		if (isspace(*p) || iscntrl(*p))
-			return false;
-	}
-
-	return true;
+	return ela_uboot_env_valid_var_name(name);
 }
 
 bool uboot_is_sensitive_env_var(const char *name)
 {
-	static const char *sensitive_vars[] = {
-		"bootcmd",
-		"altbootcmd",
-		"bootargs",
-		"boot_targets",
-		"bootdelay",
-		"preboot",
-		"stdin",
-		"stdout",
-		"stderr",
-	};
-
-	if (!name || !*name)
-		return false;
-
-	for (size_t i = 0; i < ARRAY_SIZE(sensitive_vars); i++)
-		if (!strcmp(name, sensitive_vars[i]))
-			return true;
-
-	return false;
+	return ela_uboot_env_is_sensitive_var(name);
 }
 
 bool uboot_confirm_sensitive_write(const char *name)
@@ -651,93 +447,22 @@ bool uboot_confirm_sensitive_write(const char *name)
 
 char *uboot_trim(char *s)
 {
-	char *end;
-
-	if (!s)
-		return s;
-
-	while (*s && isspace((unsigned char)*s))
-		s++;
-
-	if (!*s)
-		return s;
-
-	end = s + strlen(s) - 1;
-	while (end >= s && isspace((unsigned char)*end)) {
-		*end = '\0';
-		end--;
-	}
-
-	return s;
+	return ela_uboot_env_trim(s);
 }
 
 static MAYBE_UNUSED void free_env_kvs(struct env_kv *kvs, size_t count)
 {
-	if (!kvs)
-		return;
-	for (size_t i = 0; i < count; i++) {
-		free(kvs[i].name);
-		free(kvs[i].value);
-	}
-	free(kvs);
+	ela_uboot_env_free_kvs(kvs, count);
 }
 
 static MAYBE_UNUSED int env_set_kv(struct env_kv **kvs, size_t *count, const char *name, const char *value)
 {
-	struct env_kv *tmp;
-	char *name_dup;
-	char *value_dup;
-
-	if (!kvs || !count || !name || !value)
-		return -1;
-
-	for (size_t i = 0; i < *count; i++) {
-		if (strcmp((*kvs)[i].name, name))
-			continue;
-		value_dup = strdup(value);
-		if (!value_dup)
-			return -1;
-		free((*kvs)[i].value);
-		(*kvs)[i].value = value_dup;
-		return 0;
-	}
-
-	tmp = realloc(*kvs, (*count + 1) * sizeof(**kvs));
-	if (!tmp)
-		return -1;
-	*kvs = tmp;
-
-	name_dup = strdup(name);
-	value_dup = strdup(value);
-	if (!name_dup || !value_dup) {
-		free(name_dup);
-		free(value_dup);
-		return -1;
-	}
-
-	(*kvs)[*count].name = name_dup;
-	(*kvs)[*count].value = value_dup;
-	(*count)++;
-	return 0;
+	return ela_uboot_env_set_kv(kvs, count, name, value);
 }
 
 static MAYBE_UNUSED int env_unset_kv(struct env_kv *kvs, size_t *count, const char *name)
 {
-	if (!kvs || !count || !name)
-		return -1;
-
-	for (size_t i = 0; i < *count; i++) {
-		if (strcmp(kvs[i].name, name))
-			continue;
-		free(kvs[i].name);
-		free(kvs[i].value);
-		for (size_t j = i + 1; j < *count; j++)
-			kvs[j - 1] = kvs[j];
-		(*count)--;
-		return 0;
-	}
-
-	return 0;
+	return ela_uboot_env_unset_kv(kvs, count, name);
 }
 
 static MAYBE_UNUSED int parse_fw_config(const char *path, struct uboot_cfg_entry out[2], size_t *out_count)
@@ -757,30 +482,9 @@ static MAYBE_UNUSED int parse_fw_config(const char *path, struct uboot_cfg_entry
 
 	while (fgets(line, sizeof(line), fp)) {
 		char *s = uboot_trim(line);
-		char dev[256], off_s[64], size_s[64], erase_s[64], sec_s[64];
-		uint64_t off, env_size, erase, sec;
 
 		if (!*s || *s == '#')
 			continue;
-
-		if (sscanf(s, "%255s %63s %63s %63s %63s", dev, off_s, size_s, erase_s, sec_s) != 5) {
-			err_printf("Invalid uboot_env.config line: %s\n", s);
-			fclose(fp);
-			return -1;
-		}
-
-		if (ela_parse_u64(off_s, &off) || ela_parse_u64(size_s, &env_size) ||
-		    ela_parse_u64(erase_s, &erase) || ela_parse_u64(sec_s, &sec)) {
-			err_printf("Invalid numeric values in uboot_env.config line: %s\n", s);
-			fclose(fp);
-			return -1;
-		}
-
-		if (!env_size || env_size < 8) {
-			err_printf("Invalid env size in uboot_env.config line: %s\n", s);
-			fclose(fp);
-			return -1;
-		}
 
 		if (count >= 2) {
 			err_printf("uboot_env.config must contain one or two usable entries for --write\n");
@@ -788,12 +492,11 @@ static MAYBE_UNUSED int parse_fw_config(const char *path, struct uboot_cfg_entry
 			return -1;
 		}
 
-		strncpy(out[count].dev, dev, sizeof(out[count].dev) - 1);
-		out[count].dev[sizeof(out[count].dev) - 1] = '\0';
-		out[count].off = off;
-		out[count].env_size = env_size;
-		out[count].erase_size = erase;
-		out[count].sectors = sec;
+		if (ela_uboot_parse_fw_config_line(s, &out[count]) != 1) {
+			err_printf("Invalid uboot_env.config line: %s\n", s);
+			fclose(fp);
+			return -1;
+		}
 		count++;
 	}
 
@@ -816,49 +519,7 @@ static MAYBE_UNUSED int parse_fw_config(const char *path, struct uboot_cfg_entry
 static MAYBE_UNUSED int parse_existing_env_data(const uint8_t *buf, size_t buf_len, size_t data_off,
 					   struct env_kv **kvs, size_t *count)
 {
-	size_t off = data_off;
-
-	if (!buf || !kvs || !count || data_off >= buf_len)
-		return -1;
-
-	while (off < buf_len) {
-		const char *entry;
-		size_t slen;
-		const char *eq;
-		char *name, *value;
-
-		if (buf[off] == '\0') {
-			if (off + 1 >= buf_len || buf[off + 1] == '\0')
-				break;
-			off++;
-			continue;
-		}
-
-		entry = (const char *)(buf + off);
-		slen = strnlen(entry, buf_len - off);
-		if (slen >= buf_len - off)
-			break;
-
-		eq = memchr(entry, '=', slen);
-		if (!eq) {
-			off += slen + 1;
-			continue;
-		}
-
-		name = strndup(entry, (size_t)(eq - entry));
-		value = strndup(eq + 1, slen - (size_t)(eq - entry) - 1);
-		if (!name || !value || env_set_kv(kvs, count, name, value)) {
-			free(name);
-			free(value);
-			return -1;
-		}
-		free(name);
-		free(value);
-
-		off += slen + 1;
-	}
-
-	return 0;
+	return ela_uboot_parse_existing_env_data(buf, buf_len, data_off, kvs, count);
 }
 
 static MAYBE_UNUSED int apply_write_script(const char *script_path, struct env_kv **kvs, size_t *count)
@@ -877,36 +538,13 @@ static MAYBE_UNUSED int apply_write_script(const char *script_path, struct env_k
 	}
 
 	while (fgets(line, sizeof(line), fp)) {
-		char *s;
-		char *name;
+		char *name = NULL;
 		char *value = NULL;
-		char *eq;
-		char *space;
 		bool delete_var = false;
 
 		lineno++;
-		s = uboot_trim(line);
-		if (!*s || *s == '#')
+		if (ela_uboot_env_parse_write_script_line(line, &name, &value, &delete_var) != 0)
 			continue;
-
-		eq = strchr(s, '=');
-		space = strpbrk(s, " \t");
-		if (eq && (!space || eq < space)) {
-			*eq = '\0';
-			name = uboot_trim(s);
-			value = eq + 1;
-		} else {
-			if (space) {
-				*space = '\0';
-				name = uboot_trim(s);
-				value = uboot_trim(space + 1);
-				if (!*value)
-					delete_var = true;
-			} else {
-				name = uboot_trim(s);
-				delete_var = true;
-			}
-		}
 
 		if (!uboot_valid_var_name(name)) {
 			err_printf("Invalid variable name at %s:%lu\n", script_path, lineno);
@@ -942,32 +580,7 @@ static MAYBE_UNUSED int apply_write_script(const char *script_path, struct env_k
 
 static MAYBE_UNUSED int build_env_region(const struct env_kv *kvs, size_t count, uint8_t *out, size_t out_len)
 {
-	size_t pos = 0;
-
-	if (!out || out_len < 2)
-		return -1;
-
-	memset(out, 0, out_len);
-	for (size_t i = 0; i < count; i++) {
-		size_t nlen = strlen(kvs[i].name);
-		size_t vlen = strlen(kvs[i].value);
-		size_t need = nlen + 1 + vlen + 1;
-
-		if (pos + need + 1 > out_len)
-			return -1;
-
-		memcpy(out + pos, kvs[i].name, nlen);
-		pos += nlen;
-		out[pos++] = '=';
-		memcpy(out + pos, kvs[i].value, vlen);
-		pos += vlen;
-		out[pos++] = '\0';
-	}
-
-	if (pos + 1 > out_len)
-		return -1;
-	out[pos++] = '\0';
-	return 0;
+	return ela_uboot_build_env_region(kvs, count, out, out_len);
 }
 
 static MAYBE_UNUSED int read_env_copy(const struct uboot_cfg_entry *cfg, uint8_t **out)
@@ -1003,26 +616,7 @@ static MAYBE_UNUSED int read_env_copy(const struct uboot_cfg_entry *cfg, uint8_t
 
 static MAYBE_UNUSED bool env_crc_matches(const uint8_t *buf, size_t env_size, size_t data_off, bool *is_le)
 {
-	uint32_t stored_le;
-	uint32_t stored_be;
-	uint32_t calc;
-
-	if (!buf || env_size <= data_off || !is_le)
-		return false;
-
-	stored_le = read_le32(buf);
-	stored_be = ela_read_be32(buf);
-	calc = ela_crc32_calc(crc32_table, buf + data_off, env_size - data_off);
-	if (calc == stored_le) {
-		*is_le = true;
-		return true;
-	}
-	if (calc == stored_be) {
-		*is_le = false;
-		return true;
-	}
-
-	return false;
+	return ela_uboot_env_crc_matches(crc32_table, buf, env_size, data_off, is_le);
 }
 
 static MAYBE_UNUSED int write_env_copy(const struct uboot_cfg_entry *cfg, const uint8_t *buf)
@@ -1054,124 +648,20 @@ static MAYBE_UNUSED int write_env_copy(const struct uboot_cfg_entry *cfg, const 
 
 static bool has_hint_var(const uint8_t *data, size_t len, const char *hint_override)
 {
-	static const char *hints[] = {
-		"bootcmd=", "bootargs=", "baudrate=", "ethaddr=", "stdin=",
-	};
-
-	if (hint_override && *hint_override) {
-		size_t hlen = strlen(hint_override);
-		for (size_t off = 0; off + hlen <= len; off++)
-			if (!memcmp(data + off, hint_override, hlen))
-				return true;
-		return false;
-	}
-
-	for (size_t i = 0; i < ARRAY_SIZE(hints); i++) {
-		size_t hlen = strlen(hints[i]);
-		for (size_t off = 0; off + hlen <= len; off++)
-			if (!memcmp(data + off, hints[i], hlen))
-				return true;
-	}
-
-	return false;
+	return ela_uboot_env_has_hint_var(data, len, hint_override);
 }
 
 static MAYBE_UNUSED void dump_env_vars(const char *dev, uint64_t env_off,
 				      const uint8_t *data, size_t len)
 {
-	size_t cursor = 0;
-	size_t count = 0;
-	json_object *vars_arr = NULL;
-	json_object *obj = NULL;
-	bool json_mode = (g_output_format == FW_OUTPUT_JSON);
+	char *formatted = NULL;
 
-	if (json_mode) {
-		vars_arr = json_object_new_array();
-		if (!vars_arr)
-			return;
-	}
-
-	if (!json_mode)
-		out_printf("    parsed env vars:\n");
-	while (cursor < len) {
-		const char *s;
-		size_t slen;
-		const char *eq;
-		bool printable = true;
-
-		if (data[cursor] == '\0') {
-			if ((cursor + 1 < len && data[cursor + 1] == '\0') || cursor + 1 >= len)
-				break;
-			cursor++;
-			continue;
-		}
-
-		s = (const char *)(data + cursor);
-		slen = strnlen(s, len - cursor);
-		if (slen == len - cursor)
-			break;
-
-		eq = memchr(s, '=', slen);
-		if (eq) {
-			size_t key_len = (size_t)(eq - s);
-			size_t val_len = slen - key_len - 1;
-			for (size_t i = 0; i < slen; i++) {
-				if (!isprint((unsigned char)s[i]) && s[i] != '\t') {
-					printable = false;
-					break;
-				}
-			}
-
-			if (printable) {
-				if (json_mode) {
-					json_object *kv = json_object_new_object();
-					char *key = strndup(s, key_len);
-					char *value = strndup(eq + 1, val_len);
-
-					if (kv && key && value) {
-						json_object_object_add(kv, "key", json_object_new_string(key));
-						json_object_object_add(kv, "value", json_object_new_string(value));
-						json_object_array_add(vars_arr, kv);
-						count++;
-					} else if (kv) {
-						json_object_put(kv);
-					}
-
-					free(key);
-					free(value);
-				} else {
-					out_printf("      %.*s\n", (int)slen, s);
-					count++;
-				}
-			}
-		}
-
-		cursor += slen + 1;
-		if (count >= 256) {
-			if (!json_mode)
-				out_printf("      ... truncated after 256 vars ...\n");
-			break;
-		}
-	}
-
-	if (json_mode) {
-		obj = json_object_new_object();
-		if (!obj) {
-			json_object_put(vars_arr);
-			return;
-		}
-		json_object_object_add(obj, "record", json_object_new_string("env_vars"));
-		if (dev)
-			json_object_object_add(obj, "device", json_object_new_string(dev));
-		json_object_object_add(obj, "offset", json_object_new_uint64(env_off));
-		json_object_object_add(obj, "vars", vars_arr);
-		out_printf("%s\n", json_object_to_json_string_ext(obj, JSON_C_TO_STRING_PLAIN | JSON_C_TO_STRING_NOSLASHESCAPE));
-		json_object_put(obj);
+	if (ela_uboot_env_format_vars_dump(g_output_format, dev, env_off, data, len, &formatted) != 0)
 		return;
+	if (formatted) {
+		out_printf("%s", formatted);
+		free(formatted);
 	}
-
-	if (!count)
-		out_printf("      (no parseable variables found)\n");
 }
 
 static int scan_dev(const char *dev, uint64_t step, uint64_t env_size, const char *hint_override)
@@ -1263,7 +753,7 @@ static int scan_dev(const char *dev, uint64_t step, uint64_t env_size, const cha
 		if (g_bruteforce)
 			emit_env_candidate_record(dev, (uint64_t)off, "", "hint-only", true,
 				cfg_off, env_size, erase_size, sector_count);
-		else if (crc_ok_redund && !crc_ok_std)
+		else if (!strcmp(ela_uboot_env_candidate_mode(g_bruteforce, crc_ok_std, crc_ok_redund), "redundant"))
 			emit_env_candidate_record(dev, (uint64_t)off,
 				(calc_redund == stored_le) ? "LE" : "BE", "redundant", hint_ok_redund,
 				cfg_off, env_size, erase_size, sector_count);
@@ -1277,10 +767,9 @@ static int scan_dev(const char *dev, uint64_t step, uint64_t env_size, const cha
 				(uintmax_t)erase_size, (uintmax_t)sector_count);
 		}
 		if (g_parse_vars) {
-			if (crc_ok_redund && !crc_ok_std && env_size > 5)
-				dump_env_vars(dev, (uint64_t)off, buf + 5, (size_t)env_size - 5);
-			else if (env_size > 4)
-				dump_env_vars(dev, (uint64_t)off, buf + 4, (size_t)env_size - 4);
+			size_t data_off = ela_uboot_env_data_offset(crc_ok_std, crc_ok_redund);
+			if (env_size > data_off)
+				dump_env_vars(dev, (uint64_t)off, buf + data_off, (size_t)env_size - data_off);
 			else
 				out_printf("    parsed env vars:\n      (no parseable variables found)\n");
 		}
@@ -1288,13 +777,11 @@ static int scan_dev(const char *dev, uint64_t step, uint64_t env_size, const cha
 	}
 
 	if (cand_count >= 2 && erase_size) {
-		uint64_t expected = erase_size * (sector_count ? sector_count : 1);
 		for (size_t i = 1; i < cand_count; i++) {
 			uint64_t prev = cands[i - 1].cfg_off;
 			uint64_t curr = cands[i].cfg_off;
-			uint64_t diff = curr - prev;
 
-			if (diff != erase_size && diff != expected)
+			if (!ela_uboot_env_should_report_redundant_pair(prev, curr, erase_size, sector_count))
 				continue;
 
 			emit_redundant_pair_record(dev, prev, curr);

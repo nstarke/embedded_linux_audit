@@ -2,7 +2,14 @@
 
 #include "http_client.h"
 #include "api_key.h"
+#include "http_client_body_util.h"
+#include "http_client_parse_util.h"
+#include "http_client_protocol_util.h"
+#include "http_client_runtime_util.h"
+#include "http_ws_policy_util.h"
 #include "tcp_util.h"
+#include "../util/http_uri_util.h"
+#include "../util/http_protocol_util.h"
 #include "../util/str_util.h"
 #include "../util/isa_util.h"
 #include "../embedded_linux_audit_cmd.h"
@@ -59,94 +66,6 @@
 #ifndef PATH_MAX
 #define PATH_MAX 4096
 #endif
-
-static int parse_status_code_from_headers(const char *headers);
-
-int parse_http_uri(const char *uri, struct parsed_http_uri *parsed)
-{
-	const char *scheme_end;
-	const char *authority;
-	const char *authority_end;
-	const char *host_start;
-	const char *host_end;
-	const char *path_start;
-	const char *at;
-	const char *port_sep = NULL;
-	char port_buf[8];
-	size_t host_len;
-	size_t path_len;
-
-	if (!uri || !parsed)
-		return -1;
-
-	memset(parsed, 0, sizeof(*parsed));
-	scheme_end = strstr(uri, "://");
-	if (!scheme_end)
-		return -1;
-
-	if ((size_t)(scheme_end - uri) == 4 && !strncmp(uri, "http", 4)) {
-		parsed->https = false;
-		parsed->port = 80;
-	} else if ((size_t)(scheme_end - uri) == 5 && !strncmp(uri, "https", 5)) {
-		parsed->https = true;
-		parsed->port = 443;
-	} else {
-		return -1;
-	}
-
-	authority = scheme_end + 3;
-	authority_end = authority;
-	while (*authority_end && *authority_end != '/' && *authority_end != '?' && *authority_end != '#')
-		authority_end++;
-	path_start = authority_end;
-
-	at = memchr(authority, '@', (size_t)(authority_end - authority));
-	host_start = at ? (at + 1) : authority;
-	if (host_start >= authority_end)
-		return -1;
-
-	if (*host_start == '[')
-		return -1;
-
-	host_end = host_start;
-	while (host_end < authority_end && *host_end != ':')
-		host_end++;
-	if (host_end < authority_end && *host_end == ':')
-		port_sep = host_end;
-
-	host_len = (size_t)(host_end - host_start);
-	if (!host_len || host_len >= sizeof(parsed->host))
-		return -1;
-	memcpy(parsed->host, host_start, host_len);
-	parsed->host[host_len] = '\0';
-
-	if (port_sep) {
-		char *end;
-		unsigned long port_ul;
-		size_t port_len = (size_t)(authority_end - (port_sep + 1));
-		if (!port_len || port_len >= sizeof(port_buf))
-			return -1;
-		memcpy(port_buf, port_sep + 1, port_len);
-		port_buf[port_len] = '\0';
-		errno = 0;
-		port_ul = strtoul(port_buf, &end, 10);
-		if (errno || !end || *end || port_ul == 0 || port_ul > 65535)
-			return -1;
-		parsed->port = (uint16_t)port_ul;
-	}
-
-	if (!*path_start) {
-		parsed->path[0] = '/';
-		parsed->path[1] = '\0';
-		return 0;
-	}
-
-	path_len = strlen(path_start);
-	if (path_len >= sizeof(parsed->path))
-		return -1;
-	memcpy(parsed->path, path_start, path_len + 1);
-	return 0;
-}
 
 static int ssl_ctx_add_embedded_ca_store(X509_STORE *store, char *errbuf, size_t errbuf_len)
 {
@@ -208,8 +127,7 @@ static int read_http_status_and_headers(int sock, int *status_out)
 {
 	char headers[8192];
 	size_t used = 0;
-	char *line_end;
-	char *status_line_end;
+	size_t header_len = 0;
 
 	if (!status_out)
 		return -1;
@@ -224,8 +142,7 @@ static int read_http_status_and_headers(int sock, int *status_out)
 			return -1;
 		used += (size_t)n;
 		headers[used] = '\0';
-		line_end = strstr(headers, "\r\n\r\n");
-		if (line_end)
+		if (ela_http_parse_response_headers(headers, used, status_out, &header_len) == 0)
 			break;
 		if (used == sizeof(headers) - 1)
 			return -1;
@@ -234,19 +151,11 @@ static int read_http_status_and_headers(int sock, int *status_out)
 		used = 0;
 	}
 
-	status_line_end = strstr(headers, "\r\n");
-	if (!status_line_end)
-		return -1;
-	*status_line_end = '\0';
-	if (sscanf(headers, "HTTP/%*u.%*u %d", status_out) != 1)
-		return -1;
-
-	used = (size_t)((line_end + 4) - headers);
-	while (used) {
-		ssize_t n = recv(sock, headers, used, 0);
+	while (header_len) {
+		ssize_t n = recv(sock, headers, header_len, 0);
 		if (n <= 0)
 			return -1;
-		used -= (size_t)n;
+		header_len -= (size_t)n;
 	}
 
 	return 0;
@@ -265,8 +174,6 @@ static int simple_http_post(const char *uri,
 	struct parsed_http_uri parsed;
 	char *request = NULL;
 	size_t request_len = 0;
-	size_t request_cap = 0;
-	char content_len_buf[32];
 	int sock;
 	int status_code;
 
@@ -286,35 +193,15 @@ static int simple_http_post(const char *uri,
 		return -1;
 	}
 
-	snprintf(content_len_buf, sizeof(content_len_buf), "%zu", len);
-	if (append_text(&request, &request_len, &request_cap, "POST ") != 0 ||
-	    append_text(&request, &request_len, &request_cap, parsed.path) != 0 ||
-	    append_text(&request, &request_len, &request_cap, " HTTP/1.1\r\nHost: ") != 0 ||
-	    append_text(&request, &request_len, &request_cap, parsed.host) != 0 ||
-	    append_text(&request, &request_len, &request_cap, "\r\nConnection: close\r\nContent-Type: ") != 0 ||
-	    append_text(&request, &request_len, &request_cap, content_type) != 0 ||
-	    append_text(&request, &request_len, &request_cap, "\r\nContent-Length: ") != 0 ||
-	    append_text(&request, &request_len, &request_cap, content_len_buf) != 0) {
-		if (errbuf && errbuf_len)
-			snprintf(errbuf, errbuf_len, "failed to build HTTP request");
-		free(request);
-		close(sock);
-		return -1;
-	}
-
-	if (auth_key && *auth_key) {
-		if (append_text(&request, &request_len, &request_cap, "\r\nAuthorization: Bearer ") != 0 ||
-		    append_text(&request, &request_len, &request_cap, auth_key) != 0) {
-			if (errbuf && errbuf_len)
-				snprintf(errbuf, errbuf_len, "failed to build HTTP request");
-			free(request);
-			close(sock);
-			return -1;
-		}
-	}
-
-	if (append_text(&request, &request_len, &request_cap, "\r\n\r\n") != 0 ||
-	    append_bytes(&request, &request_len, &request_cap, (const char *)data, len) != 0) {
+	if (ela_http_build_post_request(&request,
+					&request_len,
+					parsed.path,
+					parsed.host,
+					content_type,
+					len,
+					auth_key,
+					data,
+					len) != 0) {
 		if (errbuf && errbuf_len)
 			snprintf(errbuf, errbuf_len, "failed to build HTTP request");
 		free(request);
@@ -347,9 +234,9 @@ static int simple_http_post(const char *uri,
 	if (status_out)
 		*status_out = status_code;
 
-	if (status_code < 200 || status_code >= 300) {
+	if (!ela_http_status_is_success(status_code)) {
 		if (errbuf && errbuf_len)
-			snprintf(errbuf, errbuf_len, "HTTP status %d", status_code);
+			ela_http_format_status_error(status_code, errbuf, errbuf_len);
 		if (verbose)
 			fprintf(stderr, "HTTP POST response failure uri=%s status=%d\n", uri, status_code);
 		return -1;
@@ -384,8 +271,6 @@ static int simple_wolfssl_https_post(const struct parsed_http_uri *parsed,
 	char *headers = NULL;
 	char *request = NULL;
 	size_t request_len = 0;
-	size_t request_cap = 0;
-	char content_len_buf[32];
 	int status;
 	int rc;
 
@@ -453,31 +338,15 @@ static int simple_wolfssl_https_post(const struct parsed_http_uri *parsed,
 		}
 	}
 
-	snprintf(content_len_buf, sizeof(content_len_buf), "%zu", len);
-	if (append_text(&request, &request_len, &request_cap, "POST ") != 0 ||
-	    append_text(&request, &request_len, &request_cap, parsed->path) != 0 ||
-	    append_text(&request, &request_len, &request_cap, " HTTP/1.1\r\nHost: ") != 0 ||
-	    append_text(&request, &request_len, &request_cap, parsed->host) != 0 ||
-	    append_text(&request, &request_len, &request_cap, "\r\nConnection: close\r\nContent-Type: ") != 0 ||
-	    append_text(&request, &request_len, &request_cap, content_type) != 0 ||
-	    append_text(&request, &request_len, &request_cap, "\r\nContent-Length: ") != 0 ||
-	    append_text(&request, &request_len, &request_cap, content_len_buf) != 0) {
-		if (errbuf && errbuf_len)
-			snprintf(errbuf, errbuf_len, "failed to build HTTPS request");
-		goto cleanup;
-	}
-
-	if (auth_key && *auth_key) {
-		if (append_text(&request, &request_len, &request_cap, "\r\nAuthorization: Bearer ") != 0 ||
-		    append_text(&request, &request_len, &request_cap, auth_key) != 0) {
-			if (errbuf && errbuf_len)
-				snprintf(errbuf, errbuf_len, "failed to build HTTPS request");
-			goto cleanup;
-		}
-	}
-
-	if (append_text(&request, &request_len, &request_cap, "\r\n\r\n") != 0 ||
-	    append_bytes(&request, &request_len, &request_cap, (const char *)data, len) != 0) {
+	if (ela_http_build_post_request(&request,
+					&request_len,
+					parsed->path,
+					parsed->host,
+					content_type,
+					len,
+					auth_key,
+					data,
+					len) != 0) {
 		if (errbuf && errbuf_len)
 			snprintf(errbuf, errbuf_len, "failed to build HTTPS request");
 		goto cleanup;
@@ -502,12 +371,12 @@ static int simple_wolfssl_https_post(const struct parsed_http_uri *parsed,
 		goto cleanup;
 	}
 
-	status = parse_status_code_from_headers(headers);
+	status = ela_http_parse_status_code_from_headers(headers);
 	if (status_out)
 		*status_out = status;
 	if (status < 200 || status >= 300) {
 		if (errbuf && errbuf_len)
-			snprintf(errbuf, errbuf_len, "HTTP status %d", status);
+			ela_http_format_status_error(status, errbuf, errbuf_len);
 		goto cleanup;
 	}
 
@@ -547,7 +416,6 @@ static int simple_http_get_to_file(const char *uri,
 	struct parsed_http_uri parsed;
 	char *request = NULL;
 	size_t request_len = 0;
-	size_t request_cap = 0;
 	FILE *fp = NULL;
 	int sock = -1;
 	int status_code;
@@ -574,11 +442,7 @@ static int simple_http_get_to_file(const char *uri,
 		return -1;
 	}
 
-	if (append_text(&request, &request_len, &request_cap, "GET ") != 0 ||
-	    append_text(&request, &request_len, &request_cap, parsed.path) != 0 ||
-	    append_text(&request, &request_len, &request_cap, " HTTP/1.1\r\nHost: ") != 0 ||
-	    append_text(&request, &request_len, &request_cap, parsed.host) != 0 ||
-	    append_text(&request, &request_len, &request_cap, "\r\nConnection: close\r\n\r\n") != 0) {
+	if (ela_http_build_get_request(&request, &request_len, parsed.path, parsed.host) != 0) {
 		if (errbuf && errbuf_len)
 			snprintf(errbuf, errbuf_len, "failed to build HTTP request");
 		goto fail;
@@ -603,7 +467,7 @@ static int simple_http_get_to_file(const char *uri,
 
 	if (status_code < 200 || status_code >= 300) {
 		if (errbuf && errbuf_len)
-			snprintf(errbuf, errbuf_len, "HTTP status %d", status_code);
+			ela_http_format_status_error(status_code, errbuf, errbuf_len);
 		if (verbose)
 			fprintf(stderr, "HTTP GET response failure uri=%s status=%d\n", uri, status_code);
 		goto fail;
@@ -773,11 +637,7 @@ static int simple_wolfssl_https_get_to_file(const struct parsed_http_uri *parsed
 		goto cleanup;
 	}
 
-	if (append_text(&request, &request_len, &request_cap, "GET ") != 0 ||
-	    append_text(&request, &request_len, &request_cap, parsed->path) != 0 ||
-	    append_text(&request, &request_len, &request_cap, " HTTP/1.1\r\nHost: ") != 0 ||
-	    append_text(&request, &request_len, &request_cap, parsed->host) != 0 ||
-	    append_text(&request, &request_len, &request_cap, "\r\nConnection: close\r\nAccept-Encoding: identity\r\n\r\n") != 0) {
+	if (ela_http_build_identity_get_request(&request, &request_len, parsed->path, parsed->host) != 0) {
 		if (errbuf && errbuf_len)
 			snprintf(errbuf, errbuf_len, "failed to build HTTPS request");
 		goto cleanup;
@@ -797,7 +657,7 @@ static int simple_wolfssl_https_get_to_file(const struct parsed_http_uri *parsed
 	ela_set_sigill_stage("https:wolfssl_read_headers");
 	if (wolfssl_read_headers(ssl, &headers) != 0)
 		goto cleanup;
-	status = parse_status_code_from_headers(headers);
+	status = ela_http_parse_status_code_from_headers(headers);
 	if (status < 200 || status >= 300) {
 		if (errbuf && errbuf_len)
 			snprintf(errbuf, errbuf_len, "HTTP status %d", status);
@@ -839,21 +699,6 @@ cleanup:
 }
 #endif
 
-static int parse_status_code_from_headers(const char *headers)
-{
-	int status = 0;
-	if (!headers)
-		return -1;
-	if (sscanf(headers, "HTTP/%*u.%*u %d", &status) != 1)
-		return -1;
-	return status;
-}
-
-static bool headers_have_chunked_encoding(const char *headers)
-{
-	return headers && strstr(headers, "\nTransfer-Encoding: chunked\r") != NULL;
-}
-
 static int ssl_readline(SSL *ssl, char *buf, size_t buf_sz)
 {
 	size_t len = 0;
@@ -875,15 +720,13 @@ static int ssl_readline(SSL *ssl, char *buf, size_t buf_sz)
 static int ssl_copy_response_body_to_file(SSL *ssl, const char *headers, FILE *fp)
 {
 	char buf[4096];
-	if (headers_have_chunked_encoding(headers)) {
+	if (ela_http_body_is_chunked(headers)) {
 		for (;;) {
 			char line[128];
 			unsigned long chunk_len;
-			char *end;
 			if (ssl_readline(ssl, line, sizeof(line)) < 0)
 				return -1;
-			chunk_len = strtoul(line, &end, 16);
-			if (end == line)
+			if (ela_http_parse_chunk_size_line(line, &chunk_len) != 0)
 				return -1;
 			if (chunk_len == 0) {
 				if (ssl_readline(ssl, line, sizeof(line)) < 0)
@@ -891,7 +734,7 @@ static int ssl_copy_response_body_to_file(SSL *ssl, const char *headers, FILE *f
 				break;
 			}
 			while (chunk_len) {
-				int want = (int)(chunk_len > sizeof(buf) ? sizeof(buf) : chunk_len);
+				int want = (int)ela_http_chunk_read_size(chunk_len, sizeof(buf));
 				int n = SSL_read(ssl, buf, want);
 				if (n <= 0)
 					return -1;
@@ -1092,8 +935,6 @@ static int simple_https_post(const char *uri,
 	char *headers = NULL;
 	char *request = NULL;
 	size_t request_len = 0;
-	size_t request_cap = 0;
-	char content_len_buf[32];
 	int status;
 
 	if (status_out)
@@ -1106,7 +947,8 @@ static int simple_https_post(const char *uri,
 	}
 
 #ifdef ELA_HAS_WOLFSSL
-	if (isa_is_powerpc_family(ela_detect_isa())) {
+	if (ela_http_choose_https_backend(isa_is_powerpc_family(ela_detect_isa())) ==
+	    ELA_HTTP_HTTPS_BACKEND_WOLFSSL) {
 		ela_set_sigill_stage("https:wolfssl_post_fallback");
 		return simple_wolfssl_https_post(&parsed, uri, data, len, content_type,
 						 auth_key, insecure, verbose,
@@ -1119,31 +961,15 @@ static int simple_https_post(const char *uri,
 	if (ssl_connect_with_embedded_ca(&parsed, insecure, &ctx, &ssl, &sock, errbuf, errbuf_len) < 0)
 		return -1;
 
-	snprintf(content_len_buf, sizeof(content_len_buf), "%zu", len);
-	if (append_text(&request, &request_len, &request_cap, "POST ") != 0 ||
-	    append_text(&request, &request_len, &request_cap, parsed.path) != 0 ||
-	    append_text(&request, &request_len, &request_cap, " HTTP/1.1\r\nHost: ") != 0 ||
-	    append_text(&request, &request_len, &request_cap, parsed.host) != 0 ||
-	    append_text(&request, &request_len, &request_cap, "\r\nConnection: close\r\nContent-Type: ") != 0 ||
-	    append_text(&request, &request_len, &request_cap, content_type) != 0 ||
-	    append_text(&request, &request_len, &request_cap, "\r\nContent-Length: ") != 0 ||
-	    append_text(&request, &request_len, &request_cap, content_len_buf) != 0) {
-		if (errbuf && errbuf_len)
-			snprintf(errbuf, errbuf_len, "failed to build HTTPS request");
-		goto fail;
-	}
-
-	if (auth_key && *auth_key) {
-		if (append_text(&request, &request_len, &request_cap, "\r\nAuthorization: Bearer ") != 0 ||
-		    append_text(&request, &request_len, &request_cap, auth_key) != 0) {
-			if (errbuf && errbuf_len)
-				snprintf(errbuf, errbuf_len, "failed to build HTTPS request");
-			goto fail;
-		}
-	}
-
-	if (append_text(&request, &request_len, &request_cap, "\r\n\r\n") != 0 ||
-	    append_bytes(&request, &request_len, &request_cap, (const char *)data, len) != 0) {
+	if (ela_http_build_post_request(&request,
+					&request_len,
+					parsed.path,
+					parsed.host,
+					content_type,
+					len,
+					auth_key,
+					data,
+					len) != 0) {
 		if (errbuf && errbuf_len)
 			snprintf(errbuf, errbuf_len, "failed to build HTTPS request");
 		goto fail;
@@ -1168,12 +994,12 @@ static int simple_https_post(const char *uri,
 		goto fail;
 	}
 
-	status = parse_status_code_from_headers(headers);
+	status = ela_http_parse_status_code_from_headers(headers);
 	if (status_out)
 		*status_out = status;
-	if (status < 200 || status >= 300) {
+	if (!ela_http_status_is_success(status)) {
 		if (errbuf && errbuf_len)
-			snprintf(errbuf, errbuf_len, "HTTP status %d", status);
+			ela_http_format_status_error(status, errbuf, errbuf_len);
 		goto fail;
 	}
 
@@ -1217,7 +1043,6 @@ static int simple_https_get_to_file(const char *uri,
 	char *headers = NULL;
 	char *request = NULL;
 	size_t request_len = 0;
-	size_t request_cap = 0;
 	int status;
 
 	if (parse_http_uri(uri, &parsed) != 0 || !parsed.https) {
@@ -1227,7 +1052,8 @@ static int simple_https_get_to_file(const char *uri,
 	}
 
 	#ifdef ELA_HAS_WOLFSSL
-	if (isa_is_powerpc_family(ela_detect_isa())) {
+	if (ela_http_choose_https_backend(isa_is_powerpc_family(ela_detect_isa())) ==
+	    ELA_HTTP_HTTPS_BACKEND_WOLFSSL) {
 		ela_set_sigill_stage("https:wolfssl_fallback");
 		return simple_wolfssl_https_get_to_file(&parsed, uri, output_path, insecure,
 			verbose, errbuf, errbuf_len);
@@ -1248,11 +1074,7 @@ static int simple_https_get_to_file(const char *uri,
 	}
 
 	ela_set_sigill_stage("https:get:build_request");
-	if (append_text(&request, &request_len, &request_cap, "GET ") != 0 ||
-	    append_text(&request, &request_len, &request_cap, parsed.path) != 0 ||
-	    append_text(&request, &request_len, &request_cap, " HTTP/1.1\r\nHost: ") != 0 ||
-	    append_text(&request, &request_len, &request_cap, parsed.host) != 0 ||
-	    append_text(&request, &request_len, &request_cap, "\r\nConnection: close\r\nAccept-Encoding: identity\r\n\r\n") != 0) {
+	if (ela_http_build_identity_get_request(&request, &request_len, parsed.path, parsed.host) != 0) {
 		if (errbuf && errbuf_len)
 			snprintf(errbuf, errbuf_len, "failed to build HTTPS request");
 		goto fail;
@@ -1276,11 +1098,11 @@ static int simple_https_get_to_file(const char *uri,
 		goto fail;
 	}
 
-	status = parse_status_code_from_headers(headers);
+	status = ela_http_parse_status_code_from_headers(headers);
 	ela_set_sigill_stage("https:get:read_body");
-	if (status < 200 || status >= 300) {
+	if (!ela_http_status_is_success(status)) {
 		if (errbuf && errbuf_len)
-			snprintf(errbuf, errbuf_len, "HTTP status %d", status);
+			ela_http_format_status_error(status, errbuf, errbuf_len);
 		goto fail;
 	}
 
@@ -1358,79 +1180,6 @@ static CURLcode curl_ssl_ctx_load_embedded_ca(CURL *curl, void *sslctx, void *pa
 	return CURLE_OK;
 }
 
-static int parse_http_uri_host(const char *uri, char *host_buf, size_t host_buf_len)
-{
-	const char *scheme_end;
-	const char *authority;
-	const char *authority_end;
-	const char *host_start;
-	const char *host_end;
-	const char *at;
-	size_t host_len;
-
-	if (!uri || !*uri || !host_buf || host_buf_len < 2)
-		return -1;
-
-	scheme_end = strstr(uri, "://");
-	if (!scheme_end)
-		return -1;
-
-	authority = scheme_end + 3;
-	authority_end = authority;
-	while (*authority_end && *authority_end != '/' && *authority_end != '?' && *authority_end != '#')
-		authority_end++;
-
-	at = memchr(authority, '@', (size_t)(authority_end - authority));
-	host_start = at ? (at + 1) : authority;
-	if (host_start >= authority_end)
-		return -1;
-
-	if (*host_start == '[') {
-		host_start++;
-		host_end = memchr(host_start, ']', (size_t)(authority_end - host_start));
-		if (!host_end)
-			return -1;
-	} else {
-		host_end = host_start;
-		while (host_end < authority_end && *host_end != ':')
-			host_end++;
-	}
-
-	host_len = (size_t)(host_end - host_start);
-	if (host_len == 0 || host_len >= host_buf_len)
-		return -1;
-
-	memcpy(host_buf, host_start, host_len);
-	host_buf[host_len] = '\0';
-	return 0;
-}
-
-static bool is_valid_mac_address_string(const char *value)
-{
-	int i;
-
-	if (!value)
-		return false;
-
-	for (i = 0; i < 17; i++) {
-		char ch = value[i];
-
-		if (i % 3 == 2) {
-			if (ch != ':')
-				return false;
-		} else if (!isxdigit((unsigned char)ch)) {
-			return false;
-		}
-	}
-
-	return value[17] == '\0';
-}
-
-static bool is_zero_mac_address_string(const char *value)
-{
-	return value && !strcmp(value, "00:00:00:00:00:00");
-}
-
 static int __attribute__((unused)) resolve_uri_ipv4(const char *base_uri, struct in_addr *addr_out)
 {
 	char host[256];
@@ -1440,7 +1189,7 @@ static int __attribute__((unused)) resolve_uri_ipv4(const char *base_uri, struct
 
 	if (!addr_out)
 		return -1;
-	if (parse_http_uri_host(base_uri, host, sizeof(host)) < 0)
+	if (ela_parse_http_uri_host(base_uri, host, sizeof(host)) < 0)
 		return -1;
 
 	memset(&hints, 0, sizeof(hints));
@@ -1582,9 +1331,9 @@ static int first_non_loopback_mac(char *mac_buf, size_t mac_buf_len)
 		fclose(fp);
 
 		addr[strcspn(addr, "\r\n")] = '\0';
-		if (is_zero_mac_address_string(addr))
+		if (ela_http_is_zero_mac_address_string(addr))
 			continue;
-		if (!is_valid_mac_address_string(addr))
+		if (!ela_http_is_valid_mac_address_string(addr))
 			continue;
 
 		snprintf(mac_buf, mac_buf_len, "%s", addr);
@@ -1616,8 +1365,8 @@ int ela_http_get_upload_mac(const char *base_uri, char *mac_buf, size_t mac_buf_
 	    resolve_uri_ipv4(base_uri, &dest_addr) == 0 &&
 	    route_iface_for_ipv4(dest_addr, ifname, sizeof(ifname)) == 0 &&
 	    mac_for_interface(ifname, routed_mac, sizeof(routed_mac)) == 0 &&
-	    is_valid_mac_address_string(routed_mac) &&
-	    !is_zero_mac_address_string(routed_mac)) {
+	    ela_http_is_valid_mac_address_string(routed_mac) &&
+	    !ela_http_is_zero_mac_address_string(routed_mac)) {
 		snprintf(mac_buf, mac_buf_len, "%s", routed_mac);
 		return 0;
 	}
@@ -1627,120 +1376,12 @@ int ela_http_get_upload_mac(const char *base_uri, char *mac_buf, size_t mac_buf_
 	 * the upload path away from heavier libc/network helper code on older
 	 * compatibility targets where we've seen runtime CPU faults.
 	 */
-	if (first_non_loopback_mac(mac_buf, mac_buf_len) == 0)
-		return 0;
+	if (first_non_loopback_mac(routed_mac, sizeof(routed_mac)) == 0)
+		return ela_http_choose_upload_mac_address(NULL, routed_mac, mac_buf, mac_buf_len);
 
-	/*
-	 * Final fallback: use a deterministic placeholder rather than invoking more
-	 * network stack helpers. The API accepts any syntactically valid MAC path.
-	 */
-	snprintf(mac_buf, mac_buf_len, "%s", "00:00:00:00:00:00");
-	return 0;
+	return ela_http_choose_upload_mac_address(NULL, NULL, mac_buf, mac_buf_len);
 }
 
-char *ela_http_uri_normalize_default_port(const char *uri, uint16_t default_port)
-{
-	const char *scheme_end;
-	const char *authority;
-	const char *authority_end;
-	const char *path;
-	const char *host_start;
-	const char *at;
-	const char *port_sep = NULL;
-	char port_buf[8];
-	char *out;
-	size_t prefix_len;
-	size_t suffix_len;
-	size_t port_len;
-
-	if (!uri || !*uri)
-		return NULL;
-
-	scheme_end = strstr(uri, "://");
-	if (!scheme_end)
-		return strdup(uri);
-
-	authority = scheme_end + 3;
-	authority_end = authority;
-	while (*authority_end && *authority_end != '/' && *authority_end != '?' && *authority_end != '#')
-		authority_end++;
-
-	if (authority == authority_end)
-		return strdup(uri);
-
-	path = authority_end;
-	at = memchr(authority, '@', (size_t)(authority_end - authority));
-	host_start = at ? (at + 1) : authority;
-
-	if (host_start >= authority_end)
-		return strdup(uri);
-
-	if (*host_start == '[') {
-		const char *host_end = memchr(host_start, ']', (size_t)(authority_end - host_start));
-		if (!host_end)
-			return strdup(uri);
-		if (host_end + 1 < authority_end && *(host_end + 1) == ':')
-			port_sep = host_end + 1;
-	} else {
-		for (const char *p = host_start; p < authority_end; p++) {
-			if (*p == ':')
-				port_sep = p;
-		}
-	}
-
-	if (port_sep)
-		return strdup(uri);
-
-	snprintf(port_buf, sizeof(port_buf), ":%u", (unsigned int)default_port);
-	port_len = strlen(port_buf);
-	prefix_len = (size_t)(authority_end - uri);
-	suffix_len = strlen(path);
-
-	out = malloc(prefix_len + port_len + suffix_len + 1);
-	if (!out)
-		return NULL;
-
-	memcpy(out, uri, prefix_len);
-	memcpy(out + prefix_len, port_buf, port_len);
-	memcpy(out + prefix_len + port_len, path, suffix_len + 1);
-	return out;
-}
-
-int ela_parse_http_output_uri(const char *uri,
-				  const char **output_http,
-				  const char **output_https,
-				  char *errbuf,
-				  size_t errbuf_len)
-{
-	if (output_http)
-		*output_http = NULL;
-	if (output_https)
-		*output_https = NULL;
-	if (errbuf && errbuf_len)
-		errbuf[0] = '\0';
-
-	if (!uri || !*uri)
-		return 0;
-
-	if (!strncmp(uri, "http://", 7)) {
-		if (output_http)
-			*output_http = uri;
-		return 0;
-	}
-
-	if (!strncmp(uri, "https://", 8)) {
-		if (output_https)
-			*output_https = uri;
-		return 0;
-	}
-
-	if (errbuf && errbuf_len)
-		snprintf(errbuf,
-			 errbuf_len,
-			 "Invalid --output-http URI (expected http://host:port/... or https://host:port/...): %s",
-			 uri);
-	return -1;
-}
 
 char *ela_http_build_upload_uri(const char *base_uri, const char *upload_type, const char *file_path)
 {
@@ -1879,36 +1520,7 @@ static int ela_read_nameservers(char ns[][16], int max_ns)
 /* Build a DNS A-record query packet.  Returns packet length or -1. */
 static int ela_dns_build_query(const char *hostname, uint8_t *buf, int buf_len)
 {
-	int pos = 12;
-	const char *p = hostname;
-
-	if (buf_len < 32)
-		return -1;
-
-	memset(buf, 0, 12);
-	buf[0] = 0xab; buf[1] = 0xcd; /* transaction ID */
-	buf[2] = 0x01; buf[3] = 0x00; /* QR=0, RD=1 */
-	buf[4] = 0x00; buf[5] = 0x01; /* QDCOUNT = 1 */
-
-	while (*p) {
-		const char *dot = strchr(p, '.');
-		int label_len = dot ? (int)(dot - p) : (int)strlen(p);
-
-		if (pos + 1 + label_len + 4 > buf_len)
-			return -1;
-		buf[pos++] = (uint8_t)label_len;
-		memcpy(buf + pos, p, (size_t)label_len);
-		pos += label_len;
-		if (!dot)
-			break;
-		p = dot + 1;
-	}
-	if (pos + 5 > buf_len)
-		return -1;
-	buf[pos++] = 0;          /* root label */
-	buf[pos++] = 0x00; buf[pos++] = 0x01; /* QTYPE = A  */
-	buf[pos++] = 0x00; buf[pos++] = 0x01; /* QCLASS = IN */
-	return pos;
+	return ela_http_build_dns_query_packet(hostname, buf, buf_len);
 }
 
 /*
@@ -2039,57 +1651,21 @@ static int ela_udp_resolve(const char *hostname, char *ip_buf, size_t ip_buf_len
  */
 static struct curl_slist *ela_curl_resolve_list(const char *url)
 {
-	const char *authority, *authority_end, *port_sep;
-	const char *p;
 	char host[256], port_str[8], ip[16], entry[288];
-	int host_len, port_len, dots, is_numeric;
 
 	if (!url)
 		return NULL;
-
-	authority = strstr(url, "://");
-	if (!authority)
-		return NULL;
-	authority += 3;
-
-	authority_end = strchr(authority, '/');
-	if (!authority_end)
-		authority_end = authority + strlen(authority);
-
-	/* Find the last ':' in the authority — that's the port separator */
-	port_sep = NULL;
-	for (p = authority; p < authority_end; p++) {
-		if (*p == ':')
-			port_sep = p;
-	}
-	if (!port_sep)
+	if (ela_http_parse_url_authority(url, host, sizeof(host), port_str, sizeof(port_str)) != 0)
 		return NULL;
 
-	host_len = (int)(port_sep - authority);
-	if (host_len <= 0 || host_len >= (int)sizeof(host))
-		return NULL;
-	memcpy(host, authority, (size_t)host_len);
-	host[host_len] = '\0';
-
-	port_len = (int)(authority_end - port_sep - 1);
-	if (port_len <= 0 || port_len >= (int)sizeof(port_str))
-		return NULL;
-	memcpy(port_str, port_sep + 1, (size_t)port_len);
-	port_str[port_len] = '\0';
-
-	/* Skip if host is already a numeric IPv4 address */
-	dots = 0; is_numeric = 1;
-	for (p = host; *p; p++) {
-		if (*p == '.')      { dots++; }
-		else if (*p < '0' || *p > '9') { is_numeric = 0; break; }
-	}
-	if (is_numeric && dots == 3)
+	if (!ela_http_should_try_udp_resolve_host(host))
 		return NULL;
 
 	if (ela_udp_resolve(host, ip, sizeof(ip)) != 0)
 		return NULL;
 
-	snprintf(entry, sizeof(entry), "%s:%s:%s", host, port_str, ip);
+	if (ela_http_build_resolve_entry(url, ip, entry, sizeof(entry)) != 0)
+		return NULL;
 	return curl_slist_append(NULL, entry);
 }
 
@@ -2202,7 +1778,7 @@ static int __attribute__((unused)) ela_http_post_https_once(const char *effectiv
 					" or use an IP address in ELA_API_URL\n");
 		}
 		if (errbuf && errbuf_len)
-			snprintf(errbuf, errbuf_len, "curl perform failed: %s", curl_easy_strerror(rc));
+			ela_http_format_curl_transport_error(curl_easy_strerror(rc), errbuf, errbuf_len);
 		curl_slist_free_all(headers);
 		curl_easy_cleanup(curl);
 		curl_slist_free_all(resolve_list);
@@ -2222,7 +1798,7 @@ static int __attribute__((unused)) ela_http_post_https_once(const char *effectiv
 			fprintf(stderr, "HTTP POST response failure uri=%s status=%ld\n",
 				effective_uri, http_code);
 		if (errbuf && errbuf_len)
-			snprintf(errbuf, errbuf_len, "HTTP status %ld", http_code);
+			ela_http_format_status_error(http_code, errbuf, errbuf_len);
 		return -1;
 	}
 
@@ -2293,7 +1869,7 @@ int ela_http_post(const char *uri, const uint8_t *data, size_t len,
 			return 0;
 		}
 		/* Retry with the next candidate key only on 401 */
-		if (status == 401)
+		if (ela_http_should_retry_with_next_api_key(status))
 			key = ela_api_key_next();
 		else
 			break;
@@ -2433,7 +2009,7 @@ int ela_http_get_to_file(const char *uri, const char *output_path,
 			fprintf(stderr, "HTTP GET transport failure uri=%s error=%s\n",
 				effective_uri, curl_easy_strerror(rc));
 		if (errbuf && errbuf_len)
-			snprintf(errbuf, errbuf_len, "curl perform failed: %s", curl_easy_strerror(rc));
+			ela_http_format_curl_transport_error(curl_easy_strerror(rc), errbuf, errbuf_len);
 		curl_easy_cleanup(curl);
 		fclose(fp);
 		unlink(output_path);
@@ -2459,7 +2035,7 @@ int ela_http_get_to_file(const char *uri, const char *output_path,
 			fprintf(stderr, "HTTP GET response failure uri=%s status=%ld\n",
 				effective_uri, http_code);
 		if (errbuf && errbuf_len)
-			snprintf(errbuf, errbuf_len, "HTTP status %ld", http_code);
+			ela_http_format_status_error(http_code, errbuf, errbuf_len);
 		unlink(output_path);
 		free(normalized_uri);
 		return -1;

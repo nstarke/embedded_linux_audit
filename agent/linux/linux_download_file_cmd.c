@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later - Copyright (c) 2026 Nicholas Starke
 
 #include "embedded_linux_audit_cmd.h"
+#include "util/command_io_util.h"
 
 #include <errno.h>
 #include <getopt.h>
@@ -56,27 +57,12 @@ int linux_download_file_scan_main(int argc, char **argv)
 		return 2;
 	}
 
-	url = argv[optind++];
-	if (strncmp(url, "http://", 7) && strncmp(url, "https://", 8)) {
-		fprintf(stderr, "download-file requires a URL beginning with http:// or https://: %s\n", url);
-		return 2;
-	}
-
-	if (optind >= argc) {
-		fprintf(stderr, "download-file requires an output path\n");
-		usage(argv[0]);
-		return 2;
-	}
-
-	output_path = argv[optind++];
-	if (!output_path || !*output_path) {
-		fprintf(stderr, "download-file requires a non-empty output path\n");
-		return 2;
-	}
-
-	if (optind < argc) {
-		fprintf(stderr, "Unexpected argument: %s\n", argv[optind]);
-		usage(argv[0]);
+	if (ela_parse_download_file_args(argc - optind, argv + optind, &url, &output_path, errbuf, sizeof(errbuf)) != 0) {
+		fprintf(stderr, "%s\n", errbuf);
+		if (strstr(errbuf, "Unexpected argument:") == NULL &&
+		    strstr(errbuf, "non-empty output path") == NULL &&
+		    strstr(errbuf, "http:// or https://:") == NULL)
+			usage(argv[0]);
 		return 2;
 	}
 

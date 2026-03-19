@@ -2,12 +2,14 @@
 
 #include "embedded_linux_audit_cmd.h"
 
+#include "util/command_io_util.h"
+#include "util/command_parse_util.h"
 #include "util/output_buffer.h"
+#include "util/record_formatter.h"
 
 #include <errno.h>
 #include <fcntl.h>
 #include <getopt.h>
-#include <json.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -147,52 +149,6 @@ static void usage(const char *prog)
 		prog);
 }
 
-static int format_command_output(const char *command,
-				 const char *command_output,
-				 const char *output_format,
-				 struct output_buffer *formatted)
-{
-	if (!command || !command_output || !output_format || !formatted)
-		return -1;
-
-	if (!strcmp(output_format, "txt")) {
-		if (output_buffer_append(formatted, command) != 0 ||
-		    output_buffer_append(formatted, "\n") != 0 ||
-		    output_buffer_append(formatted, command_output) != 0)
-			return -1;
-		return 0;
-	}
-
-	if (!strcmp(output_format, "csv")) {
-		if (csv_write_to_buf(formatted, command) != 0 ||
-		    output_buffer_append(formatted, ",") != 0 ||
-		    csv_write_to_buf(formatted, command_output) != 0 ||
-		    output_buffer_append(formatted, "\n") != 0)
-			return -1;
-		return 0;
-	}
-
-	if (!strcmp(output_format, "json")) {
-		json_object *obj;
-		const char *js;
-		int err;
-
-		obj = json_object_new_object();
-		if (!obj)
-			return -1;
-		json_object_object_add(obj, "command", json_object_new_string(command));
-		json_object_object_add(obj, "output",  json_object_new_string(command_output));
-		js = json_object_to_json_string_ext(obj, JSON_C_TO_STRING_PLAIN | JSON_C_TO_STRING_NOSLASHESCAPE);
-		err = output_buffer_append(formatted, js);
-		if (err == 0)
-			err = output_buffer_append(formatted, "\n");
-		json_object_put(obj);
-		return err;
-	}
-
-	return -1;
-}
-
 int linux_execute_command_scan_main(int argc, char **argv)
 {
 	const char *output_format = getenv("ELA_OUTPUT_FORMAT");
@@ -219,8 +175,7 @@ int linux_execute_command_scan_main(int argc, char **argv)
 		{ 0, 0, 0, 0 }
 	};
 
-	if (!output_format || !*output_format)
-		output_format = "txt";
+	output_format = ela_output_format_or_default(output_format, "txt");
 
 	optind = 1;
 	while ((opt = getopt_long(argc, argv, "h", long_opts, NULL)) != -1) {
@@ -247,7 +202,7 @@ int linux_execute_command_scan_main(int argc, char **argv)
 		return 2;
 	}
 
-	if (strcmp(output_format, "txt") && strcmp(output_format, "csv") && strcmp(output_format, "json")) {
+	if (!ela_output_format_is_valid(output_format)) {
 		fprintf(stderr, "Invalid output format for execute-command: %s\n", output_format);
 		return 2;
 	}
@@ -316,10 +271,10 @@ int linux_execute_command_scan_main(int argc, char **argv)
 		}
 	}
 
-	if (format_command_output(command,
-				  raw.data ? raw.data : "",
-				  output_format,
-				  &formatted) != 0) {
+	if (ela_format_execute_command_record(&formatted,
+					      output_format,
+					      command,
+					      raw.data ? raw.data : "") != 0) {
 		fprintf(stderr, "Failed to format command output\n");
 		ret = 1;
 		goto out;
@@ -345,8 +300,7 @@ int linux_execute_command_scan_main(int argc, char **argv)
 			goto out;
 		}
 
-		content_type = !strcmp(output_format, "csv") ? "text/csv; charset=utf-8" :
-			(!strcmp(output_format, "json") ? "application/json; charset=utf-8" : "text/plain; charset=utf-8");
+			content_type = ela_execute_command_content_type(output_format);
 
 		if (ela_http_post(upload_uri,
 				   (const uint8_t *)(formatted.data ? formatted.data : ""),

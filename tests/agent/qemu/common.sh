@@ -11,6 +11,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 . "$REPO_ROOT/tests/common_redaction.sh"
 
 RELEASE_BINARIES_DIR="${RELEASE_BINARIES_DIR:-$REPO_ROOT/api/data/release_binaries}"
+QEMU_UNIT_TEST_BIN="${ELA_QEMU_UNIT_TEST_BIN:-}"
 TEST_SCRIPTS_DIR="$REPO_ROOT/tests/agent/scripts"
 RELEASE_BUILD_SCRIPT="$REPO_ROOT/tests/compile_release_binaries_locally.sh"
 SUPPORTED_ISAS="arm32-le arm32-be aarch64-le aarch64-be mips-le mips-be mips64-le mips64-be powerpc-le powerpc64-be powerpc-be x86 x86_64 riscv32 riscv64"
@@ -482,6 +483,60 @@ run_qemu_binary_tests() {
     return "$rc"
 }
 
+QEMU_UNIT_TEST_TIMEOUT="${ELA_QEMU_UNIT_TEST_TIMEOUT:-180}"
+
+run_qemu_unit_tests() {
+    isa="$1"
+    unit_test_bin="$2"
+    qemu_mode="$3"
+    qemu_runner="$4"
+
+    test_log="$(mktemp /tmp/ela-qemu-unit-log.${isa}.XXXXXX)"
+
+    echo "Running C unit test binary for ISA '$isa' via $qemu_mode:$qemu_runner"
+    echo "Unit test binary: $unit_test_bin"
+
+    if [ "$qemu_mode" = "static" ]; then
+        "$qemu_runner" "$unit_test_bin" >"$test_log" 2>&1 &
+    else
+        "$unit_test_bin" >"$test_log" 2>&1 &
+    fi
+    test_pid=$!
+    (sleep "$QEMU_UNIT_TEST_TIMEOUT" && kill "$test_pid" 2>/dev/null) >/dev/null 2>/dev/null &
+    timeout_pid=$!
+    wait "$test_pid"
+    test_rc=$?
+    kill "$timeout_pid" 2>/dev/null
+    wait "$timeout_pid" 2>/dev/null
+
+    runtime_failure=""
+    if [ "$test_rc" -eq 143 ] || [ "$test_rc" -eq 124 ]; then
+        runtime_failure="timeout after ${QEMU_UNIT_TEST_TIMEOUT}s"
+    elif runtime_failure="$(detect_qemu_runtime_failure "$test_log" "$test_rc")"; then
+        :
+    else
+        runtime_failure=""
+    fi
+
+    print_file_scrubbed "$test_log"
+
+    if [ "$test_rc" -eq 0 ] && [ -z "$runtime_failure" ]; then
+        echo "[PASS] unit-c ($isa, rc=$test_rc)"
+        PASS_COUNT="$(expr "$PASS_COUNT" + 1)"
+        rm -f "$test_log"
+        return 0
+    fi
+
+    if [ -n "$runtime_failure" ]; then
+        echo "[FAIL] unit-c ($isa, rc=$test_rc, $runtime_failure)"
+    else
+        echo "[FAIL] unit-c ($isa, rc=$test_rc)"
+    fi
+    FAIL_COUNT="$(expr "$FAIL_COUNT" + 1)"
+    rm -f "$test_log"
+    return 1
+}
+
 SHELL_TESTS_DIR="$REPO_ROOT/tests/agent/shell"
 QEMU_SHELL_TEST_TIMEOUT="${ELA_QEMU_SHELL_TEST_TIMEOUT:-120}"
 
@@ -647,6 +702,13 @@ run_qemu_isa_tests() {
         use_bwrap=1
     else
         echo "warning: bwrap sandbox unavailable on this host; running qemu tests without chroot isolation" >&2
+    fi
+
+    if [ -n "$QEMU_UNIT_TEST_BIN" ]; then
+        require_file "$QEMU_UNIT_TEST_BIN"
+        if ! run_qemu_unit_tests "$isa" "$QEMU_UNIT_TEST_BIN" "$qemu_mode" "$qemu_runner"; then
+            rc=1
+        fi
     fi
 
     if ! run_qemu_binary_tests "$isa" "$binary_path" "default" "$qemu_mode" "$qemu_runner" "$use_bwrap"; then

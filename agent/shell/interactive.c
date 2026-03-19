@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later - Copyright (c) 2026 Nicholas Starke
 
 #include "interactive.h"
+#include "interactive_util.h"
 #include "../embedded_linux_audit_cmd.h"
 #include "../net/ela_conf.h"
+#include "../util/interactive_parse_util.h"
 
 #include <ctype.h>
 #include <errno.h>
@@ -25,98 +27,9 @@
 /* Forward declaration: defined in embedded_linux_audit.c (non-static) */
 int embedded_linux_audit_dispatch(int argc, char **argv);
 
-static const char *const interactive_top_level_commands[] = {
-	"help",
-	"quit",
-	"exit",
-	"set",
-	"arch",
-	"uboot",
-	"linux",
-	"efi",
-	"bios",
-	"tpm2",
-	"transfer",
-	NULL,
-};
-
-static const char *const interactive_group_arch[] = {
-	"bit",
-	"isa",
-	"endianness",
-	NULL,
-};
-
-static const char *const interactive_group_uboot[] = {
-	"env",
-	"image",
-	"audit",
-	NULL,
-};
-
-static const char *const interactive_group_linux[] = {
-	"dmesg",
-	"download-file",
-	"execute-command",
-	"grep",
-	"list-files",
-	"list-symlinks",
-	"remote-copy",
-	"ssh",
-	NULL,
-};
-
-static const char *const interactive_group_efi[] = {
-	"orom",
-	"dump-vars",
-	NULL,
-};
-
-static const char *const interactive_group_bios[] = {
-	"orom",
-	NULL,
-};
-
-static const char *const interactive_set_variables[] = {
-	"ELA_API_URL",
-	"ELA_API_INSECURE",
-	"ELA_QUIET",
-	"ELA_OUTPUT_FORMAT",
-	"ELA_OUTPUT_TCP",
-	"ELA_SCRIPT",
-	"ELA_OUTPUT_HTTP",
-	"ELA_OUTPUT_INSECURE",
-	"ELA_API_KEY",
-	"ELA_VERBOSE",
-	"ELA_DEBUG",
-	"ELA_WS_RETRY_ATTEMPTS",
-	NULL,
-};
-
 static const char *const *interactive_candidates_for_position(int argc, char **argv)
 {
-	if (argc <= 1)
-		return interactive_top_level_commands;
-
-	if (!strcmp(argv[0], "arch"))
-		return interactive_group_arch;
-
-	if (!strcmp(argv[0], "uboot"))
-		return interactive_group_uboot;
-
-	if (!strcmp(argv[0], "linux"))
-		return interactive_group_linux;
-
-	if (!strcmp(argv[0], "efi"))
-		return interactive_group_efi;
-
-	if (!strcmp(argv[0], "bios"))
-		return interactive_group_bios;
-
-	if (!strcmp(argv[0], "set") && argc == 2)
-		return interactive_set_variables;
-
-	return NULL;
+	return ela_interactive_candidates_for_position(argc, argv);
 }
 
 #if defined(ELA_HAS_READLINE)
@@ -226,6 +139,7 @@ static void print_set_values(void)
 
 static int interactive_list_supported_variables(FILE *stream)
 {
+	char buf[2048];
 	const char *ela_api_url        = getenv("ELA_API_URL");
 	const char *ela_api_insecure   = getenv("ELA_API_INSECURE");
 	const char *ela_quiet          = getenv("ELA_QUIET");
@@ -239,57 +153,19 @@ static int interactive_list_supported_variables(FILE *stream)
 	const char *ela_debug          = getenv("ELA_DEBUG");
 	const char *ela_ws_retry       = getenv("ELA_WS_RETRY_ATTEMPTS");
 
-	return fprintf(stream,
-		       "Supported variables:\n"
-		       "  ELA_API_URL              current=%s\n"
-		       "  ELA_API_INSECURE         current=%s\n"
-		       "  ELA_QUIET                current=%s\n"
-		       "  ELA_OUTPUT_FORMAT        current=%s\n"
-		       "  ELA_OUTPUT_TCP           current=%s\n"
-		       "  ELA_SCRIPT               current=%s\n"
-		       "  ELA_OUTPUT_HTTP          current=%s\n"
-		       "  ELA_OUTPUT_INSECURE      current=%s\n"
-		       "  ELA_API_KEY              current=%s\n"
-		       "  ELA_VERBOSE              current=%s\n"
-		       "  ELA_DEBUG                current=%s\n"
-		       "  ELA_WS_RETRY_ATTEMPTS    current=%s\n",
-		       (ela_api_url && *ela_api_url) ? ela_api_url : "<unset>",
-		       (ela_api_insecure && *ela_api_insecure) ? ela_api_insecure : "<unset>",
-		       (ela_quiet && *ela_quiet) ? ela_quiet : "<unset>",
-		       (ela_output_format && *ela_output_format) ? ela_output_format : "<unset>",
-		       (ela_output_tcp && *ela_output_tcp) ? ela_output_tcp : "<unset>",
-		       (ela_script && *ela_script) ? ela_script : "<unset>",
-		       (ela_output_http && *ela_output_http) ? ela_output_http : "<unset>",
-		       (ela_output_insecure && *ela_output_insecure) ? ela_output_insecure : "<unset>",
-		       (ela_api_key && *ela_api_key) ? "<set>" : "<unset>",
-		       (ela_verbose && *ela_verbose) ? ela_verbose : "<unset>",
-		       (ela_debug && *ela_debug) ? ela_debug : "<unset>",
-		       (ela_ws_retry && *ela_ws_retry) ? ela_ws_retry : "<unset>");
-}
-
-static bool interactive_parse_bool(const char *value, const char **normalized)
-{
-	if (!value || !normalized)
-		return false;
-
-	if (!strcmp(value, "1") || !strcmp(value, "true") || !strcmp(value, "yes") ||
-	    !strcmp(value, "on")) {
-		*normalized = "true";
-		return true;
-	}
-
-	if (!strcmp(value, "0") || !strcmp(value, "false") || !strcmp(value, "no") ||
-	    !strcmp(value, "off")) {
-		*normalized = "false";
-		return true;
-	}
-
-	return false;
+	if (ela_interactive_format_supported_variables(buf, sizeof(buf),
+						       ela_api_url, ela_api_insecure, ela_quiet,
+						       ela_output_format, ela_output_tcp, ela_script,
+						       ela_output_http, ela_output_insecure, ela_api_key,
+						       ela_verbose, ela_debug, ela_ws_retry) != 0)
+		return -1;
+	return fputs(buf, stream);
 }
 
 int interactive_set_command(int argc, char **argv)
 {
-	const char *normalized_bool;
+	struct ela_interactive_set_plan plan;
+	char errbuf[256];
 
 	if (argc == 1) {
 		print_set_values();
@@ -313,225 +189,31 @@ int interactive_set_command(int argc, char **argv)
 		return 2;
 	}
 
-	if (!strcmp(argv[1], "ELA_API_URL")) {
-		if (strncmp(argv[2], "http://", 7) && strncmp(argv[2], "https://", 8)) {
-			fprintf(stderr,
-				"Invalid ELA_API_URL (expected http://host:port/... or https://host:port/...): %s\n",
-				argv[2]);
-			return 2;
-		}
+	if (ela_interactive_plan_set_command(argv[1], argv[2], &plan, errbuf, sizeof(errbuf)) != 0) {
+		fprintf(stderr, "%s\n", errbuf);
+		interactive_list_supported_variables(stderr);
+		return 2;
+	}
 
-		if (setenv("ELA_API_URL", argv[2], 1) != 0) {
-			fprintf(stderr, "Failed to set ELA_API_URL\n");
-			return 2;
-		}
+	if (setenv(plan.primary_env_name, plan.primary_env_value, 1) != 0) {
+		fprintf(stderr, "Failed to set %s\n", plan.primary_env_name);
+		return 2;
+	}
 
-		/* ELA_API_URL is only consulted when explicit transport overrides are unset. */
+	if (plan.unset_env_name)
+		unsetenv(plan.unset_env_name);
+	if (plan.clear_output_overrides) {
 		unsetenv("ELA_OUTPUT_HTTP");
 		unsetenv("ELA_OUTPUT_HTTPS");
+	}
+	if (plan.update_conf)
 		ela_conf_update_from_env();
-		printf("ELA_API_URL=%s\n", argv[2]);
-		return 0;
-	}
 
-	if (!strcmp(argv[1], "ELA_API_INSECURE")) {
-		if (!interactive_parse_bool(argv[2], &normalized_bool)) {
-			fprintf(stderr,
-				"Invalid ELA_API_INSECURE value: %s (expected true/false, 1/0, yes/no, on/off)\n",
-				argv[2]);
-			return 2;
-		}
-
-		if (setenv("ELA_API_INSECURE", normalized_bool, 1) != 0) {
-			fprintf(stderr, "Failed to set ELA_API_INSECURE\n");
-			return 2;
-		}
-
-		ela_conf_update_from_env();
-		printf("ELA_API_INSECURE=%s\n", normalized_bool);
-		return 0;
-	}
-
-	if (!strcmp(argv[1], "ELA_QUIET")) {
-		if (!interactive_parse_bool(argv[2], &normalized_bool)) {
-			fprintf(stderr,
-				"Invalid ELA_QUIET value: %s (expected true/false, 1/0, yes/no, on/off)\n",
-				argv[2]);
-			return 2;
-		}
-
-		if (setenv("ELA_QUIET", normalized_bool, 1) != 0) {
-			fprintf(stderr, "Failed to set ELA_QUIET\n");
-			return 2;
-		}
-
-		printf("ELA_QUIET=%s\n", normalized_bool);
-		return 0;
-	}
-
-	if (!strcmp(argv[1], "ELA_OUTPUT_FORMAT")) {
-		if (strcmp(argv[2], "txt") && strcmp(argv[2], "csv") && strcmp(argv[2], "json")) {
-			fprintf(stderr,
-				"Invalid ELA_OUTPUT_FORMAT: %s (expected: csv, json, txt)\n",
-				argv[2]);
-			return 2;
-		}
-
-		if (setenv("ELA_OUTPUT_FORMAT", argv[2], 1) != 0) {
-			fprintf(stderr, "Failed to set ELA_OUTPUT_FORMAT\n");
-			return 2;
-		}
-
-		ela_conf_update_from_env();
-		printf("ELA_OUTPUT_FORMAT=%s\n", argv[2]);
-		return 0;
-	}
-
-	if (!strcmp(argv[1], "ELA_OUTPUT_TCP")) {
-		if (!ela_is_valid_tcp_output_target(argv[2])) {
-			fprintf(stderr,
-				"Invalid ELA_OUTPUT_TCP target (expected IPv4:port): %s\n",
-				argv[2]);
-			return 2;
-		}
-
-		if (setenv("ELA_OUTPUT_TCP", argv[2], 1) != 0) {
-			fprintf(stderr, "Failed to set ELA_OUTPUT_TCP\n");
-			return 2;
-		}
-
-		printf("ELA_OUTPUT_TCP=%s\n", argv[2]);
-		return 0;
-	}
-
-	if (!strcmp(argv[1], "ELA_SCRIPT")) {
-		if (setenv("ELA_SCRIPT", argv[2], 1) != 0) {
-			fprintf(stderr, "Failed to set ELA_SCRIPT\n");
-			return 2;
-		}
-
-		printf("ELA_SCRIPT=%s\n", argv[2]);
-		return 0;
-	}
-
-	if (!strcmp(argv[1], "ELA_OUTPUT_HTTP")) {
-		if (strncmp(argv[2], "http://", 7) && strncmp(argv[2], "https://", 8)) {
-			fprintf(stderr,
-				"Invalid ELA_OUTPUT_HTTP (expected http://host:port/... or https://host:port/...): %s\n",
-				argv[2]);
-			return 2;
-		}
-
-		if (!strncmp(argv[2], "https://", 8)) {
-			if (setenv("ELA_OUTPUT_HTTPS", argv[2], 1) != 0) {
-				fprintf(stderr, "Failed to set ELA_OUTPUT_HTTPS\n");
-				return 2;
-			}
-			unsetenv("ELA_OUTPUT_HTTP");
-		} else {
-			if (setenv("ELA_OUTPUT_HTTP", argv[2], 1) != 0) {
-				fprintf(stderr, "Failed to set ELA_OUTPUT_HTTP\n");
-				return 2;
-			}
-			unsetenv("ELA_OUTPUT_HTTPS");
-		}
-
-		ela_conf_update_from_env();
-		printf("ELA_OUTPUT_HTTP=%s\n", argv[2]);
-		return 0;
-	}
-
-	if (!strcmp(argv[1], "ELA_OUTPUT_INSECURE")) {
-		if (!interactive_parse_bool(argv[2], &normalized_bool)) {
-			fprintf(stderr,
-				"Invalid ELA_OUTPUT_INSECURE value: %s (expected true/false, 1/0, yes/no, on/off)\n",
-				argv[2]);
-			return 2;
-		}
-
-		if (setenv("ELA_OUTPUT_INSECURE", normalized_bool, 1) != 0) {
-			fprintf(stderr, "Failed to set ELA_OUTPUT_INSECURE\n");
-			return 2;
-		}
-
-		ela_conf_update_from_env();
-		printf("ELA_OUTPUT_INSECURE=%s\n", normalized_bool);
-		return 0;
-	}
-
-	if (!strcmp(argv[1], "ELA_API_KEY")) {
-		if (strlen(argv[2]) > 1024) {
-			fprintf(stderr,
-				"ELA_API_KEY value too long (max 1024 characters)\n");
-			return 2;
-		}
-
-		if (setenv("ELA_API_KEY", argv[2], 1) != 0) {
-			fprintf(stderr, "Failed to set ELA_API_KEY\n");
-			return 2;
-		}
-
-		printf("ELA_API_KEY=<set>\n");
-		return 0;
-	}
-
-	if (!strcmp(argv[1], "ELA_VERBOSE")) {
-		if (!interactive_parse_bool(argv[2], &normalized_bool)) {
-			fprintf(stderr,
-				"Invalid ELA_VERBOSE value: %s (expected true/false, 1/0, yes/no, on/off)\n",
-				argv[2]);
-			return 2;
-		}
-
-		if (setenv("ELA_VERBOSE", normalized_bool, 1) != 0) {
-			fprintf(stderr, "Failed to set ELA_VERBOSE\n");
-			return 2;
-		}
-
-		printf("ELA_VERBOSE=%s\n", normalized_bool);
-		return 0;
-	}
-
-	if (!strcmp(argv[1], "ELA_DEBUG")) {
-		if (!interactive_parse_bool(argv[2], &normalized_bool)) {
-			fprintf(stderr,
-				"Invalid ELA_DEBUG value: %s (expected true/false, 1/0, yes/no, on/off)\n",
-				argv[2]);
-			return 2;
-		}
-
-		if (setenv("ELA_DEBUG", normalized_bool, 1) != 0) {
-			fprintf(stderr, "Failed to set ELA_DEBUG\n");
-			return 2;
-		}
-
-		printf("ELA_DEBUG=%s\n", normalized_bool);
-		return 0;
-	}
-
-	if (!strcmp(argv[1], "ELA_WS_RETRY_ATTEMPTS")) {
-		char *end;
-		long v = strtol(argv[2], &end, 10);
-
-		if (*end || v < 0 || v > 1000) {
-			fprintf(stderr,
-				"Invalid ELA_WS_RETRY_ATTEMPTS value: %s (expected integer 0-1000)\n",
-				argv[2]);
-			return 2;
-		}
-
-		if (setenv("ELA_WS_RETRY_ATTEMPTS", argv[2], 1) != 0) {
-			fprintf(stderr, "Failed to set ELA_WS_RETRY_ATTEMPTS\n");
-			return 2;
-		}
-
-		printf("ELA_WS_RETRY_ATTEMPTS=%s\n", argv[2]);
-		return 0;
-	}
-
-	fprintf(stderr, "Unsupported variable for set: %s\n", argv[1]);
-	interactive_list_supported_variables(stderr);
-	return 2;
+	if (plan.redact_value)
+		printf("%s=<set>\n", plan.display_name);
+	else
+		printf("%s=%s\n", plan.display_name, plan.primary_env_value);
+	return 0;
 }
 
 #if defined(ELA_HAS_READLINE)
@@ -596,133 +278,6 @@ static char **interactive_completion(const char *text, int start, int end)
 }
 #endif
 
-static int interactive_append_arg(char ***argv_out, int *argc_out, const char *start, size_t len)
-{
-	char **tmp_argv;
-	char *arg;
-
-	if (!argv_out || !argc_out)
-		return -1;
-
-	arg = malloc(len + 1);
-	if (!arg)
-		return -1;
-	memcpy(arg, start, len);
-	arg[len] = '\0';
-
-	tmp_argv = realloc(*argv_out, (size_t)(*argc_out + 2) * sizeof(*tmp_argv));
-	if (!tmp_argv) {
-		free(arg);
-		return -1;
-	}
-
-	*argv_out = tmp_argv;
-	(*argv_out)[*argc_out] = arg;
-	(*argc_out)++;
-	(*argv_out)[*argc_out] = NULL;
-	return 0;
-}
-
-void interactive_free_argv(char **argv, int argc)
-{
-	if (!argv)
-		return;
-
-	for (int i = 0; i < argc; i++)
-		free(argv[i]);
-	free(argv);
-}
-
-int interactive_parse_line(const char *line, char ***argv_out, int *argc_out)
-{
-	const char *p = line;
-	char **argv = NULL;
-	int argc = 0;
-
-	if (!argv_out || !argc_out)
-		return -1;
-
-	while (*p) {
-		const char *start;
-		char quote = '\0';
-		char *arg = NULL;
-		size_t arg_len = 0;
-		size_t arg_cap = 0;
-
-		while (*p && isspace((unsigned char)*p))
-			p++;
-		if (*p == '#')
-			break;
-		if (!*p || *p == '\n')
-			break;
-
-		start = p;
-		while (*p && (!isspace((unsigned char)*p) || quote)) {
-			char ch = *p++;
-			if (!quote && ch == '#') {
-				p--;
-				break;
-			}
-			if (!quote && (ch == '\'' || ch == '"')) {
-				quote = ch;
-				continue;
-			}
-			if (quote && ch == quote) {
-				quote = '\0';
-				continue;
-			}
-			if (ch == '\\' && *p) {
-				ch = *p++;
-			}
-			if (arg_len + 2 > arg_cap) {
-				size_t new_cap = arg_cap ? arg_cap * 2 : 32;
-				char *tmp = realloc(arg, new_cap);
-				if (!tmp) {
-					free(arg);
-					interactive_free_argv(argv, argc);
-					return -1;
-				}
-				arg = tmp;
-				arg_cap = new_cap;
-			}
-			arg[arg_len++] = ch;
-		}
-
-		if (quote) {
-			fprintf(stderr, "Unterminated quote in interactive command: %s\n", start);
-			free(arg);
-			interactive_free_argv(argv, argc);
-			return 2;
-		}
-
-		if (!arg) {
-			if (interactive_append_arg(&argv, &argc, start, (size_t)(p - start)) != 0) {
-				interactive_free_argv(argv, argc);
-				return -1;
-			}
-		} else {
-			char **tmp_argv;
-			arg[arg_len] = '\0';
-			tmp_argv = realloc(argv, (size_t)(argc + 2) * sizeof(*tmp_argv));
-			if (!tmp_argv) {
-				free(arg);
-				interactive_free_argv(argv, argc);
-				return -1;
-			}
-			argv = tmp_argv;
-			argv[argc++] = arg;
-			argv[argc] = NULL;
-		}
-
-		if (*p == '#')
-			break;
-	}
-
-	*argv_out = argv;
-	*argc_out = argc;
-	return 0;
-}
-
 static void interactive_restore_terminal(int tty_fd,
 					 const struct termios *saved_termios,
 					 bool have_saved_termios)
@@ -734,54 +289,6 @@ static void interactive_restore_terminal(int tty_fd,
 }
 
 #if !defined(ELA_HAS_READLINE)
-struct interactive_history {
-	char **entries;
-	size_t count;
-	size_t cap;
-};
-
-static void interactive_history_free(struct interactive_history *history)
-{
-	if (!history)
-		return;
-
-	for (size_t i = 0; i < history->count; i++)
-		free(history->entries[i]);
-	free(history->entries);
-	history->entries = NULL;
-	history->count = 0;
-	history->cap = 0;
-}
-
-static int interactive_history_add(struct interactive_history *history, const char *line)
-{
-	char **tmp_entries;
-	char *copy;
-
-	if (!history || !line || !*line)
-		return 0;
-
-	copy = strdup(line);
-	if (!copy)
-		return -1;
-
-	if (history->count == history->cap) {
-		size_t new_cap = history->cap ? history->cap * 2 : 16;
-
-		tmp_entries = realloc(history->entries, new_cap * sizeof(*tmp_entries));
-		if (!tmp_entries) {
-			free(copy);
-			return -1;
-		}
-
-		history->entries = tmp_entries;
-		history->cap = new_cap;
-	}
-
-	history->entries[history->count++] = copy;
-	return 0;
-}
-
 static int interactive_set_raw_mode(int tty_fd,
 				    const struct termios *saved_termios,
 				    bool have_saved_termios)
@@ -820,10 +327,9 @@ static void interactive_tab_complete_fallback(char **line_ptr, size_t *len_ptr,
 	int argc = 0;
 	size_t word_start;
 	const char *cur_word;
-	size_t cur_len;
 	const char *matches[64];
-	int nmatch = 0;
 	int i;
+	size_t nmatch = 0;
 
 	/* Find start of current (incomplete) word */
 	word_start = len;
@@ -834,7 +340,6 @@ static void interactive_tab_complete_fallback(char **line_ptr, size_t *len_ptr,
 	}
 
 	cur_word = (line && len > word_start) ? line + word_start : "";
-	cur_len  = len - word_start;
 
 	/*
 	 * Parse the tokens that precede the current word to determine context.
@@ -858,10 +363,7 @@ static void interactive_tab_complete_fallback(char **line_ptr, size_t *len_ptr,
 	if (!candidates)
 		return;
 
-	for (i = 0; candidates[i] && nmatch < 64; i++) {
-		if (strncmp(candidates[i], cur_word, cur_len) == 0)
-			matches[nmatch++] = candidates[i];
-	}
+	nmatch = ela_interactive_collect_matches(candidates, cur_word, matches, 64);
 
 	if (nmatch == 0)
 		return;
@@ -893,7 +395,7 @@ static void interactive_tab_complete_fallback(char **line_ptr, size_t *len_ptr,
 
 	/* Multiple matches: list them, then redraw the prompt */
 	putchar('\n');
-	for (i = 0; i < nmatch; i++)
+	for (i = 0; i < (int)nmatch; i++)
 		printf("%s  ", matches[i]);
 	putchar('\n');
 	fflush(stdout);
@@ -904,7 +406,7 @@ static char *interactive_read_line_fallback(const char *prompt,
 					    int tty_fd,
 					    const struct termios *saved_termios,
 					    bool have_saved_termios,
-					    struct interactive_history *history)
+					    struct ela_interactive_history *history)
 {
 	char *line = NULL;
 	char *draft = NULL;
@@ -1066,7 +568,7 @@ static char *interactive_read_line_fallback(const char *prompt,
 			return NULL;
 	}
 
-	if (interactive_history_add(history, line) != 0) {
+	if (ela_interactive_history_add(history, line) != 0) {
 		free(line);
 		return NULL;
 	}
@@ -1090,7 +592,7 @@ int interactive_loop(const char *prog)
 	bool have_saved_termios = false;
 
 #if !defined(ELA_HAS_READLINE)
-	struct interactive_history history = {0};
+	struct ela_interactive_history history = {0};
 #endif
 
 	if (isatty(STDIN_FILENO)) {
@@ -1102,7 +604,7 @@ int interactive_loop(const char *prog)
 	/* Show prompt on a real TTY, or when running over a WebSocket session
 	 * (ELA_SESSION_MAC is set by ela_ws_run_interactive before forking). */
 	const char *session_mac = getenv("ELA_SESSION_MAC");
-	const bool show_prompt = tty_fd >= 0 || (session_mac && *session_mac);
+	const bool show_prompt = ela_interactive_should_show_prompt(tty_fd, session_mac);
 
 	if (show_prompt) {
 		printf("Entering interactive mode for %s. Type 'help' for commands or 'quit' to exit.\n\n", prog);
@@ -1121,16 +623,7 @@ int interactive_loop(const char *prog)
 
 #if defined(ELA_HAS_READLINE)
 		char prompt[128];
-		{
-			if (!show_prompt) {
-				prompt[0] = '\0';
-			} else if (session_mac && *session_mac) {
-				snprintf(prompt, sizeof(prompt), "(%s)> ", session_mac);
-			} else {
-				const char *bn = strrchr(prog, '/');
-				snprintf(prompt, sizeof(prompt), "%s> ", bn ? bn + 1 : prog);
-			}
-		}
+		ela_interactive_build_prompt(prompt, sizeof(prompt), prog, session_mac, show_prompt);
 		interactive_restore_terminal(tty_fd, &saved_termios, have_saved_termios);
 		line = readline(show_prompt ? prompt : NULL);
 		if (!line) {
@@ -1142,16 +635,7 @@ int interactive_loop(const char *prog)
 			add_history(line);
 #else
 		char prompt[128];
-		{
-			if (!show_prompt) {
-				prompt[0] = '\0';
-			} else if (session_mac && *session_mac) {
-				snprintf(prompt, sizeof(prompt), "(%s)> ", session_mac);
-			} else {
-				const char *bn = strrchr(prog, '/');
-				snprintf(prompt, sizeof(prompt), "%s> ", bn ? bn + 1 : prog);
-			}
-		}
+		ela_interactive_build_prompt(prompt, sizeof(prompt), prog, session_mac, show_prompt);
 		line = interactive_read_line_fallback(prompt,
 						 tty_fd,
 						 &saved_termios,
@@ -1180,13 +664,13 @@ int interactive_loop(const char *prog)
 			continue;
 		}
 
-		if (!strcmp(argv[0], "quit") || !strcmp(argv[0], "exit")) {
+		if (ela_interactive_is_exit_command(argv[0])) {
 			interactive_free_argv(argv, argc);
 			free(line);
 			break;
 		}
 
-		if (!strcmp(argv[0], "help")) {
+		if (ela_interactive_is_help_command(argv[0])) {
 			interactive_usage(prog);
 			interactive_free_argv(argv, argc);
 			free(line);
@@ -1222,7 +706,7 @@ int interactive_loop(const char *prog)
 	interactive_restore_terminal(tty_fd, &saved_termios, have_saved_termios);
 
 #if !defined(ELA_HAS_READLINE)
-	interactive_history_free(&history);
+	ela_interactive_history_free(&history);
 #endif
 
 	return last_rc;
