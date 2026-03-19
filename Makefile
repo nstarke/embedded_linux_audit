@@ -1006,7 +1006,8 @@ coverage-agent-c:
 		'tests/*' \
 		'generated/*' \
 		'compat/*' \
-		--output-file $(AGENT_C_COVERAGE_INFO)
+		--output-file $(AGENT_C_COVERAGE_INFO) || \
+		{ _lcov_rc=$$?; test "$$_lcov_rc" -eq 25; }
 
 coverage-agent-c-html: coverage-agent-c
 	genhtml $(AGENT_C_COVERAGE_INFO) --output-directory $(AGENT_C_COVERAGE_HTML)
