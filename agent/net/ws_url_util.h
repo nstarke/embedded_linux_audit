@@ -21,5 +21,6 @@ int ela_ws_build_handshake_request(char *out,
 				   int is_tls,
 				   const char *auth_token,
 				   const char *websocket_key);
+int ela_is_ws_url(const char *url);
 
 #endif
