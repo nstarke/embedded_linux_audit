@@ -62,6 +62,8 @@ TLS_KEY=""
 GITHUB_TOKEN="${GITHUB_TOKEN:-}"
 RELEASE_BUILDER_IMAGE="ela-release-builder:local"
 RELEASE_BUILDER_DOCKERFILE="$REPO_ROOT/tests/release-builder.Dockerfile"
+DOCKER_RUN_UID="$(id -u)"
+DOCKER_RUN_GID="$(id -g)"
 
 copy_compiled_release_binaries() {
     src_root="$1"
@@ -378,12 +380,14 @@ if [ "$COMPILE_LOCALLY" -eq 1 ]; then
 
     echo "Compiling release binaries locally into $ELA_RELEASE_BINARIES_DIR ..."
     docker run --rm \
+        --user "$DOCKER_RUN_UID:$DOCKER_RUN_GID" \
         -v "$REPO_ROOT:/src" \
         -v "$ELA_RELEASE_BINARIES_DIR:/out" \
         -w /src \
+        -e HOME=/tmp/ela-release-builder-home \
         -e RELEASE_BINARIES_DIR=/out \
         "$RELEASE_BUILDER_IMAGE" \
-        /bin/bash -lc "git config --global --add safe.directory '*' && /bin/bash tests/compile_release_binaries_locally.sh --clean --jobs=\"$COMPILE_JOBS\""
+        /bin/bash -lc "mkdir -p \"\$HOME\" && git config --global --add safe.directory '*' && /bin/bash tests/compile_release_binaries_locally.sh --clean --jobs=\"$COMPILE_JOBS\""
 
     # The helper API serves binaries from the top-level release_binaries
     # directory, while the local compiler writes /out/<isa>/ela-<isa>.
