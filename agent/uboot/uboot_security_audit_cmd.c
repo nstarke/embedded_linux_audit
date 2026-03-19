@@ -71,29 +71,10 @@ static void send_to_output_socket(const char *buf, size_t len)
 
 static void append_output_http_buffer(const char *buf, size_t len)
 {
-	char *tmp;
-	size_t need;
-	size_t new_cap;
-
 	if (!g_output_http_uri || !buf || !len)
 		return;
-
-	need = g_output_http_len + len + 1;
-	if (need > g_output_http_cap) {
-		new_cap = g_output_http_cap ? g_output_http_cap : 1024;
-		while (new_cap < need)
-			new_cap *= 2;
-
-		tmp = realloc(g_output_http_buf, new_cap);
-		if (!tmp)
-			return;
-		g_output_http_buf = tmp;
-		g_output_http_cap = new_cap;
-	}
-
-	memcpy(g_output_http_buf + g_output_http_len, buf, len);
-	g_output_http_len += len;
-	g_output_http_buf[g_output_http_len] = '\0';
+	ela_uboot_audit_http_buf_append(&g_output_http_buf, &g_output_http_len,
+					&g_output_http_cap, buf, len);
 }
 
 static void emit_v(FILE *stream, const char *fmt, va_list ap)

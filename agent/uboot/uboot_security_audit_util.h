@@ -16,4 +16,13 @@ uint32_t ela_uboot_read_be32(const uint8_t *p);
 bool ela_uboot_fit_header_looks_valid(const uint8_t *p, uint64_t abs_off, uint64_t dev_size);
 int ela_uboot_extract_public_key_pem(const char *text, size_t len, char **pem_out);
 
+/*
+ * Append data_len bytes from data into the heap buffer described by
+ * (*buf, *len, *cap), growing it with realloc as needed (doubling strategy).
+ * On success returns 0 and the buffer is NUL-terminated.
+ * Returns -1 on invalid arguments or allocation failure; *buf is unchanged.
+ */
+int ela_uboot_audit_http_buf_append(char **buf, size_t *len, size_t *cap,
+				    const char *data, size_t data_len);
+
 #endif
