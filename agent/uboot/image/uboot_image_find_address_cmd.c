@@ -2,6 +2,7 @@
 
 #include "embedded_linux_audit_cmd.h"
 #include "uboot/image/uboot_image_cmd.h"
+#include "uboot/image/uboot_image_find_address_util.h"
 #include "uboot/image/uboot_image_internal.h"
 
 #include <errno.h>
@@ -133,10 +134,13 @@ int uboot_image_find_address_execute(const char *dev, uint64_t offset)
 			return 1;
 		}
 		if (g_output_format == FW_OUTPUT_TXT) {
-			uboot_img_out_printf("uImage load address: 0x%08x\n", ela_read_be32(hdr + 16));
+			uboot_img_out_printf("uImage load address: 0x%08x\n",
+					     ela_uboot_image_uimage_read_load_addr(hdr));
 		} else {
 			char value[32];
-			snprintf(value, sizeof(value), "0x%08x", ela_read_be32(hdr + 16));
+			ela_uboot_image_find_format_addr32(
+				ela_uboot_image_uimage_read_load_addr(hdr),
+				value, sizeof(value));
 			emit_image_record("image_load_address", dev, offset, "uImage", value);
 		}
 		close(fd);
@@ -180,7 +184,7 @@ int uboot_image_find_address_execute(const char *dev, uint64_t offset)
 				uboot_img_out_printf("FIT load address: 0x%08x\n", load_addr);
 			} else {
 				char value[32];
-				snprintf(value, sizeof(value), "0x%08x", load_addr);
+				ela_uboot_image_find_format_addr32(load_addr, value, sizeof(value));
 				emit_image_record("image_load_address", dev, offset, "FIT", value);
 			}
 		}
@@ -192,7 +196,7 @@ int uboot_image_find_address_execute(const char *dev, uint64_t offset)
 				uboot_img_out_printf("FIT U-Boot code offset: 0x%jx\n", (uintmax_t)uboot_off);
 			} else {
 				char value[32];
-				snprintf(value, sizeof(value), "0x%jx", (uintmax_t)uboot_off);
+				ela_uboot_image_find_format_offset(uboot_off, value, sizeof(value));
 				emit_image_record("fit_uboot_offset", dev, offset, "FIT", value);
 			}
 		}

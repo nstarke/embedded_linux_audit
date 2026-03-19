@@ -464,7 +464,8 @@ AGENT_UNIT_TEST_SRC := \
 	tests/unit/agent/test_dispatch_parse_util.c \
 	tests/unit/agent/test_uboot_image_scan_util.c \
 	tests/unit/agent/test_uboot_image_pull_util.c \
-	tests/unit/agent/test_uboot_image_list_commands_util.c
+	tests/unit/agent/test_uboot_image_list_commands_util.c \
+	tests/unit/agent/test_uboot_image_find_address_util.c
 AGENT_UNIT_TEST_DEPS := \
 	agent/util/str_util.c \
 	agent/util/isa_util.c \
@@ -529,6 +530,7 @@ AGENT_UNIT_TEST_DEPS := \
 	agent/uboot/image/uboot_image_scan_util.c \
 	agent/uboot/image/uboot_image_pull_util.c \
 	agent/uboot/image/uboot_image_list_commands_util.c \
+	agent/uboot/image/uboot_image_find_address_util.c \
 	agent/util/str_util.h \
 	agent/util/isa_util.h \
 	agent/util/http_uri_util.h \
@@ -580,7 +582,8 @@ AGENT_UNIT_TEST_DEPS := \
 	agent/util/dispatch_parse_util.h \
 	agent/uboot/image/uboot_image_scan_util.h \
 	agent/uboot/image/uboot_image_pull_util.h \
-	agent/uboot/image/uboot_image_list_commands_util.h
+	agent/uboot/image/uboot_image_list_commands_util.h \
+	agent/uboot/image/uboot_image_find_address_util.h
 
 ZLIB_CMAKE_ARGS := $(CMAKE_CC_ARGS)
 ifneq ($(strip $(ZLIB_EXTRA_CFLAGS)),)
@@ -707,6 +710,7 @@ SRC := \
 	agent/uboot/image/uboot_image_scan_util.c \
 	agent/uboot/image/uboot_image_pull_cmd.c \
 	agent/uboot/image/uboot_image_find_address_cmd.c \
+	agent/uboot/image/uboot_image_find_address_util.c \
 	agent/uboot/image/uboot_image_list_commands_cmd.c \
 	agent/uboot/image/uboot_image_list_commands_util.c \
 	agent/uboot/image/uboot_command_extract_util.c \
@@ -1135,6 +1139,7 @@ $(AGENT_UNIT_TEST_BIN): $(AGENT_UNIT_TEST_SRC) $(AGENT_UNIT_TEST_DEPS) $(JSONC_L
 			agent/uboot/image/uboot_image_scan_util.c \
 			agent/uboot/image/uboot_image_pull_util.c \
 			agent/uboot/image/uboot_image_list_commands_util.c \
+			agent/uboot/image/uboot_image_find_address_util.c \
 			$(JSONC_LIB) \
 			$(UNIT_TEST_LDFLAGS)
 
