@@ -22,6 +22,10 @@
 #define ELA_ISA_AARCH64_LE   "aarch64-le"
 
 int uboot_get_mtd_index(const char *dev, char *idx, size_t idx_sz);
+int uboot_get_ubi_indices(const char *dev, unsigned int *ubi, unsigned int *vol);
+int uboot_parse_major_minor(const char *text, unsigned int *major_out, unsigned int *minor_out);
+bool uboot_is_sd_block_name(const char *name);
+bool uboot_is_emmc_block_name(const char *name);
 
 uint64_t uboot_guess_size_from_sysfs(const char *dev);
 uint64_t uboot_guess_erasesize_from_sysfs(const char *dev);

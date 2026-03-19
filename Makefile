@@ -457,7 +457,8 @@ AGENT_UNIT_TEST_SRC := \
 	tests/unit/agent/test_linux_download_file_util.c \
 	tests/unit/agent/test_linux_grep_util.c \
 	tests/unit/agent/test_linux_list_files_util.c \
-	tests/unit/agent/test_linux_list_symlinks_util.c
+	tests/unit/agent/test_linux_list_symlinks_util.c \
+	tests/unit/agent/test_device_scan.c
 AGENT_UNIT_TEST_DEPS := \
 	agent/util/str_util.c \
 	agent/util/isa_util.c \
@@ -513,6 +514,7 @@ AGENT_UNIT_TEST_DEPS := \
 	agent/uboot/image/uboot_image_record_util.c \
 	agent/linux/linux_download_file_util.c \
 	agent/linux/linux_execute_command_util.c \
+	agent/device/device_scan.c \
 	agent/shell/script_exec_util.c \
 	agent/shell/interactive_util.c \
 	agent/util/str_util.h \
@@ -1007,6 +1009,7 @@ $(AGENT_UNIT_TEST_BIN): $(AGENT_UNIT_TEST_SRC) $(AGENT_UNIT_TEST_DEPS) $(JSONC_L
 			agent/uboot/image/uboot_image_record_util.c \
 			agent/linux/linux_download_file_util.c \
 			agent/linux/linux_execute_command_util.c \
+			agent/device/device_scan.c \
 			agent/shell/script_exec_util.c \
 			agent/shell/interactive_util.c \
 			$(JSONC_LIB) \
