@@ -238,12 +238,14 @@ int linux_execute_command_scan_main(int argc, char **argv)
 	}
 
 	/*
-	 * Interactive mode: no output redirection configured.
-	 * Run the command with a PTY so interactive processes (shells,
-	 * editors, etc.) see a real terminal, then stream I/O directly
-	 * through the WebSocket pipes.
+	 * Interactive mode: no output redirection configured and stdout is a
+	 * real terminal.  Run the command with a PTY so interactive processes
+	 * (shells, editors, etc.) see a real terminal, then stream I/O
+	 * directly through the WebSocket pipes.  When stdout is not a TTY
+	 * (e.g. redirected to a file or pipe) skip the PTY and fall through
+	 * to the popen path so output is captured reliably.
 	 */
-	if (!output_uri && output_sock < 0)
+	if (!output_uri && output_sock < 0 && isatty(STDOUT_FILENO))
 		return run_command_interactive(command);
 
 	fp = popen(command, "r");

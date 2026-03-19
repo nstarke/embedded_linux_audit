@@ -66,8 +66,8 @@ TEST_DISABLE_OUTPUT_OVERRIDE=1 ELA_OUTPUT_FORMAT=json run_with_output_override \
     "$BIN" linux list-symlinks "$TMP_DIR" --recursive >"$symlink_log" 2>&1
 rc=$?
 if [ "$rc" -eq 0 ] && \
-   grep -F "\"path\":\"$SYMLINK_FILE\"" "$symlink_log" >/dev/null 2>&1 && \
-   grep -F "\"target\":\"$TOP_FILE\"" "$symlink_log" >/dev/null 2>&1; then
+   grep -F "\"link_path\":\"$SYMLINK_FILE\"" "$symlink_log" >/dev/null 2>&1 && \
+   grep -F "\"location_path\":\"$TOP_FILE\"" "$symlink_log" >/dev/null 2>&1; then
     echo "[PASS] linux list-symlinks emits real symlink records"
     PASS_COUNT="$(expr "$PASS_COUNT" + 1)"
 else
