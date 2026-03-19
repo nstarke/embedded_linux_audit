@@ -53,7 +53,6 @@ find_node_bin() {
 
     return 1
 }
-
 start_http_capture_server() {
     server_log="$1"
     req_path_out="$2"
@@ -115,7 +114,6 @@ wait_for_background_process_exit() {
 
     return 1
 }
-
 start_https_capture_server() {
     server_log="$1"
     mode="$2"

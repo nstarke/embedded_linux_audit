@@ -693,12 +693,40 @@ async function main() {
   });
 }
 
-main().catch(async (err) => {
-  process.stderr.write(`${err.stack || err.message}\n`);
-  try {
-    await closeDatabase();
-  } catch {
-    // ignore shutdown errors
-  }
-  process.exit(1);
-});
+function start() {
+  return main().catch(async (err) => {
+    process.stderr.write(`${err.stack || err.message}\n`);
+    try {
+      await closeDatabase();
+    } catch {
+      // ignore shutdown errors
+    }
+    process.exit(1);
+  });
+}
+
+if (require.main === module) {
+  start();
+}
+
+module.exports = {
+  terminalConfig,
+  HOST,
+  PORT,
+  HEARTBEAT_INTERVAL_MS,
+  LEGACY_ALIASES_FILE,
+  VALIDATE_KEY,
+  TUI_STATE,
+  ANSI,
+  sessionRegistry,
+  tui,
+  httpServer,
+  wss,
+  importLegacyAliases,
+  cleanup,
+  exitGracefully,
+  onUpdateStateTransition,
+  setupInput,
+  main,
+  start,
+};
