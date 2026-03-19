@@ -451,7 +451,9 @@ AGENT_UNIT_TEST_SRC := \
 	tests/unit/agent/test_interactive_util.c \
 	tests/unit/agent/test_linux_execute_command_util.c \
 	tests/unit/agent/test_linux_download_file_util.c \
-	tests/unit/agent/test_linux_grep_util.c
+	tests/unit/agent/test_linux_grep_util.c \
+	tests/unit/agent/test_linux_list_files_util.c \
+	tests/unit/agent/test_linux_list_symlinks_util.c
 AGENT_UNIT_TEST_DEPS := \
 	agent/util/str_util.c \
 	agent/util/isa_util.c \
@@ -475,6 +477,8 @@ AGENT_UNIT_TEST_DEPS := \
 	agent/linux/linux_dmesg_util.c \
 	agent/linux/remote_copy_cmd_util.c \
 	agent/linux/linux_grep_util.c \
+	agent/linux/linux_list_files_util.c \
+	agent/linux/linux_list_symlinks_util.c \
 	agent/net/ela_conf_util.c \
 	agent/net/ws_url_util.c \
 	agent/net/ws_connect_util.c \
@@ -524,6 +528,8 @@ AGENT_UNIT_TEST_DEPS := \
 	agent/linux/linux_dmesg_util.h \
 	agent/linux/linux_download_file_util.h \
 	agent/linux/linux_grep_util.h \
+	agent/linux/linux_list_files_util.h \
+	agent/linux/linux_list_symlinks_util.h \
 	agent/linux/remote_copy_cmd_util.h \
 	agent/linux/linux_execute_command_util.h \
 	agent/net/ela_conf_util.h \
@@ -958,6 +964,8 @@ $(AGENT_UNIT_TEST_BIN): $(AGENT_UNIT_TEST_SRC) $(AGENT_UNIT_TEST_DEPS) $(JSONC_L
 			agent/linux/linux_dmesg_util.c \
 			agent/linux/remote_copy_cmd_util.c \
 			agent/linux/linux_grep_util.c \
+			agent/linux/linux_list_files_util.c \
+			agent/linux/linux_list_symlinks_util.c \
 			agent/net/ela_conf_util.c \
 			agent/net/ws_url_util.c \
 			agent/net/ws_connect_util.c \
