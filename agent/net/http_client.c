@@ -6,6 +6,7 @@
 #include "http_client_parse_util.h"
 #include "http_client_protocol_util.h"
 #include "http_client_runtime_util.h"
+#include "http_client_transfer_util.h"
 #include "http_ws_policy_util.h"
 #include "tcp_util.h"
 #include "../util/http_uri_util.h"
@@ -1144,7 +1145,7 @@ fail:
 	return -1;
 }
 
-static size_t curl_write_to_fp(void *ptr, size_t size, size_t nmemb, void *userdata)
+static size_t __attribute__((unused)) curl_write_to_fp(void *ptr, size_t size, size_t nmemb, void *userdata)
 {
 	FILE *fp = (FILE *)userdata;
 	if (!fp)
@@ -1812,10 +1813,7 @@ int ela_http_post(const char *uri, const uint8_t *data, size_t len,
 		 const char *content_type, bool insecure, bool verbose,
 		 char *errbuf, size_t errbuf_len)
 {
-	bool is_https;
-	char *normalized_uri = NULL;
-	const char *effective_uri = uri;
-	const char *ct;
+	struct ela_http_transfer_plan plan;
 	const char *key;
 	int status = 0;
 	int ret;
@@ -1823,35 +1821,14 @@ int ela_http_post(const char *uri, const uint8_t *data, size_t len,
 	if (errbuf && errbuf_len)
 		errbuf[0] = '\0';
 
-	if (!uri || !*uri) {
-		if (errbuf && errbuf_len)
-			snprintf(errbuf, errbuf_len, "HTTP URI is empty");
+	if (ela_http_prepare_post_plan(uri, content_type, &plan, errbuf, errbuf_len) != 0)
 		return -1;
-	}
-
-	ela_ensure_dns_configured();
-	is_https = !strncmp(uri, "https://", 8);
-	if (!strncmp(uri, "http://", 7))
-		normalized_uri = ela_http_uri_normalize_default_port(uri, 80);
-	else if (is_https)
-		normalized_uri = ela_http_uri_normalize_default_port(uri, 443);
-
-	if ((!strncmp(uri, "http://", 7) || is_https) && !normalized_uri) {
-		if (errbuf && errbuf_len)
-			snprintf(errbuf, errbuf_len, "failed to normalize HTTP URI");
-		return -1;
-	}
-	if (normalized_uri)
-		effective_uri = normalized_uri;
-
-	ct = (content_type && *content_type)
-	     ? content_type : "text/plain; charset=utf-8";
 
 	key = ela_api_key_get();
 	do {
-		if (is_https) {
-			ret = simple_https_post(effective_uri, data, len,
-						ct, key, insecure, verbose,
+		if (plan.transport == ELA_HTTP_TRANSPORT_HTTPS) {
+			ret = simple_https_post(plan.effective_uri, data, len,
+						plan.content_type, key, insecure, verbose,
 						errbuf, errbuf_len, &status);
 		} else {
 			/*
@@ -1859,13 +1836,13 @@ int ela_http_post(const char *uri, const uint8_t *data, size_t len,
 			 * to avoid curl / OpenSSL initialisation on architectures
 			 * where curl_global_init is unreliable under QEMU.
 			 */
-			ret = simple_http_post(effective_uri, data, len, ct,
+			ret = simple_http_post(plan.effective_uri, data, len, plan.content_type,
 					       key, verbose, errbuf, errbuf_len,
 					       &status);
 		}
 		if (ret == 0) {
 			ela_api_key_confirm();
-			free(normalized_uri);
+			ela_http_transfer_plan_cleanup(&plan);
 			return 0;
 		}
 		/* Retry with the next candidate key only on 401 */
@@ -1875,12 +1852,12 @@ int ela_http_post(const char *uri, const uint8_t *data, size_t len,
 			break;
 	} while (key);
 
-	if (status == 401)
+	if (ela_http_should_warn_unauthorized_status(status))
 		fprintf(stderr,
 			"warning: server returned 401 Unauthorized\n"
 			"  Set a bearer token via --api-key, ELA_API_KEY, or /tmp/ela.key\n");
 
-	free(normalized_uri);
+	ela_http_transfer_plan_cleanup(&plan);
 	return -1;
 }
 
@@ -1888,163 +1865,28 @@ int ela_http_get_to_file(const char *uri, const char *output_path,
 			   bool insecure, bool verbose,
 			   char *errbuf, size_t errbuf_len)
 {
-	CURL *curl;
-	CURLcode rc;
-	long http_code = 0;
-	static bool curl_global_ready;
-	bool is_https;
-	char *normalized_uri = NULL;
-	const char *effective_uri = uri;
-	FILE *fp = NULL;
-	struct curl_ssl_ctx_error_data ssl_ctx_err = { errbuf, errbuf_len };
+	struct ela_http_transfer_plan plan;
 
 	if (errbuf && errbuf_len)
 		errbuf[0] = '\0';
 
-	if (!uri || !*uri || !output_path || !*output_path) {
-		if (errbuf && errbuf_len)
-			snprintf(errbuf, errbuf_len, "HTTP GET requires URI and output path");
+	if (ela_http_prepare_get_plan(uri, output_path, &plan, errbuf, errbuf_len) != 0)
 		return -1;
-	}
 
 	ela_install_sigill_debug_handler();
 	ela_set_sigill_stage("download-file:entry");
 
-	if (!strncmp(uri, "http://", 7))
-		return simple_http_get_to_file(uri, output_path, verbose, errbuf, errbuf_len);
-	if (!strncmp(uri, "https://", 8))
-		return simple_https_get_to_file(uri, output_path, insecure, verbose, errbuf, errbuf_len);
-
-	is_https = !strncmp(uri, "https://", 8);
-	if (!strncmp(uri, "http://", 7)) {
-		normalized_uri = ela_http_uri_normalize_default_port(uri, 80);
-	} else if (is_https) {
-		normalized_uri = ela_http_uri_normalize_default_port(uri, 443);
-	} else {
-		if (errbuf && errbuf_len)
-			snprintf(errbuf, errbuf_len, "unsupported URI scheme (expected http:// or https://)");
-		return -1;
+	if (plan.transport == ELA_HTTP_TRANSPORT_HTTP) {
+		int rc = simple_http_get_to_file(plan.effective_uri, output_path, verbose,
+						 errbuf, errbuf_len);
+		ela_http_transfer_plan_cleanup(&plan);
+		return rc;
 	}
 
-	if (!normalized_uri) {
-		if (errbuf && errbuf_len)
-			snprintf(errbuf, errbuf_len, "failed to normalize HTTP URI");
-		return -1;
+	{
+		int rc = simple_https_get_to_file(plan.effective_uri, output_path, insecure,
+						  verbose, errbuf, errbuf_len);
+		ela_http_transfer_plan_cleanup(&plan);
+		return rc;
 	}
-	effective_uri = normalized_uri;
-
-	ela_set_sigill_stage("download-file:curl_global_init");
-	ela_force_conservative_crypto_caps();
-
-	if (!curl_global_ready) {
-		if (curl_global_init(CURL_GLOBAL_DEFAULT) != CURLE_OK) {
-			if (errbuf && errbuf_len)
-				snprintf(errbuf, errbuf_len, "curl_global_init failed");
-			free(normalized_uri);
-			return -1;
-		}
-		curl_global_ready = true;
-	}
-
-	ela_set_sigill_stage("download-file:fopen");
-	fp = fopen(output_path, "wb");
-	if (!fp) {
-		if (errbuf && errbuf_len)
-			snprintf(errbuf, errbuf_len, "cannot open output file %s: %s", output_path, strerror(errno));
-		free(normalized_uri);
-		return -1;
-	}
-
-	ela_set_sigill_stage("download-file:curl_easy_init");
-	curl = curl_easy_init();
-	if (!curl) {
-		if (errbuf && errbuf_len)
-			snprintf(errbuf, errbuf_len, "curl_easy_init failed");
-		fclose(fp);
-		unlink(output_path);
-		free(normalized_uri);
-		return -1;
-	}
-
-	if (verbose) {
-		fprintf(stderr, "HTTP GET request uri=%s -> file=%s insecure=%s\n",
-			effective_uri,
-			output_path,
-			insecure ? "true" : "false");
-	}
-
-	ela_set_sigill_stage("download-file:curl_setopt");
-	curl_easy_setopt(curl, CURLOPT_URL, effective_uri);
-	curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_write_to_fp);
-	curl_easy_setopt(curl, CURLOPT_WRITEDATA, fp);
-	curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);
-	curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
-
-	if (is_https) {
-		if (insecure) {
-			curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
-			curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
-		} else {
-			rc = curl_easy_setopt(curl, CURLOPT_SSL_CTX_FUNCTION, curl_ssl_ctx_load_embedded_ca);
-			if (rc == CURLE_OK)
-				rc = curl_easy_setopt(curl, CURLOPT_SSL_CTX_DATA, &ssl_ctx_err);
-			if (rc != CURLE_OK) {
-				if (errbuf && errbuf_len)
-					snprintf(errbuf, errbuf_len, "failed to configure HTTPS CA bundle: %s",
-						 curl_easy_strerror(rc));
-				curl_easy_cleanup(curl);
-				fclose(fp);
-				unlink(output_path);
-				free(normalized_uri);
-				return -1;
-			}
-		}
-	}
-
-	ela_set_sigill_stage("download-file:curl_perform");
-	rc = curl_easy_perform(curl);
-	if (rc != CURLE_OK) {
-		if (verbose)
-			fprintf(stderr, "HTTP GET transport failure uri=%s error=%s\n",
-				effective_uri, curl_easy_strerror(rc));
-		if (errbuf && errbuf_len)
-			ela_http_format_curl_transport_error(curl_easy_strerror(rc), errbuf, errbuf_len);
-		curl_easy_cleanup(curl);
-		fclose(fp);
-		unlink(output_path);
-		free(normalized_uri);
-		return -1;
-	}
-
-	ela_set_sigill_stage("download-file:curl_getinfo");
-	curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
-	curl_easy_cleanup(curl);
-
-	if (fclose(fp) != 0) {
-		if (errbuf && errbuf_len)
-			snprintf(errbuf, errbuf_len, "failed to finalize output file %s", output_path);
-		unlink(output_path);
-		free(normalized_uri);
-		return -1;
-	}
-	fp = NULL;
-
-	if (http_code < 200 || http_code >= 300) {
-		if (verbose)
-			fprintf(stderr, "HTTP GET response failure uri=%s status=%ld\n",
-				effective_uri, http_code);
-		if (errbuf && errbuf_len)
-			ela_http_format_status_error(http_code, errbuf, errbuf_len);
-		unlink(output_path);
-		free(normalized_uri);
-		return -1;
-	}
-
-	if (verbose)
-		fprintf(stderr, "HTTP GET success uri=%s status=%ld\n", effective_uri, http_code);
-
-	ela_set_sigill_stage("download-file:success");
-	free(normalized_uri);
-	return 0;
 }

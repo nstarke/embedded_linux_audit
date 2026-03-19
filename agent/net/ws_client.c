@@ -9,6 +9,7 @@
 #include "api_key.h"
 #include "http_ws_policy_util.h"
 #include "ws_connect_util.h"
+#include "ws_client_runtime_util.h"
 #include "ws_interactive_util.h"
 #include "ws_recv_util.h"
 #include "ws_frame_util.h"
@@ -317,6 +318,7 @@ static int ws_do_handshake(struct ela_ws_conn *ws,
 	char req[1024];
 	int req_len;
 	char resp[2048];
+	char errbuf[256];
 	size_t resp_len = 0;
 
 	ws_make_key(key, sizeof(key));
@@ -349,13 +351,8 @@ static int ws_do_handshake(struct ela_ws_conn *ws,
 	}
 	resp[resp_len] = '\0';
 
-	if (ela_ws_validate_handshake_response(resp, NULL, 0) != 0) {
-		if (ela_ws_handshake_response_is_unauthorized(resp))
-			fprintf(stderr,
-				"ws: server returned 401 Unauthorized\n"
-				"  Set a bearer token via --api-key, ELA_API_KEY, or /tmp/ela.key\n");
-		else
-			fprintf(stderr, "ws: server returned unexpected response: %.40s\n", resp);
+	if (ela_ws_format_handshake_error(resp, errbuf, sizeof(errbuf)) != 0) {
+		fprintf(stderr, "%s\n", errbuf);
 		return -1;
 	}
 
@@ -636,7 +633,7 @@ static ssize_t ws_recv_frame(const struct ela_ws_conn *ws,
  * Heartbeat response
  * ---------------------------------------------------------------------- */
 
-static void send_heartbeat_ack(const struct ela_ws_conn *ws)
+static int send_heartbeat_ack(const struct ela_ws_conn *ws)
 {
 	char date_str[64];
 	char ack[160];
@@ -652,7 +649,44 @@ static void send_heartbeat_ack(const struct ela_ws_conn *ws)
 
 	date_str[sizeof(date_str) - 1] = '\0';
 	if (ela_ws_build_heartbeat_ack(date_str, ack, sizeof(ack)) == 0)
-		ws_send_text(ws, ack, strlen(ack));
+		return ws_send_text(ws, ack, strlen(ack));
+	return -1;
+}
+
+struct ws_loop_dispatch_ctx {
+	const struct ela_ws_conn *ws;
+	int repl_fd;
+};
+
+static int ws_dispatch_write_repl(void *ctx, const char *payload, size_t payload_len)
+{
+	struct ws_loop_dispatch_ctx *dispatch = (struct ws_loop_dispatch_ctx *)ctx;
+
+	if (!dispatch || dispatch->repl_fd < 0 || !payload)
+		return -1;
+	return write(dispatch->repl_fd, payload, payload_len) < 0 ? -1 : 0;
+}
+
+static int ws_dispatch_send_pong(void *ctx)
+{
+	struct ws_loop_dispatch_ctx *dispatch = (struct ws_loop_dispatch_ctx *)ctx;
+	uint8_t pong[6];
+	size_t pong_len = 0;
+
+	if (!dispatch || !dispatch->ws)
+		return -1;
+	if (ela_ws_build_zero_mask_control_frame(ELA_WS_OPCODE_PONG, pong, &pong_len) != 0)
+		return -1;
+	return ws_conn_write(dispatch->ws, pong, pong_len) < 0 ? -1 : 0;
+}
+
+static int ws_dispatch_send_heartbeat_ack(void *ctx)
+{
+	struct ws_loop_dispatch_ctx *dispatch = (struct ws_loop_dispatch_ctx *)ctx;
+
+	if (!dispatch || !dispatch->ws)
+		return -1;
+	return send_heartbeat_ack(dispatch->ws);
 }
 
 /* -------------------------------------------------------------------------
@@ -761,6 +795,15 @@ int ela_ws_run_interactive(struct ela_ws_conn *ws, const char *prog)
 		{
 			int ws_readable = FD_ISSET(ws->sock, &rfds);
 			int pending_bytes = 0;
+			struct ws_loop_dispatch_ctx dispatch_ctx = {
+				.ws = ws,
+				.repl_fd = pipe_to_loop[1],
+			};
+			struct ela_ws_runtime_dispatch_ops dispatch_ops = {
+				.write_repl_fn = ws_dispatch_write_repl,
+				.send_pong_fn = ws_dispatch_send_pong,
+				.send_heartbeat_ack_fn = ws_dispatch_send_heartbeat_ack,
+			};
 			if (!ws_readable && ws->is_tls && ws->ssl) {
 #ifdef ELA_HAS_WOLFSSL
 				pending_bytes = wolfSSL_pending((ws_ssl_t *)ws->ssl);
@@ -775,33 +818,14 @@ int ela_ws_run_interactive(struct ela_ws_conn *ws, const char *prog)
 				break;
 
 			{
-				struct ela_ws_frame_action action;
-
-				ela_ws_classify_incoming_frame(opcode, frame_buf,
-							       frame_len > 0 ? (size_t)frame_len : 0U,
-							       &action);
-				if (action.terminate_session)
+				int dispatch_rc = ela_ws_dispatch_incoming_frame(
+					opcode,
+					frame_buf,
+					frame_len > 0 ? (size_t)frame_len : 0U,
+					&dispatch_ops,
+					&dispatch_ctx);
+				if (dispatch_rc != 0)
 					break;
-
-				if (action.send_pong) {
-					uint8_t pong[6];
-					size_t pong_len = 0;
-
-					if (ela_ws_build_zero_mask_control_frame(ELA_WS_OPCODE_PONG,
-										 pong,
-										 &pong_len) == 0)
-						ws_conn_write(ws, pong, pong_len);
-					continue;
-				}
-
-				if (action.send_heartbeat_ack) {
-					send_heartbeat_ack(ws);
-				} else if (action.forward_to_repl) {
-					if (write(pipe_to_loop[1],
-						  frame_buf,
-						  (size_t)frame_len) < 0)
-						break;
-				}
 			}
 		}
 		} /* end ws_readable compound block */
