@@ -41,6 +41,76 @@ find_python_bin() {
     return 1
 }
 
+start_http_capture_server() {
+    server_log="$1"
+    req_path_out="$2"
+    req_type_out="$3"
+    req_body_out="$4"
+    status_code="${5:-200}"
+    req_auth_out="${6:-}"
+
+    python_bin="$(find_python_bin || true)"
+    if [ -z "$python_bin" ]; then
+        return 1
+    fi
+
+    cmd="$python_bin \"$SCRIPT_DIR/http_capture_server.py\" --path-out \"$req_path_out\" --type-out \"$req_type_out\" --body-out \"$req_body_out\" --status \"$status_code\""
+    if [ -n "$req_auth_out" ]; then
+        cmd="$cmd --auth-out \"$req_auth_out\""
+    fi
+
+    # shellcheck disable=SC2086
+    sh -c "$cmd" >"$server_log" 2>&1 &
+    echo $!
+}
+
+wait_for_http_capture_server_ready() {
+    server_log="$1"
+    attempts="${2:-50}"
+    i=0
+    while [ "$i" -lt "$attempts" ]; do
+        port="$(sed -n 's/^ready://p' "$server_log" 2>/dev/null | head -n 1)"
+        if [ -n "$port" ]; then
+            echo "$port"
+            return 0
+        fi
+        sleep 0.1
+        i="$(expr "$i" + 1)"
+    done
+    return 1
+}
+
+stop_background_server() {
+    _pid="$1"
+    kill "$_pid" 2>/dev/null || true
+    wait "$_pid" 2>/dev/null || true
+}
+
+start_https_capture_server() {
+    server_log="$1"
+    mode="$2"
+    cert_path="$3"
+    key_path="$4"
+    req_path_out="$5"
+    req_type_out="$6"
+    req_body_out="$7"
+    payload_path="${8:-}"
+
+    python_bin="$(find_python_bin || true)"
+    if [ -z "$python_bin" ]; then
+        return 1
+    fi
+
+    cmd="$python_bin \"$SCRIPT_DIR/https_capture_server.py\" --mode \"$mode\" --cert \"$cert_path\" --key \"$key_path\" --path-out \"$req_path_out\" --type-out \"$req_type_out\" --body-out \"$req_body_out\""
+    if [ -n "$payload_path" ]; then
+        cmd="$cmd --payload \"$payload_path\""
+    fi
+
+    # shellcheck disable=SC2086
+    sh -c "$cmd" >"$server_log" 2>&1 &
+    echo $!
+}
+
 command_exists() {
     cmd_name="$1"
 

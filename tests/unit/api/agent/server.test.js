@@ -1,0 +1,409 @@
+'use strict';
+
+const path = require('path');
+
+function makeResponse({ statusCode = 200, headers = {}, body = '', location } = {}) {
+  const handlers = {};
+  return {
+    statusCode,
+    headers: location ? { ...headers, location } : headers,
+    setEncoding: jest.fn(),
+    on: jest.fn((event, handler) => {
+      handlers[event] = handler;
+      return this;
+    }),
+    emit(event, value) {
+      if (handlers[event]) {
+        handlers[event](value);
+      }
+    },
+    pipe(dest) {
+      setImmediate(() => {
+        if (dest._handlers.finish) {
+          dest._handlers.finish();
+        }
+      });
+    },
+    resume: jest.fn(),
+  };
+}
+
+function makeWriteStream() {
+  const stream = {
+    _handlers: {},
+    on: jest.fn((event, handler) => {
+      stream._handlers[event] = handler;
+      return stream;
+    }),
+    close: jest.fn((cb) => {
+      if (cb) cb();
+    }),
+  };
+  return stream;
+}
+
+function loadAgentServer(options = {}) {
+  jest.resetModules();
+
+  const fsMock = {
+    constants: { F_OK: 0 },
+    createWriteStream: jest.fn(() => makeWriteStream()),
+    rm: jest.fn((_path, _opts, cb) => cb && cb()),
+    existsSync: jest.fn(() => false),
+    mkdirSync: jest.fn(),
+    readFileSync: jest.fn(() => 'file-bytes'),
+  };
+  const fspMock = {
+    readFile: jest.fn(),
+    writeFile: jest.fn().mockResolvedValue(undefined),
+    mkdir: jest.fn().mockResolvedValue(undefined),
+    readdir: jest.fn(),
+    unlink: jest.fn().mockResolvedValue(undefined),
+    rm: jest.fn().mockResolvedValue(undefined),
+    access: jest.fn().mockResolvedValue(undefined),
+  };
+  const httpGet = jest.fn();
+  const httpsGet = jest.fn();
+  const httpServer = {
+    once: jest.fn(),
+    listen: jest.fn((port, host, cb) => cb()),
+    close: jest.fn((cb) => cb && cb()),
+  };
+  const httpsServer = {
+    once: jest.fn(),
+    listen: jest.fn((port, host, cb) => cb()),
+    close: jest.fn((cb) => cb && cb()),
+  };
+  const auth = {
+    init: jest.fn(() => true),
+  };
+  const initializeDatabase = jest.fn().mockResolvedValue(undefined);
+  const runMigrations = jest.fn().mockResolvedValue([]);
+  const closeDatabase = jest.fn().mockResolvedValue(undefined);
+  const persistUpload = jest.fn();
+  const createApp = jest.fn(() => 'app-instance');
+  const selectStartupDataDir = jest.fn().mockResolvedValue({
+    dataDir: '/repo/data/123',
+    timestamp: '123',
+    reusedExisting: false,
+  });
+  const resolveProjectPath = jest.fn((root, target) => path.isAbsolute(target) ? target : path.join(root, target));
+  const getAgentServiceConfig = jest.fn(() => ({
+    host: '0.0.0.0',
+    port: 5000,
+    logPrefix: 'post_requests',
+    dataDir: 'api/agent/data',
+    repo: 'nstarke/embedded_linux_audit',
+    assetsDir: null,
+    testsDir: 'tests',
+  }));
+  const execFileSync = jest.fn();
+  const processOn = jest.spyOn(process, 'on').mockImplementation(() => process);
+  const consoleLog = jest.spyOn(console, 'log').mockImplementation(() => {});
+  const consoleError = jest.spyOn(console, 'error').mockImplementation(() => {});
+  const exitSpy = jest.spyOn(process, 'exit').mockImplementation(() => undefined);
+
+  if (options.fs) Object.assign(fsMock, options.fs);
+  if (options.fsp) Object.assign(fspMock, options.fsp);
+  if (options.auth) Object.assign(auth, options.auth);
+  if (options.db) {
+    if (options.db.initializeDatabase) initializeDatabase.mockImplementation(options.db.initializeDatabase);
+    if (options.db.runMigrations) runMigrations.mockImplementation(options.db.runMigrations);
+    if (options.db.closeDatabase) closeDatabase.mockImplementation(options.db.closeDatabase);
+  }
+  if (options.serverUtils) {
+    if (options.serverUtils.selectStartupDataDir) selectStartupDataDir.mockImplementation(options.serverUtils.selectStartupDataDir);
+    if (options.serverUtils.resolveProjectPath) resolveProjectPath.mockImplementation(options.serverUtils.resolveProjectPath);
+  }
+
+  jest.doMock('fs', () => fsMock);
+  jest.doMock('fs/promises', () => fspMock);
+  jest.doMock('http', () => ({
+    get: httpGet,
+    createServer: jest.fn(() => httpServer),
+  }), { virtual: true });
+  jest.doMock('https', () => ({
+    get: httpsGet,
+    createServer: jest.fn(() => httpsServer),
+  }), { virtual: true });
+  jest.doMock('mime-types', () => ({
+    lookup: jest.fn(() => 'application/octet-stream'),
+  }), { virtual: true });
+  jest.doMock('child_process', () => ({
+    execFileSync,
+  }));
+  jest.doMock('../../../../api/auth', () => auth);
+  jest.doMock('../../../../api/lib/config', () => ({
+    getAgentServiceConfig,
+  }));
+  jest.doMock('../../../../api/lib/db', () => ({
+    initializeDatabase,
+    runMigrations,
+    closeDatabase,
+  }));
+  jest.doMock('../../../../api/lib/db/persistUpload', () => ({
+    persistUpload,
+  }));
+  jest.doMock('../../../../api/agent/app', () => ({
+    createApp,
+  }));
+  jest.doMock('../../../../api/agent/serverUtils', () => ({
+    findProjectRoot: jest.fn(() => '/repo'),
+    isValidMacAddress: jest.fn(),
+    normalizeContentType: jest.fn(),
+    logPathForContentType: jest.fn(),
+    augmentJsonPayload: jest.fn(),
+    resolveProjectPath,
+    selectStartupDataDir,
+    isWithinRoot: jest.fn(),
+    getClientIp: jest.fn(),
+    sanitizeUploadPath: jest.fn(),
+    writeUploadFile: jest.fn(),
+  }));
+
+  const server = require('../../../../api/agent/server');
+
+  return {
+    server,
+    fsMock,
+    fspMock,
+    httpGet,
+    httpsGet,
+    httpServer,
+    httpsServer,
+    auth,
+    initializeDatabase,
+    runMigrations,
+    closeDatabase,
+    createApp,
+    persistUpload,
+    selectStartupDataDir,
+    resolveProjectPath,
+    getAgentServiceConfig,
+    execFileSync,
+    processOn,
+    consoleLog,
+    consoleError,
+    exitSpy,
+  };
+}
+
+describe('agent server', () => {
+  afterEach(() => {
+    jest.resetModules();
+    jest.restoreAllMocks();
+    process.argv = ['node', 'server.js'];
+  });
+
+  test('githubJsonGet fetches JSON and includes auth headers', async () => {
+    const { server, httpsGet } = loadAgentServer();
+    httpsGet.mockImplementation((url, options, cb) => {
+      const res = makeResponse({ body: '{"ok":true}' });
+      cb(res);
+      res.emit('data', '{"ok":');
+      res.emit('data', 'true}');
+      res.emit('end');
+      return { on: jest.fn() };
+    });
+
+    await expect(server.githubJsonGet('https://api.example.test/data', 'token-1')).resolves.toEqual({ ok: true });
+    expect(httpsGet).toHaveBeenCalledWith('https://api.example.test/data', expect.objectContaining({
+      headers: expect.objectContaining({
+        Authorization: 'Bearer token-1',
+        Accept: 'application/vnd.github+json',
+      }),
+    }), expect.any(Function));
+  });
+
+  test('getLatestRelease requests the GitHub latest release endpoint and rejects on HTTP error', async () => {
+    const { server, httpsGet } = loadAgentServer();
+    httpsGet
+      .mockImplementationOnce((url, _options, cb) => {
+        const res = makeResponse({ statusCode: 403 });
+        cb(res);
+        res.emit('end');
+        return { on: jest.fn() };
+      })
+      .mockImplementationOnce((url, _options, cb) => {
+        const res = makeResponse();
+        cb(res);
+        res.emit('data', '{"tag_name":"v1.2.3"}');
+        res.emit('end');
+        return { on: jest.fn() };
+      });
+
+    await expect(server.githubJsonGet('https://api.example.test/data')).rejects.toMatchObject({ message: 'HTTP 403', statusCode: 403 });
+    await expect(server.getLatestRelease('owner/repo', 'tok')).resolves.toEqual({ tag_name: 'v1.2.3' });
+    expect(httpsGet.mock.calls[1][0]).toBe('https://api.github.com/repos/owner/repo/releases/latest');
+  });
+
+  test('downloadFile follows redirects and cleans temporary files', async () => {
+    const { server, fsMock, httpsGet } = loadAgentServer();
+    httpsGet
+      .mockImplementationOnce((_url, _options, cb) => {
+        const res = makeResponse({ statusCode: 302, location: '/redirected.bin' });
+        cb(res);
+        return { on: jest.fn() };
+      })
+      .mockImplementationOnce((_url, _options, cb) => {
+        const res = makeResponse({ statusCode: 200 });
+        cb(res);
+        return { on: jest.fn() };
+      });
+
+    await expect(server.downloadFile('https://example.test/file.bin', '/tmp/file.bin', 'tok')).resolves.toBeUndefined();
+    expect(httpsGet).toHaveBeenCalledTimes(2);
+    expect(fsMock.rm).toHaveBeenCalledWith('/tmp/file.bin', { force: true }, expect.any(Function));
+  });
+
+  test('releaseIdentity and cached release helpers handle expected values', async () => {
+    const { server, fspMock } = loadAgentServer();
+    fspMock.readFile.mockResolvedValueOnce('{"release":"v9.9.9"}');
+
+    expect(server.releaseIdentity({ tag_name: 'v1.0.0' })).toBe('v1.0.0');
+    expect(server.releaseIdentity({ id: 1234 })).toBe('1234');
+    expect(server.releaseIdentity({})).toBe('');
+    await expect(server.loadCachedReleaseIdentity('/tmp/assets')).resolves.toBe('v9.9.9');
+
+    await server.saveCachedReleaseIdentity('/tmp/assets', 'v2.0.0');
+    expect(fspMock.mkdir).toHaveBeenCalledWith('/tmp/assets', { recursive: true });
+    expect(fspMock.writeFile).toHaveBeenCalledWith(
+      path.join('/tmp/assets', '.release_state.json'),
+      expect.stringContaining('"release": "v2.0.0"'),
+      'utf8',
+    );
+  });
+
+  test('clearDownloadedAssets preserves release state files and ignores missing directories', async () => {
+    const { server, fspMock } = loadAgentServer();
+    fspMock.readdir
+      .mockResolvedValueOnce([
+        { name: '.release_state.json', isFile: () => true, isSymbolicLink: () => false },
+        { name: '.release_state.123', isFile: () => true, isSymbolicLink: () => false },
+        { name: 'ela-x86_64', isFile: () => true, isSymbolicLink: () => false },
+        { name: 'link.bin', isFile: () => false, isSymbolicLink: () => true },
+      ])
+      .mockRejectedValueOnce(Object.assign(new Error('missing'), { code: 'ENOENT' }));
+
+    await server.clearDownloadedAssets('/tmp/assets');
+    expect(fspMock.unlink).toHaveBeenCalledWith(path.join('/tmp/assets', 'ela-x86_64'));
+    expect(fspMock.unlink).toHaveBeenCalledWith(path.join('/tmp/assets', 'link.bin'));
+    expect(fspMock.unlink).not.toHaveBeenCalledWith(path.join('/tmp/assets', '.release_state.json'));
+    await expect(server.clearDownloadedAssets('/tmp/missing')).resolves.toBeUndefined();
+  });
+
+  test('ensureSelfSignedCert skips existing files and otherwise creates certs with openssl', () => {
+    const { server, fsMock, execFileSync } = loadAgentServer();
+    fsMock.existsSync.mockReturnValueOnce(true).mockReturnValueOnce(true);
+
+    server.ensureSelfSignedCert('/tmp/cert.pem', '/tmp/key.pem');
+    expect(execFileSync).not.toHaveBeenCalled();
+
+    fsMock.existsSync.mockReturnValue(false);
+    server.ensureSelfSignedCert('/tmp/cert.pem', '/tmp/key.pem');
+    expect(fsMock.mkdirSync).toHaveBeenCalledWith('/tmp', { recursive: true });
+    expect(execFileSync).toHaveBeenCalledWith('openssl', expect.arrayContaining([
+      'req',
+      '-x509',
+      '-keyout',
+      '/tmp/key.pem',
+      '-out',
+      '/tmp/cert.pem',
+    ]), { stdio: 'ignore' });
+  });
+
+  test('main returns 1 on invalid CLI arguments and auth/database failures', async () => {
+    let loaded = loadAgentServer();
+    process.argv = ['node', 'server.js', '--bad-flag'];
+    await expect(loaded.server.main()).resolves.toBe(1);
+    expect(loaded.consoleError).toHaveBeenCalledWith('Unknown argument: --bad-flag');
+
+    loaded = loadAgentServer({ auth: { init: jest.fn(() => false) } });
+    process.argv = ['node', 'server.js', '--validate-key'];
+    await expect(loaded.server.main()).resolves.toBe(1);
+    expect(loaded.consoleError).toHaveBeenCalledWith('error: --validate-key is set but ela.key is missing or contains no valid tokens');
+
+    loaded = loadAgentServer({
+      db: {
+        initializeDatabase: async () => {
+          throw new Error('db unavailable');
+        },
+      },
+    });
+    process.argv = ['node', 'server.js'];
+    await expect(loaded.server.main()).resolves.toBe(1);
+    expect(loaded.consoleError).toHaveBeenCalledWith('Failed to initialize database: db unavailable');
+  });
+
+  test('main honors CLI bootstrap flags for skip-asset-sync and starts an HTTP server', async () => {
+    const loaded = loadAgentServer();
+    process.argv = [
+      'node', 'server.js',
+      '--host', '127.0.0.1',
+      '--port', '5050',
+      '--data-dir', 'data-root',
+      '--tests-dir', 'tests-root',
+      '--log-prefix', 'logs/prefix',
+      '--skip-asset-sync',
+      '--reuse-last-data-dir',
+      '--verbose',
+    ];
+
+    await expect(loaded.server.main()).resolves.toBe(0);
+
+    expect(loaded.initializeDatabase).toHaveBeenCalled();
+    expect(loaded.runMigrations).toHaveBeenCalled();
+    expect(loaded.selectStartupDataDir).toHaveBeenCalledWith('/repo/data-root', {
+      reuseLastTimestampDir: true,
+    });
+    expect(loaded.createApp).toHaveBeenCalledWith(expect.objectContaining({
+      logPrefix: '/repo/logs/prefix',
+      dataDir: '/repo/data/123',
+      testsDir: '/repo/tests-root',
+      assetsDir: path.join('/repo/data-root', 'release_binaries'),
+      verbose: true,
+      persistUpload: loaded.persistUpload,
+    }));
+    expect(loaded.httpServer.listen).toHaveBeenCalledWith(5050, '127.0.0.1', expect.any(Function));
+    expect(loaded.consoleLog).toHaveBeenCalledWith(expect.stringContaining('Skipping release asset sync; serving assets from'));
+    expect(loaded.processOn).toHaveBeenCalledWith('SIGINT', expect.any(Function));
+  });
+
+  test('main creates an HTTPS server and syncs assets when requested', async () => {
+    const loaded = loadAgentServer({
+      fs: {
+        existsSync: jest.fn(() => false),
+      },
+      fsp: {
+        readFile: jest.fn().mockRejectedValue(new Error('missing')),
+        access: jest.fn().mockRejectedValue(new Error('missing')),
+        readdir: jest.fn().mockResolvedValue([]),
+      },
+    });
+    loaded.httpsGet
+      .mockImplementationOnce((_url, _options, cb) => {
+        const res = makeResponse();
+        cb(res);
+        res.emit('data', '{"tag_name":"v1.2.3","assets":[{"name":"ela-x86_64","browser_download_url":"https://download.test/ela-x86_64"}]}');
+        res.emit('end');
+        return { on: jest.fn() };
+      })
+      .mockImplementationOnce((_url, _options, cb) => {
+        const res = makeResponse({ statusCode: 200 });
+        cb(res);
+        return { on: jest.fn() };
+      });
+
+    process.argv = ['node', 'server.js', '--https', '--cert', 'certs/server.crt', '--key', 'certs/server.key'];
+    await expect(loaded.server.main()).resolves.toBe(0);
+
+    expect(loaded.execFileSync).toHaveBeenCalled();
+    expect(loaded.httpsServer.listen).toHaveBeenCalledWith(5000, '0.0.0.0', expect.any(Function));
+    expect(loaded.fspMock.writeFile).toHaveBeenCalledWith(
+      path.join('/repo/api/agent/data/release_binaries', '.release_state.json'),
+      expect.stringContaining('"release": "v1.2.3"'),
+      'utf8',
+    );
+    expect(loaded.consoleLog).toHaveBeenCalledWith(expect.stringContaining('Downloaded 1 release asset(s)'));
+  });
+});
