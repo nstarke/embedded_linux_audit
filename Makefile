@@ -759,7 +759,11 @@ $(TPM2_TSS_BUILD_STAMP): $(OPENSSL_SSL_LIB)
 		mkdir -p "$(TPM2_TSS_DIR)/m4"; \
 		cp build_support/tpm2-tss/ela_fallbacks.m4 "$(TPM2_TSS_DIR)/m4/ela_fallbacks.m4"; \
 		cp build_support/tpm2-tss/aminclude_static.am "$(TPM2_TSS_DIR)/aminclude_static.am"; \
-		cd $(TPM2_TSS_DIR) && ACLOCAL='aclocal -I m4' ./bootstrap; \
+		cd $(TPM2_TSS_DIR) && \
+			AUTORECONF='autoreconf -I m4' \
+			ACLOCAL='aclocal -I m4' \
+			ACLOCAL_PATH="$(abspath $(TPM2_TSS_DIR))/m4$${ACLOCAL_PATH:+:$${ACLOCAL_PATH}}" \
+			./bootstrap; \
 	fi
 	rm -rf $(TPM2_TSS_BUILD)
 	mkdir -p $(TPM2_TSS_BUILD)
