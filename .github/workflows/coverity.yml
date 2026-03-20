@@ -24,14 +24,14 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y gcc make
+          sudo apt-get install -y gcc make autoconf automake cmake libtool-bin libltdl-dev
 
       - name: Coverity Scan
         uses: vapier/coverity-scan-action@v1
         with:
-          project: nstarke%2Fembedded_linux_audit
+          project: nstarke/embedded_linux_audit
           token: ${{ secrets.COVERITY_SCAN_TOKEN }}
           email: ${{ secrets.COVERITY_SCAN_EMAIL }}
-          build_language: cxx
+          build_language: c
           build_platform: linux64
           command: make
