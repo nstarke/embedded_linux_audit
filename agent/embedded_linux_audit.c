@@ -55,6 +55,7 @@ static void usage(const char *prog)
 		"  linux list-symlinks List symlinks under a directory (use --recursive to recurse)\n"
 		"  linux remote-copy  Copy a local file to remote destination\n"
 		"  linux ssh          SSH client/copy/tunnel operations\n"
+		"  linux process      Watch for process restarts matching a needle string\n"
 		"  tpm2               Run built-in TPM2 commands through the TPM2-TSS library\n"
 		"  efi orom           EFI option ROM utilities (pull/list)\n"
 		"  efi dump-vars      Dump EFI variables with txt/csv/json formatting\n"
@@ -496,6 +497,8 @@ int embedded_linux_audit_dispatch(int argc, char **argv)
 		} else if (!strcmp(argv[sub_idx], "list-symlinks"))
 			ret = linux_list_symlinks_scan_main(argc - sub_idx,
 							    argv + sub_idx);
+		else if (!strcmp(argv[sub_idx], "process"))
+			ret = linux_process_main(argc - sub_idx, argv + sub_idx);
 		else {
 			fprintf(stderr, "Unknown linux subcommand: %s\n\n",
 				argv[sub_idx]);
