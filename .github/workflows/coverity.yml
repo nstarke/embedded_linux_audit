@@ -32,6 +32,6 @@ jobs:
           project: nstarke%2Fembedded_linux_audit
           token: ${{ secrets.COVERITY_SCAN_TOKEN }}
           email: ${{ secrets.COVERITY_SCAN_EMAIL }}
-          build_language: c
+          build_language: cxx
           build_platform: linux64
           command: make
