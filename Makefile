@@ -466,7 +466,12 @@ AGENT_UNIT_TEST_SRC := \
 	tests/unit/agent/test_uboot_image_pull_util.c \
 	tests/unit/agent/test_uboot_image_list_commands_util.c \
 	tests/unit/agent/test_uboot_image_find_address_util.c \
-	tests/unit/agent/test_uboot_audit_output_util.c
+	tests/unit/agent/test_uboot_audit_output_util.c \
+	tests/unit/agent/test_uboot_validate_crc32_util.c \
+	tests/unit/agent/test_uboot_validate_env_writeability_util.c \
+	tests/unit/agent/test_uboot_validate_secureboot_util.c \
+	tests/unit/agent/test_uboot_validate_env_security_util.c \
+	tests/unit/agent/test_uboot_validate_cmdline_init_util.c
 AGENT_UNIT_TEST_DEPS := \
 	agent/util/str_util.c \
 	agent/util/isa_util.c \
@@ -517,6 +522,11 @@ AGENT_UNIT_TEST_DEPS := \
 	agent/uboot/env/uboot_env_util.c \
 	agent/uboot/env/uboot_env_scan_util.c \
 	agent/uboot/audit-rules/uboot_audit_util.c \
+	agent/uboot/audit-rules/uboot_validate_crc32_util.c \
+	agent/uboot/audit-rules/uboot_validate_env_writeability_util.c \
+	agent/uboot/audit-rules/uboot_validate_secureboot_util.c \
+	agent/uboot/audit-rules/uboot_validate_env_security_util.c \
+	agent/uboot/audit-rules/uboot_validate_cmdline_init_util.c \
 	agent/uboot/audit/uboot_audit_output_util.c \
 	agent/uboot/uboot_security_audit_util.c \
 	agent/uboot/image/uboot_command_extract_util.c \
@@ -576,6 +586,11 @@ AGENT_UNIT_TEST_DEPS := \
 	agent/uboot/env/uboot_env_util.h \
 	agent/uboot/env/uboot_env_scan_util.h \
 	agent/uboot/audit-rules/uboot_audit_util.h \
+	agent/uboot/audit-rules/uboot_validate_crc32_util.h \
+	agent/uboot/audit-rules/uboot_validate_env_writeability_util.h \
+	agent/uboot/audit-rules/uboot_validate_secureboot_util.h \
+	agent/uboot/audit-rules/uboot_validate_env_security_util.h \
+	agent/uboot/audit-rules/uboot_validate_cmdline_init_util.h \
 	agent/uboot/audit/uboot_audit_output_util.h \
 	agent/uboot/uboot_security_audit_util.h \
 	agent/uboot/image/uboot_command_extract_util.h \
@@ -723,6 +738,11 @@ SRC := \
 	agent/uboot/audit/uboot_audit_output.c \
 	agent/uboot/audit/uboot_audit_output_util.c \
 	agent/uboot/audit-rules/uboot_audit_util.c \
+	agent/uboot/audit-rules/uboot_validate_crc32_util.c \
+	agent/uboot/audit-rules/uboot_validate_env_writeability_util.c \
+	agent/uboot/audit-rules/uboot_validate_secureboot_util.c \
+	agent/uboot/audit-rules/uboot_validate_env_security_util.c \
+	agent/uboot/audit-rules/uboot_validate_cmdline_init_util.c \
 	agent/uboot/audit-rules/uboot_validate_crc32_rule.c \
 	agent/uboot/audit-rules/uboot_validate_cmdline_init_writeability_rule.c \
 	agent/uboot/audit-rules/uboot_validate_env_security_rule.c \
@@ -1130,6 +1150,11 @@ $(AGENT_UNIT_TEST_BIN): $(AGENT_UNIT_TEST_SRC) $(AGENT_UNIT_TEST_DEPS) $(JSONC_L
 			agent/uboot/env/uboot_env_util.c \
 			agent/uboot/env/uboot_env_scan_util.c \
 			agent/uboot/audit-rules/uboot_audit_util.c \
+			agent/uboot/audit-rules/uboot_validate_crc32_util.c \
+			agent/uboot/audit-rules/uboot_validate_env_writeability_util.c \
+			agent/uboot/audit-rules/uboot_validate_secureboot_util.c \
+			agent/uboot/audit-rules/uboot_validate_env_security_util.c \
+			agent/uboot/audit-rules/uboot_validate_cmdline_init_util.c \
 			agent/uboot/audit/uboot_audit_output_util.c \
 			agent/uboot/uboot_security_audit_util.c \
 			agent/uboot/image/uboot_command_extract_util.c \

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later - Copyright (c) 2026 Nicholas Starke
 
 #include "embedded_linux_audit_cmd.h"
+#include "uboot/audit-rules/uboot_validate_env_writeability_util.h"
 
 #include <inttypes.h>
 #include <errno.h>
@@ -56,6 +57,7 @@ static int run_validate_env_writeability(const struct embedded_linux_audit_input
 	int fd;
 	int saved_errno;
 	int env_scan_rc;
+	int rc;
 
 	if (!input || !input->device || !*input->device) {
 		if (message && message_len)
@@ -88,24 +90,21 @@ static int run_validate_env_writeability(const struct embedded_linux_audit_input
 	}
 
 	saved_errno = errno;
-	if (saved_errno == EACCES || saved_errno == EPERM || saved_errno == EROFS) {
-		if (message && message_len) {
+	rc = ela_uboot_validate_env_errno_classify(saved_errno);
+	if (message && message_len) {
+		if (rc == 0) {
 			snprintf(message, message_len,
 				 "environment block is not writable: device=%s (%s)",
 				 input->device,
 				 strerror(saved_errno));
+		} else {
+			snprintf(message, message_len,
+				 "unable to determine writeability for %s: %s",
+				 input->device,
+				 strerror(saved_errno));
 		}
-		return 0;
 	}
-
-	if (message && message_len) {
-		snprintf(message, message_len,
-			 "unable to determine writeability for %s: %s",
-			 input->device,
-			 strerror(saved_errno));
-	}
-
-	return -1;
+	return rc;
 }
 
 static const struct embedded_linux_audit_rule uboot_validate_env_writeability_rule = {
