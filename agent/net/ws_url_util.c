@@ -165,3 +165,11 @@ int ela_ws_build_handshake_request(char *out,
 		return -1;
 	return n;
 }
+
+int ela_is_ws_url(const char *url)
+{
+	if (!url)
+		return 0;
+	return strncmp(url, "ws://", 5) == 0 ||
+	       strncmp(url, "wss://", 6) == 0;
+}

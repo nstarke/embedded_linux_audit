@@ -4,6 +4,7 @@
 #include "../../../agent/net/ws_client_runtime_util.h"
 #include "../../../agent/net/ws_frame_util.h"
 #include "../../../agent/net/ws_client.h"
+#include "../../../agent/net/ws_url_util.h"
 
 #include <string.h>
 
@@ -46,6 +47,10 @@ static int fake_send_ack(void *ctx)
 	return 0;
 }
 
+/* -------------------------------------------------------------------------
+ * ela_ws_format_handshake_error
+ * ---------------------------------------------------------------------- */
+
 static void test_ws_client_runtime_formats_handshake_errors(void)
 {
 	char errbuf[256];
@@ -63,6 +68,49 @@ static void test_ws_client_runtime_formats_handshake_errors(void)
 		"HTTP/1.1 500 Server Error\r\n\r\n", errbuf, sizeof(errbuf)));
 	ELA_ASSERT_TRUE(strstr(errbuf, "unexpected response") != NULL);
 }
+
+static void test_ws_format_handshake_error_null_response(void)
+{
+	char errbuf[256];
+
+	/* NULL response is treated as malformed */
+	ELA_ASSERT_INT_EQ(-1, ela_ws_format_handshake_error(NULL, errbuf, sizeof(errbuf)));
+	ELA_ASSERT_TRUE(strstr(errbuf, "malformed") != NULL);
+}
+
+static void test_ws_format_handshake_error_null_errbuf(void)
+{
+	/* Should return the right code without writing to NULL */
+	ELA_ASSERT_INT_EQ(0, ela_ws_format_handshake_error(
+		"HTTP/1.1 101 Switching Protocols\r\n\r\n", NULL, 256));
+	ELA_ASSERT_INT_EQ(-1, ela_ws_format_handshake_error(
+		"HTTP/1.1 500 Error\r\n\r\n", NULL, 256));
+}
+
+static void test_ws_format_handshake_error_zero_errbuf_len(void)
+{
+	char errbuf[256];
+
+	errbuf[0] = 'X';
+	/* Zero len: no write should occur */
+	ELA_ASSERT_INT_EQ(-1, ela_ws_format_handshake_error(
+		"HTTP/1.1 500 Error\r\n\r\n", errbuf, 0));
+	ELA_ASSERT_INT_EQ('X', errbuf[0]);
+}
+
+static void test_ws_format_handshake_error_non_http_response(void)
+{
+	char errbuf[256];
+
+	/* Garbage response: not HTTP/1.1 */
+	ELA_ASSERT_INT_EQ(-1, ela_ws_format_handshake_error(
+		"garbage\r\n\r\n", errbuf, sizeof(errbuf)));
+	ELA_ASSERT_TRUE(strstr(errbuf, "malformed") != NULL);
+}
+
+/* -------------------------------------------------------------------------
+ * ela_ws_dispatch_incoming_frame
+ * ---------------------------------------------------------------------- */
 
 static void test_ws_client_runtime_dispatches_frames(void)
 {
@@ -98,18 +146,194 @@ static void test_ws_client_runtime_dispatches_frames(void)
 		ELA_WS_OPCODE_TEXT, "broken", 6, &ops, &state));
 }
 
+static void test_ws_dispatch_null_ops(void)
+{
+	ELA_ASSERT_INT_EQ(-1, ela_ws_dispatch_incoming_frame(
+		ELA_WS_OPCODE_TEXT, "hi", 2, NULL, NULL));
+}
+
+static void test_ws_dispatch_null_write_fn_for_text(void)
+{
+	struct fake_ws_dispatch_state state;
+	struct ela_ws_runtime_dispatch_ops ops = {
+		.write_repl_fn = NULL,
+		.send_pong_fn = fake_send_pong,
+		.send_heartbeat_ack_fn = fake_send_ack,
+	};
+
+	memset(&state, 0, sizeof(state));
+	ELA_ASSERT_INT_EQ(-1, ela_ws_dispatch_incoming_frame(
+		ELA_WS_OPCODE_TEXT, "data", 4, &ops, &state));
+}
+
+static void test_ws_dispatch_null_pong_fn_for_ping(void)
+{
+	struct fake_ws_dispatch_state state;
+	struct ela_ws_runtime_dispatch_ops ops = {
+		.write_repl_fn = fake_write_repl,
+		.send_pong_fn = NULL,
+		.send_heartbeat_ack_fn = fake_send_ack,
+	};
+
+	memset(&state, 0, sizeof(state));
+	ELA_ASSERT_INT_EQ(-1, ela_ws_dispatch_incoming_frame(
+		ELA_WS_OPCODE_PING, "", 0, &ops, &state));
+}
+
+static void test_ws_dispatch_null_ack_fn_for_heartbeat(void)
+{
+	struct fake_ws_dispatch_state state;
+	struct ela_ws_runtime_dispatch_ops ops = {
+		.write_repl_fn = fake_write_repl,
+		.send_pong_fn = fake_send_pong,
+		.send_heartbeat_ack_fn = NULL,
+	};
+
+	memset(&state, 0, sizeof(state));
+	ELA_ASSERT_INT_EQ(-1, ela_ws_dispatch_incoming_frame(
+		ELA_WS_OPCODE_TEXT, "{\"_type\":\"heartbeat\"}", 20, &ops, &state));
+}
+
+static void test_ws_dispatch_binary_frame_ignored(void)
+{
+	struct fake_ws_dispatch_state state;
+	struct ela_ws_runtime_dispatch_ops ops = {
+		.write_repl_fn = fake_write_repl,
+		.send_pong_fn = fake_send_pong,
+		.send_heartbeat_ack_fn = fake_send_ack,
+	};
+
+	memset(&state, 0, sizeof(state));
+	/* opcode 0x02 = BINARY — not handled, no action */
+	ELA_ASSERT_INT_EQ(0, ela_ws_dispatch_incoming_frame(
+		0x02, "data", 4, &ops, &state));
+	ELA_ASSERT_INT_EQ(0, state.write_calls);
+	ELA_ASSERT_INT_EQ(0, state.pong_calls);
+	ELA_ASSERT_INT_EQ(0, state.ack_calls);
+}
+
+static void test_ws_dispatch_pong_frame_ignored(void)
+{
+	struct fake_ws_dispatch_state state;
+	struct ela_ws_runtime_dispatch_ops ops = {
+		.write_repl_fn = fake_write_repl,
+		.send_pong_fn = fake_send_pong,
+		.send_heartbeat_ack_fn = fake_send_ack,
+	};
+
+	memset(&state, 0, sizeof(state));
+	ELA_ASSERT_INT_EQ(0, ela_ws_dispatch_incoming_frame(
+		ELA_WS_OPCODE_PONG, "", 0, &ops, &state));
+	ELA_ASSERT_INT_EQ(0, state.write_calls + state.pong_calls + state.ack_calls);
+}
+
+static void test_ws_dispatch_text_empty_payload_ignored(void)
+{
+	struct fake_ws_dispatch_state state;
+	struct ela_ws_runtime_dispatch_ops ops = {
+		.write_repl_fn = fake_write_repl,
+		.send_pong_fn = fake_send_pong,
+		.send_heartbeat_ack_fn = fake_send_ack,
+	};
+
+	memset(&state, 0, sizeof(state));
+	/* TEXT with zero-length payload: classify produces no action */
+	ELA_ASSERT_INT_EQ(0, ela_ws_dispatch_incoming_frame(
+		ELA_WS_OPCODE_TEXT, "", 0, &ops, &state));
+	ELA_ASSERT_INT_EQ(0, state.write_calls);
+}
+
+static void test_ws_dispatch_text_null_payload_ignored(void)
+{
+	struct fake_ws_dispatch_state state;
+	struct ela_ws_runtime_dispatch_ops ops = {
+		.write_repl_fn = fake_write_repl,
+		.send_pong_fn = fake_send_pong,
+		.send_heartbeat_ack_fn = fake_send_ack,
+	};
+
+	memset(&state, 0, sizeof(state));
+	/* TEXT with NULL payload: classify produces no action */
+	ELA_ASSERT_INT_EQ(0, ela_ws_dispatch_incoming_frame(
+		ELA_WS_OPCODE_TEXT, NULL, 0, &ops, &state));
+	ELA_ASSERT_INT_EQ(0, state.write_calls);
+}
+
+/* -------------------------------------------------------------------------
+ * ela_ws_should_reconnect_after_disconnect
+ * ---------------------------------------------------------------------- */
+
 static void test_ws_client_runtime_reconnect_policy(void)
 {
 	ELA_ASSERT_TRUE(ela_ws_should_reconnect_after_disconnect(0));
 	ELA_ASSERT_FALSE(ela_ws_should_reconnect_after_disconnect(ELA_WS_EXIT_CLEAN));
 }
 
+/* -------------------------------------------------------------------------
+ * ela_is_ws_url
+ * ---------------------------------------------------------------------- */
+
+static void test_ws_is_ws_url_valid_ws(void)
+{
+	ELA_ASSERT_INT_EQ(1, ela_is_ws_url("ws://example.com/path"));
+}
+
+static void test_ws_is_ws_url_valid_wss(void)
+{
+	ELA_ASSERT_INT_EQ(1, ela_is_ws_url("wss://example.com/path"));
+}
+
+static void test_ws_is_ws_url_null(void)
+{
+	ELA_ASSERT_INT_EQ(0, ela_is_ws_url(NULL));
+}
+
+static void test_ws_is_ws_url_empty(void)
+{
+	ELA_ASSERT_INT_EQ(0, ela_is_ws_url(""));
+}
+
+static void test_ws_is_ws_url_http(void)
+{
+	ELA_ASSERT_INT_EQ(0, ela_is_ws_url("http://example.com"));
+}
+
+static void test_ws_is_ws_url_https(void)
+{
+	ELA_ASSERT_INT_EQ(0, ela_is_ws_url("https://example.com"));
+}
+
+static void test_ws_is_ws_url_partial_scheme(void)
+{
+	/* "ws:/example.com" — only one slash, not "ws://" */
+	ELA_ASSERT_INT_EQ(0, ela_is_ws_url("ws:/example.com"));
+}
+
 int run_ws_client_runtime_util_tests(void)
 {
 	static const struct ela_test_case cases[] = {
-		{ "ws_client_runtime_formats_handshake_errors", test_ws_client_runtime_formats_handshake_errors },
-		{ "ws_client_runtime_dispatches_frames", test_ws_client_runtime_dispatches_frames },
-		{ "ws_client_runtime_reconnect_policy", test_ws_client_runtime_reconnect_policy },
+		{ "ws_client_runtime_formats_handshake_errors",      test_ws_client_runtime_formats_handshake_errors },
+		{ "ws_format_handshake_error_null_response",         test_ws_format_handshake_error_null_response },
+		{ "ws_format_handshake_error_null_errbuf",           test_ws_format_handshake_error_null_errbuf },
+		{ "ws_format_handshake_error_zero_errbuf_len",       test_ws_format_handshake_error_zero_errbuf_len },
+		{ "ws_format_handshake_error_non_http_response",     test_ws_format_handshake_error_non_http_response },
+		{ "ws_client_runtime_dispatches_frames",             test_ws_client_runtime_dispatches_frames },
+		{ "ws_dispatch_null_ops",                            test_ws_dispatch_null_ops },
+		{ "ws_dispatch_null_write_fn_for_text",              test_ws_dispatch_null_write_fn_for_text },
+		{ "ws_dispatch_null_pong_fn_for_ping",               test_ws_dispatch_null_pong_fn_for_ping },
+		{ "ws_dispatch_null_ack_fn_for_heartbeat",           test_ws_dispatch_null_ack_fn_for_heartbeat },
+		{ "ws_dispatch_binary_frame_ignored",                test_ws_dispatch_binary_frame_ignored },
+		{ "ws_dispatch_pong_frame_ignored",                  test_ws_dispatch_pong_frame_ignored },
+		{ "ws_dispatch_text_empty_payload_ignored",          test_ws_dispatch_text_empty_payload_ignored },
+		{ "ws_dispatch_text_null_payload_ignored",           test_ws_dispatch_text_null_payload_ignored },
+		{ "ws_client_runtime_reconnect_policy",              test_ws_client_runtime_reconnect_policy },
+		{ "ws_is_ws_url_valid_ws",                           test_ws_is_ws_url_valid_ws },
+		{ "ws_is_ws_url_valid_wss",                          test_ws_is_ws_url_valid_wss },
+		{ "ws_is_ws_url_null",                               test_ws_is_ws_url_null },
+		{ "ws_is_ws_url_empty",                              test_ws_is_ws_url_empty },
+		{ "ws_is_ws_url_http",                               test_ws_is_ws_url_http },
+		{ "ws_is_ws_url_https",                              test_ws_is_ws_url_https },
+		{ "ws_is_ws_url_partial_scheme",                     test_ws_is_ws_url_partial_scheme },
 	};
 
 	return ela_run_test_suite("ws_client_runtime_util", cases, sizeof(cases) / sizeof(cases[0]));

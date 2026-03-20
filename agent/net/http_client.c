@@ -1209,9 +1209,7 @@ static int __attribute__((unused)) resolve_uri_ipv4(const char *base_uri, struct
 static int __attribute__((unused)) route_iface_for_ipv4(struct in_addr dest_addr, char *ifname_buf, size_t ifname_buf_len)
 {
 	FILE *fp;
-	char line[512];
-	uint32_t best_mask = 0;
-	bool found = false;
+	int rc;
 
 	if (!ifname_buf || ifname_buf_len < IF_NAMESIZE)
 		return -1;
@@ -1220,52 +1218,9 @@ static int __attribute__((unused)) route_iface_for_ipv4(struct in_addr dest_addr
 	if (!fp)
 		return -1;
 
-	if (!fgets(line, sizeof(line), fp)) {
-		fclose(fp);
-		return -1;
-	}
-
-	while (fgets(line, sizeof(line), fp)) {
-		char iface[IF_NAMESIZE];
-		unsigned long destination;
-		unsigned long gateway;
-		unsigned long flags;
-		unsigned long refcnt;
-		unsigned long use;
-		unsigned long metric;
-		unsigned long mask;
-		unsigned long mtu;
-		unsigned long window;
-		unsigned long irtt;
-		uint32_t dest_host;
-		uint32_t mask_host;
-		uint32_t target_host;
-
-		if (sscanf(line, "%15s %lx %lx %lx %lx %lx %lx %lx %lx %lx %lx",
-			   iface, &destination, &gateway, &flags, &refcnt, &use,
-			   &metric, &mask, &mtu, &window, &irtt) != 11)
-			continue;
-
-		if (!(flags & 0x1UL))
-			continue;
-
-		dest_host = ntohl((uint32_t)destination);
-		mask_host = ntohl((uint32_t)mask);
-		target_host = ntohl(dest_addr.s_addr);
-
-		if ((target_host & mask_host) != (dest_host & mask_host))
-			continue;
-
-		if (!found || mask_host > best_mask) {
-			strncpy(ifname_buf, iface, ifname_buf_len - 1);
-			ifname_buf[ifname_buf_len - 1] = '\0';
-			best_mask = mask_host;
-			found = true;
-		}
-	}
-
+	rc = ela_http_parse_route_table(fp, dest_addr.s_addr, ifname_buf, ifname_buf_len);
 	fclose(fp);
-	return found ? 0 : -1;
+	return rc;
 }
 
 static int __attribute__((unused)) mac_for_interface(const char *ifname, char *mac_buf, size_t mac_buf_len)
@@ -1490,30 +1445,12 @@ int ela_http_post_log_message(const char *base_uri, const char *message,
 static int ela_read_nameservers(char ns[][16], int max_ns)
 {
 	FILE *f;
-	char line[256];
-	int count = 0;
+	int count;
 
 	f = fopen("/etc/resolv.conf", "r");
 	if (!f)
 		return 0;
-
-	while (count < max_ns && fgets(line, (int)sizeof(line), f)) {
-		const char *p = line;
-		int i;
-
-		while (*p == ' ' || *p == '\t') p++;
-		if (strncmp(p, "nameserver", 10) != 0)
-			continue;
-		p += 10;
-		while (*p == ' ' || *p == '\t') p++;
-
-		for (i = 0; i < 15 && *p && *p != '\n' && *p != '\r' &&
-		            *p != ' ' && *p != '\t' && *p != '#'; i++)
-			ns[count][i] = *p++;
-		ns[count][i] = '\0';
-		if (i > 0)
-			count++;
-	}
+	count = ela_http_parse_resolv_conf(f, ns, max_ns);
 	fclose(f);
 	return count;
 }
@@ -1538,7 +1475,6 @@ static int ela_dns_query_a(const char *ns_ip, const char *hostname,
 	int sock;
 	int pkt_len;
 	ssize_t n;
-	int pos, qdcount, ancount, i;
 
 	pkt_len = ela_dns_build_query(hostname, pkt, (int)sizeof(pkt));
 	if (pkt_len < 0)
@@ -1568,58 +1504,7 @@ static int ela_dns_query_a(const char *ns_ip, const char *hostname,
 
 	n = recv(sock, resp, sizeof(resp), 0);
 	close(sock);
-	if (n < 12)
-		return -1;
-
-	/* Must be a response with RCODE=0 */
-	if (!(resp[2] & 0x80) || (resp[3] & 0x0f) != 0)
-		return -1;
-
-	qdcount = (resp[4] << 8) | resp[5];
-	ancount = (resp[6] << 8) | resp[7];
-	if (ancount == 0)
-		return -1;
-
-	/* Skip questions */
-	pos = 12;
-	for (i = 0; i < qdcount && pos < (int)n; i++) {
-		while (pos < (int)n) {
-			if (resp[pos] == 0)             { pos++; break; }
-			if ((resp[pos] & 0xC0) == 0xC0) { pos += 2; break; }
-			pos += resp[pos] + 1;
-		}
-		pos += 4; /* QTYPE + QCLASS */
-	}
-
-	/* Parse answer records, return the first A record */
-	for (i = 0; i < ancount && pos < (int)n; i++) {
-		int rtype, rdlen;
-
-		if ((resp[pos] & 0xC0) == 0xC0) {
-			pos += 2;
-		} else {
-			while (pos < (int)n) {
-				if (resp[pos] == 0)             { pos++; break; }
-				if ((resp[pos] & 0xC0) == 0xC0) { pos += 2; break; }
-				pos += resp[pos] + 1;
-			}
-		}
-
-		if (pos + 10 > (int)n)
-			break;
-		rtype = (resp[pos] << 8) | resp[pos + 1];
-		/* skip class (2) + ttl (4) */
-		rdlen = (resp[pos + 8] << 8) | resp[pos + 9];
-		pos += 10;
-
-		if (rtype == 1 /* A */ && rdlen == 4 && pos + 4 <= (int)n) {
-			snprintf(ip_buf, ip_buf_len, "%d.%d.%d.%d",
-				 resp[pos], resp[pos+1], resp[pos+2], resp[pos+3]);
-			return 0;
-		}
-		pos += rdlen;
-	}
-	return -1;
+	return ela_http_parse_dns_a_response(resp, (int)n, ip_buf, ip_buf_len);
 }
 
 /*

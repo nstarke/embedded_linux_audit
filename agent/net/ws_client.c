@@ -261,18 +261,6 @@ static void get_primary_mac(char *buf, size_t buf_sz)
 	snprintf(buf, buf_sz, "unknown");
 }
 
-/* -------------------------------------------------------------------------
- * URL helpers
- * ---------------------------------------------------------------------- */
-
-int ela_is_ws_url(const char *url)
-{
-	if (!url)
-		return 0;
-	return strncmp(url, "ws://", 5) == 0 ||
-	       strncmp(url, "wss://", 6) == 0;
-}
-
 /*
  * Parse ws[s]://host[:port][/path] → host, port, path.
  * Returns 0 on success, -1 if the URL is malformed.

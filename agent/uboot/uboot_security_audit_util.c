@@ -5,6 +5,34 @@
 #include <stdlib.h>
 #include <string.h>
 
+int ela_uboot_audit_http_buf_append(char **buf, size_t *len, size_t *cap,
+				    const char *data, size_t data_len)
+{
+	size_t need;
+	size_t new_cap;
+	char *tmp;
+
+	if (!buf || !len || !cap || !data || !data_len)
+		return -1;
+
+	need = *len + data_len + 1;
+	if (need > *cap) {
+		new_cap = *cap ? *cap : 1024;
+		while (new_cap < need)
+			new_cap *= 2;
+		tmp = realloc(*buf, new_cap);
+		if (!tmp)
+			return -1;
+		*buf = tmp;
+		*cap = new_cap;
+	}
+
+	memcpy(*buf + *len, data, data_len);
+	*len += data_len;
+	(*buf)[*len] = '\0';
+	return 0;
+}
+
 #define FIT_MIN_TOTAL_SIZE 0x100U
 #define FIT_MAX_TOTAL_SIZE (64U * 1024U * 1024U)
 

@@ -5,14 +5,11 @@
 #include "script_exec_util.h"
 #include "../embedded_linux_audit_cmd.h"
 
-#include <ctype.h>
 #include <errno.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/stat.h>
-#include <sys/types.h>
 #include <unistd.h>
 
 #ifndef O_CLOEXEC
@@ -29,68 +26,6 @@ int embedded_linux_audit_dispatch(int argc, char **argv);
 /* Forward declaration of usage() for help command handling in scripts */
 void ela_usage(const char *prog);
 
-static bool is_http_script_source(const char *value)
-{
-	return ela_script_is_http_source(value);
-}
-
-static bool local_script_source_exists(const char *value)
-{
-	struct stat st;
-
-	if (!value || !*value)
-		return false;
-
-	return stat(value, &st) == 0 && S_ISREG(st.st_mode);
-}
-
-static const char *script_basename(const char *path)
-{
-	return ela_script_basename(path);
-}
-
-static char *script_url_percent_encode(const char *text)
-{
-	return ela_script_url_percent_encode(text);
-}
-
-static int create_temp_script_path(char *dir_path, size_t dir_path_len,
-				      char *file_path, size_t file_path_len,
-				      const char *script_source)
-{
-	const char *script_name;
-	int n;
-
-	if (!dir_path || dir_path_len == 0 || !file_path || file_path_len == 0)
-		return -1;
-
-	script_name = script_basename(script_source);
-	if (!script_name || !*script_name)
-		script_name = "script.txt";
-
-	snprintf(dir_path, dir_path_len, "/tmp/embedded_linux_audit_script.XXXXXX");
-	if (!mkdtemp(dir_path))
-		return -1;
-
-	n = snprintf(file_path, file_path_len, "%s/%s", dir_path, script_name);
-	if (n < 0 || (size_t)n >= file_path_len) {
-		rmdir(dir_path);
-		dir_path[0] = '\0';
-		return -1;
-	}
-
-	return 0;
-}
-
-static char *build_script_fallback_uri(const char *output_uri, const char *script_source)
-{
-	return ela_script_build_fallback_uri(output_uri, script_source);
-}
-
-static char *script_trim(char *s)
-{
-	return ela_script_trim(s);
-}
 
 int execute_script_commands(const char *prog, const char *script_source)
 {
@@ -117,8 +52,8 @@ int execute_script_commands(const char *prog, const char *script_source)
 	if ((!output_uri || !*output_uri) && getenv("ELA_OUTPUT_HTTPS") && *getenv("ELA_OUTPUT_HTTPS"))
 		output_uri = getenv("ELA_OUTPUT_HTTPS");
 
-	if (is_http_script_source(script_source)) {
-		if (create_temp_script_path(script_dir,
+	if (ela_script_is_http_source(script_source)) {
+		if (ela_script_create_temp_path(script_dir,
 					 sizeof(script_dir),
 					 script_path,
 					 sizeof(script_path),
@@ -146,8 +81,8 @@ int execute_script_commands(const char *prog, const char *script_source)
 
 		effective_path = script_path;
 		downloaded = true;
-	} else if (!local_script_source_exists(script_source) && output_uri && *output_uri) {
-		fallback_uri = build_script_fallback_uri(output_uri, script_source);
+	} else if (!ela_script_local_file_exists(script_source) && output_uri && *output_uri) {
+		fallback_uri = ela_script_build_fallback_uri(output_uri, script_source);
 		if (!fallback_uri) {
 			fprintf(stderr,
 				"Cannot resolve fallback script URI for %s using %s\n",
@@ -156,7 +91,7 @@ int execute_script_commands(const char *prog, const char *script_source)
 			return 2;
 		}
 
-		if (create_temp_script_path(script_dir,
+		if (ela_script_create_temp_path(script_dir,
 					 sizeof(script_dir),
 					 script_path,
 					 sizeof(script_path),
@@ -205,7 +140,7 @@ int execute_script_commands(const char *prog, const char *script_source)
 		int rc;
 
 		lineno++;
-		trimmed = script_trim(line);
+		trimmed = ela_script_trim(line);
 		if (ela_script_line_is_ignorable(trimmed))
 			continue;
 

@@ -17,9 +17,6 @@ struct ela_ws_conn {
 	char  auth_token[ELA_API_KEY_MAX_LEN + 4]; /* copy of bearer token */
 };
 
-/* Returns 1 if the URL begins with ws:// or wss://, 0 otherwise. */
-int ela_is_ws_url(const char *url);
-
 /*
  * Connect to a WebSocket server.  Discovers the primary MAC address and
  * appends "/terminal/<mac>" to the base URL.  insecure=1 disables TLS

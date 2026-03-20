@@ -194,7 +194,7 @@ uint64_t uboot_guess_erasesize_from_proc_mtd(const char *dev)
 	return 0;
 }
 
-static int get_ubi_indices(const char *dev, unsigned int *ubi, unsigned int *vol)
+int uboot_get_ubi_indices(const char *dev, unsigned int *ubi, unsigned int *vol)
 {
 	const char *base = strrchr(dev, '/');
 	char extra;
@@ -224,7 +224,7 @@ uint64_t uboot_guess_size_from_ubi_sysfs(const char *dev)
 	uint64_t reserved_ebs;
 	uint64_t usable_eb_size;
 
-	if (get_ubi_indices(dev, &ubi, &vol))
+	if (uboot_get_ubi_indices(dev, &ubi, &vol))
 		return 0;
 
 	snprintf(path, sizeof(path), "/sys/class/ubi/ubi%u_%u/data_bytes", ubi, vol);
@@ -251,7 +251,7 @@ uint64_t uboot_guess_step_from_ubi_sysfs(const char *dev)
 	char path[256];
 	uint64_t step;
 
-	if (get_ubi_indices(dev, &ubi, &vol))
+	if (uboot_get_ubi_indices(dev, &ubi, &vol))
 		return 0;
 
 	snprintf(path, sizeof(path), "/sys/class/ubi/ubi%u/min_io_size", ubi);
@@ -450,35 +450,6 @@ static void create_node_if_missing(const char *path, mode_t mode, dev_t devno, b
 		printf("Created missing node: %s\n", path);
 }
 
-static int read_major_minor_from_sysfs(const char *dev_attr_path,
-				       unsigned int *major_out,
-				       unsigned int *minor_out)
-{
-	char buf[64];
-	int fd;
-	ssize_t n;
-	unsigned int major, minor;
-
-	if (!major_out || !minor_out)
-		return -1;
-
-	fd = open(dev_attr_path, O_RDONLY | O_CLOEXEC);
-	if (fd < 0)
-		return -1;
-	n = read(fd, buf, sizeof(buf) - 1);
-	close(fd);
-	if (n <= 0)
-		return -1;
-
-	buf[n] = '\0';
-	if (sscanf(buf, "%u:%u", &major, &minor) != 2)
-		return -1;
-
-	*major_out = major;
-	*minor_out = minor;
-	return 0;
-}
-
 static bool str_all_digits(const char *s)
 {
 	if (!s || !*s)
@@ -492,7 +463,7 @@ static bool str_all_digits(const char *s)
 	return true;
 }
 
-static bool is_sd_block_name(const char *name)
+bool uboot_is_sd_block_name(const char *name)
 {
 	if (!name || strncmp(name, "sd", 2))
 		return false;
@@ -504,7 +475,7 @@ static bool is_sd_block_name(const char *name)
 	return str_all_digits(name + 3);
 }
 
-static bool is_emmc_block_name(const char *name)
+bool uboot_is_emmc_block_name(const char *name)
 {
 	const char *p;
 
@@ -524,6 +495,52 @@ static bool is_emmc_block_name(const char *name)
 	return str_all_digits(p + 1);
 }
 
+int uboot_parse_major_minor(const char *text, unsigned int *major_out, unsigned int *minor_out)
+{
+	unsigned int major;
+	unsigned int minor;
+	int consumed = 0;
+	const char *tail;
+
+	if (!text || !major_out || !minor_out)
+		return -1;
+
+	if (sscanf(text, "%u:%u%n", &major, &minor, &consumed) != 2)
+		return -1;
+	tail = text + consumed;
+	while (*tail == ' ' || *tail == '\t' || *tail == '\r' || *tail == '\n')
+		tail++;
+	if (*tail != '\0')
+		return -1;
+
+	*major_out = major;
+	*minor_out = minor;
+	return 0;
+}
+
+static int read_major_minor_from_sysfs(const char *dev_attr_path,
+				       unsigned int *major_out,
+				       unsigned int *minor_out)
+{
+	char buf[64];
+	int fd;
+	ssize_t n;
+
+	if (!major_out || !minor_out)
+		return -1;
+
+	fd = open(dev_attr_path, O_RDONLY | O_CLOEXEC);
+	if (fd < 0)
+		return -1;
+	n = read(fd, buf, sizeof(buf) - 1);
+	close(fd);
+	if (n <= 0)
+		return -1;
+
+	buf[n] = '\0';
+	return uboot_parse_major_minor(buf, major_out, minor_out);
+}
+
 int uboot_ensure_block_nodes_collect(bool verbose, bool include_sd, bool include_emmc,
 				  char ***created_nodes, size_t *created_count)
 {
@@ -540,12 +557,12 @@ int uboot_ensure_block_nodes_collect(bool verbose, bool include_sd, bool include
 		unsigned int major;
 		unsigned int minor;
 
-		if (!include_sd && is_sd_block_name(de->d_name))
+		if (!include_sd && uboot_is_sd_block_name(de->d_name))
 			continue;
-		if (!include_emmc && is_emmc_block_name(de->d_name))
+		if (!include_emmc && uboot_is_emmc_block_name(de->d_name))
 			continue;
-		if ((include_sd && is_sd_block_name(de->d_name)) ||
-		    (include_emmc && is_emmc_block_name(de->d_name))) {
+		if ((include_sd && uboot_is_sd_block_name(de->d_name)) ||
+		    (include_emmc && uboot_is_emmc_block_name(de->d_name))) {
 			snprintf(dev_attr, sizeof(dev_attr), "/sys/class/block/%s/dev", de->d_name);
 			snprintf(devnode, sizeof(devnode), "/dev/%s", de->d_name);
 

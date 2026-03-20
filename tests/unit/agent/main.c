@@ -8,6 +8,7 @@ int run_command_parse_util_tests(void);
 int run_record_formatter_tests(void);
 int run_list_files_filter_util_tests(void);
 int run_lifecycle_formatter_tests(void);
+int run_lifecycle_util_tests(void);
 int run_ela_conf_util_tests(void);
 int run_interactive_parse_util_tests(void);
 int run_file_scan_formatter_tests(void);
@@ -15,6 +16,7 @@ int run_tpm2_pcr_parse_util_tests(void);
 int run_ws_url_util_tests(void);
 int run_remote_copy_util_tests(void);
 int run_orom_util_tests(void);
+int run_orom_pull_cmd_util_tests(void);
 int run_http_protocol_util_tests(void);
 int run_tcp_parse_util_tests(void);
 int run_tcp_runtime_util_tests(void);
@@ -55,6 +57,19 @@ int run_linux_download_file_util_tests(void);
 int run_linux_grep_util_tests(void);
 int run_linux_list_files_util_tests(void);
 int run_linux_list_symlinks_util_tests(void);
+int run_device_scan_tests(void);
+int run_dispatch_util_tests(void);
+int run_dispatch_parse_util_tests(void);
+int run_uboot_image_scan_util_tests(void);
+int run_uboot_image_pull_util_tests(void);
+int run_uboot_image_list_commands_util_tests(void);
+int run_uboot_image_find_address_util_tests(void);
+int run_uboot_audit_output_util_tests(void);
+int run_uboot_validate_crc32_util_tests(void);
+int run_uboot_validate_env_writeability_util_tests(void);
+int run_uboot_validate_secureboot_util_tests(void);
+int run_uboot_validate_env_security_util_tests(void);
+int run_uboot_validate_cmdline_init_util_tests(void);
 
 int main(void)
 {
@@ -68,6 +83,7 @@ int main(void)
 	rc |= run_record_formatter_tests();
 	rc |= run_list_files_filter_util_tests();
 	rc |= run_lifecycle_formatter_tests();
+	rc |= run_lifecycle_util_tests();
 	rc |= run_ela_conf_util_tests();
 	rc |= run_interactive_parse_util_tests();
 	rc |= run_file_scan_formatter_tests();
@@ -75,6 +91,7 @@ int main(void)
 	rc |= run_ws_url_util_tests();
 	rc |= run_remote_copy_util_tests();
 	rc |= run_orom_util_tests();
+	rc |= run_orom_pull_cmd_util_tests();
 	rc |= run_http_protocol_util_tests();
 	rc |= run_tcp_parse_util_tests();
 	rc |= run_tcp_runtime_util_tests();
@@ -115,6 +132,19 @@ int main(void)
 	rc |= run_linux_grep_util_tests();
 	rc |= run_linux_list_files_util_tests();
 	rc |= run_linux_list_symlinks_util_tests();
+	rc |= run_device_scan_tests();
+	rc |= run_dispatch_util_tests();
+	rc |= run_dispatch_parse_util_tests();
+	rc |= run_uboot_image_scan_util_tests();
+	rc |= run_uboot_image_pull_util_tests();
+	rc |= run_uboot_image_list_commands_util_tests();
+	rc |= run_uboot_image_find_address_util_tests();
+	rc |= run_uboot_audit_output_util_tests();
+	rc |= run_uboot_validate_crc32_util_tests();
+	rc |= run_uboot_validate_env_writeability_util_tests();
+	rc |= run_uboot_validate_secureboot_util_tests();
+	rc |= run_uboot_validate_env_security_util_tests();
+	rc |= run_uboot_validate_cmdline_init_util_tests();
 
 	return rc;
 }

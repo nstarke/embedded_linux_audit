@@ -2,11 +2,11 @@
 
 #include "embedded_linux_audit_cmd.h"
 #include "orom_pull_cmd_common.h"
+#include "orom_pull_cmd_util.h"
 #include "../util/orom_util.h"
 
 #include <errno.h>
 #include <fcntl.h>
-#include <getopt.h>
 #include <glob.h>
 #include <inttypes.h>
 #include <stdbool.h>
@@ -37,17 +37,10 @@ struct orom_ctx {
 	bool verbose;
 	bool insecure;
 	const char *output_tcp;
-	const char *output_http;
-	const char *output_https;
 	const char *output_uri;
 	enum orom_output_format fmt;
 	bool csv_header_emitted;
 };
-
-static void detect_output_format(struct orom_ctx *ctx)
-{
-	ctx->fmt = ela_orom_detect_output_format(getenv("ELA_OUTPUT_FORMAT"));
-}
 
 static void mirror_log_to_remote(struct orom_ctx *ctx, const char *line)
 {
@@ -176,8 +169,8 @@ static int send_rom_tcp(const char *output_tcp, const char *name, const uint8_t 
 	if (sock < 0)
 		return -1;
 
-	hlen = snprintf(hdr, sizeof(hdr), "OROM %s %zu\n", name, len);
-	if (hlen < 0 || (size_t)hlen >= sizeof(hdr)) {
+	hlen = ela_orom_build_tcp_header(hdr, sizeof(hdr), name, len);
+	if (hlen < 0) {
 		close(sock);
 		return -1;
 	}
@@ -201,17 +194,12 @@ static int send_rom_http(const char *output_uri,
 {
 	char errbuf[256];
 	char *upload_uri;
-	char *payload;
-	size_t name_len = strlen(name);
+	uint8_t *payload = NULL;
+	size_t payload_len = 0;
 	int rc;
 
-	payload = malloc(name_len + 1 + len);
-	if (!payload)
+	if (ela_orom_build_http_payload(name, data, len, &payload, &payload_len) < 0)
 		return -1;
-
-	memcpy(payload, name, name_len);
-	payload[name_len] = '\n';
-	memcpy(payload + name_len + 1, data, len);
 
 	upload_uri = ela_http_build_upload_uri(output_uri, "orom", name);
 	if (!upload_uri) {
@@ -220,8 +208,8 @@ static int send_rom_http(const char *output_uri,
 	}
 
 	rc = ela_http_post(upload_uri,
-		(const uint8_t *)payload,
-		name_len + 1 + len,
+		payload,
+		payload_len,
 		"application/octet-stream",
 		insecure,
 		verbose,
@@ -288,7 +276,7 @@ static int orom_execute_pull(struct orom_ctx *ctx)
 			continue;
 		}
 
-			if (!ela_orom_rom_matches_mode(rom, rom_len, ctx->fw_mode)) {
+		if (!ela_orom_rom_matches_mode(rom, rom_len, ctx->fw_mode)) {
 			free(rom);
 			continue;
 		}
@@ -349,7 +337,7 @@ static int orom_execute_list(struct orom_ctx *ctx)
 			continue;
 		}
 
-			if (!ela_orom_rom_matches_mode(rom, rom_len, ctx->fw_mode)) {
+		if (!ela_orom_rom_matches_mode(rom, rom_len, ctx->fw_mode)) {
 			free(rom);
 			continue;
 		}
@@ -372,103 +360,29 @@ static int orom_execute_list(struct orom_ctx *ctx)
 
 int orom_group_main(const char *fw_mode, int argc, char **argv)
 {
+	struct ela_orom_env env;
+	struct ela_orom_parsed_args args;
 	struct orom_ctx ctx;
-	const char *action;
-	int opt;
+	char errbuf[256];
+	int rc;
 
-	optind = 1;
-	memset(&ctx, 0, sizeof(ctx));
-	ctx.fw_mode = fw_mode;
-	ctx.verbose = getenv("ELA_VERBOSE") && !strcmp(getenv("ELA_VERBOSE"), "1");
-	ctx.insecure = getenv("ELA_OUTPUT_INSECURE") && !strcmp(getenv("ELA_OUTPUT_INSECURE"), "1");
-	ctx.output_tcp = getenv("ELA_OUTPUT_TCP");
-	ctx.output_http = getenv("ELA_OUTPUT_HTTP");
-	ctx.output_https = getenv("ELA_OUTPUT_HTTPS");
-	detect_output_format(&ctx);
+	env.verbose      = getenv("ELA_VERBOSE");
+	env.insecure     = getenv("ELA_OUTPUT_INSECURE");
+	env.output_tcp   = getenv("ELA_OUTPUT_TCP");
+	env.output_http  = getenv("ELA_OUTPUT_HTTP");
+	env.output_https = getenv("ELA_OUTPUT_HTTPS");
+	env.output_fmt   = getenv("ELA_OUTPUT_FORMAT");
 
-	static const struct option long_opts[] = {
-		{ "help", no_argument, NULL, 'h' },
-		{ "output-tcp", required_argument, NULL, 't' },
-		{ "output-http", required_argument, NULL, 'O' },
-		{ 0, 0, 0, 0 }
-	};
-
-	if (argc < 2) {
-		usage(argv[0], fw_mode);
-		return 2;
-	}
-
-	action = argv[1];
-	if (!strcmp(action, "-h") || !strcmp(action, "--help") || !strcmp(action, "help")) {
+	errbuf[0] = '\0';
+	rc = ela_orom_parse_args(argc, argv, fw_mode, &env, &args, errbuf, sizeof(errbuf));
+	if (rc == 1) {
 		usage(argv[0], fw_mode);
 		return 0;
 	}
-	if (strcmp(action, "pull") && strcmp(action, "list")) {
+	if (rc == 2) {
+		if (errbuf[0])
+			fprintf(stderr, "%s\n", errbuf);
 		usage(argv[0], fw_mode);
-		return 2;
-	}
-
-	optind = 2;
-
-	while ((opt = getopt_long(argc, argv, "ht:O:", long_opts, NULL)) != -1) {
-		switch (opt) {
-		case 'h':
-			usage(argv[0], fw_mode);
-			return 0;
-		case 't':
-			ctx.output_tcp = optarg;
-			break;
-		case 'O':
-			{
-				const char *new_output_http = NULL;
-				const char *new_output_https = NULL;
-				if (ela_parse_http_output_uri(optarg,
-						      &new_output_http,
-						      &new_output_https,
-						      NULL,
-						      0) < 0)
-				ctx.output_http = optarg;
-				else {
-					if ((ctx.output_http && new_output_https) || (ctx.output_https && new_output_http)) {
-						fprintf(stderr, "Use only one of --output-http or --output-https\n");
-						return 2;
-					}
-					ctx.output_http = new_output_http;
-					ctx.output_https = new_output_https;
-				}
-			}
-			break;
-		default:
-			usage(argv[0], fw_mode);
-			return 2;
-		}
-	}
-
-	if (optind < argc) {
-		usage(argv[0], fw_mode);
-		return 2;
-	}
-
-	if (ctx.output_http &&
-	    !ctx.output_https &&
-	    strncmp(ctx.output_http, "http://", 7)) {
-		fprintf(stderr, "Invalid --output-http URI (expected http://host:port/... or https://host:port/...): %s\n", ctx.output_http);
-		return 2;
-	}
-
-	if (ctx.output_http && ctx.output_https) {
-		fprintf(stderr, "Use only one of --output-http or --output-https\n");
-		return 2;
-	}
-
-	ctx.output_uri = ctx.output_http ? ctx.output_http : ctx.output_https;
-
-	/* Validate pull's required output target before the ISA check so that
-	 * missing-argument errors correctly return rc=2 on all ISAs. */
-	if (!strcmp(action, "pull") &&
-	    (!ctx.output_tcp || !*ctx.output_tcp) &&
-	    (!ctx.output_uri || !*ctx.output_uri)) {
-		fprintf(stderr, "pull requires one of --output-tcp or --output-http\n");
 		return 2;
 	}
 
@@ -483,7 +397,15 @@ int orom_group_main(const char *fw_mode, int argc, char **argv)
 		}
 	}
 
-	if (!strcmp(action, "pull"))
+	memset(&ctx, 0, sizeof(ctx));
+	ctx.fw_mode    = fw_mode;
+	ctx.verbose    = args.verbose;
+	ctx.insecure   = args.insecure;
+	ctx.output_tcp = args.output_tcp;
+	ctx.output_uri = args.output_uri;
+	ctx.fmt        = args.fmt;
+
+	if (!strcmp(args.action, "pull"))
 		return orom_execute_pull(&ctx);
 
 	return orom_execute_list(&ctx);

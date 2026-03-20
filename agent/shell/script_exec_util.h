@@ -30,5 +30,9 @@ int ela_script_plan_dispatch(int argc,
 			     struct ela_script_dispatch_plan *plan,
 			     char *errbuf,
 			     size_t errbuf_len);
+bool ela_script_local_file_exists(const char *path);
+int ela_script_create_temp_path(char *dir_path, size_t dir_path_len,
+				char *file_path, size_t file_path_len,
+				const char *script_source);
 
 #endif
