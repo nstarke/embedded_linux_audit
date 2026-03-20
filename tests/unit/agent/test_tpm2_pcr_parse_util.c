@@ -255,6 +255,31 @@ static void test_add_pcr_all_sha256_pcrs(void)
 	ELA_ASSERT_INT_EQ(0x00, sel.banks[0].pcr_select[2]);
 }
 
+static void test_add_pcr_count_at_max_fails(void)
+{
+	struct ela_tpm2_pcr_selection sel = {0};
+	char errbuf[128] = { 0 };
+
+	/* Directly saturate the bank counter to trigger the limit check */
+	sel.count = ELA_TPM2_MAX_PCR_BANKS;
+	ELA_ASSERT_INT_EQ(-1, ela_tpm2_add_pcr_selection(&sel, "sha256:0",
+							  errbuf, sizeof(errbuf)));
+	ELA_ASSERT_TRUE(strstr(errbuf, "too many PCR banks") != NULL);
+}
+
+static void test_add_pcr_empty_pcr_list(void)
+{
+	struct ela_tpm2_pcr_selection sel = {0};
+
+	/* "sha256:" with nothing after the colon: bank added, no bits set */
+	ELA_ASSERT_INT_EQ(0, ela_tpm2_add_pcr_selection(&sel, "sha256:", NULL, 0));
+	ELA_ASSERT_INT_EQ(1, (int)sel.count);
+	ELA_ASSERT_INT_EQ(ELA_TPM2_ALG_SHA256, sel.banks[0].hash_alg);
+	ELA_ASSERT_INT_EQ(0, sel.banks[0].pcr_select[0]);
+	ELA_ASSERT_INT_EQ(0, sel.banks[0].pcr_select[1]);
+	ELA_ASSERT_INT_EQ(0, sel.banks[0].pcr_select[2]);
+}
+
 int run_tpm2_pcr_parse_util_tests(void)
 {
 	static const struct ela_test_case cases[] = {
@@ -285,6 +310,8 @@ int run_tpm2_pcr_parse_util_tests(void)
 		{ "add_pcr_max_banks_exceeded",        test_add_pcr_max_banks_exceeded },
 		{ "add_pcr_null_errbuf_no_crash",      test_add_pcr_null_errbuf_no_crash },
 		{ "add_pcr_all_sha256_pcrs",           test_add_pcr_all_sha256_pcrs },
+		{ "add_pcr_count_at_max_fails",        test_add_pcr_count_at_max_fails },
+		{ "add_pcr_empty_pcr_list",            test_add_pcr_empty_pcr_list },
 	};
 
 	return ela_run_test_suite("tpm2_pcr_parse_util", cases, sizeof(cases) / sizeof(cases[0]));

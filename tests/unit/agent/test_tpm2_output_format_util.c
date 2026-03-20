@@ -193,6 +193,17 @@ static void test_format_kv_json_multiple_accumulate(void)
 	free(out.data);
 }
 
+static void test_format_kv_csv_multiple_accumulate(void)
+{
+	struct output_buffer out = {0};
+
+	ELA_ASSERT_INT_EQ(0, ela_tpm2_format_kv_record(&out, "csv", "key1", "val1"));
+	ELA_ASSERT_INT_EQ(0, ela_tpm2_format_kv_record(&out, "csv", "key2", "val2"));
+	ELA_ASSERT_TRUE(strstr(out.data, "\"key1\",\"val1\"\n") != NULL);
+	ELA_ASSERT_TRUE(strstr(out.data, "\"key2\",\"val2\"\n") != NULL);
+	free(out.data);
+}
+
 static void test_format_kv_hex_value_preserved(void)
 {
 	struct output_buffer out = {0};
@@ -231,6 +242,7 @@ int run_tpm2_output_format_util_tests(void)
 		{ "format_kv_csv_quote_in_value",      test_format_kv_csv_value_with_quote },
 		{ "format_kv_json",                    test_format_kv_json },
 		{ "format_kv_json_multiple",           test_format_kv_json_multiple_accumulate },
+		{ "format_kv_csv_multiple",            test_format_kv_csv_multiple_accumulate },
 		{ "format_kv_hex_value_preserved",     test_format_kv_hex_value_preserved },
 	};
 
