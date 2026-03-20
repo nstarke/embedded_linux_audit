@@ -711,6 +711,7 @@ SRC := \
 	agent/uboot/image/uboot_image_format_util.c \
 	agent/uboot/image/uboot_image_record_util.c \
 	agent/uboot/image/uboot_image_scan_util.c \
+	agent/uboot/image/uboot_image_pull_util.c \
 	agent/uboot/image/uboot_image_pull_cmd.c \
 	agent/uboot/image/uboot_image_find_address_cmd.c \
 	agent/uboot/image/uboot_image_find_address_util.c \
