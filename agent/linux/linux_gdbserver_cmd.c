@@ -25,6 +25,7 @@
 #elif defined(__aarch64__)
 #  include <sys/uio.h>
 #  include <elf.h>
+#  include <asm/ptrace.h>
 #elif defined(__arm__)
 #  include <sys/user.h>
 #  include <sys/uio.h>
