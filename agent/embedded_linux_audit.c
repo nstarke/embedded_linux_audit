@@ -56,6 +56,7 @@ static void usage(const char *prog)
 		"  linux remote-copy  Copy a local file to remote destination\n"
 		"  linux ssh          SSH client/copy/tunnel operations\n"
 		"  linux process      Watch for process restarts matching a needle string\n"
+		"  linux gdbserver    GDB RSP server; attach gdb-multiarch with target remote\n"
 		"  tpm2               Run built-in TPM2 commands through the TPM2-TSS library\n"
 		"  efi orom           EFI option ROM utilities (pull/list)\n"
 		"  efi dump-vars      Dump EFI variables with txt/csv/json formatting\n"
@@ -499,6 +500,8 @@ int embedded_linux_audit_dispatch(int argc, char **argv)
 							    argv + sub_idx);
 		else if (!strcmp(argv[sub_idx], "process"))
 			ret = linux_process_main(argc - sub_idx, argv + sub_idx);
+		else if (!strcmp(argv[sub_idx], "gdbserver"))
+			ret = linux_gdbserver_main(argc - sub_idx, argv + sub_idx);
 		else {
 			fprintf(stderr, "Unknown linux subcommand: %s\n\n",
 				argv[sub_idx]);
