@@ -432,14 +432,9 @@ void uboot_free_created_nodes(char **nodes, size_t count)
 static void create_node_if_missing(const char *path, mode_t mode, dev_t devno, bool verbose,
 				   char ***created_nodes, size_t *created_count)
 {
-	struct stat st;
-
-	if (!stat(path, &st))
-		return;
-	if (errno != ENOENT)
-		return;
-
 	if (mknod(path, mode, devno) < 0) {
+		if (errno == EEXIST)
+			return;
 		if (verbose)
 			fprintf(stderr, "Warning: cannot create %s: %s\n", path, strerror(errno));
 		return;

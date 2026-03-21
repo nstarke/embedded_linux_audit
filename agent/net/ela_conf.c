@@ -2,6 +2,7 @@
 
 #include "ela_conf.h"
 #include "ela_conf_util.h"
+#include "../util/command_parse_util.h"
 
 #include <fcntl.h>
 #include <stdio.h>
@@ -40,7 +41,7 @@ void ela_conf_export_to_env(const struct ela_conf *conf)
 			setenv("ELA_OUTPUT_HTTP", conf->output_http, 0);
 	}
 
-	if (conf->output_format[0])
+	if (conf->output_format[0] && ela_output_format_is_valid(conf->output_format))
 		setenv("ELA_OUTPUT_FORMAT", conf->output_format, 0);
 
 	if (conf->insecure)

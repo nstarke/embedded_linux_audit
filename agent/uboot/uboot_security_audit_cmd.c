@@ -519,8 +519,10 @@ static int auto_scan_signature_artifacts(char **blob_path_out, char **pubkey_pat
 	if (!auto_dir)
 		return -1;
 
-	if (uboot_glob_scan_devices(&g, scan_flags) < 0)
+	if (uboot_glob_scan_devices(&g, scan_flags) < 0) {
+		free(auto_dir);
 		return -1;
+	}
 
 	for (size_t i = 0; i < g.gl_pathc && (!blob_path || !pubkey_path); i++) {
 		const char *dev = g.gl_pathv[i];

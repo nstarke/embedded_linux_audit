@@ -462,6 +462,12 @@ int ela_execute_command_run_interactive_with_ops(const char *command,
 				_exit(127);
 		}
 
+		/* forkpty sets master_fd on success; guard against it staying -1 */
+		if (master_fd < 0) {
+			effective_ops->waitpid_fn(pid, &status, 0);
+			goto done_linux;
+		}
+
 		for (;;) {
 			fd_set rfds;
 			struct timeval tv;
