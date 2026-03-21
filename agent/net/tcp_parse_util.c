@@ -98,8 +98,10 @@ int ela_dns_extract_first_a_record(const uint8_t *resp, size_t resp_len, char *i
 
 	qdcount = (resp[4] << 8) | resp[5];
 	ancount = (resp[6] << 8) | resp[7];
-	if (ancount == 0)
+	if (ancount <= 0)
 		return -1;
+	if (ancount > 256)
+		ancount = 256; /* cap tainted network value */
 
 	pos = 12;
 	for (i = 0; i < qdcount && pos < (int)resp_len; i++) {
