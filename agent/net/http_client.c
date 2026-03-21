@@ -1486,7 +1486,10 @@ static int ela_dns_query_a(const char *ns_ip, const char *hostname,
 
 	tv.tv_sec  = 2;
 	tv.tv_usec = 0;
-	setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+	if (setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0) {
+		close(sock);
+		return -1;
+	}
 
 	memset(&ns_addr, 0, sizeof(ns_addr));
 	ns_addr.sin_family = AF_INET;
