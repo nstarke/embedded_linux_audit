@@ -14,6 +14,7 @@
 #include <fcntl.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <sys/stat.h>
 #include <sys/socket.h>
 #include <sys/ptrace.h>
 #include <netinet/in.h>
@@ -156,7 +157,35 @@ static int   g_svr4_xml_len = -1; /* -1 = not yet built for this session */
 static const char k_target_xml[] =
 	"<?xml version=\"1.0\"?>"
 	"<!DOCTYPE target SYSTEM \"gdb-target.dtd\">"
-	"<target><architecture>i386:x86-64</architecture></target>";
+	"<target>"
+	  "<architecture>i386:x86-64</architecture>"
+	  "<feature name=\"org.gnu.gdb.i386.core\">"
+	    "<reg name=\"rax\"    bitsize=\"64\" type=\"int64\"/>"
+	    "<reg name=\"rbx\"    bitsize=\"64\" type=\"int64\"/>"
+	    "<reg name=\"rcx\"    bitsize=\"64\" type=\"int64\"/>"
+	    "<reg name=\"rdx\"    bitsize=\"64\" type=\"int64\"/>"
+	    "<reg name=\"rsi\"    bitsize=\"64\" type=\"int64\"/>"
+	    "<reg name=\"rdi\"    bitsize=\"64\" type=\"int64\"/>"
+	    "<reg name=\"rbp\"    bitsize=\"64\" type=\"data_ptr\"/>"
+	    "<reg name=\"rsp\"    bitsize=\"64\" type=\"data_ptr\"/>"
+	    "<reg name=\"r8\"     bitsize=\"64\" type=\"int64\"/>"
+	    "<reg name=\"r9\"     bitsize=\"64\" type=\"int64\"/>"
+	    "<reg name=\"r10\"    bitsize=\"64\" type=\"int64\"/>"
+	    "<reg name=\"r11\"    bitsize=\"64\" type=\"int64\"/>"
+	    "<reg name=\"r12\"    bitsize=\"64\" type=\"int64\"/>"
+	    "<reg name=\"r13\"    bitsize=\"64\" type=\"int64\"/>"
+	    "<reg name=\"r14\"    bitsize=\"64\" type=\"int64\"/>"
+	    "<reg name=\"r15\"    bitsize=\"64\" type=\"int64\"/>"
+	    "<reg name=\"rip\"    bitsize=\"64\" type=\"code_ptr\"/>"
+	    "<reg name=\"eflags\" bitsize=\"32\" type=\"int32\"/>"
+	    "<reg name=\"cs\"     bitsize=\"32\" type=\"int32\"/>"
+	    "<reg name=\"ss\"     bitsize=\"32\" type=\"int32\"/>"
+	    "<reg name=\"ds\"     bitsize=\"32\" type=\"int32\"/>"
+	    "<reg name=\"es\"     bitsize=\"32\" type=\"int32\"/>"
+	    "<reg name=\"fs\"     bitsize=\"32\" type=\"int32\"/>"
+	    "<reg name=\"gs\"     bitsize=\"32\" type=\"int32\"/>"
+	  "</feature>"
+	"</target>";
 #elif defined(__aarch64__)
 static const char k_target_xml[] =
 	"<?xml version=\"1.0\"?>"
@@ -593,11 +622,13 @@ static int reg_write_one(int regnum, const char *hex_val)
 static int regs_read(char *out, size_t out_sz)
 {
 	struct user_regs r;
+	struct iovec iov = { &r, sizeof(r) };
 	char tmp[9];
 	size_t pos = 0;
 	int i;
 
-	if (ptrace(PTRACE_GETREGS, g_pid, NULL, &r) != 0)
+	if (ptrace(PTRACE_GETREGSET, g_pid, (void *)(uintptr_t)NT_PRSTATUS,
+		   &iov) != 0)
 		return -1;
 
 	/* r0-r15 */
@@ -610,7 +641,7 @@ static int regs_read(char *out, size_t out_sz)
 		pos += 8;
 	}
 
-	/* f0-f7: 8 legacy FPA registers, 12 bytes (24 hex chars) each */
+	/* f0-f7: 8 legacy FPA registers, 12 bytes (24 hex chars) each — zero */
 	if (pos + 192 + 1 > out_sz)
 		return -1;
 	memset(out + pos, '0', 192);
@@ -639,8 +670,10 @@ static int regs_read(char *out, size_t out_sz)
 static int reg_read_one(int regnum, char *out, size_t out_sz)
 {
 	struct user_regs r;
+	struct iovec iov = { &r, sizeof(r) };
 
-	if (ptrace(PTRACE_GETREGS, g_pid, NULL, &r) != 0)
+	if (ptrace(PTRACE_GETREGSET, g_pid, (void *)(uintptr_t)NT_PRSTATUS,
+		   &iov) != 0)
 		return -1;
 
 	/* r0-r15 */
@@ -670,9 +703,11 @@ static int reg_read_one(int regnum, char *out, size_t out_sz)
 static int reg_write_one(int regnum, const char *hex_val)
 {
 	struct user_regs r;
+	struct iovec iov = { &r, sizeof(r) };
 	uint32_t v32;
 
-	if (ptrace(PTRACE_GETREGS, g_pid, NULL, &r) != 0)
+	if (ptrace(PTRACE_GETREGSET, g_pid, (void *)(uintptr_t)NT_PRSTATUS,
+		   &iov) != 0)
 		return -1;
 
 	if (regnum >= 0 && regnum <= 15) {
@@ -687,10 +722,29 @@ static int reg_write_one(int regnum, const char *hex_val)
 		return -1;
 	}
 
-	return ptrace(PTRACE_SETREGS, g_pid, NULL, &r) != 0 ? -1 : 0;
+	iov.iov_len = sizeof(r);
+	return ptrace(PTRACE_SETREGSET, g_pid, (void *)(uintptr_t)NT_PRSTATUS,
+		      &iov) != 0 ? -1 : 0;
 }
 
 #elif defined(__mips__)
+
+/*
+ * GDB expects register bytes in the target's native byte order.
+ * Use endian-agnostic wrappers so the same code compiles correctly for
+ * both MIPS big-endian and MIPS little-endian targets.
+ */
+#ifdef __MIPSEL__
+# define mips_enc32(v, b, s) ela_gdb_encode_le32((uint32_t)(v), (b), (s))
+# define mips_enc64(v, b, s) ela_gdb_encode_le64((uint64_t)(v), (b), (s))
+# define mips_dec32(h, o)    ela_gdb_decode_le32((h), (o))
+# define mips_dec64(h, o)    ela_gdb_decode_le64((h), (o))
+#else
+# define mips_enc32(v, b, s) ela_gdb_encode_be32((uint32_t)(v), (b), (s))
+# define mips_enc64(v, b, s) ela_gdb_encode_be64((uint64_t)(v), (b), (s))
+# define mips_dec32(h, o)    ela_gdb_decode_be32((h), (o))
+# define mips_dec64(h, o)    ela_gdb_decode_be64((h), (o))
+#endif
 
 /*
  * Common MIPS ptrace helper: fetch elf_gregset_t via PTRACE_GETREGSET.
@@ -715,7 +769,6 @@ static int reg_write_one(int regnum, const char *hex_val)
 
 /*
  * MIPS64 g-packet: 72 registers × 8 bytes = 576 bytes (1152 hex chars).
- * All registers including CP0 and FP control are encoded as 64-bit LE.
  */
 static int regs_read(char *out, size_t out_sz)
 {
@@ -730,7 +783,7 @@ static int regs_read(char *out, size_t out_sz)
 		return -1;
 
 #define EMIT64(v) do { \
-	if (ela_gdb_encode_le64((uint64_t)(v), tmp, sizeof(tmp)) != 0) return -1; \
+	if (mips_enc64((v), tmp, sizeof(tmp)) != 0) return -1; \
 	if (pos + 16 + 1 > out_sz) return -1; \
 	memcpy(out + pos, tmp, 16); pos += 16; \
 } while (0)
@@ -773,28 +826,21 @@ static int reg_read_one(int regnum, char *out, size_t out_sz)
 		return -1;
 
 	if (regnum >= 0 && regnum <= 31)
-		return ela_gdb_encode_le64(
-			(uint64_t)regs[MIPS_EF_R0 + regnum], out, out_sz);
+		return mips_enc64(regs[MIPS_EF_R0 + regnum], out, out_sz);
 
 	switch (regnum) {
-	case 32: return ela_gdb_encode_le64(
-			(uint64_t)regs[MIPS_EF_STATUS],   out, out_sz);
-	case 33: return ela_gdb_encode_le64(
-			(uint64_t)regs[MIPS_EF_LO],       out, out_sz);
-	case 34: return ela_gdb_encode_le64(
-			(uint64_t)regs[MIPS_EF_HI],       out, out_sz);
-	case 35: return ela_gdb_encode_le64(
-			(uint64_t)regs[MIPS_EF_BADVADDR], out, out_sz);
-	case 36: return ela_gdb_encode_le64(
-			(uint64_t)regs[MIPS_EF_CAUSE],    out, out_sz);
-	case 37: return ela_gdb_encode_le64(
-			(uint64_t)regs[MIPS_EF_EPC],      out, out_sz);
+	case 32: return mips_enc64(regs[MIPS_EF_STATUS],   out, out_sz);
+	case 33: return mips_enc64(regs[MIPS_EF_LO],       out, out_sz);
+	case 34: return mips_enc64(regs[MIPS_EF_HI],       out, out_sz);
+	case 35: return mips_enc64(regs[MIPS_EF_BADVADDR], out, out_sz);
+	case 36: return mips_enc64(regs[MIPS_EF_CAUSE],    out, out_sz);
+	case 37: return mips_enc64(regs[MIPS_EF_EPC],      out, out_sz);
 	default: break;
 	}
 
 	/* f0-f31 (38-69), fcsr (70), fir (71): zero */
 	if (regnum >= 38 && regnum <= 71)
-		return ela_gdb_encode_le64(0, out, out_sz);
+		return mips_enc64(0, out, out_sz);
 
 	return -1;
 }
@@ -810,27 +856,27 @@ static int reg_write_one(int regnum, const char *hex_val)
 		return -1;
 
 	if (regnum >= 0 && regnum <= 31) {
-		if (ela_gdb_decode_le64(hex_val, &v64)) return -1;
+		if (mips_dec64(hex_val, &v64)) return -1;
 		regs[MIPS_EF_R0 + regnum] = (unsigned long)v64;
 	} else {
 		switch (regnum) {
 		case 32:
-			if (ela_gdb_decode_le64(hex_val, &v64)) return -1;
+			if (mips_dec64(hex_val, &v64)) return -1;
 			regs[MIPS_EF_STATUS] = (unsigned long)v64; break;
 		case 33:
-			if (ela_gdb_decode_le64(hex_val, &v64)) return -1;
+			if (mips_dec64(hex_val, &v64)) return -1;
 			regs[MIPS_EF_LO] = (unsigned long)v64; break;
 		case 34:
-			if (ela_gdb_decode_le64(hex_val, &v64)) return -1;
+			if (mips_dec64(hex_val, &v64)) return -1;
 			regs[MIPS_EF_HI] = (unsigned long)v64; break;
 		case 35:
-			if (ela_gdb_decode_le64(hex_val, &v64)) return -1;
+			if (mips_dec64(hex_val, &v64)) return -1;
 			regs[MIPS_EF_BADVADDR] = (unsigned long)v64; break;
 		case 36:
-			if (ela_gdb_decode_le64(hex_val, &v64)) return -1;
+			if (mips_dec64(hex_val, &v64)) return -1;
 			regs[MIPS_EF_CAUSE] = (unsigned long)v64; break;
 		case 37:
-			if (ela_gdb_decode_le64(hex_val, &v64)) return -1;
+			if (mips_dec64(hex_val, &v64)) return -1;
 			regs[MIPS_EF_EPC] = (unsigned long)v64; break;
 		default:
 			if (regnum >= 38 && regnum <= 71)
@@ -862,7 +908,7 @@ static int regs_read(char *out, size_t out_sz)
 		return -1;
 
 #define EMIT32(v) do { \
-	if (ela_gdb_encode_le32((uint32_t)(v), tmp, sizeof(tmp)) != 0) return -1; \
+	if (mips_enc32((v), tmp, sizeof(tmp)) != 0) return -1; \
 	if (pos + 8 + 1 > out_sz) return -1; \
 	memcpy(out + pos, tmp, 8); pos += 8; \
 } while (0)
@@ -905,28 +951,21 @@ static int reg_read_one(int regnum, char *out, size_t out_sz)
 		return -1;
 
 	if (regnum >= 0 && regnum <= 31)
-		return ela_gdb_encode_le32(
-			(uint32_t)regs[MIPS_EF_R0 + regnum], out, out_sz);
+		return mips_enc32(regs[MIPS_EF_R0 + regnum], out, out_sz);
 
 	switch (regnum) {
-	case 32: return ela_gdb_encode_le32(
-			(uint32_t)regs[MIPS_EF_STATUS],   out, out_sz);
-	case 33: return ela_gdb_encode_le32(
-			(uint32_t)regs[MIPS_EF_LO],       out, out_sz);
-	case 34: return ela_gdb_encode_le32(
-			(uint32_t)regs[MIPS_EF_HI],       out, out_sz);
-	case 35: return ela_gdb_encode_le32(
-			(uint32_t)regs[MIPS_EF_BADVADDR], out, out_sz);
-	case 36: return ela_gdb_encode_le32(
-			(uint32_t)regs[MIPS_EF_CAUSE],    out, out_sz);
-	case 37: return ela_gdb_encode_le32(
-			(uint32_t)regs[MIPS_EF_EPC],      out, out_sz);
+	case 32: return mips_enc32(regs[MIPS_EF_STATUS],   out, out_sz);
+	case 33: return mips_enc32(regs[MIPS_EF_LO],       out, out_sz);
+	case 34: return mips_enc32(regs[MIPS_EF_HI],       out, out_sz);
+	case 35: return mips_enc32(regs[MIPS_EF_BADVADDR], out, out_sz);
+	case 36: return mips_enc32(regs[MIPS_EF_CAUSE],    out, out_sz);
+	case 37: return mips_enc32(regs[MIPS_EF_EPC],      out, out_sz);
 	default: break;
 	}
 
 	/* f0-f31 (38-69), fcsr (70), fir (71): zero-filled */
 	if (regnum >= 38 && regnum <= 71)
-		return ela_gdb_encode_le32(0, out, out_sz);
+		return mips_enc32(0, out, out_sz);
 
 	return -1;
 }
@@ -942,27 +981,27 @@ static int reg_write_one(int regnum, const char *hex_val)
 		return -1;
 
 	if (regnum >= 0 && regnum <= 31) {
-		if (ela_gdb_decode_le32(hex_val, &v32)) return -1;
+		if (mips_dec32(hex_val, &v32)) return -1;
 		regs[MIPS_EF_R0 + regnum] = (unsigned long)v32;
 	} else {
 		switch (regnum) {
 		case 32:
-			if (ela_gdb_decode_le32(hex_val, &v32)) return -1;
+			if (mips_dec32(hex_val, &v32)) return -1;
 			regs[MIPS_EF_STATUS] = (unsigned long)v32; break;
 		case 33:
-			if (ela_gdb_decode_le32(hex_val, &v32)) return -1;
+			if (mips_dec32(hex_val, &v32)) return -1;
 			regs[MIPS_EF_LO] = (unsigned long)v32; break;
 		case 34:
-			if (ela_gdb_decode_le32(hex_val, &v32)) return -1;
+			if (mips_dec32(hex_val, &v32)) return -1;
 			regs[MIPS_EF_HI] = (unsigned long)v32; break;
 		case 35:
-			if (ela_gdb_decode_le32(hex_val, &v32)) return -1;
+			if (mips_dec32(hex_val, &v32)) return -1;
 			regs[MIPS_EF_BADVADDR] = (unsigned long)v32; break;
 		case 36:
-			if (ela_gdb_decode_le32(hex_val, &v32)) return -1;
+			if (mips_dec32(hex_val, &v32)) return -1;
 			regs[MIPS_EF_CAUSE] = (unsigned long)v32; break;
 		case 37:
-			if (ela_gdb_decode_le32(hex_val, &v32)) return -1;
+			if (mips_dec32(hex_val, &v32)) return -1;
 			regs[MIPS_EF_EPC] = (unsigned long)v32; break;
 		default:
 			if (regnum >= 38 && regnum <= 71)
@@ -977,6 +1016,11 @@ static int reg_write_one(int regnum, const char *hex_val)
 }
 
 #endif /* __mips64 */
+
+#undef mips_enc32
+#undef mips_enc64
+#undef mips_dec32
+#undef mips_dec64
 
 #elif defined(__powerpc64__)
 
@@ -1017,7 +1061,7 @@ static int regs_read(char *out, size_t out_sz)
 	iov.iov_len  = sizeof(fp_regs);
 	if (ptrace(PTRACE_GETREGSET, g_pid,
 		   (void *)(uintptr_t)NT_PRFPREG, &iov) != 0)
-		return -1;
+		memset(fp_regs, 0, sizeof(fp_regs)); /* FPU unavailable — zero-fill */
 
 #define EMIT32BE(v) do { \
 	if (ela_gdb_encode_be32((uint32_t)(v), tmp, sizeof(tmp)) != 0) return -1; \
@@ -1091,7 +1135,7 @@ static int reg_read_one(int regnum, char *out, size_t out_sz)
 		iov.iov_len  = sizeof(fp_regs);
 		if (ptrace(PTRACE_GETREGSET, g_pid,
 			   (void *)(uintptr_t)NT_PRFPREG, &iov) != 0)
-			return -1;
+			return ela_gdb_encode_be64(0, out, out_sz);
 		memcpy(&fp_bits, &fp_regs[regnum - 32], 8);
 		return ela_gdb_encode_be64(fp_bits, out, out_sz);
 	}
@@ -1109,7 +1153,7 @@ static int reg_read_one(int regnum, char *out, size_t out_sz)
 		iov.iov_len  = sizeof(fp_regs);
 		if (ptrace(PTRACE_GETREGSET, g_pid,
 			   (void *)(uintptr_t)NT_PRFPREG, &iov) != 0)
-			return -1;
+			return ela_gdb_encode_be32(0, out, out_sz);
 		memcpy(&fp_bits, &fp_regs[32], 8);
 		return ela_gdb_encode_be32(
 			(uint32_t)(fp_bits & 0xffffffffULL), out, out_sz);
@@ -1142,12 +1186,12 @@ static int reg_write_one(int regnum, const char *hex_val)
 			      (void *)(uintptr_t)NT_PRSTATUS, &iov) != 0 ? -1 : 0;
 	}
 
-	/* f0-f31: 64-bit BE */
+	/* f0-f31: 64-bit BE — silently accept if FPU unavailable */
 	if (regnum >= 32 && regnum <= 63) {
 		iov.iov_base = fp_regs; iov.iov_len = sizeof(fp_regs);
 		if (ptrace(PTRACE_GETREGSET, g_pid,
 			   (void *)(uintptr_t)NT_PRFPREG, &iov) != 0)
-			return -1;
+			return 0;
 		if (ela_gdb_decode_be64(hex_val, &v64)) return -1;
 		memcpy(&fp_regs[regnum - 32], &v64, 8);
 		iov.iov_base = fp_regs; iov.iov_len = sizeof(fp_regs);
@@ -1168,11 +1212,11 @@ static int reg_write_one(int regnum, const char *hex_val)
 		 gregs[PPC_PT_CTR] = (unsigned long)v64; break;
 	case 69: if (ela_gdb_decode_be32(hex_val, &v32)) return -1;
 		 gregs[PPC_PT_XER] = (unsigned long)v32; break;
-	case 70: { /* fpscr: update lower 32 bits of fp_regs[32] */
+	case 70: { /* fpscr: update lower 32 bits of fp_regs[32] — silently accept if FPU unavailable */
 		iov.iov_base = fp_regs; iov.iov_len = sizeof(fp_regs);
 		if (ptrace(PTRACE_GETREGSET, g_pid,
 			   (void *)(uintptr_t)NT_PRFPREG, &iov) != 0)
-			return -1;
+			return 0;
 		if (ela_gdb_decode_be32(hex_val, &v32)) return -1;
 		memcpy(&slot, &fp_regs[32], 8);
 		slot = (slot & 0xffffffff00000000ULL) | v32;
@@ -1228,7 +1272,7 @@ static int regs_read(char *out, size_t out_sz)
 	iov.iov_len  = sizeof(fp_regs);
 	if (ptrace(PTRACE_GETREGSET, g_pid,
 		   (void *)(uintptr_t)NT_PRFPREG, &iov) != 0)
-		return -1;
+		memset(fp_regs, 0, sizeof(fp_regs)); /* FPU unavailable — zero-fill */
 
 #define EMIT32BE(v) do { \
 	if (ela_gdb_encode_be32((uint32_t)(v), tmp, sizeof(tmp)) != 0) return -1; \
@@ -1296,7 +1340,7 @@ static int reg_read_one(int regnum, char *out, size_t out_sz)
 		iov.iov_len  = sizeof(fp_regs);
 		if (ptrace(PTRACE_GETREGSET, g_pid,
 			   (void *)(uintptr_t)NT_PRFPREG, &iov) != 0)
-			return -1;
+			return ela_gdb_encode_be64(0, out, out_sz);
 		memcpy(&fp_bits, &fp_regs[regnum - 32], 8);
 		return ela_gdb_encode_be64(fp_bits, out, out_sz);
 	}
@@ -1314,7 +1358,7 @@ static int reg_read_one(int regnum, char *out, size_t out_sz)
 		iov.iov_len  = sizeof(fp_regs);
 		if (ptrace(PTRACE_GETREGSET, g_pid,
 			   (void *)(uintptr_t)NT_PRFPREG, &iov) != 0)
-			return -1;
+			return ela_gdb_encode_be32(0, out, out_sz);
 		memcpy(&fp_bits, &fp_regs[32], 8);
 		return ela_gdb_encode_be32(
 			(uint32_t)(fp_bits & 0xffffffffULL), out, out_sz);
@@ -1347,12 +1391,12 @@ static int reg_write_one(int regnum, const char *hex_val)
 			      (void *)(uintptr_t)NT_PRSTATUS, &iov) != 0 ? -1 : 0;
 	}
 
-	/* f0-f31: 64-bit BE */
+	/* f0-f31: 64-bit BE — silently accept if FPU unavailable */
 	if (regnum >= 32 && regnum <= 63) {
 		iov.iov_base = fp_regs; iov.iov_len = sizeof(fp_regs);
 		if (ptrace(PTRACE_GETREGSET, g_pid,
 			   (void *)(uintptr_t)NT_PRFPREG, &iov) != 0)
-			return -1;
+			return 0;
 		if (ela_gdb_decode_be64(hex_val, &v64)) return -1;
 		memcpy(&fp_regs[regnum - 32], &v64, 8);
 		iov.iov_base = fp_regs; iov.iov_len = sizeof(fp_regs);
@@ -1373,11 +1417,11 @@ static int reg_write_one(int regnum, const char *hex_val)
 		 gregs[PPC_PT_CTR] = (unsigned long)v32; break;
 	case 69: if (ela_gdb_decode_be32(hex_val, &v32)) return -1;
 		 gregs[PPC_PT_XER] = (unsigned long)v32; break;
-	case 70: { /* fpscr: update lower 32 bits of fp_regs[32] */
+	case 70: { /* fpscr: update lower 32 bits of fp_regs[32] — silently accept if FPU unavailable */
 		iov.iov_base = fp_regs; iov.iov_len = sizeof(fp_regs);
 		if (ptrace(PTRACE_GETREGSET, g_pid,
 			   (void *)(uintptr_t)NT_PRFPREG, &iov) != 0)
-			return -1;
+			return 0;
 		if (ela_gdb_decode_be32(hex_val, &v32)) return -1;
 		memcpy(&slot, &fp_regs[32], 8);
 		slot = (slot & 0xffffffff00000000ULL) | v32;
@@ -1952,6 +1996,110 @@ static int rsp_binary_unescape(const char *src, size_t max_src,
 }
 
 /* -----------------------------------------------------------------------
+ * vFile helpers
+ * ---------------------------------------------------------------------- */
+
+/* Big-endian encode helpers for the GDB portable stat structure. */
+static void vfile_put_be32(uint8_t *p, uint32_t v)
+{
+	p[0] = (uint8_t)(v >> 24); p[1] = (uint8_t)(v >> 16);
+	p[2] = (uint8_t)(v >>  8); p[3] = (uint8_t)(v);
+}
+
+static void vfile_put_be64(uint8_t *p, uint64_t v)
+{
+	vfile_put_be32(p,     (uint32_t)(v >> 32));
+	vfile_put_be32(p + 4, (uint32_t)(v));
+}
+
+/*
+ * Encode a host struct stat into the 64-byte GDB fio_stat structure.
+ * Fields are big-endian; layout: 7×uint32 + 3×uint64 + 3×uint32.
+ */
+static void vfile_encode_stat(uint8_t *buf, const struct stat *st)
+{
+	memset(buf, 0, 64);
+	vfile_put_be32(buf +  0, (uint32_t)st->st_dev);
+	vfile_put_be32(buf +  4, (uint32_t)st->st_ino);
+	vfile_put_be32(buf +  8, (uint32_t)st->st_mode);
+	vfile_put_be32(buf + 12, (uint32_t)st->st_nlink);
+	vfile_put_be32(buf + 16, (uint32_t)st->st_uid);
+	vfile_put_be32(buf + 20, (uint32_t)st->st_gid);
+	vfile_put_be32(buf + 24, (uint32_t)st->st_rdev);
+	vfile_put_be64(buf + 28, (uint64_t)st->st_size);
+	vfile_put_be64(buf + 36, (uint64_t)st->st_blksize);
+	vfile_put_be64(buf + 44, (uint64_t)st->st_blocks);
+	vfile_put_be32(buf + 52, (uint32_t)st->st_atime);
+	vfile_put_be32(buf + 56, (uint32_t)st->st_mtime);
+	vfile_put_be32(buf + 60, (uint32_t)st->st_ctime);
+}
+
+/*
+ * Translate GDB fileio open flags to Linux open flags.
+ * GDB uses its own constants (from gdb/fileio.h); Linux values differ.
+ */
+static int vfile_gdb_flags_to_linux(int gflags)
+{
+	int lflags = gflags & 3; /* O_RDONLY/O_WRONLY/O_RDWR values match */
+	if (gflags & 0x008) lflags |= O_APPEND;
+	if (gflags & 0x200) lflags |= O_CREAT;
+	if (gflags & 0x400) lflags |= O_TRUNC;
+	if (gflags & 0x800) lflags |= O_EXCL;
+	return lflags;
+}
+
+/* Send a vFile F-response with only a return code (no binary attachment). */
+static void vfile_send_rc(int conn_fd, int retcode, int err)
+{
+	char buf[32];
+	if (retcode < 0)
+		snprintf(buf, sizeof(buf), "F-1,%x", err);
+	else
+		snprintf(buf, sizeof(buf), "F%x", retcode);
+	rsp_send_str(conn_fd, buf);
+}
+
+/*
+ * Send a vFile F-response with a binary attachment: $F<retcode>;<esc-data>#cs
+ * datalen must be <= ELA_GDB_RSP_MAX_PACKET/2 to stay within the wire limit.
+ */
+static void vfile_send_data(int conn_fd, int retcode,
+			    const uint8_t *data, size_t datalen)
+{
+	static const char hx[] = "0123456789abcdef";
+	char buf[ELA_GDB_RSP_MAX_PACKET * 2 + 32];
+	uint8_t cksum = 0;
+	char hdr[24];
+	int hdr_len;
+	size_t i, pos = 0;
+	uint8_t b;
+
+	hdr_len = snprintf(hdr, sizeof(hdr), "F%x;", retcode);
+	buf[pos++] = '$';
+	for (i = 0; i < (size_t)hdr_len; i++) {
+		b = (uint8_t)hdr[i];
+		buf[pos++] = (char)b;
+		cksum += b;
+	}
+	for (i = 0; i < datalen; i++) {
+		b = data[i];
+		if (b == '$' || b == '#' || b == '*' || b == '}') {
+			buf[pos++] = '}';
+			buf[pos++] = (char)(b ^ 0x20u);
+			cksum += (uint8_t)'}';
+			cksum += (uint8_t)(b ^ 0x20u);
+		} else {
+			buf[pos++] = (char)b;
+			cksum += b;
+		}
+	}
+	buf[pos++] = '#';
+	buf[pos++] = hx[cksum >> 4];
+	buf[pos++] = hx[cksum & 0x0f];
+	send(conn_fd, buf, pos, 0);
+}
+
+/* -----------------------------------------------------------------------
  * RSP packet dispatch
  * ---------------------------------------------------------------------- */
 
@@ -1983,10 +2131,18 @@ static void handle_packet(int fd, char *pkt)
 
 	case 'p': /* Read single register */
 		regnum = (int)strtol(pkt + 1, NULL, 16);
-		if (reg_read_one(regnum, resp, sizeof(resp)) != 0)
-			rsp_send_str(fd, "E01");
-		else
+		if (reg_read_one(regnum, resp, sizeof(resp)) != 0) {
+			/*
+			 * Return register-not-available ('x' fill) rather than
+			 * E01 for unknown register numbers.  E01 triggers a
+			 * recursion bug in pwndbg's Python error handler.
+			 * Use 8 'x' chars (4 bytes) as a conservative fallback;
+			 * GDB treats any all-'x' response as "not available".
+			 */
+			rsp_send_str(fd, "xxxxxxxx");
+		} else {
 			rsp_send_str(fd, resp);
+		}
 		break;
 
 	case 'P': { /* Write single register: Pnn=r...r */
@@ -2104,6 +2260,158 @@ static void handle_packet(int fd, char *pkt)
 			       (void *)(uintptr_t)sig);
 			waitpid(g_pid, &wstatus, 0);
 			send_stop_reply(fd, wstatus);
+		} else if (strncmp(pkt, "vFile:open:", 11) == 0) {
+			char *rest = pkt + 11;
+			char *cm1, *cm2;
+			char name_buf[1024];
+			int gflags, fmode, vfd, res;
+
+			cm1 = strchr(rest, ',');
+			if (!cm1) { vfile_send_rc(fd, -1, EINVAL); break; }
+			*cm1 = '\0';
+			cm2 = strchr(cm1 + 1, ',');
+			if (!cm2) { vfile_send_rc(fd, -1, EINVAL); break; }
+			res = ela_gdb_hex_decode(rest, (uint8_t *)name_buf,
+						 sizeof(name_buf) - 1);
+			if (res < 0) { vfile_send_rc(fd, -1, EINVAL); break; }
+			name_buf[res] = '\0';
+			gflags = (int)strtol(cm1 + 1, NULL, 16);
+			fmode  = (int)strtol(cm2 + 1, NULL, 16);
+			errno  = 0;
+			vfd    = open(name_buf,
+				      vfile_gdb_flags_to_linux(gflags),
+				      (mode_t)fmode);
+			vfile_send_rc(fd, vfd < 0 ? -1 : vfd,
+				      vfd < 0 ? errno : 0);
+
+		} else if (strncmp(pkt, "vFile:close:", 12) == 0) {
+			int vfd = (int)strtol(pkt + 12, NULL, 16);
+			/* Refuse to close stdin/stdout/stderr */
+			if (vfd < 3) { vfile_send_rc(fd, -1, EBADF); break; }
+			errno = 0;
+			vfile_send_rc(fd, close(vfd) == 0 ? 0 : -1, errno);
+
+		} else if (strncmp(pkt, "vFile:pread:", 12) == 0) {
+			char *rest = pkt + 12;
+			char *cm1, *cm2;
+			int vfd;
+			size_t count;
+			off_t offset;
+			ssize_t nr;
+
+			cm1 = strchr(rest, ',');
+			if (!cm1) { vfile_send_rc(fd, -1, EINVAL); break; }
+			*cm1 = '\0';
+			cm2 = strchr(cm1 + 1, ',');
+			if (!cm2) { vfile_send_rc(fd, -1, EINVAL); break; }
+			*cm2 = '\0';
+			vfd    = (int)strtol(rest, NULL, 16);
+			count  = (size_t)strtoul(cm1 + 1, NULL, 16);
+			offset = (off_t)strtoull(cm2 + 1, NULL, 16);
+			if (count > sizeof(data_buf))
+				count = sizeof(data_buf);
+			errno = 0;
+			nr = pread(vfd, data_buf, count, offset);
+			if (nr < 0)
+				vfile_send_rc(fd, -1, errno);
+			else
+				vfile_send_data(fd, (int)nr,
+						data_buf, (size_t)nr);
+
+		} else if (strncmp(pkt, "vFile:pwrite:", 13) == 0) {
+			char *rest = pkt + 13;
+			char *cm1, *cm2, *semi;
+			int vfd, decoded;
+			size_t count;
+			off_t offset;
+			ssize_t nw;
+
+			cm1 = strchr(rest, ',');
+			if (!cm1) { vfile_send_rc(fd, -1, EINVAL); break; }
+			*cm1 = '\0';
+			cm2 = strchr(cm1 + 1, ',');
+			if (!cm2) { vfile_send_rc(fd, -1, EINVAL); break; }
+			*cm2 = '\0';
+			semi = strchr(cm2 + 1, ';');
+			if (!semi) { vfile_send_rc(fd, -1, EINVAL); break; }
+			*semi = '\0';
+			vfd    = (int)strtol(rest, NULL, 16);
+			count  = (size_t)strtoul(cm1 + 1, NULL, 16);
+			offset = (off_t)strtoull(cm2 + 1, NULL, 16);
+			if (count > sizeof(data_buf))
+				count = sizeof(data_buf);
+			decoded = rsp_binary_unescape(semi + 1, count * 2 + 1,
+						      data_buf, count);
+			if (decoded < 0) { vfile_send_rc(fd, -1, EINVAL); break; }
+			errno = 0;
+			nw = pwrite(vfd, data_buf, (size_t)decoded, offset);
+			vfile_send_rc(fd, nw < 0 ? -1 : (int)nw,
+				      nw < 0 ? errno : 0);
+
+		} else if (strncmp(pkt, "vFile:fstat:", 12) == 0) {
+			int vfd = (int)strtol(pkt + 12, NULL, 16);
+			struct stat st;
+			uint8_t stat_buf[64];
+
+			errno = 0;
+			if (fstat(vfd, &st) != 0) {
+				vfile_send_rc(fd, -1, errno);
+				break;
+			}
+			vfile_encode_stat(stat_buf, &st);
+			vfile_send_data(fd, (int)sizeof(stat_buf),
+					stat_buf, sizeof(stat_buf));
+
+		} else if (strncmp(pkt, "vFile:stat:", 11) == 0) {
+			char name_buf[1024];
+			struct stat st;
+			uint8_t stat_buf[64];
+			int res = ela_gdb_hex_decode(pkt + 11,
+						     (uint8_t *)name_buf,
+						     sizeof(name_buf) - 1);
+			if (res < 0) { vfile_send_rc(fd, -1, EINVAL); break; }
+			name_buf[res] = '\0';
+			errno = 0;
+			if (stat(name_buf, &st) != 0) {
+				vfile_send_rc(fd, -1, errno);
+				break;
+			}
+			vfile_encode_stat(stat_buf, &st);
+			vfile_send_data(fd, (int)sizeof(stat_buf),
+					stat_buf, sizeof(stat_buf));
+
+		} else if (strncmp(pkt, "vFile:unlink:", 13) == 0) {
+			char name_buf[1024];
+			int res = ela_gdb_hex_decode(pkt + 13,
+						     (uint8_t *)name_buf,
+						     sizeof(name_buf) - 1);
+			if (res < 0) { vfile_send_rc(fd, -1, EINVAL); break; }
+			name_buf[res] = '\0';
+			errno = 0;
+			vfile_send_rc(fd, unlink(name_buf) == 0 ? 0 : -1,
+				      errno);
+
+		} else if (strncmp(pkt, "vFile:readlink:", 15) == 0) {
+			char name_buf[1024];
+			ssize_t rlen;
+			int res = ela_gdb_hex_decode(pkt + 15,
+						     (uint8_t *)name_buf,
+						     sizeof(name_buf) - 1);
+			if (res < 0) { vfile_send_rc(fd, -1, EINVAL); break; }
+			name_buf[res] = '\0';
+			errno = 0;
+			rlen = readlink(name_buf, hex, sizeof(hex) - 1);
+			if (rlen < 0)
+				vfile_send_rc(fd, -1, errno);
+			else
+				vfile_send_data(fd, (int)rlen,
+						(const uint8_t *)hex,
+						(size_t)rlen);
+
+		} else if (strncmp(pkt, "vFile:setfs:", 12) == 0) {
+			/* Only local filesystem is supported; accept any pid. */
+			vfile_send_rc(fd, 0, 0);
+
 		} else {
 			rsp_send_str(fd, ""); /* unknown v-packet */
 		}
@@ -2160,7 +2468,8 @@ static void handle_packet(int fd, char *pkt)
 				 ";qXfer:exec-file:read+"
 				 ";qXfer:auxv:read+"
 				 ";qXfer:features:read+"
-				 ";qXfer:libraries-svr4:read+",
+				 ";qXfer:libraries-svr4:read+"
+				 ";vFile+",
 				 ELA_GDB_RSP_MAX_PACKET);
 			rsp_send_str(fd, resp);
 		} else if (strcmp(pkt, "qAttached") == 0) {
