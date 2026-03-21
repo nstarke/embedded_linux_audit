@@ -4468,7 +4468,10 @@ static int tcp_listen_port(uint16_t port)
 	if (fd < 0)
 		return -1;
 
-	setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+	if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
+		close(fd);
+		return -1;
+	}
 
 	memset(&addr, 0, sizeof(addr));
 	addr.sin_family      = AF_INET;
