@@ -2785,6 +2785,14 @@ static void handle_qoffsets(int fd)
 		goto out_zero;
 	}
 
+	/*
+	 * Sanity-cap the program header count read from the file: the ELF
+	 * spec allows up to 65535 entries, but no real binary needs remotely
+	 * that many.  Capping prevents a malicious/corrupt ELF from driving
+	 * an arbitrarily long loop.
+	 */
+#define ELA_GDB_MAX_PHNUM 1024
+
 	if (e_ident[EI_CLASS] == ELFCLASS64) {
 		Elf64_Ehdr ehdr;
 		lseek(elf_fd, 0, SEEK_SET);
@@ -2792,12 +2800,15 @@ static void handle_qoffsets(int fd)
 		    ehdr.e_type == ET_DYN) {
 			int i;
 			int first = 1;
+			int phnum = ehdr.e_phnum < ELA_GDB_MAX_PHNUM
+				    ? (int)ehdr.e_phnum : ELA_GDB_MAX_PHNUM;
 			is_pie = 1;
-			for (i = 0; i < (int)ehdr.e_phnum; i++) {
+			for (i = 0; i < phnum; i++) {
 				Elf64_Phdr phdr;
 				off_t off = (off_t)ehdr.e_phoff +
 					    i * (off_t)ehdr.e_phentsize;
-				lseek(elf_fd, off, SEEK_SET);
+				if (lseek(elf_fd, off, SEEK_SET) == (off_t)-1)
+					break;
 				if (read(elf_fd, &phdr, sizeof(phdr)) !=
 				    (ssize_t)sizeof(phdr))
 					break;
@@ -2815,12 +2826,15 @@ static void handle_qoffsets(int fd)
 		    ehdr.e_type == ET_DYN) {
 			int i;
 			int first = 1;
+			int phnum = ehdr.e_phnum < ELA_GDB_MAX_PHNUM
+				    ? (int)ehdr.e_phnum : ELA_GDB_MAX_PHNUM;
 			is_pie = 1;
-			for (i = 0; i < (int)ehdr.e_phnum; i++) {
+			for (i = 0; i < phnum; i++) {
 				Elf32_Phdr phdr;
 				off_t off = (off_t)ehdr.e_phoff +
 					    i * (off_t)ehdr.e_phentsize;
-				lseek(elf_fd, off, SEEK_SET);
+				if (lseek(elf_fd, off, SEEK_SET) == (off_t)-1)
+					break;
 				if (read(elf_fd, &phdr, sizeof(phdr)) !=
 				    (ssize_t)sizeof(phdr))
 					break;
@@ -2833,6 +2847,8 @@ static void handle_qoffsets(int fd)
 			}
 		}
 	}
+
+#undef ELA_GDB_MAX_PHNUM
 	close(elf_fd);
 
 	if (!is_pie) goto out_zero;
@@ -3397,6 +3413,13 @@ static void handle_packet(int fd, char *pkt)
 			gflags = (int)strtol(cm1 + 1, NULL, 16);
 			fmode  = (int)strtol(cm2 + 1, NULL, 16);
 			errno  = 0;
+			/*
+			 * The fd returned by open() is intentionally kept open
+			 * across packets: GDB references it by number in later
+			 * vFile:pread/pwrite/fstat/close commands.  The client
+			 * is responsible for issuing vFile:close to release it.
+			 */
+			/* coverity[resource_leak] */
 			vfd    = open(name_buf,
 				      vfile_gdb_flags_to_linux(gflags),
 				      (mode_t)fmode);
