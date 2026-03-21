@@ -944,7 +944,9 @@ int uboot_env_scan_core_main(int argc, char **argv)
 		write_script_effective_path = write_script_path;
 
 		if (is_http_write_source(write_script_path)) {
+			mode_t old_umask = umask(0177);
 			tmp_fd = mkstemp(downloaded_write_script_path);
+			umask(old_umask);
 			if (tmp_fd < 0) {
 				err_printf("Cannot create temp file for --write URL %s: %s\n",
 					write_script_path,
