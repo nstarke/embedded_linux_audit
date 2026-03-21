@@ -35,6 +35,7 @@ TPM2_ALG_ID parse_hash_alg(const char *name)
 	return (TPM2_ALG_ID)alg;
 }
 
+/* LCOV_EXCL_START - tpm2_open/tpm2_close require a real /dev/tpm0 device */
 int tpm2_open(ESYS_CONTEXT **esys, TSS2_TCTI_CONTEXT **tcti)
 {
 	TSS2_ABI_VERSION abi = TSS2_ABI_VERSION_CURRENT;
@@ -87,5 +88,6 @@ void tpm2_close(ESYS_CONTEXT **esys, TSS2_TCTI_CONTEXT **tcti)
 		*tcti = NULL;
 	}
 }
+/* LCOV_EXCL_STOP */
 
 #endif /* ELA_HAS_TPM2 */

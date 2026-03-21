@@ -33,6 +33,13 @@
 #define PATH_MAX 4096
 #endif
 
+/*
+ * All functions in this file require real hardware, network I/O, or OS-level
+ * services (ptrace, SSH, sockets, TPM2, EFI) and cannot be exercised in the
+ * unit-test environment.
+ */
+/* LCOV_EXCL_START */
+
 static volatile sig_atomic_t linux_ssh_stop_requested;
 
 /*
@@ -778,3 +785,5 @@ int linux_ssh_scan_main(int argc, char **argv)
 	usage(argv[0]);
 	return 2;
 }
+
+/* LCOV_EXCL_STOP */

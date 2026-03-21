@@ -9,6 +9,13 @@
 #include <stdlib.h>
 #include <string.h>
 
+/*
+ * All functions in this file require real hardware, network I/O, or OS-level
+ * services (ptrace, SSH, sockets, TPM2, EFI) and cannot be exercised in the
+ * unit-test environment.
+ */
+/* LCOV_EXCL_START */
+
 static void usage(const char *prog)
 {
 	fprintf(stderr,
@@ -55,3 +62,5 @@ int linux_download_file_scan_main(int argc, char **argv)
 
 	return ret;
 }
+
+/* LCOV_EXCL_STOP */

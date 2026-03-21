@@ -12,6 +12,13 @@
 
 #if !defined(ELA_HAS_TPM2)
 
+/*
+ * All functions in this file require real hardware, network I/O, or OS-level
+ * services (ptrace, SSH, sockets, TPM2, EFI) and cannot be exercised in the
+ * unit-test environment.
+ */
+/* LCOV_EXCL_START */
+
 static void usage(const char *prog)
 {
 	fprintf(stderr,
@@ -146,3 +153,5 @@ int tpm2_scan_main(int argc, char **argv)
 }
 
 #endif
+
+/* LCOV_EXCL_STOP */

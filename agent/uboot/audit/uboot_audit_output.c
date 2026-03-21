@@ -12,6 +12,13 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+/*
+ * All functions in this file require real hardware, network I/O, or OS-level
+ * services (ptrace, SSH, sockets, TPM2, EFI) and cannot be exercised in the
+ * unit-test environment.
+ */
+/* LCOV_EXCL_START */
+
 const char *audit_http_content_type(enum uboot_output_format fmt)
 {
 	return ela_uboot_audit_http_content_type(fmt);
@@ -170,3 +177,5 @@ void print_verbose_audit_end(enum uboot_output_format fmt, int rc)
 
 	uboot_audit_out_printf("audit run end: rc=%d\n", rc);
 }
+
+/* LCOV_EXCL_STOP */

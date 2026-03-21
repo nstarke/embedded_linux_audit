@@ -10,6 +10,13 @@
 #include <string.h>
 #include <unistd.h>
 
+/*
+ * All functions in this file require real hardware, network I/O, or OS-level
+ * services (ptrace, SSH, sockets, TPM2, EFI) and cannot be exercised in the
+ * unit-test environment.
+ */
+/* LCOV_EXCL_START */
+
 void ela_conf_load(struct ela_conf *conf)
 {
 	FILE *f;
@@ -119,3 +126,5 @@ void ela_conf_save(const struct ela_conf *conf)
 
 	fclose(f); /* also closes fd */
 }
+
+/* LCOV_EXCL_STOP */

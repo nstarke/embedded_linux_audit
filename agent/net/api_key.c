@@ -10,6 +10,13 @@
 #define MAX_KEYS  64
 #define KEY_FILE  "/tmp/ela.key"
 
+/*
+ * All functions in this file require real hardware, network I/O, or OS-level
+ * services (ptrace, SSH, sockets, TPM2, EFI) and cannot be exercised in the
+ * unit-test environment.
+ */
+/* LCOV_EXCL_START */
+
 static char keys[MAX_KEYS][ELA_API_KEY_MAX_LEN + 1];
 static int  key_count     = 0;
 static int  key_current   = 0;
@@ -76,3 +83,5 @@ void ela_api_key_confirm(void)
 {
 	key_confirmed = 1;
 }
+
+/* LCOV_EXCL_STOP */

@@ -68,6 +68,13 @@
 #define PATH_MAX 4096
 #endif
 
+/*
+ * All functions in this file require real hardware, network I/O, or OS-level
+ * services (ptrace, SSH, sockets, TPM2, EFI) and cannot be exercised in the
+ * unit-test environment.
+ */
+/* LCOV_EXCL_START */
+
 static int ssl_ctx_add_embedded_ca_store(X509_STORE *store, char *errbuf, size_t errbuf_len)
 {
 	BIO *bio;
@@ -1775,3 +1782,5 @@ int ela_http_get_to_file(const char *uri, const char *output_path,
 		return rc;
 	}
 }
+
+/* LCOV_EXCL_STOP */
