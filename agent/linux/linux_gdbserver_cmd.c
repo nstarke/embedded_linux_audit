@@ -250,11 +250,11 @@ static int rsp_send_binary_qxfer(int fd, const uint8_t *data, size_t data_len,
 		if (b == '$' || b == '#' || b == '*' || b == '}') {
 			buf[pos++] = '}';
 			buf[pos++] = (char)(b ^ 0x20u);
-			cksum += (uint8_t)'}';
-			cksum += (uint8_t)(b ^ 0x20u);
+			cksum = (uint8_t)(cksum + (uint8_t)'}');
+			cksum = (uint8_t)(cksum + (uint8_t)(b ^ 0x20u));
 		} else {
 			buf[pos++] = (char)b;
-			cksum += b;
+			cksum = (uint8_t)(cksum + b);
 		}
 	}
 
@@ -3079,11 +3079,11 @@ static void vfile_send_data(int conn_fd, int retcode,
 		if (b == '$' || b == '#' || b == '*' || b == '}') {
 			buf[pos++] = '}';
 			buf[pos++] = (char)(b ^ 0x20u);
-			cksum += (uint8_t)'}';
-			cksum += (uint8_t)(b ^ 0x20u);
+			cksum = (uint8_t)(cksum + (uint8_t)'}');
+			cksum = (uint8_t)(cksum + (uint8_t)(b ^ 0x20u));
 		} else {
 			buf[pos++] = (char)b;
-			cksum += b;
+			cksum = (uint8_t)(cksum + b);
 		}
 	}
 	buf[pos++] = '#';
