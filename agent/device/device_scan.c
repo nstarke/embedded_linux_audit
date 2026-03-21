@@ -242,6 +242,8 @@ uint64_t uboot_guess_size_from_ubi_sysfs(const char *dev)
 	if (!usable_eb_size)
 		return 0;
 
+	if (reserved_ebs > UINT64_MAX / usable_eb_size)
+		return UINT64_MAX;
 	return reserved_ebs * usable_eb_size;
 }
 
@@ -294,6 +296,8 @@ uint64_t uboot_guess_size_from_block_sysfs(const char *dev)
 	if (!logical_block_size)
 		logical_block_size = 512;
 
+	if (sectors > UINT64_MAX / logical_block_size)
+		return UINT64_MAX;
 	return sectors * logical_block_size;
 }
 
