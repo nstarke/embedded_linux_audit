@@ -3,6 +3,8 @@
 #include "linux_gdbserver_util.h"
 #include "../embedded_linux_audit_cmd.h"
 
+#include <libxml/tree.h>
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -90,7 +92,8 @@
 /* Maximum byte size of the SVR4 library-list XML document */
 #define ELA_GDB_SVR4_XML_MAX     16384
 
-/* Maximum byte sizes of other on-demand XML documents */
+/* Maximum byte sizes of on-demand XML documents */
+#define ELA_GDB_TARGET_XML_MAX   8192
 #define ELA_GDB_THREADS_XML_MAX  8192
 #define ELA_GDB_MEMMAP_XML_MAX   32768
 
@@ -174,94 +177,9 @@ static int   g_threads_xml_len = -1;
 static char  g_memmap_xml[ELA_GDB_MEMMAP_XML_MAX];
 static int   g_memmap_xml_len = -1;
 
-/*
- * Target XML served by qXfer:features:read:target.xml.
- * GDB uses this to know the register layout and ABI.
- */
-#if defined(__x86_64__)
-static const char k_target_xml[] =
-	"<?xml version=\"1.0\"?>"
-	"<!DOCTYPE target SYSTEM \"gdb-target.dtd\">"
-	"<target>"
-	  "<architecture>i386:x86-64</architecture>"
-	  "<feature name=\"org.gnu.gdb.i386.core\">"
-	    "<reg name=\"rax\"    bitsize=\"64\" type=\"int64\"/>"
-	    "<reg name=\"rbx\"    bitsize=\"64\" type=\"int64\"/>"
-	    "<reg name=\"rcx\"    bitsize=\"64\" type=\"int64\"/>"
-	    "<reg name=\"rdx\"    bitsize=\"64\" type=\"int64\"/>"
-	    "<reg name=\"rsi\"    bitsize=\"64\" type=\"int64\"/>"
-	    "<reg name=\"rdi\"    bitsize=\"64\" type=\"int64\"/>"
-	    "<reg name=\"rbp\"    bitsize=\"64\" type=\"data_ptr\"/>"
-	    "<reg name=\"rsp\"    bitsize=\"64\" type=\"data_ptr\"/>"
-	    "<reg name=\"r8\"     bitsize=\"64\" type=\"int64\"/>"
-	    "<reg name=\"r9\"     bitsize=\"64\" type=\"int64\"/>"
-	    "<reg name=\"r10\"    bitsize=\"64\" type=\"int64\"/>"
-	    "<reg name=\"r11\"    bitsize=\"64\" type=\"int64\"/>"
-	    "<reg name=\"r12\"    bitsize=\"64\" type=\"int64\"/>"
-	    "<reg name=\"r13\"    bitsize=\"64\" type=\"int64\"/>"
-	    "<reg name=\"r14\"    bitsize=\"64\" type=\"int64\"/>"
-	    "<reg name=\"r15\"    bitsize=\"64\" type=\"int64\"/>"
-	    "<reg name=\"rip\"    bitsize=\"64\" type=\"code_ptr\"/>"
-	    "<reg name=\"eflags\" bitsize=\"32\" type=\"int32\"/>"
-	    "<reg name=\"cs\"     bitsize=\"32\" type=\"int32\"/>"
-	    "<reg name=\"ss\"     bitsize=\"32\" type=\"int32\"/>"
-	    "<reg name=\"ds\"     bitsize=\"32\" type=\"int32\"/>"
-	    "<reg name=\"es\"     bitsize=\"32\" type=\"int32\"/>"
-	    "<reg name=\"fs\"     bitsize=\"32\" type=\"int32\"/>"
-	    "<reg name=\"gs\"     bitsize=\"32\" type=\"int32\"/>"
-	  "</feature>"
-	"</target>";
-#elif defined(__aarch64__)
-static const char k_target_xml[] =
-	"<?xml version=\"1.0\"?>"
-	"<!DOCTYPE target SYSTEM \"gdb-target.dtd\">"
-	"<target><architecture>aarch64</architecture></target>";
-#elif defined(__arm__)
-static const char k_target_xml[] =
-	"<?xml version=\"1.0\"?>"
-	"<!DOCTYPE target SYSTEM \"gdb-target.dtd\">"
-	"<target><architecture>arm</architecture></target>";
-#elif defined(__mips__) && defined(__mips64)
-static const char k_target_xml[] =
-	"<?xml version=\"1.0\"?>"
-	"<!DOCTYPE target SYSTEM \"gdb-target.dtd\">"
-	"<target><architecture>mips:isa64</architecture></target>";
-#elif defined(__mips__) && defined(__MIPSEL__)
-static const char k_target_xml[] =
-	"<?xml version=\"1.0\"?>"
-	"<!DOCTYPE target SYSTEM \"gdb-target.dtd\">"
-	"<target><architecture>mipsel</architecture></target>";
-#elif defined(__mips__)
-static const char k_target_xml[] =
-	"<?xml version=\"1.0\"?>"
-	"<!DOCTYPE target SYSTEM \"gdb-target.dtd\">"
-	"<target><architecture>mips</architecture></target>";
-#elif defined(__powerpc64__)
-static const char k_target_xml[] =
-	"<?xml version=\"1.0\"?>"
-	"<!DOCTYPE target SYSTEM \"gdb-target.dtd\">"
-	"<target><architecture>powerpc:common64</architecture></target>";
-#elif defined(__powerpc__)
-static const char k_target_xml[] =
-	"<?xml version=\"1.0\"?>"
-	"<!DOCTYPE target SYSTEM \"gdb-target.dtd\">"
-	"<target><architecture>powerpc:common</architecture></target>";
-#elif defined(__riscv) && (__riscv_xlen == 64)
-static const char k_target_xml[] =
-	"<?xml version=\"1.0\"?>"
-	"<!DOCTYPE target SYSTEM \"gdb-target.dtd\">"
-	"<target><architecture>riscv:rv64</architecture></target>";
-#elif defined(__riscv) && (__riscv_xlen == 32)
-static const char k_target_xml[] =
-	"<?xml version=\"1.0\"?>"
-	"<!DOCTYPE target SYSTEM \"gdb-target.dtd\">"
-	"<target><architecture>riscv:rv32</architecture></target>";
-#else
-static const char k_target_xml[] =
-	"<?xml version=\"1.0\"?>"
-	"<!DOCTYPE target SYSTEM \"gdb-target.dtd\">"
-	"<target></target>";
-#endif
+/* Target XML cache (built once per session by build_target_xml) */
+static char  g_target_xml[ELA_GDB_TARGET_XML_MAX];
+static int   g_target_xml_len = -1;
 
 static void handle_signal(int sig)
 {
@@ -2280,29 +2198,137 @@ static void bp_clear_all(void)
 }
 
 /* -----------------------------------------------------------------------
- * Thread-list XML builder  (qXfer:threads:read)
+ * XML document builders using libxml2
  * ---------------------------------------------------------------------- */
 
 /*
- * Build a <threads> XML document by walking /proc/<pid>/task/.
- * Each thread gets a "p<pid>.t<tid>" id (multi-process notation) and
- * its name from /proc/<pid>/task/<tid>/comm.
- *
- * Returns byte length (excluding NUL) on success, -1 on failure.
+ * Helper: copy the xmlDocDumpMemory output into a fixed caller buffer.
+ * Frees buf and returns the byte count, or -1 on overflow.
+ */
+static int xml_dump_to_buf(xmlChar *buf, int bufsize,
+			   char *out, size_t out_sz)
+{
+	int ret = -1;
+
+	if (buf && bufsize > 0 && (size_t)bufsize + 1 <= out_sz) {
+		memcpy(out, buf, (size_t)bufsize);
+		out[bufsize] = '\0';
+		ret = bufsize;
+	}
+	if (buf)
+		xmlFree(buf);
+	return ret;
+}
+
+/*
+ * Build target.xml: arch description + register layout.
+ * Result is cached in g_target_xml / g_target_xml_len.
+ */
+static int build_target_xml(char *out, size_t out_sz)
+{
+	xmlDocPtr doc;
+	xmlNodePtr root;
+	xmlChar *buf = NULL;
+	int bufsize = 0;
+
+	doc = xmlNewDoc(BAD_CAST "1.0");
+	if (!doc)
+		return -1;
+
+	xmlCreateIntSubset(doc, BAD_CAST "target", NULL,
+			   BAD_CAST "gdb-target.dtd");
+
+	root = xmlNewNode(NULL, BAD_CAST "target");
+	xmlDocSetRootElement(doc, root);
+
+#if defined(__x86_64__)
+	{
+		static const struct {
+			const char *name, *bits, *type;
+		} regs[] = {
+			{"rax","64","int64"}, {"rbx","64","int64"},
+			{"rcx","64","int64"}, {"rdx","64","int64"},
+			{"rsi","64","int64"}, {"rdi","64","int64"},
+			{"rbp","64","data_ptr"}, {"rsp","64","data_ptr"},
+			{"r8","64","int64"}, {"r9","64","int64"},
+			{"r10","64","int64"}, {"r11","64","int64"},
+			{"r12","64","int64"}, {"r13","64","int64"},
+			{"r14","64","int64"}, {"r15","64","int64"},
+			{"rip","64","code_ptr"}, {"eflags","32","int32"},
+			{"cs","32","int32"}, {"ss","32","int32"},
+			{"ds","32","int32"}, {"es","32","int32"},
+			{"fs","32","int32"}, {"gs","32","int32"},
+			{NULL, NULL, NULL}
+		};
+		int i;
+		xmlNodePtr feat;
+
+		xmlNewChild(root, NULL, BAD_CAST "architecture",
+			    BAD_CAST "i386:x86-64");
+		feat = xmlNewChild(root, NULL, BAD_CAST "feature", NULL);
+		xmlNewProp(feat, BAD_CAST "name",
+			   BAD_CAST "org.gnu.gdb.i386.core");
+		for (i = 0; regs[i].name; i++) {
+			xmlNodePtr reg = xmlNewChild(feat, NULL,
+						     BAD_CAST "reg", NULL);
+			xmlNewProp(reg, BAD_CAST "name",
+				   BAD_CAST regs[i].name);
+			xmlNewProp(reg, BAD_CAST "bitsize",
+				   BAD_CAST regs[i].bits);
+			xmlNewProp(reg, BAD_CAST "type",
+				   BAD_CAST regs[i].type);
+		}
+	}
+#elif defined(__aarch64__)
+	xmlNewChild(root, NULL, BAD_CAST "architecture", BAD_CAST "aarch64");
+#elif defined(__arm__)
+	xmlNewChild(root, NULL, BAD_CAST "architecture", BAD_CAST "arm");
+#elif defined(__mips__) && defined(__mips64)
+	xmlNewChild(root, NULL, BAD_CAST "architecture",
+		    BAD_CAST "mips:isa64");
+#elif defined(__mips__) && defined(__MIPSEL__)
+	xmlNewChild(root, NULL, BAD_CAST "architecture", BAD_CAST "mipsel");
+#elif defined(__mips__)
+	xmlNewChild(root, NULL, BAD_CAST "architecture", BAD_CAST "mips");
+#elif defined(__powerpc64__)
+	xmlNewChild(root, NULL, BAD_CAST "architecture",
+		    BAD_CAST "powerpc:common64");
+#elif defined(__powerpc__)
+	xmlNewChild(root, NULL, BAD_CAST "architecture",
+		    BAD_CAST "powerpc:common");
+#elif defined(__riscv) && (__riscv_xlen == 64)
+	xmlNewChild(root, NULL, BAD_CAST "architecture",
+		    BAD_CAST "riscv:rv64");
+#elif defined(__riscv) && (__riscv_xlen == 32)
+	xmlNewChild(root, NULL, BAD_CAST "architecture",
+		    BAD_CAST "riscv:rv32");
+#endif
+
+	xmlDocDumpMemory(doc, &buf, &bufsize);
+	xmlFreeDoc(doc);
+	return xml_dump_to_buf(buf, bufsize, out, out_sz);
+}
+
+/*
+ * Build <threads> XML by walking /proc/<pid>/task/.
+ * libxml2 handles all attribute escaping automatically.
  */
 static int build_threads_xml(pid_t pid, char *out, size_t out_sz)
 {
+	xmlDocPtr doc;
+	xmlNodePtr root;
+	xmlChar *buf = NULL;
+	int bufsize = 0;
 	char task_path[32];
 	DIR *dir;
 	struct dirent *ent;
-	size_t pos = 0;
-	int n;
 
-	n = snprintf(out + pos, out_sz - pos,
-		     "<?xml version=\"1.0\"?><threads>");
-	if (n < 0 || (size_t)n >= out_sz - pos)
+	doc = xmlNewDoc(BAD_CAST "1.0");
+	if (!doc)
 		return -1;
-	pos += (size_t)n;
+
+	root = xmlNewNode(NULL, BAD_CAST "threads");
+	xmlDocSetRootElement(doc, root);
 
 	snprintf(task_path, sizeof(task_path), "/proc/%d/task", (int)pid);
 	dir = opendir(task_path);
@@ -2314,8 +2340,8 @@ static int build_threads_xml(pid_t pid, char *out, size_t out_sz)
 			char comm[16];
 			int comm_fd;
 			ssize_t comm_len;
-			char name_attr[64]; /* escaped name attribute value */
-			int ni;
+			char id_buf[32];
+			xmlNodePtr thr;
 
 			if (ent->d_name[0] == '.')
 				continue;
@@ -2323,7 +2349,6 @@ static int build_threads_xml(pid_t pid, char *out, size_t out_sz)
 			if (*endp != '\0' || tid <= 0)
 				continue;
 
-			/* Read thread name from comm */
 			snprintf(comm_path, sizeof(comm_path),
 				 "/proc/%d/task/%d/comm",
 				 (int)pid, (int)tid);
@@ -2341,141 +2366,78 @@ static int build_threads_xml(pid_t pid, char *out, size_t out_sz)
 			}
 			comm[comm_len > 0 ? comm_len : 0] = '\0';
 
-			/*
-			 * XML-escape the name (replace & < > " with entities).
-			 * Comm strings from the kernel are plain ASCII process
-			 * names so in practice only '&' and '<' need guarding.
-			 */
-			ni = 0;
-			{
-				const char *cp = comm;
-				while (*cp && ni < (int)sizeof(name_attr) - 7) {
-					if (*cp == '&') {
-						memcpy(name_attr + ni,
-						       "&amp;", 5);
-						ni += 5;
-					} else if (*cp == '<') {
-						memcpy(name_attr + ni,
-						       "&lt;", 4);
-						ni += 4;
-					} else if (*cp == '>') {
-						memcpy(name_attr + ni,
-						       "&gt;", 4);
-						ni += 4;
-					} else if (*cp == '"') {
-						memcpy(name_attr + ni,
-						       "&quot;", 6);
-						ni += 6;
-					} else {
-						name_attr[ni++] = *cp;
-					}
-					cp++;
-				}
-			}
-			name_attr[ni] = '\0';
-
-			n = snprintf(out + pos, out_sz - pos,
-				     "<thread id=\"p%x.t%x\""
-				     " core=\"0\" name=\"%s\"/>",
-				     (unsigned)pid, (unsigned)tid,
-				     name_attr);
-			if (n < 0 || (size_t)n >= out_sz - pos)
-				break;
-			pos += (size_t)n;
+			thr = xmlNewChild(root, NULL, BAD_CAST "thread", NULL);
+			snprintf(id_buf, sizeof(id_buf), "p%x.t%x",
+				 (unsigned)pid, (unsigned)tid);
+			xmlNewProp(thr, BAD_CAST "id",   BAD_CAST id_buf);
+			xmlNewProp(thr, BAD_CAST "core", BAD_CAST "0");
+			xmlNewProp(thr, BAD_CAST "name", BAD_CAST comm);
 		}
 		closedir(dir);
 	}
 
-	n = snprintf(out + pos, out_sz - pos, "</threads>");
-	if (n < 0 || (size_t)n >= out_sz - pos)
-		return -1;
-	pos += (size_t)n;
-
-	return (int)pos;
+	xmlDocDumpMemory(doc, &buf, &bufsize);
+	xmlFreeDoc(doc);
+	return xml_dump_to_buf(buf, bufsize, out, out_sz);
 }
 
-/* -----------------------------------------------------------------------
- * Memory-map XML builder  (qXfer:memory-map:read)
- * ---------------------------------------------------------------------- */
-
 /*
- * Build a GDB <memory-map> XML document from /proc/<pid>/maps.
- * Each line yields one <memory> element whose type is:
- *   "ram"  — read-write or read-only anonymous / file-backed
- *   "rom"  — read-only, no-write, no-exec (rare but possible)
- *   "flash"— not used; we don't model flash here
- *
- * GDB uses this to skip un-readable ranges in memory searches and to
- * display correct permissions in pwndbg's vmmap output.
- *
- * Returns byte length (excluding NUL) on success, -1 on failure.
+ * Build <memory-map> XML from /proc/<pid>/maps.
+ * Includes a DOCTYPE referencing the GDB memory-map DTD.
  */
 static int build_memmap_xml(pid_t pid, char *out, size_t out_sz)
 {
+	xmlDocPtr doc;
+	xmlNodePtr root;
+	xmlChar *buf = NULL;
+	int bufsize = 0;
 	char maps_path[32];
 	FILE *f;
 	char line[512];
-	size_t pos = 0;
-	int n;
 
-	n = snprintf(out + pos, out_sz - pos,
-		     "<?xml version=\"1.0\"?>"
-		     "<!DOCTYPE memory-map "
-		     "PUBLIC \"+//IDN gnu.org//DTD GDB Memory Map V1.0//EN\""
-		     " \"http://sourceware.org/gdb/gdb-memory-map.dtd\">"
-		     "<memory-map>");
-	if (n < 0 || (size_t)n >= out_sz - pos)
+	doc = xmlNewDoc(BAD_CAST "1.0");
+	if (!doc)
 		return -1;
-	pos += (size_t)n;
+
+	xmlCreateIntSubset(doc, BAD_CAST "memory-map",
+			   BAD_CAST "+//IDN gnu.org//DTD GDB Memory Map V1.0//EN",
+			   BAD_CAST "http://sourceware.org/gdb/gdb-memory-map.dtd");
+
+	root = xmlNewNode(NULL, BAD_CAST "memory-map");
+	xmlDocSetRootElement(doc, root);
 
 	snprintf(maps_path, sizeof(maps_path), "/proc/%d/maps", (int)pid);
 	f = fopen(maps_path, "r");
-	if (!f)
-		return -1;
+	if (f) {
+		while (fgets(line, sizeof(line), f)) {
+			unsigned long long start, end, length;
+			char perms[8];
+			const char *type;
+			char start_buf[20], len_buf[20];
+			xmlNodePtr mem;
 
-	while (fgets(line, sizeof(line), f)) {
-		unsigned long long start, end;
-		char perms[8];
-		unsigned long long length;
-		const char *type;
+			if (sscanf(line, "%llx-%llx %7s",
+				   &start, &end, perms) != 3)
+				continue;
+			length = end - start;
+			if (length == 0)
+				continue;
 
-		/*
-		 * /proc/pid/maps format:
-		 *   start-end perms offset dev inode [pathname]
-		 * perms: rwxp / rwxs
-		 */
-		if (sscanf(line, "%llx-%llx %7s", &start, &end, perms) != 3)
-			continue;
-
-		length = end - start;
-		if (length == 0)
-			continue;
-
-		/*
-		 * Map permissions to GDB memory type:
-		 *   writable → "ram" (GDB may issue write commands)
-		 *   read-only → "rom" (GDB treats as immutable)
-		 * Both tell GDB the region is readable, which is what
-		 * matters most for memory searches and display.
-		 */
-		type = (perms[1] == 'w') ? "ram" : "rom";
-
-		n = snprintf(out + pos, out_sz - pos,
-			     "<memory type=\"%s\""
-			     " start=\"0x%llx\" length=\"0x%llx\"/>",
-			     type, start, length);
-		if (n < 0 || (size_t)n >= out_sz - pos)
-			break;
-		pos += (size_t)n;
+			type = (perms[1] == 'w') ? "ram" : "rom";
+			mem = xmlNewChild(root, NULL, BAD_CAST "memory", NULL);
+			xmlNewProp(mem, BAD_CAST "type", BAD_CAST type);
+			snprintf(start_buf, sizeof(start_buf),
+				 "0x%llx", start);
+			snprintf(len_buf, sizeof(len_buf), "0x%llx", length);
+			xmlNewProp(mem, BAD_CAST "start",  BAD_CAST start_buf);
+			xmlNewProp(mem, BAD_CAST "length", BAD_CAST len_buf);
+		}
+		fclose(f);
 	}
-	fclose(f);
 
-	n = snprintf(out + pos, out_sz - pos, "</memory-map>");
-	if (n < 0 || (size_t)n >= out_sz - pos)
-		return -1;
-	pos += (size_t)n;
-
-	return (int)pos;
+	xmlDocDumpMemory(doc, &buf, &bufsize);
+	xmlFreeDoc(doc);
+	return xml_dump_to_buf(buf, bufsize, out, out_sz);
 }
 
 /* -----------------------------------------------------------------------
@@ -2484,113 +2446,134 @@ static int build_memmap_xml(pid_t pid, char *out, size_t out_sz)
 
 /*
  * Build the <library-list-svr4> XML document by walking /proc/<pid>/maps.
- *
- * For every mapped file whose path contains ".so" we emit one <library>
- * element.  Duplicate entries (multiple segments of the same .so) are
- * suppressed by scanning the already-written XML for name="<path>".
- * l_addr is the lowest mapping address for that path, which equals the
- * ELF load bias for PIC shared libraries linked at virtual base 0.
- * lm and l_ld are set to 0x0 because we do not traverse the r_debug /
- * link_map chain; GDB can still find and load symbols from the file.
- *
- * Returns the byte length of the XML (excluding NUL) on success,
- * or -1 if the output buffer is too small or /proc/<pid>/maps is
- * unreadable.
+ * Duplicate .so entries (multiple segments of the same file) are suppressed
+ * by walking root->children and checking the "name" attribute via xmlGetProp,
+ * avoiding any string-search in the serialised output.
+ * The XML declaration is stripped from the output because GDB's SVR4 packet
+ * handler expects bare XML content without the <?xml?> prolog.
  */
 static int build_libraries_svr4_xml(pid_t pid, char *out, size_t out_sz)
 {
+	xmlDocPtr doc;
+	xmlNodePtr root;
+	xmlChar *buf = NULL;
+	int bufsize = 0;
 	char maps_path[32];
 	FILE *f;
 	char line[512];
 	char path[256];
-	char needle[292]; /* "name=\"" (6) + path (256) + "\"" (1) + NUL */
-	size_t pos = 0;
-	int n;
-	unsigned long long start_addr;
-	char *p, *nl;
-	int fields;
+	char addr_buf[20];
 
-	n = snprintf(out, out_sz, "<library-list-svr4 version=\"1.0\">");
-	if (n < 0 || (size_t)n >= out_sz)
+	doc = xmlNewDoc(BAD_CAST "1.0");
+	if (!doc)
 		return -1;
-	pos = (size_t)n;
+
+	root = xmlNewNode(NULL, BAD_CAST "library-list-svr4");
+	xmlDocSetRootElement(doc, root);
+	xmlNewProp(root, BAD_CAST "version", BAD_CAST "1.0");
 
 	snprintf(maps_path, sizeof(maps_path), "/proc/%d/maps", (int)pid);
 	f = fopen(maps_path, "r");
-	if (!f)
-		goto footer;
+	if (f) {
+		while (fgets(line, sizeof(line), f)) {
+			unsigned long long start_addr;
+			char *p, *nl;
+			int fields;
+			xmlNodePtr child;
+			int dup;
 
-	while (fgets(line, sizeof(line), f)) {
-		/* Parse the start address (hex, no 0x prefix). */
-		if (sscanf(line, "%llx", &start_addr) != 1)
-			continue;
+			if (sscanf(line, "%llx", &start_addr) != 1)
+				continue;
 
-		/*
-		 * Skip to the path field.
-		 * Maps line format:
-		 *   start-end perms offset dev inode [path]
-		 * That is 5 whitespace-delimited tokens before the path.
-		 */
-		p = line;
-		fields = 0;
-		while (*p && fields < 5) {
-			while (*p && *p != ' ' && *p != '\t') p++;
-			while (*p == ' ' || *p == '\t') p++;
-			fields++;
+			p = line;
+			fields = 0;
+			while (*p && fields < 5) {
+				while (*p && *p != ' ' && *p != '\t') p++;
+				while (*p == ' ' || *p == '\t') p++;
+				fields++;
+			}
+			if (*p == '\0' || *p == '\n' || *p == '\r')
+				continue;
+
+			strncpy(path, p, sizeof(path) - 1);
+			path[sizeof(path) - 1] = '\0';
+			nl = strchr(path, '\n');
+			if (nl) *nl = '\0';
+			nl = strchr(path, '\r');
+			if (nl) *nl = '\0';
+
+			if (path[0] == '[')
+				continue;
+			if (strstr(path, ".so") == NULL)
+				continue;
+
+			/* Deduplicate via xmlGetProp instead of strstr */
+			dup = 0;
+			for (child = root->children; child;
+			     child = child->next) {
+				if (child->type == XML_ELEMENT_NODE) {
+					xmlChar *existing =
+						xmlGetProp(child,
+							   BAD_CAST "name");
+					if (existing) {
+						if (xmlStrcmp(existing,
+							      BAD_CAST path)
+						    == 0)
+							dup = 1;
+						xmlFree(existing);
+					}
+				}
+				if (dup)
+					break;
+			}
+			if (dup)
+				continue;
+
+			child = xmlNewChild(root, NULL,
+					    BAD_CAST "library", NULL);
+			xmlNewProp(child, BAD_CAST "name", BAD_CAST path);
+			xmlNewProp(child, BAD_CAST "lm",   BAD_CAST "0x0");
+			snprintf(addr_buf, sizeof(addr_buf),
+				 "0x%llx", start_addr);
+			xmlNewProp(child, BAD_CAST "l_addr",
+				   BAD_CAST addr_buf);
+			xmlNewProp(child, BAD_CAST "l_ld",  BAD_CAST "0x0");
 		}
-
-		if (*p == '\0' || *p == '\n' || *p == '\r')
-			continue; /* anonymous or special mapping — no path */
-
-		/* Copy path and strip trailing whitespace / newline. */
-		strncpy(path, p, sizeof(path) - 1);
-		path[sizeof(path) - 1] = '\0';
-		nl = strchr(path, '\n');
-		if (nl) *nl = '\0';
-		nl = strchr(path, '\r');
-		if (nl) *nl = '\0';
-
-		/* Skip kernel-synthetic entries like [vdso], [heap], [stack]. */
-		if (path[0] == '[')
-			continue;
-
-		/* Only include shared-library files. */
-		if (strstr(path, ".so") == NULL)
-			continue;
-
-		/*
-		 * Deduplicate: a single .so has several segments (r-x, r--,
-		 * rw-) that all appear in maps.  Only emit the first
-		 * (lowest-address) one by checking the already-written XML.
-		 */
-		snprintf(needle, sizeof(needle), "name=\"%s\"", path);
-		if (strstr(out, needle) != NULL)
-			continue;
-
-		/*
-		 * Leave at least 30 bytes for the closing tag.
-		 * If we can't fit another entry, stop collecting.
-		 */
-		if (pos + 30 >= out_sz)
-			break;
-
-		n = snprintf(out + pos, out_sz - pos - 30,
-			     "<library name=\"%s\""
-			     " lm=\"0x0\""
-			     " l_addr=\"0x%llx\""
-			     " l_ld=\"0x0\"/>",
-			     path, start_addr);
-		if (n > 0)
-			pos += (size_t)n;
+		fclose(f);
 	}
-	fclose(f);
 
-footer:
-	n = snprintf(out + pos, out_sz - pos, "</library-list-svr4>");
-	if (n < 0 || pos + (size_t)n >= out_sz)
+	xmlDocDumpMemory(doc, &buf, &bufsize);
+	xmlFreeDoc(doc);
+
+	if (!buf || bufsize <= 0)
 		return -1;
-	pos += (size_t)n;
-	return (int)pos;
+
+	/* Strip the <?xml ...?> prolog — GDB expects bare SVR4 content. */
+	{
+		const xmlChar *start = buf;
+		int copy_len;
+
+		if (bufsize > 5 &&
+		    xmlStrncmp(buf, BAD_CAST "<?xml", 5) == 0) {
+			const xmlChar *p =
+				(const xmlChar *)memchr(buf, '>',
+							(size_t)bufsize);
+			if (p) {
+				start = p + 1;
+				if (*start == '\n')
+					start++;
+			}
+		}
+		copy_len = bufsize - (int)(start - buf);
+		if (copy_len > 0 && (size_t)copy_len + 1 <= out_sz) {
+			memcpy(out, start, (size_t)copy_len);
+			out[copy_len] = '\0';
+			xmlFree(buf);
+			return copy_len;
+		}
+	}
+	xmlFree(buf);
+	return -1;
 }
 
 /* -----------------------------------------------------------------------
@@ -3518,6 +3501,7 @@ static void handle_packet(int fd, char *pkt)
 			g_svr4_xml_len    = -1;
 			g_threads_xml_len = -1;
 			g_memmap_xml_len  = -1;
+			g_target_xml_len  = -1;
 			g_current_tid     = new_pid;
 			memset(g_bps, 0, sizeof(g_bps));
 
@@ -4044,7 +4028,14 @@ static void handle_packet(int fd, char *pkt)
 				break;
 			}
 
-			xml_len = sizeof(k_target_xml) - 1; /* exclude NUL */
+			if (g_target_xml_len < 0)
+				g_target_xml_len = build_target_xml(
+					g_target_xml, sizeof(g_target_xml));
+			if (g_target_xml_len < 0) {
+				rsp_send_str(fd, "E00");
+				break;
+			}
+			xml_len = (size_t)g_target_xml_len;
 
 			if (xfer_off >= (uint64_t)xml_len) {
 				rsp_send_str(fd, "l");
@@ -4058,7 +4049,8 @@ static void handle_packet(int fd, char *pkt)
 				? avail : (size_t)xfer_len;
 
 			resp[0] = (chunk < avail) ? 'm' : 'l';
-			memcpy(resp + 1, k_target_xml + (size_t)xfer_off, chunk);
+			memcpy(resp + 1, g_target_xml + (size_t)xfer_off,
+			       chunk);
 			resp[1 + chunk] = '\0';
 			rsp_send_str(fd, resp);
 		} else if (strncmp(pkt, "qXfer:threads:read:", 19) == 0) {
@@ -4355,6 +4347,7 @@ static int run_session(int conn_fd, pid_t pid, int attach_wstatus)
 	g_svr4_xml_len     = -1;
 	g_threads_xml_len  = -1;
 	g_memmap_xml_len   = -1;
+	g_target_xml_len   = -1;
 	g_noack            = 0;
 	g_pass_signals     = 0;
 	g_current_tid      = pid;
@@ -4364,6 +4357,7 @@ static int run_session(int conn_fd, pid_t pid, int attach_wstatus)
 	g_in_syscall       = 0;
 	g_last_sysno       = 0;
 	memset(g_bps, 0, sizeof(g_bps));
+	xmlInitParser();
 
 	/*
 	 * Make syscall stops distinguishable from regular SIGTRAP:
