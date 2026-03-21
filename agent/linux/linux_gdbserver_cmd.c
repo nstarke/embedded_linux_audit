@@ -3092,7 +3092,7 @@ static void vfile_send_data(int conn_fd, int retcode,
 	for (i = 0; i < (size_t)hdr_len; i++) {
 		b = (uint8_t)hdr[i];
 		buf[pos++] = (char)b;
-		cksum += b;
+		cksum = (uint8_t)(cksum + b);
 	}
 	for (i = 0; i < datalen; i++) {
 		b = data[i];
