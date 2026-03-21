@@ -17,8 +17,10 @@ static const char *const interactive_top_level_commands[] = {
 static const char *const interactive_group_arch[] = { "bit", "isa", "endianness", NULL };
 static const char *const interactive_group_uboot[] = { "env", "image", "audit", NULL };
 static const char *const interactive_group_linux[] = {
-	"dmesg", "download-file", "execute-command", "grep", "list-files", "list-symlinks", "remote-copy", "ssh", NULL,
+	"dmesg", "download-file", "execute-command", "grep", "list-files", "list-symlinks", "remote-copy", "ssh", "process", "gdbserver", NULL,
 };
+static const char *const interactive_group_linux_process[] = { "watch", NULL };
+static const char *const interactive_group_linux_process_watch[] = { "on", "off", "list", NULL };
 static const char *const interactive_group_efi[] = { "orom", "dump-vars", NULL };
 static const char *const interactive_group_bios[] = { "orom", NULL };
 static const char *const interactive_set_variables[] = {
@@ -39,8 +41,16 @@ const char *const *ela_interactive_candidates_for_position(int argc, char **argv
 		return interactive_group_arch;
 	if (!strcmp(argv[0], "uboot"))
 		return interactive_group_uboot;
-	if (!strcmp(argv[0], "linux"))
+	if (!strcmp(argv[0], "linux")) {
+		if (argc >= 3 && !strcmp(argv[1], "process")) {
+			if (argc == 3)
+				return interactive_group_linux_process;
+			if (argc == 4 && !strcmp(argv[2], "watch"))
+				return interactive_group_linux_process_watch;
+			return NULL;
+		}
 		return interactive_group_linux;
+	}
 	if (!strcmp(argv[0], "efi"))
 		return interactive_group_efi;
 	if (!strcmp(argv[0], "bios"))

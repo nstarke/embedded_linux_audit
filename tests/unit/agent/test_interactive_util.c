@@ -45,6 +45,63 @@ static void test_candidates_group_linux(void)
 	ELA_ASSERT_STR_EQ("dmesg", candidates[0]);
 }
 
+static void test_candidates_linux_includes_process_and_gdbserver(void)
+{
+	char *argv[] = { "linux" };
+	const char *const *candidates = ela_interactive_candidates_for_position(2, argv);
+	int found_process = 0, found_gdbserver = 0;
+	int i;
+
+	ELA_ASSERT_TRUE(candidates != NULL);
+	for (i = 0; candidates[i] != NULL; i++) {
+		if (!strcmp(candidates[i], "process"))
+			found_process = 1;
+		if (!strcmp(candidates[i], "gdbserver"))
+			found_gdbserver = 1;
+	}
+	ELA_ASSERT_TRUE(found_process);
+	ELA_ASSERT_TRUE(found_gdbserver);
+}
+
+static void test_candidates_linux_process_subcommand(void)
+{
+	char *argv[] = { "linux", "process" };
+	const char *const *candidates = ela_interactive_candidates_for_position(3, argv);
+
+	ELA_ASSERT_TRUE(candidates != NULL);
+	ELA_ASSERT_STR_EQ("watch", candidates[0]);
+	ELA_ASSERT_TRUE(candidates[1] == NULL);
+}
+
+static void test_candidates_linux_process_watch_subcommand(void)
+{
+	char *argv[] = { "linux", "process", "watch" };
+	const char *const *candidates = ela_interactive_candidates_for_position(4, argv);
+
+	ELA_ASSERT_TRUE(candidates != NULL);
+	ELA_ASSERT_STR_EQ("on", candidates[0]);
+	ELA_ASSERT_STR_EQ("off", candidates[1]);
+	ELA_ASSERT_STR_EQ("list", candidates[2]);
+	ELA_ASSERT_TRUE(candidates[3] == NULL);
+}
+
+static void test_candidates_linux_process_watch_arg_returns_null(void)
+{
+	char *argv[] = { "linux", "process", "watch", "on" };
+	const char *const *candidates = ela_interactive_candidates_for_position(5, argv);
+
+	ELA_ASSERT_TRUE(candidates == NULL);
+}
+
+static void test_candidates_linux_gdbserver_returns_linux_list(void)
+{
+	/* gdbserver takes positional args, not subcommands — no completions beyond linux */
+	char *argv[] = { "linux", "gdbserver" };
+	const char *const *candidates = ela_interactive_candidates_for_position(3, argv);
+
+	ELA_ASSERT_TRUE(candidates == NULL);
+}
+
 static void test_candidates_group_arch(void)
 {
 	char *argv[] = { "arch" };
@@ -708,6 +765,11 @@ int run_interactive_util_tests(void)
 		{ "candidates_argc_zero_or_one",          test_candidates_argc_zero_or_one },
 		{ "candidates_group_uboot",                test_candidates_group_uboot },
 		{ "candidates_group_linux",                test_candidates_group_linux },
+		{ "candidates_linux_includes_process_and_gdbserver", test_candidates_linux_includes_process_and_gdbserver },
+		{ "candidates_linux_process_subcommand",   test_candidates_linux_process_subcommand },
+		{ "candidates_linux_process_watch_subcommand", test_candidates_linux_process_watch_subcommand },
+		{ "candidates_linux_process_watch_arg_returns_null", test_candidates_linux_process_watch_arg_returns_null },
+		{ "candidates_linux_gdbserver_returns_linux_list", test_candidates_linux_gdbserver_returns_linux_list },
 		{ "candidates_group_arch",                 test_candidates_group_arch },
 		{ "candidates_group_efi",                  test_candidates_group_efi },
 		{ "candidates_group_bios",                 test_candidates_group_bios },
