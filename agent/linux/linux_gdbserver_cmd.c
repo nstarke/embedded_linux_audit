@@ -2803,6 +2803,7 @@ static void handle_qoffsets(int fd)
 			int phnum = ehdr.e_phnum < ELA_GDB_MAX_PHNUM
 				    ? (int)ehdr.e_phnum : ELA_GDB_MAX_PHNUM;
 			is_pie = 1;
+			/* coverity[tainted_data] */
 			for (i = 0; i < phnum; i++) {
 				Elf64_Phdr phdr;
 				off_t off = (off_t)ehdr.e_phoff +
@@ -2829,6 +2830,7 @@ static void handle_qoffsets(int fd)
 			int phnum = ehdr.e_phnum < ELA_GDB_MAX_PHNUM
 				    ? (int)ehdr.e_phnum : ELA_GDB_MAX_PHNUM;
 			is_pie = 1;
+			/* coverity[tainted_data] */
 			for (i = 0; i < phnum; i++) {
 				Elf32_Phdr phdr;
 				off_t off = (off_t)ehdr.e_phoff +
