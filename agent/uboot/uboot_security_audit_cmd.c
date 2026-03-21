@@ -100,6 +100,7 @@ static void emit_v(FILE *stream, const char *fmt, va_list ap)
 		return;
 
 	if ((size_t)needed < sizeof(stack)) {
+		va_end(ar);
 		if (mirror_to_remote) {
 			send_to_output_socket(stack, (size_t)needed);
 			append_output_http_buffer(stack, (size_t)needed);
@@ -557,8 +558,11 @@ static int auto_scan_signature_artifacts(char **blob_path_out, char **pubkey_pat
 					if (pubkey_path)
 						snprintf(pubkey_path, (size_t)n + 1, "%s/auto_signature_pubkey.pem", auto_dir);
 				}
-				if (!pubkey_path)
+				if (!pubkey_path) {
+					free(pem);
+					pem = NULL;
 					continue;
+				}
 				fd = open(pubkey_path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
 				if (fd < 0 || write(fd, pem, strlen(pem)) < 0) {
 					if (fd >= 0)
