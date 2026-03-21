@@ -2424,8 +2424,7 @@ static int build_threads_xml(pid_t pid, char *out, size_t out_sz)
 			comm[comm_len > 0 ? comm_len : 0] = '\0';
 
 			thr = xmlNewChild(root, NULL, BAD_CAST "thread", NULL);
-			snprintf(id_buf, sizeof(id_buf), "p%x.t%x",
-				 (unsigned)pid, (unsigned)tid);
+			snprintf(id_buf, sizeof(id_buf), "%x", (unsigned)tid);
 			xmlNewProp(thr, BAD_CAST "id",   BAD_CAST id_buf);
 			xmlNewProp(thr, BAD_CAST "core", BAD_CAST "0");
 			xmlNewProp(thr, BAD_CAST "name", BAD_CAST comm);
