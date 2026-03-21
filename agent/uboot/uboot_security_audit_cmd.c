@@ -353,6 +353,10 @@ static int find_fit_blob_in_device(const char *dev, uint64_t *off_out, uint32_t 
 			continue;
 		*off_out = off;
 		*size_out = ela_uboot_read_be32(hdr + 4);
+		if (*size_out == 0 || *size_out > 64 * 1024 * 1024) {
+			close(fd);
+			return -1;
+		}
 		close(fd);
 		return 0;
 	}
