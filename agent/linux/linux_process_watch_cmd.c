@@ -349,7 +349,8 @@ static void poll_loop(const char *fmt)
 			}
 		}
 
-		state_write(needles, known_pids, count);
+		if (state_write(needles, known_pids, count) < 0)
+			fprintf(stderr, "process watch: failed to write state\n");
 		lock_release(lock_fd);
 
 		for (s = 0; s < ELA_PROCESS_WATCH_POLL_SECS && !g_stop; s++)
