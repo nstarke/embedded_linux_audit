@@ -2344,6 +2344,116 @@ static int rsp_binary_unescape(const char *src, size_t max_src,
 }
 
 /* -----------------------------------------------------------------------
+ * Hardware watchpoint helpers (x86_64 debug registers DR0-DR3 / DR7)
+ * ---------------------------------------------------------------------- */
+
+#if defined(__x86_64__)
+/*
+ * DR7 layout – per slot i (i = 0..3):
+ *   Local enable:  bit  2*i
+ *   Condition:     bits 16+4*i : 17+4*i  (00=exec,01=write,11=r/w)
+ *   Length:        bits 18+4*i : 19+4*i  (00=1B,01=2B,10=8B,11=4B)
+ *
+ * Access via PTRACE_PEEKUSER / PTRACE_POKEUSER at offsetof(struct user,
+ * u_debugreg[n]).
+ */
+#define X86_DR_OFF(n)         ((long)offsetof(struct user, u_debugreg[(n)]))
+#define X86_DR7_L(i)          (1UL << (2 * (i)))
+#define X86_DR7_COND_SHIFT(i) (16 + 4 * (i))
+#define X86_DR7_LEN_SHIFT(i)  (18 + 4 * (i))
+
+/* GDB watchpoint type (Z1-Z4) → DR7 condition field */
+static unsigned long x86_wp_cond(int type)
+{
+	switch (type) {
+	case 1:  return 0UL; /* execute */
+	case 2:  return 1UL; /* write */
+	case 3:  /* read-only hw not available; fall through to r/w */
+	case 4:  return 3UL; /* read/write */
+	default: return 1UL;
+	}
+}
+
+/* watchpoint byte length → DR7 length field */
+static unsigned long x86_wp_len(int kind)
+{
+	switch (kind) {
+	case 1:  return 0UL;
+	case 2:  return 1UL;
+	case 8:  return 2UL;
+	case 4:
+	default: return 3UL;
+	}
+}
+
+static int wp_insert_x86(uint64_t addr, int type, int kind)
+{
+	int slot;
+	unsigned long dr7;
+
+	errno = 0;
+	dr7 = (unsigned long)ptrace(PTRACE_PEEKUSER, g_pid,
+				    X86_DR_OFF(7), NULL);
+	if (errno)
+		return -1;
+
+	/* Find the first free slot (local-enable bit == 0) */
+	for (slot = 0; slot < 4; slot++)
+		if (!(dr7 & X86_DR7_L(slot)))
+			break;
+	if (slot == 4)
+		return -1; /* all four slots occupied */
+
+	if (ptrace(PTRACE_POKEUSER, g_pid, X86_DR_OFF(slot),
+		   (void *)(uintptr_t)addr) != 0)
+		return -1;
+
+	/* Clear old fields for this slot then apply new settings */
+	dr7 &= ~(X86_DR7_L(slot)
+		 | (3UL << X86_DR7_COND_SHIFT(slot))
+		 | (3UL << X86_DR7_LEN_SHIFT(slot)));
+	dr7 |=  X86_DR7_L(slot)
+		| (x86_wp_cond(type) << X86_DR7_COND_SHIFT(slot))
+		| (x86_wp_len(kind)  << X86_DR7_LEN_SHIFT(slot));
+	/* Bits 8-9: LE/GE exact-breakpoint enable (legacy, harmless) */
+	dr7 |= 0x300UL;
+
+	return ptrace(PTRACE_POKEUSER, g_pid, X86_DR_OFF(7),
+		      (void *)dr7) == 0 ? 0 : -1;
+}
+
+static int wp_remove_x86(uint64_t addr)
+{
+	int slot;
+	unsigned long dr7, slot_addr;
+
+	errno = 0;
+	dr7 = (unsigned long)ptrace(PTRACE_PEEKUSER, g_pid,
+				    X86_DR_OFF(7), NULL);
+	if (errno)
+		return -1;
+
+	for (slot = 0; slot < 4; slot++) {
+		if (!(dr7 & X86_DR7_L(slot)))
+			continue;
+		errno = 0;
+		slot_addr = (unsigned long)ptrace(PTRACE_PEEKUSER, g_pid,
+						  X86_DR_OFF(slot), NULL);
+		if (errno || slot_addr != (unsigned long)addr)
+			continue;
+
+		dr7 &= ~(X86_DR7_L(slot)
+			 | (3UL << X86_DR7_COND_SHIFT(slot))
+			 | (3UL << X86_DR7_LEN_SHIFT(slot)));
+		ptrace(PTRACE_POKEUSER, g_pid, X86_DR_OFF(slot), (void *)0UL);
+		ptrace(PTRACE_POKEUSER, g_pid, X86_DR_OFF(7), (void *)dr7);
+		return 0;
+	}
+	return -1; /* address not found in any active slot */
+}
+#endif /* __x86_64__ */
+
+/* -----------------------------------------------------------------------
  * vFile helpers
  * ---------------------------------------------------------------------- */
 
@@ -2812,41 +2922,69 @@ static void handle_packet(int fd, char *pkt)
 		break;
 	}
 
-	case 'Z': /* Insert breakpoint: Z0,addr,kind */
-		if (pkt[1] == '0') { /* software breakpoint only */
-			uint64_t kind = 4; /* default: 4-byte trap */
-			char *ksep;
+	case 'Z': /* Insert breakpoint/watchpoint: Z<type>,<addr>,<kind> */
+	{
+		int ztype = pkt[1] - '0';
+		uint64_t kind = 4;
+		char *ksep;
 
-			sep = strchr(pkt + 3, ',');
-			if (!sep) { rsp_send_str(fd, "E01"); break; }
-			*sep = '\0';
-			ksep = sep + 1;
-			/* kind field: 1=x86, 2=Thumb, 4=ARM/AArch64 */
-			ela_gdb_parse_hex_u64(ksep, &kind);
-			if (ela_gdb_parse_hex_u64(pkt + 3, &addr) != 0 ||
-			    bp_insert(addr, (int)kind) != 0)
+		sep = strchr(pkt + 3, ',');
+		if (!sep) { rsp_send_str(fd, "E01"); break; }
+		*sep = '\0';
+		ksep = sep + 1;
+		if (ela_gdb_parse_hex_u64(pkt + 3, &addr) != 0) {
+			rsp_send_str(fd, "E01"); break;
+		}
+		ela_gdb_parse_hex_u64(ksep, &kind);
+
+		if (ztype == 0) {
+			/* Software breakpoint */
+			if (bp_insert(addr, (int)kind) != 0)
 				rsp_send_str(fd, "E01");
 			else
 				rsp_send_str(fd, "OK");
+#if defined(__x86_64__)
+		} else if (ztype >= 1 && ztype <= 4) {
+			/* Hardware watchpoint via DR0-DR3/DR7 */
+			if (wp_insert_x86(addr, ztype, (int)kind) != 0)
+				rsp_send_str(fd, "E01");
+			else
+				rsp_send_str(fd, "OK");
+#endif
 		} else {
-			rsp_send_str(fd, ""); /* unsupported bp type */
+			rsp_send_str(fd, ""); /* unsupported on this arch */
 		}
 		break;
+	}
 
-	case 'z': /* Remove breakpoint */
-		if (pkt[1] == '0') {
-			sep = strchr(pkt + 3, ',');
-			if (!sep) { rsp_send_str(fd, "E01"); break; }
-			*sep = '\0';
-			if (ela_gdb_parse_hex_u64(pkt + 3, &addr) != 0 ||
-			    bp_remove(addr) != 0)
+	case 'z': /* Remove breakpoint/watchpoint: z<type>,<addr>,<kind> */
+	{
+		int ztype = pkt[1] - '0';
+
+		sep = strchr(pkt + 3, ',');
+		if (!sep) { rsp_send_str(fd, "E01"); break; }
+		*sep = '\0';
+		if (ela_gdb_parse_hex_u64(pkt + 3, &addr) != 0) {
+			rsp_send_str(fd, "E01"); break;
+		}
+
+		if (ztype == 0) {
+			if (bp_remove(addr) != 0)
 				rsp_send_str(fd, "E01");
 			else
 				rsp_send_str(fd, "OK");
+#if defined(__x86_64__)
+		} else if (ztype >= 1 && ztype <= 4) {
+			if (wp_remove_x86(addr) != 0)
+				rsp_send_str(fd, "E01");
+			else
+				rsp_send_str(fd, "OK");
+#endif
 		} else {
 			rsp_send_str(fd, "");
 		}
 		break;
+	}
 
 	case 'q': /* Query packets */
 		if (strncmp(pkt, "qSupported", 10) == 0) {
@@ -2856,9 +2994,14 @@ static void handle_packet(int fd, char *pkt)
 				 ";qXfer:auxv:read+"
 				 ";qXfer:features:read+"
 				 ";qXfer:libraries-svr4:read+"
+				 ";qXfer:siginfo:read+"
 				 ";vFile+"
 				 ";QStartNoAckMode+"
-				 ";QPassSignals+",
+				 ";QPassSignals+"
+#if defined(__x86_64__)
+				 ";hwbreak+"
+#endif
+				 ,
 				 ELA_GDB_RSP_MAX_PACKET);
 			rsp_send_str(fd, resp);
 		} else if (strcmp(pkt, "qAttached") == 0) {
@@ -3137,6 +3280,52 @@ static void handle_packet(int fd, char *pkt)
 			memcpy(resp + 1, k_target_xml + (size_t)xfer_off, chunk);
 			resp[1 + chunk] = '\0';
 			rsp_send_str(fd, resp);
+		} else if (strncmp(pkt, "qXfer:siginfo:read:", 19) == 0) {
+			/*
+			 * Format: qXfer:siginfo:read:<annex>:<offset>,<length>
+			 * annex is always empty.  Response: raw binary siginfo_t
+			 * from PTRACE_GETSIGINFO — only valid when the inferior
+			 * is stopped by a signal (SIGSEGV, SIGBUS, etc.).
+			 */
+			siginfo_t si;
+			uint64_t xfer_off, xfer_len;
+			char *rest = pkt + 19;
+			char *sep2  = strrchr(rest, ':');
+			char *comma2;
+			size_t si_sz, avail, chunk;
+
+			if (!sep2) { rsp_send_str(fd, "E01"); break; }
+			comma2 = strchr(sep2 + 1, ',');
+			if (!comma2) { rsp_send_str(fd, "E01"); break; }
+
+			*comma2 = '\0';
+			if (ela_gdb_parse_hex_u64(sep2 + 1, &xfer_off) != 0 ||
+			    ela_gdb_parse_hex_u64(comma2 + 1, &xfer_len) != 0) {
+				rsp_send_str(fd, "E01");
+				break;
+			}
+
+			if (ptrace(PTRACE_GETSIGINFO, g_pid, NULL, &si) != 0) {
+				rsp_send_str(fd, "E01");
+				break;
+			}
+
+			si_sz = sizeof(siginfo_t);
+			if (xfer_off >= (uint64_t)si_sz) {
+				rsp_send_str(fd, "l"); /* past end */
+				break;
+			}
+
+			avail = si_sz - (size_t)xfer_off;
+			if (xfer_len > (uint64_t)avail)
+				xfer_len = (uint64_t)avail;
+			chunk = (size_t)xfer_len;
+
+			rsp_send_binary_qxfer(fd,
+					      (const uint8_t *)&si +
+					      (size_t)xfer_off,
+					      chunk,
+					      (size_t)xfer_off + chunk >= si_sz);
 		} else if (strncmp(pkt, "qXfer:libraries-svr4:read:", 26) == 0) {
 			/*
 			 * Format: qXfer:libraries-svr4:read:<annex>:<offset>,<length>
