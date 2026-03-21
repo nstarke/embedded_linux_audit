@@ -221,6 +221,14 @@ ifneq (,$(findstring linux,$(CMAKE_C_COMPILER_TARGET)))
 # musl uses the POSIX strerror_r signature; curl's probe can become ambiguous
 # when cross-compiling these Zig Linux targets and then trips a hard preprocessor error.
 CURL_CMAKE_ARGS += -DHAVE_POSIX_STRERROR_R=1 -DHAVE_GLIBC_STRERROR_R=0
+# Pre-cache the FindThreads libc-pthread result so CMake does not run a
+# try_compile subproject to detect pthreads.  When cross-compiling with
+# zig cc, CMake's try_compile subprojects fail to initialise CMAKE_C_COMPILER
+# (the ARG1/target propagation breaks in nested sub-builds under CMake ≤3.25).
+# For musl targets pthreads is part of libc anyway; for glibc static targets
+# the empty CMAKE_THREAD_LIBS_INIT is harmless because -lpthread is pulled in
+# via the static link of OpenSSL.
+CURL_CMAKE_ARGS += -DCMAKE_HAVE_LIBC_PTHREAD=1
 endif
 endif
 
