@@ -144,6 +144,10 @@ int list_image_commands(const char *dev, uint64_t offset)
 		}
 
 		data_size = ela_read_be32(hdr + 12);
+		if (data_size == 0 || data_size > 64 * 1024 * 1024) {
+			uboot_img_err_printf("uImage data_size out of range: %u\n", data_size);
+			goto out;
+		}
 		total_size = UIMAGE_HDR_SIZE + data_size;
 		image_len = (size_t)total_size;
 		image_blob = malloc(image_len);
@@ -171,6 +175,10 @@ int list_image_commands(const char *dev, uint64_t offset)
 		}
 
 		total_size = ela_read_be32(hdr + 4);
+		if (total_size == 0 || total_size > 64 * 1024 * 1024) {
+			uboot_img_err_printf("FIT image total_size out of range: %u\n", total_size);
+			goto out;
+		}
 		image_len = (size_t)total_size;
 		image_blob = malloc(image_len);
 		if (!image_blob) {
