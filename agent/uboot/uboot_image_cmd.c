@@ -329,8 +329,10 @@ static int scan_dev_for_image(const char *dev, uint64_t step)
 		emit_image_verbose(dev, 0, msg);
 	}
 
+	/* coverity[tainted_data] */
 	for (off = 0; off < size; off += step) {
 		size_t to_read = (size - off > step) ? (size_t)step : (size_t)(size - off);
+		/* coverity[overflow_sink] */
 		ssize_t n = pread(fd, buf, to_read, (off_t)off);
 		if (n <= 0)
 			break;

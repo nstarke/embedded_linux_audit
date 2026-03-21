@@ -295,7 +295,7 @@ static void ws_make_key(char *out, size_t out_sz)
 	}
 	/* fallback */
 	{
-		unsigned int seed = (unsigned int)time(NULL);
+		uint64_t seed = (uint64_t)time(NULL);
 		ela_ws_fill_nonce_from_seed(seed, nonce);
 		ela_ws_base64_encode(nonce, sizeof(nonce), out, out_sz);
 	}
@@ -593,6 +593,10 @@ static ssize_t ws_recv_frame(const struct ela_ws_conn *ws,
 		size_t to_read = ela_ws_payload_copy_len(payload_len, buf_sz);
 		size_t to_skip = ela_ws_payload_skip_len(payload_len, buf_sz);
 		char   discard[64];
+
+		/* Reject absurdly large frames to bound the drain loop */
+		if (to_skip > 1024 * 1024)
+			return -1;
 
 		if (ws_conn_read(ws, buf, to_read) < 0)
 			return -1;

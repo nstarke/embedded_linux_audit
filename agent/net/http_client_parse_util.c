@@ -125,8 +125,10 @@ int ela_http_parse_dns_a_response(const uint8_t *resp, int resp_len,
 
 	qdcount = (resp[4] << 8) | resp[5];
 	ancount = (resp[6] << 8) | resp[7];
-	if (ancount == 0)
+	if (ancount <= 0)
 		return -1;
+	if (ancount > 256)
+		ancount = 256; /* cap tainted network value */
 
 	/* Skip question section */
 	pos = 12;

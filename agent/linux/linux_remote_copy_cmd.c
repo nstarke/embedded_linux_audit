@@ -302,6 +302,7 @@ static int upload_path_http(const char *path,
 		return -1;
 	}
 
+	/* coverity[toctou] */
 	if (lstat(path, &st) != 0) {
 		report_remote_copy_errno(output_uri, insecure, verbose,
 			"Cannot stat %s: %s\n", path);

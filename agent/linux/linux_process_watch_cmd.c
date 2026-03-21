@@ -356,7 +356,8 @@ static void poll_loop(const char *fmt)
 			}
 		}
 
-		state_write(needles, known_pids, count);
+		if (state_write(needles, known_pids, count) < 0)
+			fprintf(stderr, "process watch: failed to write state\n");
 		lock_release(lock_fd);
 
 		for (s = 0; s < ELA_PROCESS_WATCH_POLL_SECS && !g_stop; s++)
@@ -397,6 +398,9 @@ static int daemon_start(const char *fmt,
 			dup2(devnull, STDIN_FILENO);
 			dup2(devnull, STDOUT_FILENO);
 			dup2(devnull, STDERR_FILENO);
+			/* When devnull <= STDERR_FILENO one of the dup2 calls
+			 * targeted devnull itself, so no extra fd remains open. */
+			/* coverity[resource_leak] */
 			if (devnull > STDERR_FILENO)
 				close(devnull);
 		}
@@ -507,7 +511,8 @@ static int cmd_watch_on(const char *needle,
 	pids[count][0] = '\0'; /* PIDs populated on first poll */
 	count++;
 
-	state_write(needles, pids, count);
+	if (state_write(needles, pids, count) < 0)
+		fprintf(stderr, "process watch: failed to write state\n");
 	lock_release(lock_fd);
 
 	if (!daemon_is_running()) {
@@ -563,7 +568,8 @@ static int cmd_watch_off(const char *needle)
 	}
 	count--;
 
-	state_write(needles, pids, count);
+	if (state_write(needles, pids, count) < 0)
+		fprintf(stderr, "process watch: failed to write state\n");
 	lock_release(lock_fd);
 
 	fprintf(stdout, "process watch: stopped watching '%s'\n", needle);

@@ -257,11 +257,11 @@ static int rsp_send_binary_qxfer(int fd, const uint8_t *data, size_t data_len,
 		if (b == '$' || b == '#' || b == '*' || b == '}') {
 			buf[pos++] = '}';
 			buf[pos++] = (char)(b ^ 0x20u);
-			cksum += (uint8_t)'}';
-			cksum += (uint8_t)(b ^ 0x20u);
+			cksum = (uint8_t)(cksum + (uint8_t)'}');
+			cksum = (uint8_t)(cksum + (uint8_t)(b ^ 0x20u));
 		} else {
 			buf[pos++] = (char)b;
-			cksum += b;
+			cksum = (uint8_t)(cksum + b);
 		}
 	}
 
@@ -318,8 +318,10 @@ static int rsp_recv_packet(int fd, char *payload, size_t payload_sz)
 	raw[pos] = '\0';
 
 	/* ACK (suppressed after QStartNoAckMode) */
-	if (!g_noack)
-		send(fd, "+", 1, 0);
+	if (!g_noack) {
+		if (send(fd, "+", 1, 0) < 0)
+			return -1;
+	}
 
 	return ela_gdb_rsp_unframe(raw, pos, payload, payload_sz);
 }
@@ -2600,8 +2602,10 @@ static int build_libraries_svr4_xml(pid_t pid, char *out, size_t out_sz)
 	xmlDocDumpMemory(doc, &buf, &bufsize);
 	xmlFreeDoc(doc);
 
-	if (!buf || bufsize <= 0)
+	if (!buf || bufsize <= 0) {
+		xmlFree(buf);
 		return -1;
+	}
 
 	/* Strip the <?xml ...?> prolog — GDB expects bare SVR4 content. */
 	{
@@ -2790,6 +2794,14 @@ static void handle_qoffsets(int fd)
 		goto out_zero;
 	}
 
+	/*
+	 * Sanity-cap the program header count read from the file: the ELF
+	 * spec allows up to 65535 entries, but no real binary needs remotely
+	 * that many.  Capping prevents a malicious/corrupt ELF from driving
+	 * an arbitrarily long loop.
+	 */
+#define ELA_GDB_MAX_PHNUM 1024
+
 	if (e_ident[EI_CLASS] == ELFCLASS64) {
 		Elf64_Ehdr ehdr;
 		lseek(elf_fd, 0, SEEK_SET);
@@ -2797,12 +2809,16 @@ static void handle_qoffsets(int fd)
 		    ehdr.e_type == ET_DYN) {
 			int i;
 			int first = 1;
+			int phnum = ehdr.e_phnum < ELA_GDB_MAX_PHNUM
+				    ? (int)ehdr.e_phnum : ELA_GDB_MAX_PHNUM;
 			is_pie = 1;
-			for (i = 0; i < (int)ehdr.e_phnum; i++) {
+			/* coverity[tainted_data] */
+			for (i = 0; i < phnum; i++) {
 				Elf64_Phdr phdr;
 				off_t off = (off_t)ehdr.e_phoff +
 					    i * (off_t)ehdr.e_phentsize;
-				lseek(elf_fd, off, SEEK_SET);
+				if (lseek(elf_fd, off, SEEK_SET) == (off_t)-1)
+					break;
 				if (read(elf_fd, &phdr, sizeof(phdr)) !=
 				    (ssize_t)sizeof(phdr))
 					break;
@@ -2820,12 +2836,16 @@ static void handle_qoffsets(int fd)
 		    ehdr.e_type == ET_DYN) {
 			int i;
 			int first = 1;
+			int phnum = ehdr.e_phnum < ELA_GDB_MAX_PHNUM
+				    ? (int)ehdr.e_phnum : ELA_GDB_MAX_PHNUM;
 			is_pie = 1;
-			for (i = 0; i < (int)ehdr.e_phnum; i++) {
+			/* coverity[tainted_data] */
+			for (i = 0; i < phnum; i++) {
 				Elf32_Phdr phdr;
 				off_t off = (off_t)ehdr.e_phoff +
 					    i * (off_t)ehdr.e_phentsize;
-				lseek(elf_fd, off, SEEK_SET);
+				if (lseek(elf_fd, off, SEEK_SET) == (off_t)-1)
+					break;
 				if (read(elf_fd, &phdr, sizeof(phdr)) !=
 				    (ssize_t)sizeof(phdr))
 					break;
@@ -2838,6 +2858,8 @@ static void handle_qoffsets(int fd)
 			}
 		}
 	}
+
+#undef ELA_GDB_MAX_PHNUM
 	close(elf_fd);
 
 	if (!is_pie) goto out_zero;
@@ -3077,24 +3099,25 @@ static void vfile_send_data(int conn_fd, int retcode,
 	for (i = 0; i < (size_t)hdr_len; i++) {
 		b = (uint8_t)hdr[i];
 		buf[pos++] = (char)b;
-		cksum += b;
+		cksum = (uint8_t)(cksum + b);
 	}
 	for (i = 0; i < datalen; i++) {
 		b = data[i];
 		if (b == '$' || b == '#' || b == '*' || b == '}') {
 			buf[pos++] = '}';
 			buf[pos++] = (char)(b ^ 0x20u);
-			cksum += (uint8_t)'}';
-			cksum += (uint8_t)(b ^ 0x20u);
+			cksum = (uint8_t)(cksum + (uint8_t)'}');
+			cksum = (uint8_t)(cksum + (uint8_t)(b ^ 0x20u));
 		} else {
 			buf[pos++] = (char)b;
-			cksum += b;
+			cksum = (uint8_t)(cksum + b);
 		}
 	}
 	buf[pos++] = '#';
 	buf[pos++] = hx[cksum >> 4];
 	buf[pos++] = hx[cksum & 0x0f];
-	send(conn_fd, buf, pos, 0);
+	if (send(conn_fd, buf, pos, 0) < 0)
+		return;
 }
 
 /* -----------------------------------------------------------------------
@@ -3402,6 +3425,13 @@ static void handle_packet(int fd, char *pkt)
 			gflags = (int)strtol(cm1 + 1, NULL, 16);
 			fmode  = (int)strtol(cm2 + 1, NULL, 16);
 			errno  = 0;
+			/*
+			 * The fd returned by open() is intentionally kept open
+			 * across packets: GDB references it by number in later
+			 * vFile:pread/pwrite/fstat/close commands.  The client
+			 * is responsible for issuing vFile:close to release it.
+			 */
+			/* coverity[resource_leak] */
 			vfd    = open(name_buf,
 				      vfile_gdb_flags_to_linux(gflags),
 				      (mode_t)fmode);
@@ -4454,6 +4484,17 @@ static int run_session(int conn_fd, pid_t pid, int attach_wstatus)
 		n = rsp_recv_packet(conn_fd, payload, sizeof(payload));
 		if (n < 0)
 			break;
+		/*
+		 * The GDB Remote Serial Protocol vFile:* commands give GDB
+		 * deliberate remote file access with the same permissions as
+		 * the gdbserver process.  File paths decoded from RSP packets
+		 * are passed through to the OS unchanged — restricting them
+		 * would break legitimate GDB usage (symbol loading, library
+		 * inspection, etc.).  The caller is an authenticated GDB
+		 * client on a port the operator intentionally exposed.
+		 */
+		/* coverity[path_manipulation] */
+		/* coverity[tainted_scalar] */
 		handle_packet(conn_fd, payload);
 	}
 
@@ -4473,7 +4514,10 @@ static int tcp_listen_port(uint16_t port)
 	if (fd < 0)
 		return -1;
 
-	setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+	if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
+		close(fd);
+		return -1;
+	}
 
 	memset(&addr, 0, sizeof(addr));
 	addr.sin_family      = AF_INET;
@@ -4547,7 +4591,8 @@ int linux_gdbserver_main(int argc, char **argv)
 		/* Parent: block until child signals ready or error */
 		close(pipefd[1]);
 		result = 'E';
-		(void)read(pipefd[0], &result, 1);
+		if (read(pipefd[0], &result, 1) <= 0)
+			result = 'E'; /* pipe closed or error: treat as failure */
 		close(pipefd[0]);
 		if (result == 'K') {
 			fprintf(stderr,

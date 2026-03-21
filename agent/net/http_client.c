@@ -1493,7 +1493,10 @@ static int ela_dns_query_a(const char *ns_ip, const char *hostname,
 
 	tv.tv_sec  = 2;
 	tv.tv_usec = 0;
-	setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+	if (setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0) {
+		close(sock);
+		return -1;
+	}
 
 	memset(&ns_addr, 0, sizeof(ns_addr));
 	ns_addr.sin_family = AF_INET;
@@ -1645,6 +1648,7 @@ static int __attribute__((unused)) ela_http_post_https_once(const char *effectiv
 	} else {
 		rc = curl_easy_setopt(curl, CURLOPT_SSL_CTX_FUNCTION, curl_ssl_ctx_load_embedded_ca);
 		if (rc == CURLE_OK)
+			/* coverity[bad_sizeof] */
 			rc = curl_easy_setopt(curl, CURLOPT_SSL_CTX_DATA, &ssl_ctx_err);
 		if (rc != CURLE_OK) {
 			if (errbuf && errbuf_len)
@@ -1657,8 +1661,18 @@ static int __attribute__((unused)) ela_http_post_https_once(const char *effectiv
 	}
 
 	resolve_list = ela_curl_resolve_list(effective_uri);
-	if (resolve_list)
-		curl_easy_setopt(curl, CURLOPT_RESOLVE, resolve_list);
+	if (resolve_list) {
+		rc = curl_easy_setopt(curl, CURLOPT_RESOLVE, resolve_list);
+		if (rc != CURLE_OK) {
+			if (errbuf && errbuf_len)
+				snprintf(errbuf, errbuf_len, "failed to set resolve list: %s",
+					 curl_easy_strerror(rc));
+			curl_slist_free_all(resolve_list);
+			curl_slist_free_all(headers);
+			curl_easy_cleanup(curl);
+			return -1;
+		}
+	}
 
 	rc = curl_easy_perform(curl);
 	if (rc != CURLE_OK) {

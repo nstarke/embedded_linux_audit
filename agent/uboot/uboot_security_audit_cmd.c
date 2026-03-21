@@ -107,6 +107,7 @@ static void emit_v(FILE *stream, const char *fmt, va_list ap)
 		return;
 
 	if ((size_t)needed < sizeof(stack)) {
+		va_end(ar);
 		if (mirror_to_remote) {
 			send_to_output_socket(stack, (size_t)needed);
 			append_output_http_buffer(stack, (size_t)needed);
@@ -360,6 +361,10 @@ static int find_fit_blob_in_device(const char *dev, uint64_t *off_out, uint32_t 
 			continue;
 		*off_out = off;
 		*size_out = ela_uboot_read_be32(hdr + 4);
+		if (*size_out == 0 || *size_out > 64 * 1024 * 1024) {
+			close(fd);
+			return -1;
+		}
 		close(fd);
 		return 0;
 	}
@@ -560,8 +565,11 @@ static int auto_scan_signature_artifacts(char **blob_path_out, char **pubkey_pat
 					if (pubkey_path)
 						snprintf(pubkey_path, (size_t)n + 1, "%s/auto_signature_pubkey.pem", auto_dir);
 				}
-				if (!pubkey_path)
+				if (!pubkey_path) {
+					free(pem);
+					pem = NULL;
 					continue;
+				}
 				fd = open(pubkey_path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
 				if (fd < 0 || write(fd, pem, strlen(pem)) < 0) {
 					if (fd >= 0)
@@ -877,24 +885,28 @@ int embedded_linux_audit_scan_main(int argc, char **argv)
 
 	if (signature_blob_path && access(signature_blob_path, R_OK) != 0) {
 		err_printf("Cannot read --signature-blob %s: %s\n", signature_blob_path, strerror(errno));
-		return 2;
+		ret = 2;
+		goto out;
 	}
 
 	if (signature_pubkey_path && access(signature_pubkey_path, R_OK) != 0) {
 		err_printf("Cannot read --signature-pubkey %s: %s\n", signature_pubkey_path, strerror(errno));
-		return 2;
+		ret = 2;
+		goto out;
 	}
 
 	if (size > (uint64_t)SIZE_MAX) {
 		err_printf("Requested --size is too large for this host\n");
-		return 2;
+		ret = 2;
+		goto out;
 	}
 
 	read_len = (size_t)size;
 	buf = malloc(read_len);
 	if (!buf) {
 		err_printf("Unable to allocate %zu bytes for audit input\n", read_len);
-		return 1;
+		ret = 1;
+		goto out;
 	}
 
 	fd = open(dev, O_RDONLY | O_CLOEXEC);

@@ -169,6 +169,12 @@ static int pull_image_to_output_tcp(const char *dev, uint64_t offset, const char
 		}
 	}
 
+	if (total_size == 0 || total_size > 64 * 1024 * 1024) {
+		uboot_img_err_printf("Image total_size out of range: %ju\n", (uintmax_t)total_size);
+		close(fd);
+		return 1;
+	}
+
 	sock = ela_connect_tcp_ipv4(output_tcp_target);
 	if (sock < 0) {
 		uboot_img_err_printf("Unable to connect to output target %s\n", output_tcp_target);
@@ -243,6 +249,12 @@ static int pull_image_to_output_http(const char *dev, uint64_t offset, const cha
 			close(fd);
 			return 1;
 		}
+	}
+
+	if (total_size == 0 || total_size > 64 * 1024 * 1024) {
+		uboot_img_err_printf("Image total_size out of range: %ju\n", (uintmax_t)total_size);
+		close(fd);
+		return 1;
 	}
 
 	img = malloc((size_t)total_size);

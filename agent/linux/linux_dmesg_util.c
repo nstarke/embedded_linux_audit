@@ -34,8 +34,17 @@ void ela_dmesg_tail_window(size_t tail_seen,
 			   size_t *start_out,
 			   size_t *emit_count_out)
 {
-	size_t emit_count = tail_seen < tail_count ? tail_seen : tail_count;
-	size_t start = tail_seen < tail_count ? 0 : (tail_seen % tail_count);
+	size_t emit_count;
+	size_t start;
+
+	if (tail_count == 0) {
+		if (start_out)     *start_out     = 0;
+		if (emit_count_out) *emit_count_out = 0;
+		return;
+	}
+
+	emit_count = tail_seen < tail_count ? tail_seen : tail_count;
+	start      = tail_seen < tail_count ? 0 : (tail_seen % tail_count);
 
 	if (start_out)
 		*start_out = start;

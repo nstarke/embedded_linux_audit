@@ -4,7 +4,7 @@
 
 #include <stdio.h>
 
-void ela_ws_fill_nonce_from_seed(unsigned int seed, uint8_t nonce[16])
+void ela_ws_fill_nonce_from_seed(uint64_t seed, uint8_t nonce[16])
 {
 	size_t i;
 
@@ -12,8 +12,8 @@ void ela_ws_fill_nonce_from_seed(unsigned int seed, uint8_t nonce[16])
 		return;
 
 	for (i = 0; i < 16; i++) {
-		seed = seed * 1664525u + 1013904223u;
-		nonce[i] = (uint8_t)(seed >> 16);
+		seed = seed * 6364136223846793005ULL + 1442695040888963407ULL;
+		nonce[i] = (uint8_t)(seed >> 56);
 	}
 }
 

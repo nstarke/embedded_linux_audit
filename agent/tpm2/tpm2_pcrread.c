@@ -51,7 +51,7 @@ static int add_pcr_selection(TPML_PCR_SELECTION *selection, const char *spec)
 	selection->pcrSelections[selection->count].sizeofSelect = 3;
 	memcpy(selection->pcrSelections[selection->count].pcrSelect,
 	       parsed.banks[0].pcr_select,
-	       sizeof(selection->pcrSelections[selection->count].pcrSelect));
+	       sizeof(parsed.banks[0].pcr_select));
 
 	selection->count++;
 	return 0;

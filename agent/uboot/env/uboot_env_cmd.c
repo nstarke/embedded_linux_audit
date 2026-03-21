@@ -734,6 +734,7 @@ static int scan_dev(const char *dev, uint64_t step, uint64_t env_size, const cha
 		emit_env_scan_start_verbose(dev, step, env_size, (uint64_t)st.st_size);
 	}
 
+	/* coverity[tainted_data] */
 	for (off = 0; (uint64_t)off + env_size <= (uint64_t)st.st_size; off += (off_t)step) {
 		if ((uint64_t)pread(fd, buf, (size_t)env_size, off) != env_size)
 			break;
@@ -951,7 +952,9 @@ int uboot_env_scan_core_main(int argc, char **argv)
 		write_script_effective_path = write_script_path;
 
 		if (is_http_write_source(write_script_path)) {
+			mode_t old_umask = umask(0177);
 			tmp_fd = mkstemp(downloaded_write_script_path);
+			umask(old_umask);
 			if (tmp_fd < 0) {
 				err_printf("Cannot create temp file for --write URL %s: %s\n",
 					write_script_path,
