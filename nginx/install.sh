@@ -378,6 +378,23 @@ if [ "$COMPILE_LOCALLY" -eq 1 ]; then
         exit 1
     fi
 
+    # Fix any root-owned build artifacts left by older builds that ran without --user.
+    # Run as root inside the builder image so we can chown without sudo on the host.
+    docker run --rm \
+        -v "$REPO_ROOT:/src" \
+        "$RELEASE_BUILDER_IMAGE" \
+        /bin/sh -c '
+            for d in /src/generated /src/third_party/openssl/build* \
+                      /src/third_party/curl/build* /src/third_party/json-c/build* \
+                      /src/third_party/libssh/build* /src/third_party/libubootenv/build* \
+                      /src/third_party/tpm2-tss/build* /src/third_party/wolfssl/build* \
+                      /src/third_party/zlib/build*; do
+                [ -e "$d" ] || continue
+                owner=$(stat -c "%u" "$d" 2>/dev/null || echo "")
+                [ "$owner" = "0" ] && chown -R '"$DOCKER_RUN_UID:$DOCKER_RUN_GID"' "$d" 2>/dev/null || true
+            done
+        ' 2>/dev/null || true
+
     echo "Compiling release binaries locally into $ELA_RELEASE_BINARIES_DIR ..."
     docker run --rm \
         --user "$DOCKER_RUN_UID:$DOCKER_RUN_GID" \

@@ -1246,10 +1246,9 @@ clean:
 	rm -rf $(TPM2_TSS_DIR)/build*
 	rm -rf $(WOLFSSL_DIR)/build*
 	-cd $(OPENSSL_DIR) && $(MAKE) distclean >/dev/null 2>&1 || true
+	-chmod -fR u+w "$(OPENSSL_BUILD)" 2>/dev/null || true
 	rm -rf $(OPENSSL_BUILD)
 	-cd $(NCURSES_DIR) && $(MAKE) distclean >/dev/null 2>&1 || true
 	rm -f $(NCURSES_BUILD_STAMP)
 	-cd $(READLINE_DIR) && $(MAKE) distclean >/dev/null 2>&1 || true
 	rm -f $(READLINE_BUILD_STAMP)
-	-git submodule foreach --recursive 'git clean -xfd >/dev/null 2>&1 || true'
-	-git submodule foreach --recursive 'git reset --hard >/dev/null 2>&1 || true'
