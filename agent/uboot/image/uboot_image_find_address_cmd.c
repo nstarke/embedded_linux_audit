@@ -161,6 +161,11 @@ int uboot_image_find_address_execute(const char *dev, uint64_t offset)
 		}
 
 		total_size = ela_read_be32(hdr + 4);
+		if (total_size == 0 || total_size > 64 * 1024 * 1024) {
+			uboot_img_err_printf("FIT image total_size out of range: %u\n", total_size);
+			close(fd);
+			return 1;
+		}
 		fit_blob = malloc((size_t)total_size + 1);
 		if (!fit_blob) {
 			uboot_img_err_printf("Unable to allocate memory to inspect FIT image\n");
