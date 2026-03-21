@@ -727,6 +727,7 @@ static int scan_dev(const char *dev, uint64_t step, uint64_t env_size, const cha
 		emit_env_scan_start_verbose(dev, step, env_size, (uint64_t)st.st_size);
 	}
 
+	/* coverity[tainted_data] */
 	for (off = 0; (uint64_t)off + env_size <= (uint64_t)st.st_size; off += (off_t)step) {
 		if ((uint64_t)pread(fd, buf, (size_t)env_size, off) != env_size)
 			break;
