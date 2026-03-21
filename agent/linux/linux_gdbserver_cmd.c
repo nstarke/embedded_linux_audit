@@ -138,6 +138,9 @@ struct bp_entry {
 static struct bp_entry g_bps[ELA_GDB_MAX_BREAKPOINTS];
 static pid_t           g_pid;
 static volatile int    g_stop;
+static int             g_noack;        /* set by QStartNoAckMode */
+static uint64_t        g_pass_signals; /* bitmask of signals to pass to inferior */
+static pid_t           g_current_tid;  /* most-recently-set thread (H packet) */
 
 /* Thread list populated by qfThreadInfo and paged by qsThreadInfo */
 #define ELA_GDB_MAX_THREADS  256
@@ -360,8 +363,9 @@ static int rsp_recv_packet(int fd, char *payload, size_t payload_sz)
 	pos += 2;
 	raw[pos] = '\0';
 
-	/* ACK */
-	send(fd, "+", 1, 0);
+	/* ACK (suppressed after QStartNoAckMode) */
+	if (!g_noack)
+		send(fd, "+", 1, 0);
 
 	return ela_gdb_rsp_unframe(raw, pos, payload, payload_sz);
 }
@@ -372,10 +376,12 @@ static int rsp_recv_packet(int fd, char *payload, size_t payload_sz)
 
 static void send_stop_reply(int fd, int wstatus)
 {
-	char buf[16];
+	char buf[48];
 
 	if (WIFSTOPPED(wstatus))
-		snprintf(buf, sizeof(buf), "S%02x", WSTOPSIG(wstatus));
+		/* T packet includes thread TID, eliminating a qC round-trip */
+		snprintf(buf, sizeof(buf), "T%02xthread:%x;",
+			 WSTOPSIG(wstatus), (unsigned)g_pid);
 	else if (WIFEXITED(wstatus))
 		snprintf(buf, sizeof(buf), "W%02x", WEXITSTATUS(wstatus));
 	else if (WIFSIGNALED(wstatus))
@@ -510,6 +516,42 @@ static int reg_write_one(int regnum, const char *hex_val)
 	return ptrace(PTRACE_SETREGS, g_pid, NULL, &r) != 0 ? -1 : 0;
 }
 
+/* G packet: write all registers from hex string (inverse of regs_read) */
+static int regs_write(const char *hex, size_t hex_len)
+{
+	struct user_regs_struct r;
+	uint64_t v64;
+	uint32_t v32;
+	size_t pos = 0;
+
+	if (hex_len < 328) /* 17×16 + 7×8 */
+		return -1;
+	if (ptrace(PTRACE_GETREGS, g_pid, NULL, &r) != 0)
+		return -1;
+
+#define LOAD64(f) do { \
+	if (ela_gdb_decode_le64(hex+pos, &v64)) return -1; \
+	r.f = v64; pos += 16; \
+} while (0)
+#define LOAD32(f) do { \
+	if (ela_gdb_decode_le32(hex+pos, &v32)) return -1; \
+	r.f = v32; pos += 8; \
+} while (0)
+
+	LOAD64(rax); LOAD64(rbx); LOAD64(rcx); LOAD64(rdx);
+	LOAD64(rsi); LOAD64(rdi); LOAD64(rbp); LOAD64(rsp);
+	LOAD64(r8);  LOAD64(r9);  LOAD64(r10); LOAD64(r11);
+	LOAD64(r12); LOAD64(r13); LOAD64(r14); LOAD64(r15);
+	LOAD64(rip);
+	LOAD32(eflags);
+	LOAD32(cs); LOAD32(ss); LOAD32(ds); LOAD32(es); LOAD32(fs); LOAD32(gs);
+
+#undef LOAD64
+#undef LOAD32
+
+	return ptrace(PTRACE_SETREGS, g_pid, NULL, &r) != 0 ? -1 : 0;
+}
+
 #elif defined(__aarch64__)
 
 /*
@@ -600,6 +642,35 @@ static int reg_write_one(int regnum, const char *hex_val)
 	} else {
 		return -1;
 	}
+
+	iov.iov_len = sizeof(r);
+	return ptrace(PTRACE_SETREGSET, g_pid, (void *)(uintptr_t)NT_PRSTATUS,
+		      &iov) != 0 ? -1 : 0;
+}
+
+static int regs_write(const char *hex, size_t hex_len)
+{
+	struct user_pt_regs r;
+	struct iovec iov = { &r, sizeof(r) };
+	uint64_t v64;
+	uint32_t v32;
+	size_t pos = 0;
+	int i;
+
+	if (hex_len < 536) /* 33×16 + 8 */
+		return -1;
+	if (ptrace(PTRACE_GETREGSET, g_pid, (void *)(uintptr_t)NT_PRSTATUS,
+		   &iov) != 0)
+		return -1;
+
+	for (i = 0; i < 31; i++) {
+		if (ela_gdb_decode_le64(hex + pos, &v64)) return -1;
+		r.regs[i] = v64;
+		pos += 16;
+	}
+	if (ela_gdb_decode_le64(hex + pos, &v64)) return -1; r.sp = v64;     pos += 16;
+	if (ela_gdb_decode_le64(hex + pos, &v64)) return -1; r.pc = v64;     pos += 16;
+	if (ela_gdb_decode_le32(hex + pos, &v32)) return -1; r.pstate = v32;
 
 	iov.iov_len = sizeof(r);
 	return ptrace(PTRACE_SETREGSET, g_pid, (void *)(uintptr_t)NT_PRSTATUS,
@@ -721,6 +792,41 @@ static int reg_write_one(int regnum, const char *hex_val)
 	} else {
 		return -1;
 	}
+
+	iov.iov_len = sizeof(r);
+	return ptrace(PTRACE_SETREGSET, g_pid, (void *)(uintptr_t)NT_PRSTATUS,
+		      &iov) != 0 ? -1 : 0;
+}
+
+/*
+ * ARM32 g-packet: 336 hex chars
+ *   r0-r15: 16 × 8 = 128
+ *   f0-f7:  8 × 24 = 192  (legacy FPA, zero in regs_read)
+ *   fps:    1 × 8  = 8    (FPA status, zero in regs_read)
+ *   cpsr:   1 × 8  = 8
+ */
+static int regs_write(const char *hex, size_t hex_len)
+{
+	struct user_regs r;
+	struct iovec iov = { &r, sizeof(r) };
+	uint32_t v32;
+	size_t pos = 0;
+	int i;
+
+	if (hex_len < 336)
+		return -1;
+	if (ptrace(PTRACE_GETREGSET, g_pid, (void *)(uintptr_t)NT_PRSTATUS,
+		   &iov) != 0)
+		return -1;
+
+	for (i = 0; i < 16; i++) {
+		if (ela_gdb_decode_le32(hex + pos, &v32)) return -1;
+		r.uregs[i] = v32;
+		pos += 8;
+	}
+	pos += 192 + 8; /* skip f0-f7 (8×24) and fps (8) */
+	if (ela_gdb_decode_le32(hex + pos, &v32)) return -1;
+	r.uregs[16] = v32; /* cpsr */
 
 	iov.iov_len = sizeof(r);
 	return ptrace(PTRACE_SETREGSET, g_pid, (void *)(uintptr_t)NT_PRSTATUS,
@@ -890,6 +996,39 @@ static int reg_write_one(int regnum, const char *hex_val)
 		      (void *)(uintptr_t)NT_PRSTATUS, &iov) != 0 ? -1 : 0;
 }
 
+/* MIPS64 g-packet: 1152 hex (38 GPRs/ctl × 16 + 32 FP × 16 + 2 ctl × 16) */
+static int regs_write(const char *hex, size_t hex_len)
+{
+	unsigned long regs[MIPS_ELF_NGREG];
+	struct iovec iov = { regs, sizeof(regs) };
+	uint64_t v64;
+	size_t pos = 0;
+	int i;
+
+	if (hex_len < 1152)
+		return -1;
+	if (ptrace(PTRACE_GETREGSET, g_pid,
+		   (void *)(uintptr_t)NT_PRSTATUS, &iov) != 0)
+		return -1;
+
+	for (i = 0; i < 32; i++) {
+		if (mips_dec64(hex + pos, &v64)) return -1;
+		regs[MIPS_EF_R0 + i] = (unsigned long)v64;
+		pos += 16;
+	}
+	if (mips_dec64(hex+pos,&v64)) return -1; regs[MIPS_EF_STATUS]   =(unsigned long)v64; pos+=16;
+	if (mips_dec64(hex+pos,&v64)) return -1; regs[MIPS_EF_LO]       =(unsigned long)v64; pos+=16;
+	if (mips_dec64(hex+pos,&v64)) return -1; regs[MIPS_EF_HI]       =(unsigned long)v64; pos+=16;
+	if (mips_dec64(hex+pos,&v64)) return -1; regs[MIPS_EF_BADVADDR] =(unsigned long)v64; pos+=16;
+	if (mips_dec64(hex+pos,&v64)) return -1; regs[MIPS_EF_CAUSE]    =(unsigned long)v64; pos+=16;
+	if (mips_dec64(hex+pos,&v64)) return -1; regs[MIPS_EF_EPC]      =(unsigned long)v64;
+	/* FP registers not written to kernel */
+
+	iov.iov_len = sizeof(regs);
+	return ptrace(PTRACE_SETREGSET, g_pid,
+		      (void *)(uintptr_t)NT_PRSTATUS, &iov) != 0 ? -1 : 0;
+}
+
 #else /* MIPS32 */
 
 /*
@@ -1009,6 +1148,39 @@ static int reg_write_one(int regnum, const char *hex_val)
 			return -1;
 		}
 	}
+
+	iov.iov_len = sizeof(regs);
+	return ptrace(PTRACE_SETREGSET, g_pid,
+		      (void *)(uintptr_t)NT_PRSTATUS, &iov) != 0 ? -1 : 0;
+}
+
+/* MIPS32 g-packet: 576 hex (38 GPRs/ctl × 8 + 32 FP × 8 + 2 ctl × 8) */
+static int regs_write(const char *hex, size_t hex_len)
+{
+	unsigned long regs[MIPS_ELF_NGREG];
+	struct iovec iov = { regs, sizeof(regs) };
+	uint32_t v32;
+	size_t pos = 0;
+	int i;
+
+	if (hex_len < 576)
+		return -1;
+	if (ptrace(PTRACE_GETREGSET, g_pid,
+		   (void *)(uintptr_t)NT_PRSTATUS, &iov) != 0)
+		return -1;
+
+	for (i = 0; i < 32; i++) {
+		if (mips_dec32(hex + pos, &v32)) return -1;
+		regs[MIPS_EF_R0 + i] = (unsigned long)v32;
+		pos += 8;
+	}
+	if (mips_dec32(hex+pos,&v32)) return -1; regs[MIPS_EF_STATUS]   =(unsigned long)v32; pos+=8;
+	if (mips_dec32(hex+pos,&v32)) return -1; regs[MIPS_EF_LO]       =(unsigned long)v32; pos+=8;
+	if (mips_dec32(hex+pos,&v32)) return -1; regs[MIPS_EF_HI]       =(unsigned long)v32; pos+=8;
+	if (mips_dec32(hex+pos,&v32)) return -1; regs[MIPS_EF_BADVADDR] =(unsigned long)v32; pos+=8;
+	if (mips_dec32(hex+pos,&v32)) return -1; regs[MIPS_EF_CAUSE]    =(unsigned long)v32; pos+=8;
+	if (mips_dec32(hex+pos,&v32)) return -1; regs[MIPS_EF_EPC]      =(unsigned long)v32;
+	/* FP registers not written to kernel */
 
 	iov.iov_len = sizeof(regs);
 	return ptrace(PTRACE_SETREGSET, g_pid,
@@ -1233,6 +1405,62 @@ static int reg_write_one(int regnum, const char *hex_val)
 		      (void *)(uintptr_t)NT_PRSTATUS, &iov) != 0 ? -1 : 0;
 }
 
+/*
+ * PPC64 g-packet: 1112 hex
+ *   r0-r31:  32×16=512   f0-f31: 32×16=512
+ *   pc,msr:  2×16=32     cr: 8   lr,ctr: 2×16=32   xer: 8   fpscr: 8
+ */
+static int regs_write(const char *hex, size_t hex_len)
+{
+	unsigned long gregs[PPC_ELF_NGREG];
+	double fp_regs[PPC_ELF_NFPREG];
+	struct iovec iov;
+	uint64_t v64, fp_bits;
+	uint32_t v32;
+	size_t pos = 0;
+	int i;
+
+	if (hex_len < 1112)
+		return -1;
+
+	iov.iov_base = gregs; iov.iov_len = sizeof(gregs);
+	if (ptrace(PTRACE_GETREGSET, g_pid,
+		   (void *)(uintptr_t)NT_PRSTATUS, &iov) != 0)
+		return -1;
+	iov.iov_base = fp_regs; iov.iov_len = sizeof(fp_regs);
+	if (ptrace(PTRACE_GETREGSET, g_pid,
+		   (void *)(uintptr_t)NT_PRFPREG, &iov) != 0)
+		memset(fp_regs, 0, sizeof(fp_regs));
+
+	for (i = 0; i < 32; i++) {
+		if (ela_gdb_decode_be64(hex+pos, &v64)) return -1;
+		gregs[PPC_PT_GPR0+i] = (unsigned long)v64; pos += 16;
+	}
+	for (i = 0; i < 32; i++) {
+		if (ela_gdb_decode_be64(hex+pos, &fp_bits)) return -1;
+		memcpy(&fp_regs[i], &fp_bits, 8); pos += 16;
+	}
+	if (ela_gdb_decode_be64(hex+pos,&v64)) return -1; gregs[PPC_PT_NIP]=(unsigned long)v64; pos+=16;
+	if (ela_gdb_decode_be64(hex+pos,&v64)) return -1; gregs[PPC_PT_MSR]=(unsigned long)v64; pos+=16;
+	if (ela_gdb_decode_be32(hex+pos,&v32)) return -1; gregs[PPC_PT_CCR]=(unsigned long)v32; pos+= 8;
+	if (ela_gdb_decode_be64(hex+pos,&v64)) return -1; gregs[PPC_PT_LNK]=(unsigned long)v64; pos+=16;
+	if (ela_gdb_decode_be64(hex+pos,&v64)) return -1; gregs[PPC_PT_CTR]=(unsigned long)v64; pos+=16;
+	if (ela_gdb_decode_be32(hex+pos,&v32)) return -1; gregs[PPC_PT_XER]=(unsigned long)v32; pos+= 8;
+	if (ela_gdb_decode_be32(hex+pos,&v32)) return -1; /* fpscr */ {
+		uint64_t slot; memcpy(&slot,&fp_regs[32],8);
+		slot = (slot & 0xffffffff00000000ULL) | v32;
+		memcpy(&fp_regs[32], &slot, 8);
+	}
+
+	iov.iov_base = gregs; iov.iov_len = sizeof(gregs);
+	if (ptrace(PTRACE_SETREGSET, g_pid,
+		   (void *)(uintptr_t)NT_PRSTATUS, &iov) != 0)
+		return -1;
+	iov.iov_base = fp_regs; iov.iov_len = sizeof(fp_regs);
+	ptrace(PTRACE_SETREGSET, g_pid, (void *)(uintptr_t)NT_PRFPREG, &iov);
+	return 0;
+}
+
 #elif defined(__powerpc__) && !defined(__powerpc64__)
 
 /*
@@ -1438,6 +1666,62 @@ static int reg_write_one(int regnum, const char *hex_val)
 		      (void *)(uintptr_t)NT_PRSTATUS, &iov) != 0 ? -1 : 0;
 }
 
+/*
+ * PPC32 g-packet: 824 hex
+ *   r0-r31:  32×8=256   f0-f31: 32×16=512
+ *   pc,msr,cr,lr,ctr,xer,fpscr: 7×8=56
+ */
+static int regs_write(const char *hex, size_t hex_len)
+{
+	unsigned long gregs[PPC_ELF_NGREG];
+	double fp_regs[PPC_ELF_NFPREG];
+	struct iovec iov;
+	uint64_t fp_bits;
+	uint32_t v32;
+	size_t pos = 0;
+	int i;
+
+	if (hex_len < 824)
+		return -1;
+
+	iov.iov_base = gregs; iov.iov_len = sizeof(gregs);
+	if (ptrace(PTRACE_GETREGSET, g_pid,
+		   (void *)(uintptr_t)NT_PRSTATUS, &iov) != 0)
+		return -1;
+	iov.iov_base = fp_regs; iov.iov_len = sizeof(fp_regs);
+	if (ptrace(PTRACE_GETREGSET, g_pid,
+		   (void *)(uintptr_t)NT_PRFPREG, &iov) != 0)
+		memset(fp_regs, 0, sizeof(fp_regs));
+
+	for (i = 0; i < 32; i++) {
+		if (ela_gdb_decode_be32(hex+pos, &v32)) return -1;
+		gregs[PPC_PT_GPR0+i] = (unsigned long)v32; pos += 8;
+	}
+	for (i = 0; i < 32; i++) {
+		if (ela_gdb_decode_be64(hex+pos, &fp_bits)) return -1;
+		memcpy(&fp_regs[i], &fp_bits, 8); pos += 16;
+	}
+	if (ela_gdb_decode_be32(hex+pos,&v32)) return -1; gregs[PPC_PT_NIP]=(unsigned long)v32; pos+=8;
+	if (ela_gdb_decode_be32(hex+pos,&v32)) return -1; gregs[PPC_PT_MSR]=(unsigned long)v32; pos+=8;
+	if (ela_gdb_decode_be32(hex+pos,&v32)) return -1; gregs[PPC_PT_CCR]=(unsigned long)v32; pos+=8;
+	if (ela_gdb_decode_be32(hex+pos,&v32)) return -1; gregs[PPC_PT_LNK]=(unsigned long)v32; pos+=8;
+	if (ela_gdb_decode_be32(hex+pos,&v32)) return -1; gregs[PPC_PT_CTR]=(unsigned long)v32; pos+=8;
+	if (ela_gdb_decode_be32(hex+pos,&v32)) return -1; gregs[PPC_PT_XER]=(unsigned long)v32; pos+=8;
+	if (ela_gdb_decode_be32(hex+pos,&v32)) return -1; /* fpscr */ {
+		uint64_t slot; memcpy(&slot,&fp_regs[32],8);
+		slot = (slot & 0xffffffff00000000ULL) | v32;
+		memcpy(&fp_regs[32], &slot, 8);
+	}
+
+	iov.iov_base = gregs; iov.iov_len = sizeof(gregs);
+	if (ptrace(PTRACE_SETREGSET, g_pid,
+		   (void *)(uintptr_t)NT_PRSTATUS, &iov) != 0)
+		return -1;
+	iov.iov_base = fp_regs; iov.iov_len = sizeof(fp_regs);
+	ptrace(PTRACE_SETREGSET, g_pid, (void *)(uintptr_t)NT_PRFPREG, &iov);
+	return 0;
+}
+
 #elif defined(__riscv) && (__riscv_xlen == 64)
 
 /*
@@ -1528,6 +1812,35 @@ static int reg_write_one(int regnum, const char *hex_val)
 		regs[RISCV_PT_PC] = (unsigned long)v64;
 	else
 		return -1;
+
+	iov.iov_len = sizeof(regs);
+	return ptrace(PTRACE_SETREGSET, g_pid,
+		      (void *)(uintptr_t)NT_PRSTATUS, &iov) != 0 ? -1 : 0;
+}
+
+/* RV64 g-packet: 528 hex (33 × 16) */
+static int regs_write(const char *hex, size_t hex_len)
+{
+	unsigned long regs[RISCV_PT_NREGS];
+	struct iovec iov = { regs, sizeof(regs) };
+	uint64_t v64;
+	size_t pos = 0;
+	int i;
+
+	if (hex_len < 528) /* 33×16 */
+		return -1;
+	if (ptrace(PTRACE_GETREGSET, g_pid,
+		   (void *)(uintptr_t)NT_PRSTATUS, &iov) != 0)
+		return -1;
+
+	pos += 16; /* skip x0 (hard-wired zero) */
+	for (i = RISCV_PT_X1; i < RISCV_PT_NREGS; i++) {
+		if (ela_gdb_decode_le64(hex + pos, &v64)) return -1;
+		regs[i] = (unsigned long)v64;
+		pos += 16;
+	}
+	if (ela_gdb_decode_le64(hex + pos, &v64)) return -1;
+	regs[RISCV_PT_PC] = (unsigned long)v64;
 
 	iov.iov_len = sizeof(regs);
 	return ptrace(PTRACE_SETREGSET, g_pid,
@@ -1631,6 +1944,35 @@ static int reg_write_one(int regnum, const char *hex_val)
 		      (void *)(uintptr_t)NT_PRSTATUS, &iov) != 0 ? -1 : 0;
 }
 
+/* RV32 g-packet: 264 hex (33 × 8) */
+static int regs_write(const char *hex, size_t hex_len)
+{
+	unsigned long regs[RISCV_PT_NREGS];
+	struct iovec iov = { regs, sizeof(regs) };
+	uint32_t v32;
+	size_t pos = 0;
+	int i;
+
+	if (hex_len < 264) /* 33×8 */
+		return -1;
+	if (ptrace(PTRACE_GETREGSET, g_pid,
+		   (void *)(uintptr_t)NT_PRSTATUS, &iov) != 0)
+		return -1;
+
+	pos += 8; /* skip x0 */
+	for (i = RISCV_PT_X1; i < RISCV_PT_NREGS; i++) {
+		if (ela_gdb_decode_le32(hex + pos, &v32)) return -1;
+		regs[i] = (unsigned long)v32;
+		pos += 8;
+	}
+	if (ela_gdb_decode_le32(hex + pos, &v32)) return -1;
+	regs[RISCV_PT_PC] = (unsigned long)v32;
+
+	iov.iov_len = sizeof(regs);
+	return ptrace(PTRACE_SETREGSET, g_pid,
+		      (void *)(uintptr_t)NT_PRSTATUS, &iov) != 0 ? -1 : 0;
+}
+
 #else
 
 static int regs_read(char *out, size_t out_sz)
@@ -1648,6 +1990,12 @@ static int reg_read_one(int regnum, char *out, size_t out_sz)
 static int reg_write_one(int regnum, const char *hex_val)
 {
 	(void)regnum; (void)hex_val;
+	return -1;
+}
+
+static int regs_write(const char *hex, size_t hex_len)
+{
+	(void)hex; (void)hex_len;
 	return -1;
 }
 
@@ -2125,8 +2473,11 @@ static void handle_packet(int fd, char *pkt)
 			rsp_send_str(fd, resp);
 		break;
 
-	case 'G': /* Write all registers — not implemented */
-		rsp_send_str(fd, "E01");
+	case 'G': /* Write all registers: Gxx...xx */
+		if (regs_write(pkt + 1, strlen(pkt + 1)) != 0)
+			rsp_send_str(fd, "E01");
+		else
+			rsp_send_str(fd, "OK");
 		break;
 
 	case 'p': /* Read single register */
@@ -2225,10 +2576,23 @@ static void handle_packet(int fd, char *pkt)
 		break;
 
 	case 'c': /* Continue */
-		ptrace(PTRACE_CONT, g_pid, NULL, NULL);
-		waitpid(g_pid, &wstatus, 0);
+	{
+		int fwd_sig = 0;
+		do {
+			ptrace(PTRACE_CONT, g_pid, NULL,
+			       (void *)(uintptr_t)fwd_sig);
+			waitpid(g_pid, &wstatus, 0);
+			fwd_sig = 0;
+			if (WIFSTOPPED(wstatus)) {
+				int sig = WSTOPSIG(wstatus);
+				if (sig > 0 && sig < 64 &&
+				    (g_pass_signals & (1ULL << sig)))
+					fwd_sig = sig; /* pass through */
+			}
+		} while (fwd_sig);
 		send_stop_reply(fd, wstatus);
 		break;
+	}
 
 	case 's': /* Single step */
 		ptrace(PTRACE_SINGLESTEP, g_pid, NULL, NULL);
@@ -2240,8 +2604,19 @@ static void handle_packet(int fd, char *pkt)
 		if (strcmp(pkt, "vCont?") == 0) {
 			rsp_send_str(fd, "vCont;c;C;s;S");
 		} else if (strncmp(pkt, "vCont;c", 7) == 0) {
-			ptrace(PTRACE_CONT, g_pid, NULL, NULL);
-			waitpid(g_pid, &wstatus, 0);
+			int fwd_sig = 0;
+			do {
+				ptrace(PTRACE_CONT, g_pid, NULL,
+				       (void *)(uintptr_t)fwd_sig);
+				waitpid(g_pid, &wstatus, 0);
+				fwd_sig = 0;
+				if (WIFSTOPPED(wstatus)) {
+					int sig = WSTOPSIG(wstatus);
+					if (sig > 0 && sig < 64 &&
+					    (g_pass_signals & (1ULL << sig)))
+						fwd_sig = sig;
+				}
+			} while (fwd_sig);
 			send_stop_reply(fd, wstatus);
 		} else if (strncmp(pkt, "vCont;C", 7) == 0) {
 			/* Continue with signal: vCont;C<sig>[:tid] */
@@ -2421,9 +2796,21 @@ static void handle_packet(int fd, char *pkt)
 		rsp_send_str(fd, "OK");
 		break;
 
-	case 'T': /* Thread alive */
-		rsp_send_str(fd, "OK");
+	case 'T': /* Thread alive: T<tid-hex> */
+	{
+		unsigned long long tid_val;
+		char task_path[64];
+		struct stat tstat;
+
+		if (sscanf(pkt + 1, "%llx", &tid_val) != 1) {
+			rsp_send_str(fd, "E01");
+			break;
+		}
+		snprintf(task_path, sizeof(task_path),
+			 "/proc/%d/task/%llu", (int)g_pid, tid_val);
+		rsp_send_str(fd, stat(task_path, &tstat) == 0 ? "OK" : "E01");
 		break;
+	}
 
 	case 'Z': /* Insert breakpoint: Z0,addr,kind */
 		if (pkt[1] == '0') { /* software breakpoint only */
@@ -2469,7 +2856,9 @@ static void handle_packet(int fd, char *pkt)
 				 ";qXfer:auxv:read+"
 				 ";qXfer:features:read+"
 				 ";qXfer:libraries-svr4:read+"
-				 ";vFile+",
+				 ";vFile+"
+				 ";QStartNoAckMode+"
+				 ";QPassSignals+",
 				 ELA_GDB_RSP_MAX_PACKET);
 			rsp_send_str(fd, resp);
 		} else if (strcmp(pkt, "qAttached") == 0) {
@@ -2805,6 +3194,35 @@ static void handle_packet(int fd, char *pkt)
 		}
 		break;
 
+	case 'Q': /* Set packets */
+		if (strcmp(pkt, "QStartNoAckMode") == 0) {
+			rsp_send_str(fd, "OK");
+			g_noack = 1;
+		} else if (strncmp(pkt, "QPassSignals:", 13) == 0) {
+			/*
+			 * QPassSignals:<sig1>;<sig2>;...
+			 * Each token is a signal number in hex.  Build a
+			 * bitmask of signals the inferior should receive
+			 * without stopping the gdbserver.
+			 */
+			const char *p = pkt + 13;
+			uint64_t mask = 0;
+			while (*p) {
+				char *end;
+				unsigned long sig = strtoul(p, &end, 16);
+				if (end == p)
+					break;
+				if (sig > 0 && sig < 64)
+					mask |= (1ULL << sig);
+				p = (*end == ';') ? end + 1 : end;
+			}
+			g_pass_signals = mask;
+			rsp_send_str(fd, "OK");
+		} else {
+			rsp_send_str(fd, ""); /* unknown Q packet */
+		}
+		break;
+
 	case 'D': /* Detach */
 		bp_clear_all();
 		ptrace(PTRACE_DETACH, g_pid, NULL, NULL);
@@ -2838,6 +3256,9 @@ static int run_session(int conn_fd, pid_t pid)
 	g_tid_count    = 0;
 	g_tid_next     = 0;
 	g_svr4_xml_len = -1;
+	g_noack        = 0;
+	g_pass_signals = 0;
+	g_current_tid  = pid;
 	memset(g_bps, 0, sizeof(g_bps));
 
 	while (!g_stop) {
