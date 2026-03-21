@@ -556,7 +556,8 @@ static int cmd_watch_off(const char *needle)
 	}
 	count--;
 
-	state_write(needles, pids, count);
+	if (state_write(needles, pids, count) < 0)
+		fprintf(stderr, "process watch: failed to write state\n");
 	lock_release(lock_fd);
 
 	fprintf(stdout, "process watch: stopped watching '%s'\n", needle);
