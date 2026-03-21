@@ -2595,8 +2595,10 @@ static int build_libraries_svr4_xml(pid_t pid, char *out, size_t out_sz)
 	xmlDocDumpMemory(doc, &buf, &bufsize);
 	xmlFreeDoc(doc);
 
-	if (!buf || bufsize <= 0)
+	if (!buf || bufsize <= 0) {
+		xmlFree(buf);
 		return -1;
+	}
 
 	/* Strip the <?xml ...?> prolog — GDB expects bare SVR4 content. */
 	{
