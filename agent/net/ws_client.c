@@ -288,7 +288,7 @@ static void ws_make_key(char *out, size_t out_sz)
 	}
 	/* fallback */
 	{
-		unsigned int seed = (unsigned int)time(NULL);
+		uint64_t seed = (uint64_t)time(NULL);
 		ela_ws_fill_nonce_from_seed(seed, nonce);
 		ela_ws_base64_encode(nonce, sizeof(nonce), out, out_sz);
 	}
