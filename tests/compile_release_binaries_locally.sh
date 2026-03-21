@@ -58,6 +58,7 @@ clean_repo_build_artifacts() {
     rm -rf "$REPO_ROOT"/third_party/libssh/build*
     rm -rf "$REPO_ROOT"/third_party/tpm2-tss/build*
     rm -rf "$REPO_ROOT"/third_party/wolfssl/build*
+    chmod -fR u+w "$REPO_ROOT"/third_party/openssl/build* 2>/dev/null || true
     rm -rf "$REPO_ROOT"/third_party/openssl/build*
     rm -f "$REPO_ROOT"/third_party/ncurses/.ela-build-*
     rm -f "$REPO_ROOT"/third_party/readline/.ela-build-*
