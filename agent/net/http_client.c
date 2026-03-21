@@ -1638,6 +1638,7 @@ static int __attribute__((unused)) ela_http_post_https_once(const char *effectiv
 	} else {
 		rc = curl_easy_setopt(curl, CURLOPT_SSL_CTX_FUNCTION, curl_ssl_ctx_load_embedded_ca);
 		if (rc == CURLE_OK)
+			/* coverity[bad_sizeof] */
 			rc = curl_easy_setopt(curl, CURLOPT_SSL_CTX_DATA, &ssl_ctx_err);
 		if (rc != CURLE_OK) {
 			if (errbuf && errbuf_len)
