@@ -34,6 +34,10 @@
 | `linux ssh copy` | Transfer files over SFTP |
 | `linux ssh tunnel` | Establish a reverse SSH tunnel |
 | `linux ssh socks` | Set up a SOCKS proxy over SSH |
+| `linux process watch on <needle>` | Start watching for processes whose command line matches `<needle>`; emits a record each time the matching PID set changes (restart detected) |
+| `linux process watch off <needle>` | Stop watching a previously registered needle |
+| `linux process watch list` | List all active needles and their current matching PIDs |
+| `linux gdbserver <PID> <PORT>` | Attach to a running process and expose a GDB remote stub on the given TCP port; connect with `target remote <agent-ip>:<PORT>` in `gdb-multiarch` |
 
 ### `efi` — EFI/UEFI inspection
 

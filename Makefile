@@ -1030,6 +1030,12 @@ $(OPENSSL_LIB): $(OPENSSL_SSL_LIB)
 $(WOLFSSL_LIB): check-autoconf
 	mkdir -p $(WOLFSSL_BUILD)
 	if [ ! -x "$(WOLFSSL_DIR)/configure" ] \
+		|| [ ! -f "$(WOLFSSL_DIR)/ltmain.sh" ] \
+		|| [ ! -f "$(WOLFSSL_DIR)/config.guess" ] \
+		|| [ ! -f "$(WOLFSSL_DIR)/config.sub" ] \
+		|| [ ! -f "$(WOLFSSL_DIR)/missing" ] \
+		|| [ ! -f "$(WOLFSSL_DIR)/install-sh" ] \
+		|| [ ! -f "$(WOLFSSL_DIR)/compile" ] \
 		|| [ "$(WOLFSSL_DIR)/configure.ac" -nt "$(WOLFSSL_DIR)/configure" ] \
 		|| [ "$(WOLFSSL_DIR)/aclocal.m4" -nt "$(WOLFSSL_DIR)/configure" ] \
 		|| grep -qE '^[[:space:]]*(LT_PREREQ|LT_INIT)\(' "$(WOLFSSL_DIR)/configure"; then \
