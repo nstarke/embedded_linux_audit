@@ -21,24 +21,27 @@ static int ensure_fw_env_config_exists(void)
 	const char *output_http = getenv("ELA_OUTPUT_HTTP");
 	const char *output_https = getenv("ELA_OUTPUT_HTTPS");
 	const char *output_insecure = getenv("ELA_OUTPUT_INSECURE");
-	char *argv[8];
+	/* 2 fixed + 2 tcp + 2 http + 2 https + 1 insecure + 1 NULL = 10 */
+	char *argv[10];
 	int argc = 0;
+	const int argv_max = (int)(sizeof(argv) / sizeof(argv[0])) - 1;
 
 	argv[argc++] = "env";
 	argv[argc++] = "--output-config";
-	if (output_tcp && *output_tcp) {
+	if (output_tcp && *output_tcp && argc + 2 <= argv_max) {
 		argv[argc++] = "--output-tcp";
 		argv[argc++] = (char *)output_tcp;
 	}
-	if (output_http && *output_http) {
+	if (output_http && *output_http && argc + 2 <= argv_max) {
 		argv[argc++] = "--output-http";
 		argv[argc++] = (char *)output_http;
 	}
-	if (output_https && *output_https) {
+	if (output_https && *output_https && argc + 2 <= argv_max) {
 		argv[argc++] = "--output-http";
 		argv[argc++] = (char *)output_https;
 	}
-	if (output_insecure && *output_insecure && strcmp(output_insecure, "0"))
+	if (output_insecure && *output_insecure && strcmp(output_insecure, "0") &&
+	    argc + 1 <= argv_max)
 		argv[argc++] = "--insecure";
 	argv[argc] = NULL;
 
