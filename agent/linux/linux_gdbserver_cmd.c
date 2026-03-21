@@ -156,6 +156,7 @@ static int             g_noack;        /* set by QStartNoAckMode */
 static uint64_t        g_pass_signals; /* bitmask of signals to pass to inferior */
 static pid_t           g_current_tid;  /* most-recently-set thread (H packet) */
 static int             g_last_wstatus; /* wstatus from last waitpid — for '?' */
+static int             g_swbreak_feature;  /* GDB negotiated swbreak+ */
 static int             g_catch_syscalls;   /* QCatchSyscalls enabled */
 static int             g_in_syscall;       /* 0=expecting entry, 1=expecting exit */
 static uint64_t        g_last_sysno;       /* syscall# saved at entry for exit stop */
@@ -322,18 +323,51 @@ static int rsp_recv_packet(int fd, char *payload, size_t payload_sz)
 
 static void send_stop_reply(int fd, int wstatus)
 {
-	char buf[48];
+	char buf[96];
 
-	if (WIFSTOPPED(wstatus))
+	if (WIFSTOPPED(wstatus)) {
+		int sig = WSTOPSIG(wstatus);
+		bool is_swbreak = false;
+
+#if defined(__x86_64__)
+		/*
+		 * On x86_64, a software breakpoint (INT3 / 0xCC) causes the
+		 * CPU to advance the instruction pointer past the 0xCC byte
+		 * before delivering SIGTRAP.  GDB expects the reported PC to
+		 * point *at* the breakpoint instruction, so we must back RIP
+		 * up by 1.  We distinguish software breakpoints from single-
+		 * step traps using PTRACE_GETSIGINFO: TRAP_BRKPT means the
+		 * process hit an INT3 (or a Z0 breakpoint we inserted),
+		 * whereas TRAP_TRACE is a single-step event.
+		 */
+		if (sig == SIGTRAP) {
+			siginfo_t si;
+			if (ptrace(PTRACE_GETSIGINFO, g_pid, NULL, &si) == 0 &&
+			    si.si_code == TRAP_BRKPT) {
+				struct user_regs_struct r;
+				if (ptrace(PTRACE_GETREGS, g_pid, NULL, &r) == 0) {
+					r.rip -= 1;
+					ptrace(PTRACE_SETREGS, g_pid, NULL, &r);
+				}
+				is_swbreak = true;
+			}
+		}
+#endif
+
 		/* T packet includes thread TID, eliminating a qC round-trip */
-		snprintf(buf, sizeof(buf), "T%02xthread:%x;",
-			 WSTOPSIG(wstatus), (unsigned)g_pid);
-	else if (WIFEXITED(wstatus))
+		if (is_swbreak && g_swbreak_feature)
+			snprintf(buf, sizeof(buf), "T%02xthread:%x;swbreak:;",
+				 sig, (unsigned)g_pid);
+		else
+			snprintf(buf, sizeof(buf), "T%02xthread:%x;",
+				 sig, (unsigned)g_pid);
+	} else if (WIFEXITED(wstatus)) {
 		snprintf(buf, sizeof(buf), "W%02x", WEXITSTATUS(wstatus));
-	else if (WIFSIGNALED(wstatus))
+	} else if (WIFSIGNALED(wstatus)) {
 		snprintf(buf, sizeof(buf), "X%02x", WTERMSIG(wstatus));
-	else
+	} else {
 		return;
+	}
 
 	rsp_send_str(fd, buf);
 }
@@ -3642,6 +3676,17 @@ static void handle_packet(int fd, char *pkt)
 
 	case 'q': /* Query packets */
 		if (strncmp(pkt, "qSupported", 10) == 0) {
+			/*
+			 * Parse the client's feature list.  The packet format is
+			 * "qSupported:feat1+;feat2+;...".  Record whether GDB
+			 * supports swbreak+ so we can include "swbreak:;" in T
+			 * stop replies when we hit a software breakpoint.
+			 */
+			const char *client_feats = pkt + 10;
+			if (*client_feats == ':')
+				client_feats++;
+			g_swbreak_feature = (strstr(client_feats, "swbreak+") != NULL);
+
 			snprintf(resp, sizeof(resp),
 				 "PacketSize=%x"
 				 ";qXfer:exec-file:read+"
@@ -3657,6 +3702,7 @@ static void handle_packet(int fd, char *pkt)
 				 ";QStartNoAckMode+"
 				 ";QPassSignals+"
 				 ";QCatchSyscalls+"
+				 ";swbreak+"
 #if defined(__x86_64__)
 				 ";hwbreak+"
 #endif
