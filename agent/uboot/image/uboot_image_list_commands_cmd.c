@@ -180,7 +180,7 @@ int list_image_commands(const char *dev, uint64_t offset)
 			goto out;
 		}
 		image_len = (size_t)total_size;
-		image_blob = malloc(image_len);
+		image_blob = malloc(image_len + 1);
 		if (!image_blob) {
 			uboot_img_err_printf("Unable to allocate memory to inspect FIT image\n");
 			goto out;
@@ -190,6 +190,7 @@ int list_image_commands(const char *dev, uint64_t offset)
 			uboot_img_err_printf("Unable to read full FIT image for command extraction\n");
 			goto out;
 		}
+		image_blob[image_len] = '\0';
 
 		(void)fit_find_load_address(image_blob,
 					    image_len,
