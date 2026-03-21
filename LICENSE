@@ -66,6 +66,7 @@ Notable third-party license notices include:
   (`third_party/libefivar/COPYING`)
 - `third_party/wolfssl` — GNU General Public License v3
   (`third_party/wolfssl/COPYING`), unless you have separate commercial terms
+- `third_party/libxml2` — MIT License (`third_party/libxml2/Copyright`)
 
 Please consult the referenced files within each submodule for complete and
 authoritative license terms.
