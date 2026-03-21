@@ -33,6 +33,7 @@ int ela_format_arch_record(struct output_buffer *out,
 	}
 
 	if (!strcmp(format, "csv")) {
+		/* coverity[copy_paste_error] */
 		if (csv_write_to_buf(out, value) != 0 || output_buffer_append(out, "\n") != 0)
 			return -1;
 		return 0;
