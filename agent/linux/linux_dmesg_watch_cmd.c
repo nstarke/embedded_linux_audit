@@ -76,10 +76,11 @@ static void emit_watch_line(const char *line, const char *fmt)
 
 	/* Strip trailing newline for embedded formats */
 	if (line_len > 0 && line[line_len - 1] == '\n') {
-		stripped = malloc(line_len);
+		size_t stripped_len = line_len - 1;
+		stripped = malloc(stripped_len + 1);
 		if (stripped) {
-			memcpy(stripped, line, line_len - 1);
-			stripped[line_len - 1] = '\0';
+			memcpy(stripped, line, stripped_len);
+			stripped[stripped_len] = '\0';
 		}
 	}
 	msg = stripped ? stripped : line;

@@ -328,7 +328,7 @@ int linux_dmesg_scan_main(int argc, char **argv)
 			continue;
 		}
 
-		if (mode == ELA_DMESG_MODE_TAIL) {
+		if (mode == ELA_DMESG_MODE_TAIL && tail_count > 0) {
 			size_t slot = tail_seen % tail_count;
 			char *copy = strdup(line);
 

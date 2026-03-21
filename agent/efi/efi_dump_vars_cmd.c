@@ -200,6 +200,8 @@ int efi_dump_vars_main(int argc, char **argv)
 			fprintf(stderr,
 				"Unsupported ISA for efi group: %s (supported: x86, x86_64, aarch64-be, aarch64-le)\n",
 				isa ? isa : "unknown");
+			if (output_sock >= 0)
+				close(output_sock);
 			return 1;
 		}
 	}

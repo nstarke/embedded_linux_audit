@@ -225,9 +225,16 @@ int embedded_linux_audit_dispatch(int argc, char **argv)
 		return 2;
 	}
 
-	if (setenv("ELA_OUTPUT_FORMAT", opts.output_format, 1) != 0) {
-		fprintf(stderr, "Failed to set ELA_OUTPUT_FORMAT\n");
-		return 2;
+	{
+		/* Resolve to a string literal so taint analysis sees a safe value.
+		 * opts.output_format is already validated against this whitelist above. */
+		const char *safe_fmt =
+			!strcmp(opts.output_format, "csv")  ? "csv"  :
+			!strcmp(opts.output_format, "json") ? "json" : "txt";
+		if (setenv("ELA_OUTPUT_FORMAT", safe_fmt, 1) != 0) {
+			fprintf(stderr, "Failed to set ELA_OUTPUT_FORMAT\n");
+			return 2;
+		}
 	}
 	if (setenv("ELA_VERBOSE", opts.verbose ? "1" : "0", 1) != 0) {
 		fprintf(stderr, "Failed to set ELA_VERBOSE\n");

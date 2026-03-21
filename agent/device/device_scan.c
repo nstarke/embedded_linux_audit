@@ -242,6 +242,8 @@ uint64_t uboot_guess_size_from_ubi_sysfs(const char *dev)
 	if (!usable_eb_size)
 		return 0;
 
+	if (reserved_ebs > UINT64_MAX / usable_eb_size)
+		return UINT64_MAX;
 	return reserved_ebs * usable_eb_size;
 }
 
@@ -428,14 +430,9 @@ void uboot_free_created_nodes(char **nodes, size_t count)
 static void create_node_if_missing(const char *path, mode_t mode, dev_t devno, bool verbose,
 				   char ***created_nodes, size_t *created_count)
 {
-	struct stat st;
-
-	if (!stat(path, &st))
-		return;
-	if (errno != ENOENT)
-		return;
-
 	if (mknod(path, mode, devno) < 0) {
+		if (errno == EEXIST)
+			return;
 		if (verbose)
 			fprintf(stderr, "Warning: cannot create %s: %s\n", path, strerror(errno));
 		return;
