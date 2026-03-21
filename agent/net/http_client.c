@@ -1651,8 +1651,18 @@ static int __attribute__((unused)) ela_http_post_https_once(const char *effectiv
 	}
 
 	resolve_list = ela_curl_resolve_list(effective_uri);
-	if (resolve_list)
-		curl_easy_setopt(curl, CURLOPT_RESOLVE, resolve_list);
+	if (resolve_list) {
+		rc = curl_easy_setopt(curl, CURLOPT_RESOLVE, resolve_list);
+		if (rc != CURLE_OK) {
+			if (errbuf && errbuf_len)
+				snprintf(errbuf, errbuf_len, "failed to set resolve list: %s",
+					 curl_easy_strerror(rc));
+			curl_slist_free_all(resolve_list);
+			curl_slist_free_all(headers);
+			curl_easy_cleanup(curl);
+			return -1;
+		}
+	}
 
 	rc = curl_easy_perform(curl);
 	if (rc != CURLE_OK) {
