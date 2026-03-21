@@ -38,6 +38,8 @@ This section contains documentation for the `embedded_linux_audit` agent, organi
 - [`embedded_linux_audit linux list-files`](linux/list-files.md)
 - [`embedded_linux_audit linux list-symlinks`](linux/list-symlinks.md)
 - [`embedded_linux_audit linux remote-copy`](linux/remote-copy.md)
+- [`embedded_linux_audit linux gdbserver`](linux/gdbserver.md)
+- [`embedded_linux_audit linux process`](linux/process.md)
 
 ### TPM2
 
