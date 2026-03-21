@@ -923,6 +923,7 @@ $(LIBUBOOTENV_LIB): $(ZLIB_LIB)
 	cmake --build $(LIBUBOOTENV_BUILD) --parallel $(JOBS) --target ubootenv_static
 
 $(LIBEFIVAR_BUILD_STAMP):
+	find $(abspath $(LIBEFIVAR_DIR))/src -maxdepth 1 -name '.*d' -delete 2>/dev/null || true
 	-$(MAKE) -C $(LIBEFIVAR_DIR)/src TOPDIR='$(abspath $(LIBEFIVAR_DIR))' clean >/dev/null 2>&1 || true
 	$(MAKE) -C $(LIBEFIVAR_DIR)/src TOPDIR='$(abspath $(LIBEFIVAR_DIR))' libefivar.a CC='$(CC)' HOSTCC='cc' HOSTCCLD='cc' AR='ar' RANLIB='ranlib' CPPFLAGS='-I$(abspath $(LIBEFIVAR_DIR))/src/include' HOST_CFLAGS='$(LIBEFIVAR_HOST_CFLAGS)' HOST_CPPFLAGS='$(LIBEFIVAR_HOST_CPPFLAGS)' HOST_LDFLAGS='$(LIBEFIVAR_HOST_LDFLAGS)' HOST_CCLDFLAGS='$(LIBEFIVAR_HOST_LDFLAGS)'
 	test -f $(LIBEFIVAR_LIB)
