@@ -20,6 +20,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <dirent.h>
+#include <elf.h>
 
 #if defined(__x86_64__)
 #  include <sys/user.h>
@@ -89,6 +90,10 @@
 /* Maximum byte size of the SVR4 library-list XML document */
 #define ELA_GDB_SVR4_XML_MAX     16384
 
+/* Maximum byte sizes of other on-demand XML documents */
+#define ELA_GDB_THREADS_XML_MAX  8192
+#define ELA_GDB_MEMMAP_XML_MAX   32768
+
 /* Trap instruction bytes per architecture */
 #if defined(__x86_64__)
 static const uint8_t k_x86_brk[1]     = { 0xCC };             /* int3 */
@@ -141,6 +146,7 @@ static volatile int    g_stop;
 static int             g_noack;        /* set by QStartNoAckMode */
 static uint64_t        g_pass_signals; /* bitmask of signals to pass to inferior */
 static pid_t           g_current_tid;  /* most-recently-set thread (H packet) */
+static int             g_last_wstatus; /* wstatus from last waitpid — for '?' */
 
 /* Thread list populated by qfThreadInfo and paged by qsThreadInfo */
 #define ELA_GDB_MAX_THREADS  256
@@ -151,6 +157,14 @@ static int   g_tid_next;
 /* SVR4 library-list XML cache (rebuilt at the start of each transfer) */
 static char  g_svr4_xml[ELA_GDB_SVR4_XML_MAX];
 static int   g_svr4_xml_len = -1; /* -1 = not yet built for this session */
+
+/* Thread-list XML cache (rebuilt at the start of each transfer) */
+static char  g_threads_xml[ELA_GDB_THREADS_XML_MAX];
+static int   g_threads_xml_len = -1;
+
+/* Memory-map XML cache (rebuilt at the start of each transfer) */
+static char  g_memmap_xml[ELA_GDB_MEMMAP_XML_MAX];
+static int   g_memmap_xml_len = -1;
 
 /*
  * Target XML served by qXfer:features:read:target.xml.
@@ -2195,6 +2209,205 @@ static void bp_clear_all(void)
 }
 
 /* -----------------------------------------------------------------------
+ * Thread-list XML builder  (qXfer:threads:read)
+ * ---------------------------------------------------------------------- */
+
+/*
+ * Build a <threads> XML document by walking /proc/<pid>/task/.
+ * Each thread gets a "p<pid>.t<tid>" id (multi-process notation) and
+ * its name from /proc/<pid>/task/<tid>/comm.
+ *
+ * Returns byte length (excluding NUL) on success, -1 on failure.
+ */
+static int build_threads_xml(pid_t pid, char *out, size_t out_sz)
+{
+	char task_path[32];
+	DIR *dir;
+	struct dirent *ent;
+	size_t pos = 0;
+	int n;
+
+	n = snprintf(out + pos, out_sz - pos,
+		     "<?xml version=\"1.0\"?><threads>");
+	if (n < 0 || (size_t)n >= out_sz - pos)
+		return -1;
+	pos += (size_t)n;
+
+	snprintf(task_path, sizeof(task_path), "/proc/%d/task", (int)pid);
+	dir = opendir(task_path);
+	if (dir) {
+		while ((ent = readdir(dir)) != NULL) {
+			pid_t tid;
+			char *endp;
+			char comm_path[64];
+			char comm[16];
+			int comm_fd;
+			ssize_t comm_len;
+			char name_attr[64]; /* escaped name attribute value */
+			int ni;
+
+			if (ent->d_name[0] == '.')
+				continue;
+			tid = (pid_t)strtol(ent->d_name, &endp, 10);
+			if (*endp != '\0' || tid <= 0)
+				continue;
+
+			/* Read thread name from comm */
+			snprintf(comm_path, sizeof(comm_path),
+				 "/proc/%d/task/%d/comm",
+				 (int)pid, (int)tid);
+			comm_fd = open(comm_path, O_RDONLY);
+			comm_len = 0;
+			if (comm_fd >= 0) {
+				comm_len = read(comm_fd, comm,
+						sizeof(comm) - 1);
+				close(comm_fd);
+				if (comm_len > 0 &&
+				    comm[comm_len - 1] == '\n')
+					comm_len--;
+				if (comm_len < 0)
+					comm_len = 0;
+			}
+			comm[comm_len > 0 ? comm_len : 0] = '\0';
+
+			/*
+			 * XML-escape the name (replace & < > " with entities).
+			 * Comm strings from the kernel are plain ASCII process
+			 * names so in practice only '&' and '<' need guarding.
+			 */
+			ni = 0;
+			{
+				const char *cp = comm;
+				while (*cp && ni < (int)sizeof(name_attr) - 7) {
+					if (*cp == '&') {
+						memcpy(name_attr + ni,
+						       "&amp;", 5);
+						ni += 5;
+					} else if (*cp == '<') {
+						memcpy(name_attr + ni,
+						       "&lt;", 4);
+						ni += 4;
+					} else if (*cp == '>') {
+						memcpy(name_attr + ni,
+						       "&gt;", 4);
+						ni += 4;
+					} else if (*cp == '"') {
+						memcpy(name_attr + ni,
+						       "&quot;", 6);
+						ni += 6;
+					} else {
+						name_attr[ni++] = *cp;
+					}
+					cp++;
+				}
+			}
+			name_attr[ni] = '\0';
+
+			n = snprintf(out + pos, out_sz - pos,
+				     "<thread id=\"p%x.t%x\""
+				     " core=\"0\" name=\"%s\"/>",
+				     (unsigned)pid, (unsigned)tid,
+				     name_attr);
+			if (n < 0 || (size_t)n >= out_sz - pos)
+				break;
+			pos += (size_t)n;
+		}
+		closedir(dir);
+	}
+
+	n = snprintf(out + pos, out_sz - pos, "</threads>");
+	if (n < 0 || (size_t)n >= out_sz - pos)
+		return -1;
+	pos += (size_t)n;
+
+	return (int)pos;
+}
+
+/* -----------------------------------------------------------------------
+ * Memory-map XML builder  (qXfer:memory-map:read)
+ * ---------------------------------------------------------------------- */
+
+/*
+ * Build a GDB <memory-map> XML document from /proc/<pid>/maps.
+ * Each line yields one <memory> element whose type is:
+ *   "ram"  — read-write or read-only anonymous / file-backed
+ *   "rom"  — read-only, no-write, no-exec (rare but possible)
+ *   "flash"— not used; we don't model flash here
+ *
+ * GDB uses this to skip un-readable ranges in memory searches and to
+ * display correct permissions in pwndbg's vmmap output.
+ *
+ * Returns byte length (excluding NUL) on success, -1 on failure.
+ */
+static int build_memmap_xml(pid_t pid, char *out, size_t out_sz)
+{
+	char maps_path[32];
+	FILE *f;
+	char line[512];
+	size_t pos = 0;
+	int n;
+
+	n = snprintf(out + pos, out_sz - pos,
+		     "<?xml version=\"1.0\"?>"
+		     "<!DOCTYPE memory-map "
+		     "PUBLIC \"+//IDN gnu.org//DTD GDB Memory Map V1.0//EN\""
+		     " \"http://sourceware.org/gdb/gdb-memory-map.dtd\">"
+		     "<memory-map>");
+	if (n < 0 || (size_t)n >= out_sz - pos)
+		return -1;
+	pos += (size_t)n;
+
+	snprintf(maps_path, sizeof(maps_path), "/proc/%d/maps", (int)pid);
+	f = fopen(maps_path, "r");
+	if (!f)
+		return -1;
+
+	while (fgets(line, sizeof(line), f)) {
+		unsigned long long start, end;
+		char perms[8];
+		unsigned long long length;
+		const char *type;
+
+		/*
+		 * /proc/pid/maps format:
+		 *   start-end perms offset dev inode [pathname]
+		 * perms: rwxp / rwxs
+		 */
+		if (sscanf(line, "%llx-%llx %7s", &start, &end, perms) != 3)
+			continue;
+
+		length = end - start;
+		if (length == 0)
+			continue;
+
+		/*
+		 * Map permissions to GDB memory type:
+		 *   writable → "ram" (GDB may issue write commands)
+		 *   read-only → "rom" (GDB treats as immutable)
+		 * Both tell GDB the region is readable, which is what
+		 * matters most for memory searches and display.
+		 */
+		type = (perms[1] == 'w') ? "ram" : "rom";
+
+		n = snprintf(out + pos, out_sz - pos,
+			     "<memory type=\"%s\""
+			     " start=\"0x%llx\" length=\"0x%llx\"/>",
+			     type, start, length);
+		if (n < 0 || (size_t)n >= out_sz - pos)
+			break;
+		pos += (size_t)n;
+	}
+	fclose(f);
+
+	n = snprintf(out + pos, out_sz - pos, "</memory-map>");
+	if (n < 0 || (size_t)n >= out_sz - pos)
+		return -1;
+	pos += (size_t)n;
+
+	return (int)pos;
+}
+
+/* -----------------------------------------------------------------------
  * SVR4 shared-library XML builder
  * ---------------------------------------------------------------------- */
 
@@ -2341,6 +2554,224 @@ static int rsp_binary_unescape(const char *src, size_t max_src,
 		in++;
 	}
 	return (int)out;
+}
+
+/* -----------------------------------------------------------------------
+ * Memory search helper  (qSearch:memory)
+ * ---------------------------------------------------------------------- */
+
+#define MEM_SEARCH_CHUNK 2048
+
+/*
+ * Scan [start, start+length) for the first occurrence of `pattern`.
+ * Memory is read word-by-word via PTRACE_PEEKDATA; unreadable words are
+ * treated as zero-filled so the scan continues past them.
+ *
+ * Chunks overlap by (patlen-1) bytes to catch patterns that span a
+ * chunk boundary.
+ *
+ * Returns  1 and sets *found_addr on success,
+ *          0 if not found,
+ *         -1 on bad arguments.
+ */
+static int mem_search(uint64_t start, uint64_t length,
+		      const uint8_t *pattern, size_t patlen,
+		      uint64_t *found_addr)
+{
+	uint8_t buf[MEM_SEARCH_CHUNK];
+	uint64_t pos = start;
+	uint64_t end;
+	size_t i;
+
+	if (patlen == 0 || patlen > MEM_SEARCH_CHUNK || length == 0)
+		return -1;
+
+	end = start + length;
+
+	while (pos < end) {
+		size_t to_read = MEM_SEARCH_CHUNK;
+		size_t done = 0;
+
+		if (to_read > (size_t)(end - pos))
+			to_read = (size_t)(end - pos);
+
+		/* Read word-by-word via ptrace; zero-fill unreadable words */
+		while (done < to_read) {
+			uint64_t adr = (pos + done) &
+				       ~(uint64_t)(sizeof(long) - 1);
+			size_t   off = (size_t)((pos + done) - adr);
+			size_t   chk = sizeof(long) - off;
+			long     word;
+
+			if (chk > to_read - done)
+				chk = to_read - done;
+
+			errno = 0;
+			word = ptrace(PTRACE_PEEKDATA, g_pid,
+				      (void *)(uintptr_t)adr, NULL);
+			if (errno != 0)
+				memset(buf + done, 0, chk);
+			else
+				memcpy(buf + done, (uint8_t *)&word + off, chk);
+			done += chk;
+		}
+
+		/* Search this chunk */
+		if (done >= patlen) {
+			for (i = 0; i <= done - patlen; i++) {
+				if (memcmp(buf + i, pattern, patlen) == 0) {
+					*found_addr = pos + i;
+					return 1;
+				}
+			}
+		}
+
+		/*
+		 * Advance by (done - patlen + 1) so the last patlen-1 bytes
+		 * of this chunk become the first bytes of the next, catching
+		 * patterns that span a chunk boundary.
+		 */
+		pos += (done >= patlen) ? done - patlen + 1 : done;
+	}
+
+	return 0; /* not found */
+}
+
+/* -----------------------------------------------------------------------
+ * PIE load-offset helper  (qOffsets)
+ * ---------------------------------------------------------------------- */
+
+/*
+ * Compute the ASLR slide for the main executable and reply with
+ * "Text=<hex>;Data=<hex>;Bss=<hex>".
+ *
+ * For ET_EXEC (non-PIE) the offset is always 0.
+ * For ET_DYN (PIE) we find the expected load base from the lowest
+ * PT_LOAD p_vaddr in the ELF and the actual base from the lowest
+ * mapping of /proc/<pid>/exe in /proc/<pid>/maps.
+ */
+static void handle_qoffsets(int fd)
+{
+	char link_path[32];
+	char exe_path[4096];
+	char maps_path[32];
+	ssize_t exe_len;
+	int elf_fd;
+	unsigned char e_ident[EI_NIDENT];
+	uint64_t expected_base = 0;
+	uint64_t actual_base   = 0;
+	int      is_pie        = 0;
+	int      found_base    = 0;
+	FILE    *f;
+	char     line[512];
+	char     resp[64];
+
+	snprintf(link_path, sizeof(link_path), "/proc/%d/exe", (int)g_pid);
+	exe_len = readlink(link_path, exe_path, sizeof(exe_path) - 1);
+	if (exe_len < 0) goto out_zero;
+	exe_path[exe_len] = '\0';
+
+	elf_fd = open(exe_path, O_RDONLY);
+	if (elf_fd < 0) goto out_zero;
+
+	if (read(elf_fd, e_ident, EI_NIDENT) != EI_NIDENT ||
+	    e_ident[EI_MAG0] != ELFMAG0 || e_ident[EI_MAG1] != ELFMAG1 ||
+	    e_ident[EI_MAG2] != ELFMAG2 || e_ident[EI_MAG3] != ELFMAG3) {
+		close(elf_fd);
+		goto out_zero;
+	}
+
+	if (e_ident[EI_CLASS] == ELFCLASS64) {
+		Elf64_Ehdr ehdr;
+		lseek(elf_fd, 0, SEEK_SET);
+		if (read(elf_fd, &ehdr, sizeof(ehdr)) == (ssize_t)sizeof(ehdr) &&
+		    ehdr.e_type == ET_DYN) {
+			int i;
+			int first = 1;
+			is_pie = 1;
+			for (i = 0; i < (int)ehdr.e_phnum; i++) {
+				Elf64_Phdr phdr;
+				off_t off = (off_t)ehdr.e_phoff +
+					    i * (off_t)ehdr.e_phentsize;
+				lseek(elf_fd, off, SEEK_SET);
+				if (read(elf_fd, &phdr, sizeof(phdr)) !=
+				    (ssize_t)sizeof(phdr))
+					break;
+				if (phdr.p_type == PT_LOAD &&
+				    (first || phdr.p_vaddr < expected_base)) {
+					expected_base = phdr.p_vaddr;
+					first = 0;
+				}
+			}
+		}
+	} else if (e_ident[EI_CLASS] == ELFCLASS32) {
+		Elf32_Ehdr ehdr;
+		lseek(elf_fd, 0, SEEK_SET);
+		if (read(elf_fd, &ehdr, sizeof(ehdr)) == (ssize_t)sizeof(ehdr) &&
+		    ehdr.e_type == ET_DYN) {
+			int i;
+			int first = 1;
+			is_pie = 1;
+			for (i = 0; i < (int)ehdr.e_phnum; i++) {
+				Elf32_Phdr phdr;
+				off_t off = (off_t)ehdr.e_phoff +
+					    i * (off_t)ehdr.e_phentsize;
+				lseek(elf_fd, off, SEEK_SET);
+				if (read(elf_fd, &phdr, sizeof(phdr)) !=
+				    (ssize_t)sizeof(phdr))
+					break;
+				if (phdr.p_type == PT_LOAD &&
+				    (first ||
+				     (uint64_t)phdr.p_vaddr < expected_base)) {
+					expected_base = (uint64_t)phdr.p_vaddr;
+					first = 0;
+				}
+			}
+		}
+	}
+	close(elf_fd);
+
+	if (!is_pie) goto out_zero;
+
+	/* Find actual load base: lowest mapping of the executable in maps */
+	snprintf(maps_path, sizeof(maps_path), "/proc/%d/maps", (int)g_pid);
+	f = fopen(maps_path, "r");
+	if (!f) goto out_zero;
+
+	while (fgets(line, sizeof(line), f)) {
+		unsigned long long map_start, map_end;
+		char perms[8], path_buf[512];
+		int nm;
+
+		path_buf[0] = '\0';
+		nm = sscanf(line, "%llx-%llx %7s %*s %*s %*s %511s",
+			    &map_start, &map_end, perms, path_buf);
+		if (nm < 3)
+			continue;
+		if (strcmp(path_buf, exe_path) != 0)
+			continue;
+		if (!found_base || (uint64_t)map_start < actual_base) {
+			actual_base = (uint64_t)map_start;
+			found_base  = 1;
+		}
+	}
+	fclose(f);
+
+	if (!found_base) goto out_zero;
+
+	{
+		uint64_t slide = actual_base - expected_base;
+		snprintf(resp, sizeof(resp),
+			 "Text=%llx;Data=%llx;Bss=%llx",
+			 (unsigned long long)slide,
+			 (unsigned long long)slide,
+			 (unsigned long long)slide);
+		rsp_send_str(fd, resp);
+		return;
+	}
+
+out_zero:
+	rsp_send_str(fd, "Text=0;Data=0;Bss=0");
 }
 
 /* -----------------------------------------------------------------------
@@ -2572,8 +3003,8 @@ static void handle_packet(int fd, char *pkt)
 
 	switch (pkt[0]) {
 
-	case '?': /* Halt reason */
-		rsp_send_str(fd, "S05");
+	case '?': /* Halt reason — report last real stop state */
+		send_stop_reply(fd, g_last_wstatus);
 		break;
 
 	case 'g': /* Read all registers */
@@ -2700,6 +3131,7 @@ static void handle_packet(int fd, char *pkt)
 					fwd_sig = sig; /* pass through */
 			}
 		} while (fwd_sig);
+		g_last_wstatus = wstatus;
 		send_stop_reply(fd, wstatus);
 		break;
 	}
@@ -2707,8 +3139,40 @@ static void handle_packet(int fd, char *pkt)
 	case 's': /* Single step */
 		ptrace(PTRACE_SINGLESTEP, g_pid, NULL, NULL);
 		waitpid(g_pid, &wstatus, 0);
+		g_last_wstatus = wstatus;
 		send_stop_reply(fd, wstatus);
 		break;
+
+	case 'C': /* Continue with signal: C<sig>[;<addr>] */
+	{
+		int fwd_sig = (int)strtol(pkt + 1, NULL, 16);
+		do {
+			ptrace(PTRACE_CONT, g_pid, NULL,
+			       (void *)(uintptr_t)fwd_sig);
+			waitpid(g_pid, &wstatus, 0);
+			fwd_sig = 0;
+			if (WIFSTOPPED(wstatus)) {
+				int sig = WSTOPSIG(wstatus);
+				if (sig > 0 && sig < 64 &&
+				    (g_pass_signals & (1ULL << sig)))
+					fwd_sig = sig;
+			}
+		} while (fwd_sig);
+		g_last_wstatus = wstatus;
+		send_stop_reply(fd, wstatus);
+		break;
+	}
+
+	case 'S': /* Step with signal: S<sig>[;<addr>] */
+	{
+		int sig = (int)strtol(pkt + 1, NULL, 16);
+		ptrace(PTRACE_SINGLESTEP, g_pid, NULL,
+		       (void *)(uintptr_t)sig);
+		waitpid(g_pid, &wstatus, 0);
+		g_last_wstatus = wstatus;
+		send_stop_reply(fd, wstatus);
+		break;
+	}
 
 	case 'v':
 		if (strcmp(pkt, "vCont?") == 0) {
@@ -2727,16 +3191,19 @@ static void handle_packet(int fd, char *pkt)
 						fwd_sig = sig;
 				}
 			} while (fwd_sig);
+			g_last_wstatus = wstatus;
 			send_stop_reply(fd, wstatus);
 		} else if (strncmp(pkt, "vCont;C", 7) == 0) {
 			/* Continue with signal: vCont;C<sig>[:tid] */
 			int sig = (int)strtol(pkt + 7, NULL, 16);
 			ptrace(PTRACE_CONT, g_pid, NULL, (void *)(uintptr_t)sig);
 			waitpid(g_pid, &wstatus, 0);
+			g_last_wstatus = wstatus;
 			send_stop_reply(fd, wstatus);
 		} else if (strncmp(pkt, "vCont;s", 7) == 0) {
 			ptrace(PTRACE_SINGLESTEP, g_pid, NULL, NULL);
 			waitpid(g_pid, &wstatus, 0);
+			g_last_wstatus = wstatus;
 			send_stop_reply(fd, wstatus);
 		} else if (strncmp(pkt, "vCont;S", 7) == 0) {
 			/* Step with signal: vCont;S<sig>[:tid] */
@@ -2744,6 +3211,7 @@ static void handle_packet(int fd, char *pkt)
 			ptrace(PTRACE_SINGLESTEP, g_pid, NULL,
 			       (void *)(uintptr_t)sig);
 			waitpid(g_pid, &wstatus, 0);
+			g_last_wstatus = wstatus;
 			send_stop_reply(fd, wstatus);
 		} else if (strncmp(pkt, "vFile:open:", 11) == 0) {
 			char *rest = pkt + 11;
@@ -2897,6 +3365,23 @@ static void handle_packet(int fd, char *pkt)
 			/* Only local filesystem is supported; accept any pid. */
 			vfile_send_rc(fd, 0, 0);
 
+		} else if (strncmp(pkt, "vKill;", 6) == 0) {
+			/*
+			 * vKill;<pid-hex> — hard-kill the named process.
+			 * We only support killing the process we are attached
+			 * to; any other PID gets an error.
+			 */
+			pid_t kill_pid = (pid_t)strtol(pkt + 6, NULL, 16);
+			if (kill_pid == g_pid) {
+				bp_clear_all();
+				ptrace(PTRACE_KILL, g_pid, NULL, NULL);
+				waitpid(g_pid, NULL, 0);
+				rsp_send_str(fd, "OK");
+				g_stop = 1;
+			} else {
+				rsp_send_str(fd, "E01");
+			}
+
 		} else {
 			rsp_send_str(fd, ""); /* unknown v-packet */
 		}
@@ -2994,7 +3479,10 @@ static void handle_packet(int fd, char *pkt)
 				 ";qXfer:auxv:read+"
 				 ";qXfer:features:read+"
 				 ";qXfer:libraries-svr4:read+"
+				 ";qXfer:threads:read+"
+				 ";qXfer:memory-map:read+"
 				 ";qXfer:siginfo:read+"
+				 ";qSearch:memory+"
 				 ";vFile+"
 				 ";QStartNoAckMode+"
 				 ";QPassSignals+"
@@ -3006,6 +3494,62 @@ static void handle_packet(int fd, char *pkt)
 			rsp_send_str(fd, resp);
 		} else if (strcmp(pkt, "qAttached") == 0) {
 			rsp_send_str(fd, "1");
+		} else if (strncmp(pkt, "qSymbol", 7) == 0) {
+			/*
+			 * GDB sends qSymbol:: early in connection setup to
+			 * offer symbol lookup services.  We don't need any
+			 * symbols resolved by the client, so reply OK to end
+			 * the negotiation immediately.
+			 */
+			rsp_send_str(fd, "OK");
+		} else if (strcmp(pkt, "qOffsets") == 0) {
+			/*
+			 * Report the ASLR slide for the main executable so
+			 * GDB can relocate its symbol table to match the
+			 * actual load address.  Critical for PIE binaries.
+			 */
+			handle_qoffsets(fd);
+		} else if (strncmp(pkt, "qSearch:memory:", 15) == 0) {
+			/*
+			 * Format: qSearch:memory:<addr>;<len>;<pattern-hex>
+			 * Response: 1,<found-addr>  found
+			 *           0               not found
+			 *           E01             error
+			 */
+			char *rest = pkt + 15;
+			char *semi1, *semi2;
+			uint64_t s_addr, s_len;
+			uint8_t pattern[256];
+			uint64_t found_addr = 0;
+			int plen, ret;
+
+			semi1 = strchr(rest, ';');
+			if (!semi1) { rsp_send_str(fd, "E01"); break; }
+			*semi1 = '\0';
+			semi2 = strchr(semi1 + 1, ';');
+			if (!semi2) { rsp_send_str(fd, "E01"); break; }
+			*semi2 = '\0';
+
+			if (ela_gdb_parse_hex_u64(rest, &s_addr) != 0 ||
+			    ela_gdb_parse_hex_u64(semi1 + 1, &s_len) != 0) {
+				rsp_send_str(fd, "E01"); break;
+			}
+			plen = ela_gdb_hex_decode(semi2 + 1, pattern,
+						  sizeof(pattern));
+			if (plen <= 0) { rsp_send_str(fd, "E01"); break; }
+
+			ret = mem_search(s_addr, s_len,
+					 pattern, (size_t)plen,
+					 &found_addr);
+			if (ret < 0) {
+				rsp_send_str(fd, "E01");
+			} else if (ret == 0) {
+				rsp_send_str(fd, "0");
+			} else {
+				snprintf(resp, sizeof(resp), "1,%llx",
+					 (unsigned long long)found_addr);
+				rsp_send_str(fd, resp);
+			}
 		} else if (strncmp(pkt, "qC", 2) == 0) {
 			snprintf(resp, sizeof(resp), "QC%x", (unsigned)g_pid);
 			rsp_send_str(fd, resp);
@@ -3280,6 +3824,98 @@ static void handle_packet(int fd, char *pkt)
 			memcpy(resp + 1, k_target_xml + (size_t)xfer_off, chunk);
 			resp[1 + chunk] = '\0';
 			rsp_send_str(fd, resp);
+		} else if (strncmp(pkt, "qXfer:threads:read:", 19) == 0) {
+			/*
+			 * Format: qXfer:threads:read:<annex>:<offset>,<length>
+			 * annex is always empty.  Rebuild at offset 0.
+			 */
+			char *rest = pkt + 19;
+			char *sep2  = strrchr(rest, ':');
+			char *comma2;
+			uint64_t xfer_off, xfer_len;
+			size_t xml_len, avail, chunk;
+
+			if (!sep2) { rsp_send_str(fd, "E01"); break; }
+			comma2 = strchr(sep2 + 1, ',');
+			if (!comma2) { rsp_send_str(fd, "E01"); break; }
+
+			*comma2 = '\0';
+			if (ela_gdb_parse_hex_u64(sep2 + 1, &xfer_off) != 0 ||
+			    ela_gdb_parse_hex_u64(comma2 + 1, &xfer_len) != 0) {
+				rsp_send_str(fd, "E01");
+				break;
+			}
+
+			if (xfer_off == 0) {
+				g_threads_xml_len = build_threads_xml(
+					g_pid,
+					g_threads_xml,
+					sizeof(g_threads_xml));
+			}
+			if (g_threads_xml_len < 0) {
+				rsp_send_str(fd, "E01"); break;
+			}
+			xml_len = (size_t)g_threads_xml_len;
+			if (xfer_off >= (uint64_t)xml_len) {
+				rsp_send_str(fd, "l"); break;
+			}
+			avail = xml_len - (size_t)xfer_off;
+			if (xfer_len > (uint64_t)(sizeof(resp) - 2))
+				xfer_len = (uint64_t)(sizeof(resp) - 2);
+			chunk = (avail < (size_t)xfer_len)
+				? avail : (size_t)xfer_len;
+			resp[0] = (chunk < avail) ? 'm' : 'l';
+			memcpy(resp + 1,
+			       g_threads_xml + (size_t)xfer_off, chunk);
+			resp[1 + chunk] = '\0';
+			rsp_send_str(fd, resp);
+
+		} else if (strncmp(pkt, "qXfer:memory-map:read:", 22) == 0) {
+			/*
+			 * Format: qXfer:memory-map:read:<annex>:<offset>,<length>
+			 * annex is always empty.  Rebuild at offset 0.
+			 */
+			char *rest = pkt + 22;
+			char *sep2  = strrchr(rest, ':');
+			char *comma2;
+			uint64_t xfer_off, xfer_len;
+			size_t xml_len, avail, chunk;
+
+			if (!sep2) { rsp_send_str(fd, "E01"); break; }
+			comma2 = strchr(sep2 + 1, ',');
+			if (!comma2) { rsp_send_str(fd, "E01"); break; }
+
+			*comma2 = '\0';
+			if (ela_gdb_parse_hex_u64(sep2 + 1, &xfer_off) != 0 ||
+			    ela_gdb_parse_hex_u64(comma2 + 1, &xfer_len) != 0) {
+				rsp_send_str(fd, "E01");
+				break;
+			}
+
+			if (xfer_off == 0) {
+				g_memmap_xml_len = build_memmap_xml(
+					g_pid,
+					g_memmap_xml,
+					sizeof(g_memmap_xml));
+			}
+			if (g_memmap_xml_len < 0) {
+				rsp_send_str(fd, "E01"); break;
+			}
+			xml_len = (size_t)g_memmap_xml_len;
+			if (xfer_off >= (uint64_t)xml_len) {
+				rsp_send_str(fd, "l"); break;
+			}
+			avail = xml_len - (size_t)xfer_off;
+			if (xfer_len > (uint64_t)(sizeof(resp) - 2))
+				xfer_len = (uint64_t)(sizeof(resp) - 2);
+			chunk = (avail < (size_t)xfer_len)
+				? avail : (size_t)xfer_len;
+			resp[0] = (chunk < avail) ? 'm' : 'l';
+			memcpy(resp + 1,
+			       g_memmap_xml + (size_t)xfer_off, chunk);
+			resp[1 + chunk] = '\0';
+			rsp_send_str(fd, resp);
+
 		} else if (strncmp(pkt, "qXfer:siginfo:read:", 19) == 0) {
 			/*
 			 * Format: qXfer:siginfo:read:<annex>:<offset>,<length>
@@ -3435,19 +4071,22 @@ static void handle_packet(int fd, char *pkt)
  * Session loop
  * ---------------------------------------------------------------------- */
 
-static int run_session(int conn_fd, pid_t pid)
+static int run_session(int conn_fd, pid_t pid, int attach_wstatus)
 {
 	char payload[ELA_GDB_RSP_MAX_PACKET + 1];
 	int n;
 
-	g_pid          = pid;
-	g_stop         = 0;
-	g_tid_count    = 0;
-	g_tid_next     = 0;
-	g_svr4_xml_len = -1;
-	g_noack        = 0;
-	g_pass_signals = 0;
-	g_current_tid  = pid;
+	g_pid             = pid;
+	g_stop            = 0;
+	g_tid_count       = 0;
+	g_tid_next        = 0;
+	g_svr4_xml_len    = -1;
+	g_threads_xml_len = -1;
+	g_memmap_xml_len  = -1;
+	g_noack           = 0;
+	g_pass_signals    = 0;
+	g_current_tid     = pid;
+	g_last_wstatus    = attach_wstatus;
 	memset(g_bps, 0, sizeof(g_bps));
 
 	while (!g_stop) {
@@ -3608,7 +4247,7 @@ int linux_gdbserver_main(int argc, char **argv)
 	if (conn_fd < 0)
 		exit(1);
 
-	run_session(conn_fd, pid);
+	run_session(conn_fd, pid, wstatus);
 
 	close(conn_fd);
 	ptrace(PTRACE_DETACH, pid, NULL, NULL);
