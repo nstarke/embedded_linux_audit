@@ -35,7 +35,7 @@ static int read_file_all(const char *path, uint8_t **out, size_t *out_len)
 	if (fd < 0)
 		return -1;
 
-	if (fstat(fd, &st) != 0 || st.st_size <= 0 || (uint64_t)st.st_size > (uint64_t)SIZE_MAX) {
+	if (fstat(fd, &st) != 0 || st.st_size <= 0) {
 		close(fd);
 		return -1;
 	}
