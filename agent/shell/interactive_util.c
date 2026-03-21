@@ -42,11 +42,13 @@ const char *const *ela_interactive_candidates_for_position(int argc, char **argv
 	if (!strcmp(argv[0], "uboot"))
 		return interactive_group_uboot;
 	if (!strcmp(argv[0], "linux")) {
-		if (argc >= 3 && !strcmp(argv[1], "process")) {
-			if (argc == 3)
-				return interactive_group_linux_process;
-			if (argc == 4 && !strcmp(argv[2], "watch"))
-				return interactive_group_linux_process_watch;
+		if (argc >= 3) {
+			if (!strcmp(argv[1], "process")) {
+				if (argc == 3)
+					return interactive_group_linux_process;
+				if (argc == 4 && !strcmp(argv[2], "watch"))
+					return interactive_group_linux_process_watch;
+			}
 			return NULL;
 		}
 		return interactive_group_linux;
