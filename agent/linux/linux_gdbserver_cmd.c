@@ -2582,6 +2582,10 @@ int linux_gdbserver_main(int argc, char **argv)
 	int listen_fd, conn_fd, wstatus;
 	struct sockaddr_in client;
 	socklen_t client_len = sizeof(client);
+	int pipefd[2];
+	pid_t child;
+	char result;
+	int devnull;
 
 	if (argc < 3) {
 		fprintf(stderr,
@@ -2607,47 +2611,87 @@ int linux_gdbserver_main(int argc, char **argv)
 	}
 	port = (uint16_t)val;
 
+	if (pipe(pipefd) != 0) {
+		perror("pipe");
+		return 1;
+	}
+
+	child = fork();
+	if (child < 0) {
+		perror("fork");
+		close(pipefd[0]);
+		close(pipefd[1]);
+		return 1;
+	}
+
+	if (child > 0) {
+		/* Parent: block until child signals ready or error */
+		close(pipefd[1]);
+		result = 'E';
+		(void)read(pipefd[0], &result, 1);
+		close(pipefd[0]);
+		if (result == 'K') {
+			fprintf(stderr,
+				"gdbserver attached to PID %d, listening on port %u (background).\n"
+				"  Connect with: target remote :%u\n",
+				(int)pid, (unsigned)port, (unsigned)port);
+			return 0;
+		}
+		return 1;
+	}
+
+	/* Child: become session leader and run the gdbserver */
+	close(pipefd[0]);
+	setsid();
 	signal(SIGINT,  handle_signal);
 	signal(SIGTERM, handle_signal);
 
 	if (ptrace(PTRACE_ATTACH, pid, NULL, NULL) != 0) {
 		perror("ptrace attach");
-		return 1;
+		(void)write(pipefd[1], "E", 1);
+		close(pipefd[1]);
+		exit(1);
 	}
 
 	if (waitpid(pid, &wstatus, 0) < 0) {
 		perror("waitpid");
 		ptrace(PTRACE_DETACH, pid, NULL, NULL);
-		return 1;
+		(void)write(pipefd[1], "E", 1);
+		close(pipefd[1]);
+		exit(1);
 	}
 
 	listen_fd = tcp_listen_port(port);
 	if (listen_fd < 0) {
 		perror("bind/listen");
 		ptrace(PTRACE_DETACH, pid, NULL, NULL);
-		return 1;
+		(void)write(pipefd[1], "E", 1);
+		close(pipefd[1]);
+		exit(1);
 	}
 
-	fprintf(stderr,
-		"Attached to PID %d.  Listening on port %u.\n"
-		"  Connect with: target remote :%u\n",
-		(int)pid, (unsigned)port, (unsigned)port);
+	/* Signal parent that attach and bind succeeded */
+	(void)write(pipefd[1], "K", 1);
+	close(pipefd[1]);
+
+	/* Redirect stdio to /dev/null so inherited fds don't keep sessions alive */
+	devnull = open("/dev/null", O_RDWR);
+	if (devnull >= 0) {
+		dup2(devnull, STDIN_FILENO);
+		dup2(devnull, STDOUT_FILENO);
+		dup2(devnull, STDERR_FILENO);
+		if (devnull > STDERR_FILENO)
+			close(devnull);
+	}
 
 	conn_fd = accept(listen_fd, (struct sockaddr *)&client, &client_len);
 	close(listen_fd);
-	if (conn_fd < 0) {
-		perror("accept");
-		ptrace(PTRACE_DETACH, pid, NULL, NULL);
-		return 1;
-	}
-
-	fprintf(stderr, "gdb connected from %s\n",
-		inet_ntoa(client.sin_addr));
+	if (conn_fd < 0)
+		exit(1);
 
 	run_session(conn_fd, pid);
 
 	close(conn_fd);
-	/* Ensure detach even if session exited without D/k packet */
 	ptrace(PTRACE_DETACH, pid, NULL, NULL);
-	return 0;
+	exit(0);
 }

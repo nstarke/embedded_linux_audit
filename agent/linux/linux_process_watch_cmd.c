@@ -384,6 +384,17 @@ static int daemon_start(const char *fmt,
 	signal(SIGTERM, watch_signal_handler);
 	signal(SIGINT,  watch_signal_handler);
 
+	{
+		int devnull = open("/dev/null", O_RDWR);
+		if (devnull >= 0) {
+			dup2(devnull, STDIN_FILENO);
+			dup2(devnull, STDOUT_FILENO);
+			dup2(devnull, STDERR_FILENO);
+			if (devnull > STDERR_FILENO)
+				close(devnull);
+		}
+	}
+
 	if (tcp_target && *tcp_target)
 		g_watch_sock = ela_connect_tcp_ipv4(tcp_target);
 
