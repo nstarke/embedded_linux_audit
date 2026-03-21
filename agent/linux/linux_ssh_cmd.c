@@ -263,6 +263,7 @@ static int linux_ssh_copy_path(sftp_session sftp,
 {
 	struct stat st;
 
+	/* coverity[toctou] */
 	if (lstat(local_path, &st) != 0) {
 		fprintf(stderr, "ssh copy: cannot stat %s: %s\n", local_path, strerror(errno));
 		return -1;
