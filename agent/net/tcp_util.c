@@ -107,6 +107,8 @@ static int ela_dns_query_a(const char *ns_ip, const char *hostname,
 	close(sock);
 	if (n < 12)
 		return -1;
+	if (n > (ssize_t)sizeof(resp))
+		n = (ssize_t)sizeof(resp); /* cap tainted recv length */
 
 	if (!(resp[2] & 0x80) || (resp[3] & 0x0f) != 0)
 		return -1;
