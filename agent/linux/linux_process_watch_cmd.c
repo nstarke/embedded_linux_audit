@@ -391,6 +391,9 @@ static int daemon_start(const char *fmt,
 			dup2(devnull, STDIN_FILENO);
 			dup2(devnull, STDOUT_FILENO);
 			dup2(devnull, STDERR_FILENO);
+			/* When devnull <= STDERR_FILENO one of the dup2 calls
+			 * targeted devnull itself, so no extra fd remains open. */
+			/* coverity[resource_leak] */
 			if (devnull > STDERR_FILENO)
 				close(devnull);
 		}
