@@ -117,10 +117,16 @@ static const uint8_t k_mips_brk[4]    = { 0x0d, 0x00, 0x00, 0x00 }; /* LE */
 #  endif
 #elif defined(__powerpc__)
 /*
- * PPC trap instruction (unconditional): 'trap' = 0x7fe00008 (BE).
- * The encoding is the same for PPC32 and PPC64.
+ * PPC trap instruction (unconditional): 'trap' = 0x7fe00008.
+ * The encoding is the same for PPC32 and PPC64, but the byte order
+ * in memory depends on whether the kernel is running BE or LE.
+ * PPC64 LE (IBM POWER8+ in LE mode) stores the instruction bytes reversed.
  */
+#  ifdef __LITTLE_ENDIAN__
+static const uint8_t k_ppc_brk[4]     = { 0x08, 0x00, 0xe0, 0x7f }; /* LE */
+#  else
 static const uint8_t k_ppc_brk[4]     = { 0x7f, 0xe0, 0x00, 0x08 }; /* BE */
+#  endif
 #elif defined(__riscv)
 /*
  * ebreak (4-byte): 0x00100073 in LE byte order.  Same encoding on RV32/RV64.
@@ -1973,7 +1979,9 @@ static uint64_t read_sysno(void)
 #elif defined(__arm__)
 	{
 		struct user_regs r;
-		if (ptrace(PTRACE_GETREGS, g_pid, NULL, &r) == 0)
+		struct iovec iov = { &r, sizeof(r) };
+		if (ptrace(PTRACE_GETREGSET, g_pid,
+			   (void *)(uintptr_t)NT_PRSTATUS, &iov) == 0)
 			return (uint64_t)r.uregs[7]; /* r7 (EABI) */
 	}
 #elif defined(__mips__)
@@ -3275,7 +3283,10 @@ static void handle_packet(int fd, char *pkt)
 		break;
 
 	case 's': /* Single step */
-		ptrace(PTRACE_SINGLESTEP, g_pid, NULL, NULL);
+		if (ptrace(PTRACE_SINGLESTEP, g_pid, NULL, NULL) != 0) {
+			rsp_send_str(fd, "E01");
+			break;
+		}
 		waitpid(g_pid, &wstatus, 0);
 		g_last_wstatus = wstatus;
 		send_stop_reply(fd, wstatus);
@@ -3288,8 +3299,11 @@ static void handle_packet(int fd, char *pkt)
 	case 'S': /* Step with signal: S<sig>[;<addr>] */
 	{
 		int sig = (int)strtol(pkt + 1, NULL, 16);
-		ptrace(PTRACE_SINGLESTEP, g_pid, NULL,
-		       (void *)(uintptr_t)sig);
+		if (ptrace(PTRACE_SINGLESTEP, g_pid, NULL,
+			   (void *)(uintptr_t)sig) != 0) {
+			rsp_send_str(fd, "E01");
+			break;
+		}
 		waitpid(g_pid, &wstatus, 0);
 		g_last_wstatus = wstatus;
 		send_stop_reply(fd, wstatus);
@@ -3305,15 +3319,21 @@ static void handle_packet(int fd, char *pkt)
 			/* Continue with signal: vCont;C<sig>[:tid] */
 			do_continue(fd, (int)strtol(pkt + 7, NULL, 16));
 		} else if (strncmp(pkt, "vCont;s", 7) == 0) {
-			ptrace(PTRACE_SINGLESTEP, g_pid, NULL, NULL);
+			if (ptrace(PTRACE_SINGLESTEP, g_pid, NULL, NULL) != 0) {
+				rsp_send_str(fd, "E01");
+				break;
+			}
 			waitpid(g_pid, &wstatus, 0);
 			g_last_wstatus = wstatus;
 			send_stop_reply(fd, wstatus);
 		} else if (strncmp(pkt, "vCont;S", 7) == 0) {
 			/* Step with signal: vCont;S<sig>[:tid] */
 			int sig = (int)strtol(pkt + 7, NULL, 16);
-			ptrace(PTRACE_SINGLESTEP, g_pid, NULL,
-			       (void *)(uintptr_t)sig);
+			if (ptrace(PTRACE_SINGLESTEP, g_pid, NULL,
+				   (void *)(uintptr_t)sig) != 0) {
+				rsp_send_str(fd, "E01");
+				break;
+			}
 			waitpid(g_pid, &wstatus, 0);
 			g_last_wstatus = wstatus;
 			send_stop_reply(fd, wstatus);
