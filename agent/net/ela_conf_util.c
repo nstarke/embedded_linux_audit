@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later - Copyright (c) 2026 Nicholas Starke
 
 #include "ela_conf_util.h"
+#include "../util/command_parse_util.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -39,7 +40,11 @@ void ela_conf_apply_line(struct ela_conf *conf, const char *line)
 	} else if (key_len == 11 && !strncmp(line, "output-http", 11)) {
 		snprintf(conf->output_http, sizeof(conf->output_http), "%s", val);
 	} else if (key_len == 13 && !strncmp(line, "output-format", 13)) {
-		snprintf(conf->output_format, sizeof(conf->output_format), "%s", val);
+		/* Validate against the whitelist before storing to avoid
+		 * propagating untrusted file content into env exports. */
+		if (ela_output_format_is_valid(val))
+			snprintf(conf->output_format, sizeof(conf->output_format),
+				 "%s", val);
 	} else if (key_len == 8 && !strncmp(line, "insecure", 8)) {
 		conf->insecure = ela_conf_string_is_true(val) ? 1 : 0;
 	}
