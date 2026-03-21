@@ -311,8 +311,10 @@ static int rsp_recv_packet(int fd, char *payload, size_t payload_sz)
 	raw[pos] = '\0';
 
 	/* ACK (suppressed after QStartNoAckMode) */
-	if (!g_noack)
-		send(fd, "+", 1, 0);
+	if (!g_noack) {
+		if (send(fd, "+", 1, 0) < 0)
+			return -1;
+	}
 
 	return ela_gdb_rsp_unframe(raw, pos, payload, payload_sz);
 }
