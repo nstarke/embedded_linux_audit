@@ -9,3 +9,5 @@ Documents in this directory:
 - [`embedded_linux_audit linux list-files`](list-files.md)
 - [`embedded_linux_audit linux list-symlinks`](list-symlinks.md)
 - [`embedded_linux_audit linux remote-copy`](remote-copy.md)
+- [`embedded_linux_audit linux gdbserver`](gdbserver.md)
+- [`embedded_linux_audit linux process`](process.md)
