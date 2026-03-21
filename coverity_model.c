@@ -5,18 +5,21 @@
  * Coverity Scan to teach the analyzer how custom functions behave,
  * reducing false positives and improving true-positive detection.
  *
- * Primitives used:
- *   __coverity_return_null_on_error__() — function may return NULL on failure
- *   __coverity_alloc__(size)            — return value is a heap allocation
- *   __coverity_free__(ptr)              — function frees ptr
- *   __coverity_tainted_data_sink__(arg) — arg is a safe sink; stop taint propagation
- *   __coverity_writeall__(ptr)          — function writes to the buffer *ptr
+ * Valid primitives used:
  *   __coverity_panic__()               — function never returns
+ *   __coverity_tainted_data_sink__(arg) — arg is a safe sink for tainted data
+ *   __coverity_writeall__(ptr)          — function writes to the buffer *ptr
+ *   malloc(n) / free(p)                — model heap allocation / deallocation
  */
+
+/* Coverity model files cannot include system headers; declare malloc directly. */
+void *malloc(unsigned long size);
 
 /* -----------------------------------------------------------------------
  * Heap-allocating functions
- * Tell Coverity these return caller-owned heap memory (may be NULL).
+ * Modeled using malloc() so Coverity knows:
+ *   (a) the returned pointer is heap-allocated and must be freed, and
+ *   (b) it may be NULL (malloc can return NULL).
  * ----------------------------------------------------------------------- */
 
 /*
@@ -27,20 +30,17 @@ char *ela_http_build_upload_uri(const char *base_uri,
                                 const char *upload_type,
                                 const char *file_path)
 {
-    char *p;
-    __coverity_return_null_on_error__();
-    return p;
+    size_t n;
+    return (char *)malloc(n);
 }
 
 /*
- * Percent-encodes a URL path component. Returns a malloc'd string that the
- * caller must free, or NULL on failure.
+ * Percent-encodes a URL path component. Returns a malloc'd string or NULL.
  */
 char *url_percent_encode(const char *text)
 {
-    char *p;
-    __coverity_return_null_on_error__();
-    return p;
+    size_t n;
+    return (char *)malloc(n);
 }
 
 /*
@@ -48,9 +48,8 @@ char *url_percent_encode(const char *text)
  */
 char *ela_script_url_percent_encode(const char *text)
 {
-    char *p;
-    __coverity_return_null_on_error__();
-    return p;
+    size_t n;
+    return (char *)malloc(n);
 }
 
 /*
@@ -60,9 +59,8 @@ char *ela_script_url_percent_encode(const char *text)
 char *ela_http_uri_normalize_default_port(const char *uri,
                                           unsigned short default_port)
 {
-    char *p;
-    __coverity_return_null_on_error__();
-    return p;
+    size_t n;
+    return (char *)malloc(n);
 }
 
 /*
@@ -71,9 +69,8 @@ char *ela_http_uri_normalize_default_port(const char *uri,
  */
 char *ela_build_command_summary(int argc, char **argv, int start_idx)
 {
-    char *p;
-    __coverity_return_null_on_error__();
-    return p;
+    size_t n;
+    return (char *)malloc(n);
 }
 
 /*
@@ -82,9 +79,8 @@ char *ela_build_command_summary(int argc, char **argv, int start_idx)
 char *ela_remote_copy_build_symlink_upload_uri(const char *upload_uri,
                                                const char *target_path)
 {
-    char *p;
-    __coverity_return_null_on_error__();
-    return p;
+    size_t n;
+    return (char *)malloc(n);
 }
 
 /* -----------------------------------------------------------------------
@@ -147,9 +143,7 @@ int ela_http_get_upload_mac(const char *base_uri,
 /* -----------------------------------------------------------------------
  * Error-buffer writing functions
  * Functions that accept (char *errbuf, size_t errbuf_len) pairs and write
- * diagnostic text into errbuf on failure. Modeling writeall prevents
- * Coverity from flagging the buffer as potentially uninitialized after
- * an error-path call.
+ * diagnostic text into errbuf on failure.
  * ----------------------------------------------------------------------- */
 
 int ela_parse_http_output_uri(const char *uri,
@@ -163,18 +157,11 @@ int ela_parse_http_output_uri(const char *uri,
 
 /* -----------------------------------------------------------------------
  * Size-guessing functions
- * These read device metadata from /sys and /proc. The values are bounded
- * by the physical device and are not user-controlled; they are tainted
- * only in the sense that they are external. We model them as returning an
- * unsigned 64-bit value to help Coverity understand the type contract.
- * Callers are responsible for capping the result before use as a loop
- * bound or allocation size (see existing ELA_GDB_MAX_PHNUM-style caps).
+ * These read device metadata from /sys and /proc. The values are not
+ * user-controlled; callers are responsible for capping results before
+ * use as loop bounds or allocation sizes.
  * ----------------------------------------------------------------------- */
 
-/*
- * Returns the detected size of a flash/block/UBI device in bytes, or 0
- * if the size cannot be determined. Not a user-controlled value.
- */
 unsigned long long uboot_guess_size_any(const char *dev)
 {
     unsigned long long sz;
