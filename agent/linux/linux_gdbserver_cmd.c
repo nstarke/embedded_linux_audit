@@ -3483,9 +3483,14 @@ static void handle_packet(int fd, char *pkt)
 			bp_clear_all();
 			ptrace(PTRACE_DETACH, g_pid, NULL, NULL);
 
-			if (ptrace(PTRACE_ATTACH, new_pid, NULL, NULL) != 0 ||
-			    waitpid(new_pid, &new_ws, 0) < 0) {
-				/* Attach failed — session is now unattached */
+			if (ptrace(PTRACE_ATTACH, new_pid, NULL, NULL) != 0) {
+				rsp_send_str(fd, "E01");
+				g_stop = 1;
+				break;
+			}
+			if (waitpid(new_pid, &new_ws, 0) < 0) {
+				/* Attached but waitpid failed; undo attach */
+				ptrace(PTRACE_DETACH, new_pid, NULL, NULL);
 				rsp_send_str(fd, "E01");
 				g_stop = 1;
 				break;
@@ -3549,7 +3554,7 @@ static void handle_packet(int fd, char *pkt)
 		break;
 	}
 
-	case 'Z': /* Insert breakpoint/watchpoint: Z<type>,<addr>,<kind> */
+	case 'Z': /* Insert breakpoint/watchpoint: Z<type>,<addr>,<kind>[;cond...] */
 	{
 		int ztype = pkt[1] - '0';
 		uint64_t kind = 4;
@@ -3562,7 +3567,9 @@ static void handle_packet(int fd, char *pkt)
 		if (ela_gdb_parse_hex_u64(pkt + 3, &addr) != 0) {
 			rsp_send_str(fd, "E01"); break;
 		}
-		ela_gdb_parse_hex_u64(ksep, &kind);
+		/* Use strtoul so trailing ";condition" extensions are ignored */
+		if (*ksep)
+			kind = (uint64_t)strtoul(ksep, NULL, 16);
 
 		if (ztype == 0) {
 			/* Software breakpoint */
@@ -3937,16 +3944,15 @@ static void handle_packet(int fd, char *pkt)
 			}
 
 			avail = (size_t)((uint64_t)exe_len - xfer_off);
-			/* cap to what fits in resp leaving room for prefix+NUL */
-			if (xfer_len > (uint64_t)(sizeof(resp) - 2))
-				xfer_len = (uint64_t)(sizeof(resp) - 2);
+			if (xfer_len > (uint64_t)ELA_GDB_RSP_MAX_PACKET)
+				xfer_len = (uint64_t)ELA_GDB_RSP_MAX_PACKET;
 			chunk = (avail < (size_t)xfer_len)
 				? avail : (size_t)xfer_len;
 
-			resp[0] = (chunk < avail) ? 'm' : 'l';
-			memcpy(resp + 1, exe_path + xfer_off, chunk);
-			resp[1 + chunk] = '\0';
-			rsp_send_str(fd, resp);
+			rsp_send_binary_qxfer(fd,
+					      (const uint8_t *)exe_path +
+					      (size_t)xfer_off,
+					      chunk, chunk >= avail);
 		} else if (strncmp(pkt, "qXfer:auxv:read:", 16) == 0) {
 			/*
 			 * Format: qXfer:auxv:read:<annex>:<offset>,<length>
@@ -4043,16 +4049,15 @@ static void handle_packet(int fd, char *pkt)
 			}
 
 			avail = (size_t)(xml_len - (size_t)xfer_off);
-			if (xfer_len > (uint64_t)(sizeof(resp) - 2))
-				xfer_len = (uint64_t)(sizeof(resp) - 2);
+			if (xfer_len > (uint64_t)ELA_GDB_RSP_MAX_PACKET)
+				xfer_len = (uint64_t)ELA_GDB_RSP_MAX_PACKET;
 			chunk = (avail < (size_t)xfer_len)
 				? avail : (size_t)xfer_len;
 
-			resp[0] = (chunk < avail) ? 'm' : 'l';
-			memcpy(resp + 1, g_target_xml + (size_t)xfer_off,
-			       chunk);
-			resp[1 + chunk] = '\0';
-			rsp_send_str(fd, resp);
+			rsp_send_binary_qxfer(fd,
+					      (const uint8_t *)g_target_xml +
+					      (size_t)xfer_off,
+					      chunk, chunk >= avail);
 		} else if (strncmp(pkt, "qXfer:threads:read:", 19) == 0) {
 			/*
 			 * Format: qXfer:threads:read:<annex>:<offset>,<length>
@@ -4089,15 +4094,14 @@ static void handle_packet(int fd, char *pkt)
 				rsp_send_str(fd, "l"); break;
 			}
 			avail = xml_len - (size_t)xfer_off;
-			if (xfer_len > (uint64_t)(sizeof(resp) - 2))
-				xfer_len = (uint64_t)(sizeof(resp) - 2);
+			if (xfer_len > (uint64_t)ELA_GDB_RSP_MAX_PACKET)
+				xfer_len = (uint64_t)ELA_GDB_RSP_MAX_PACKET;
 			chunk = (avail < (size_t)xfer_len)
 				? avail : (size_t)xfer_len;
-			resp[0] = (chunk < avail) ? 'm' : 'l';
-			memcpy(resp + 1,
-			       g_threads_xml + (size_t)xfer_off, chunk);
-			resp[1 + chunk] = '\0';
-			rsp_send_str(fd, resp);
+			rsp_send_binary_qxfer(fd,
+					      (const uint8_t *)g_threads_xml +
+					      (size_t)xfer_off,
+					      chunk, chunk >= avail);
 
 		} else if (strncmp(pkt, "qXfer:memory-map:read:", 22) == 0) {
 			/*
@@ -4135,15 +4139,14 @@ static void handle_packet(int fd, char *pkt)
 				rsp_send_str(fd, "l"); break;
 			}
 			avail = xml_len - (size_t)xfer_off;
-			if (xfer_len > (uint64_t)(sizeof(resp) - 2))
-				xfer_len = (uint64_t)(sizeof(resp) - 2);
+			if (xfer_len > (uint64_t)ELA_GDB_RSP_MAX_PACKET)
+				xfer_len = (uint64_t)ELA_GDB_RSP_MAX_PACKET;
 			chunk = (avail < (size_t)xfer_len)
 				? avail : (size_t)xfer_len;
-			resp[0] = (chunk < avail) ? 'm' : 'l';
-			memcpy(resp + 1,
-			       g_memmap_xml + (size_t)xfer_off, chunk);
-			resp[1 + chunk] = '\0';
-			rsp_send_str(fd, resp);
+			rsp_send_binary_qxfer(fd,
+					      (const uint8_t *)g_memmap_xml +
+					      (size_t)xfer_off,
+					      chunk, chunk >= avail);
 
 		} else if (strncmp(pkt, "qXfer:siginfo:read:", 19) == 0) {
 			/*
@@ -4234,15 +4237,15 @@ static void handle_packet(int fd, char *pkt)
 			}
 
 			avail = (size_t)(xml_len - (size_t)xfer_off);
-			if (xfer_len > (uint64_t)(sizeof(resp) - 2))
-				xfer_len = (uint64_t)(sizeof(resp) - 2);
+			if (xfer_len > (uint64_t)ELA_GDB_RSP_MAX_PACKET)
+				xfer_len = (uint64_t)ELA_GDB_RSP_MAX_PACKET;
 			chunk = (avail < (size_t)xfer_len)
 				? avail : (size_t)xfer_len;
 
-			resp[0] = (chunk < avail) ? 'm' : 'l';
-			memcpy(resp + 1, g_svr4_xml + (size_t)xfer_off, chunk);
-			resp[1 + chunk] = '\0';
-			rsp_send_str(fd, resp);
+			rsp_send_binary_qxfer(fd,
+					      (const uint8_t *)g_svr4_xml +
+					      (size_t)xfer_off,
+					      chunk, chunk >= avail);
 		} else {
 			rsp_send_str(fd, ""); /* unknown query */
 		}
