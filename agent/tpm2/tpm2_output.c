@@ -77,6 +77,7 @@ int tpm2_output_kv(struct tpm2_output_ctx *ctx, const char *key, const char *val
 	return ela_tpm2_format_kv_record(&ctx->buf, ctx->format, key, value);
 }
 
+/* LCOV_EXCL_START - tpm2_output_flush requires a live TCP socket or HTTP server */
 int tpm2_output_flush(struct tpm2_output_ctx *ctx, const char *upload_type)
 {
 	const char  *data = ctx->buf.data ? ctx->buf.data : "";
@@ -121,6 +122,7 @@ int tpm2_output_flush(struct tpm2_output_ctx *ctx, const char *upload_type)
 
 	return ret;
 }
+/* LCOV_EXCL_STOP */
 
 void tpm2_output_free(struct tpm2_output_ctx *ctx)
 {

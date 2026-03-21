@@ -17,6 +17,13 @@
 #define TRANSFER_DEFAULT_RETRY_ATTEMPTS 5
 #define TRANSFER_RETRY_DELAY_SECS       60
 
+/*
+ * All functions in this file require real hardware, network I/O, or OS-level
+ * services (ptrace, SSH, sockets, TPM2, EFI) and cannot be exercised in the
+ * unit-test environment.
+ */
+/* LCOV_EXCL_START */
+
 static void usage(const char *prog)
 {
 	fprintf(stderr,
@@ -70,3 +77,5 @@ int transfer_main(int argc, char **argv)
 		return result.exit_code;
 	return 0;
 }
+
+/* LCOV_EXCL_STOP */

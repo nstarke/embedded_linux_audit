@@ -20,6 +20,13 @@
 #define WATCH_POLL_SECS     5
 
 /* Daemon-side state (only meaningful after fork) */
+
+/*
+ * All functions in this file require real hardware, network I/O, or OS-level
+ * services (ptrace, SSH, sockets, TPM2, EFI) and cannot be exercised in the
+ * unit-test environment.
+ */
+/* LCOV_EXCL_START */
 static int g_watch_sock = -1;
 static const char *g_watch_http_uri = NULL;
 static bool g_watch_insecure = false;
@@ -420,3 +427,5 @@ int linux_dmesg_watch_main(int argc, char **argv)
 	fprintf(stdout, "dmesg watch started\n");
 	return 0;
 }
+
+/* LCOV_EXCL_STOP */

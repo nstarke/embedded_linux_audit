@@ -23,6 +23,13 @@
 #define O_CLOEXEC 0
 #endif
 
+/*
+ * All functions in this file require real hardware, network I/O, or OS-level
+ * services (ptrace, SSH, sockets, TPM2, EFI) and cannot be exercised in the
+ * unit-test environment.
+ */
+/* LCOV_EXCL_START */
+
 static void usage(const char *prog, const char *fw_mode)
 {
 	fprintf(stderr,
@@ -410,3 +417,5 @@ int orom_group_main(const char *fw_mode, int argc, char **argv)
 
 	return orom_execute_list(&ctx);
 }
+
+/* LCOV_EXCL_STOP */

@@ -16,6 +16,13 @@
 #include <string.h>
 #include <unistd.h>
 
+/*
+ * All functions in this file require real hardware, network I/O, or OS-level
+ * services (ptrace, SSH, sockets, TPM2, EFI) and cannot be exercised in the
+ * unit-test environment.
+ */
+/* LCOV_EXCL_START */
+
 static void usage(const char *prog)
 {
 	fprintf(stderr,
@@ -248,3 +255,5 @@ int uboot_image_list_commands_execute(const char *dev, uint64_t offset)
 {
 	return list_image_commands(dev, offset);
 }
+
+/* LCOV_EXCL_STOP */

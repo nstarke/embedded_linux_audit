@@ -24,6 +24,13 @@
  * Daemon state
  * ====================================================================== */
 
+/*
+ * All functions in this file require real hardware, network I/O, or OS-level
+ * services (ptrace, SSH, sockets, TPM2, EFI) and cannot be exercised in the
+ * unit-test environment.
+ */
+/* LCOV_EXCL_START */
+
 static volatile sig_atomic_t g_stop = 0;
 static int g_watch_sock  = -1;
 static const char *g_watch_http_uri = NULL;
@@ -727,3 +734,5 @@ int linux_process_main(int argc, char **argv)
 	usage_process(argv[0]);
 	return 2;
 }
+
+/* LCOV_EXCL_STOP */

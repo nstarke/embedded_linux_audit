@@ -86,6 +86,13 @@
 #  define RISCV_PT_NREGS 32  /* entries in the kernel regs array */
 #endif
 
+/*
+ * All functions in this file require a live ptrace-attached process, a real
+ * TCP socket connection, or OS-level signal/process management.  None can be
+ * exercised in the unit-test environment.
+ */
+/* LCOV_EXCL_START */
+
 /* Maximum number of tracked software breakpoints */
 #define ELA_GDB_MAX_BREAKPOINTS  64
 
@@ -4607,3 +4614,4 @@ int linux_gdbserver_main(int argc, char **argv)
 	ptrace(PTRACE_DETACH, pid, NULL, NULL);
 	exit(0);
 }
+/* LCOV_EXCL_STOP */

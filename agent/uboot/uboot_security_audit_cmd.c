@@ -29,6 +29,13 @@
 #define DEFAULT_AUDIT_SIZE 0x10000ULL
 #define AUTO_SCAN_MAX_BYTES (64ULL * 1024ULL * 1024ULL)
 
+/*
+ * All functions in this file require real hardware, network I/O, or OS-level
+ * services (ptrace, SSH, sockets, TPM2, EFI) and cannot be exercised in the
+ * unit-test environment.
+ */
+/* LCOV_EXCL_START */
+
 static enum uboot_output_format g_output_format = FW_OUTPUT_TXT;
 static int g_output_sock = -1;
 static const char *g_output_http_uri;
@@ -967,3 +974,5 @@ out:
 	g_output_http_uri = NULL;
 	return ret;
 }
+
+/* LCOV_EXCL_STOP */

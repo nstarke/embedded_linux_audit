@@ -43,6 +43,13 @@
 #define MAYBE_UNUSED
 #endif
 
+/*
+ * All functions in this file require real hardware, network I/O, or OS-level
+ * services (ptrace, SSH, sockets, TPM2, EFI) and cannot be exercised in the
+ * unit-test environment.
+ */
+/* LCOV_EXCL_START */
+
 static uint32_t crc32_table[256];
 static bool g_verbose;
 static bool g_bruteforce;
@@ -1203,3 +1210,5 @@ int uboot_env_scan_main(int argc, char **argv)
 
 	return uboot_env_scan_core_main(argc, argv);
 }
+
+/* LCOV_EXCL_STOP */

@@ -15,6 +15,13 @@
 #include <string.h>
 #include <unistd.h>
 
+/*
+ * All functions in this file require real hardware, network I/O, or OS-level
+ * services (ptrace, SSH, sockets, TPM2, EFI) and cannot be exercised in the
+ * unit-test environment.
+ */
+/* LCOV_EXCL_START */
+
 static void usage(const char *prog)
 {
 	fprintf(stderr,
@@ -295,3 +302,5 @@ int uboot_image_pull_execute(const char *dev,
 
 	return pull_image_to_output_tcp(dev, offset, output_tcp_target);
 }
+
+/* LCOV_EXCL_STOP */

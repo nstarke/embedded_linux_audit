@@ -43,6 +43,13 @@
 #ifdef ELA_HAS_WOLFSSL
 #include <wolfssl/options.h>
 #include <wolfssl/ssl.h>
+
+/*
+ * All functions in this file require real hardware, network I/O, or OS-level
+ * services (ptrace, SSH, sockets, TPM2, EFI) and cannot be exercised in the
+ * unit-test environment.
+ */
+/* LCOV_EXCL_START */
 typedef WOLFSSL      ws_ssl_t;
 typedef WOLFSSL_CTX  ws_ssl_ctx_t;
 #define ws_tls_init()           wolfSSL_Init()
@@ -846,3 +853,5 @@ int ela_ws_run_interactive(struct ela_ws_conn *ws, const char *prog)
 	}
 	return ela_ws_interactive_exit_code(child_exited);
 }
+
+/* LCOV_EXCL_STOP */

@@ -25,6 +25,13 @@
  * ---------------------------------------------------------------------- */
 
 #ifdef __linux__
+
+/*
+ * All functions in this file require real hardware, network I/O, or OS-level
+ * services (ptrace, SSH, sockets, TPM2, EFI) and cannot be exercised in the
+ * unit-test environment.
+ */
+/* LCOV_EXCL_START */
 static int ela_has_dns_configured(void)
 {
 	FILE *f;
@@ -302,3 +309,5 @@ int ela_send_all(int sock, const uint8_t *buf, size_t len)
 	}
 	return 0;
 }
+
+/* LCOV_EXCL_STOP */

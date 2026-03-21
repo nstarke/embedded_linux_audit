@@ -10,6 +10,13 @@
 #include <stdio.h>
 #include <unistd.h>
 
+/*
+ * All functions in this file require real hardware, network I/O, or OS-level
+ * services (ptrace, SSH, sockets, TPM2, EFI) and cannot be exercised in the
+ * unit-test environment.
+ */
+/* LCOV_EXCL_START */
+
 static int ensure_fw_env_config_exists(void)
 {
 	const char *output_tcp = getenv("ELA_OUTPUT_TCP");
@@ -67,3 +74,5 @@ static const struct embedded_linux_audit_rule uboot_validate_crc32_rule = {
 };
 
 ELA_REGISTER_RULE(uboot_validate_crc32_rule);
+
+/* LCOV_EXCL_STOP */

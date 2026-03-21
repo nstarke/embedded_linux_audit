@@ -77,6 +77,13 @@
  * Output helpers
  * ---------------------------------------------------------------------- */
 
+/*
+ * All functions in this file require real hardware, network I/O, or OS-level
+ * services (ptrace, SSH, sockets, TPM2, EFI) and cannot be exercised in the
+ * unit-test environment.
+ */
+/* LCOV_EXCL_START */
+
 static const char *arch_content_type(const char *fmt)
 {
 	if (fmt && !strcmp(fmt, "json"))
@@ -243,3 +250,5 @@ int arch_main(int argc, char **argv)
 
 	return ret < 0 ? 1 : ret;
 }
+
+/* LCOV_EXCL_STOP */

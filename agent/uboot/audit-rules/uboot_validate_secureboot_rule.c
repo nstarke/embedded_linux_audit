@@ -21,6 +21,13 @@
 #define O_CLOEXEC 0
 #endif
 
+/*
+ * All functions in this file require real hardware, network I/O, or OS-level
+ * services (ptrace, SSH, sockets, TPM2, EFI) and cannot be exercised in the
+ * unit-test environment.
+ */
+/* LCOV_EXCL_START */
+
 static int read_file_all(const char *path, uint8_t **out, size_t *out_len)
 {
 	int fd = -1;
@@ -255,3 +262,5 @@ static const struct embedded_linux_audit_rule uboot_validate_secureboot_rule = {
 };
 
 ELA_REGISTER_RULE(uboot_validate_secureboot_rule);
+
+/* LCOV_EXCL_STOP */

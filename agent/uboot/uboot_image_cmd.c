@@ -29,6 +29,13 @@
 #include <csv.h>
 
 /* Global state definitions (authoritative) */
+
+/*
+ * All functions in this file require real hardware, network I/O, or OS-level
+ * services (ptrace, SSH, sockets, TPM2, EFI) and cannot be exercised in the
+ * unit-test environment.
+ */
+/* LCOV_EXCL_START */
 bool g_verbose;
 bool g_allow_text;
 const char *g_allow_text_pattern = "U-Boot";
@@ -692,3 +699,5 @@ int uboot_image_finish(int rc)
 
 	return ret;
 }
+
+/* LCOV_EXCL_STOP */
