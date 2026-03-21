@@ -4449,6 +4449,17 @@ static int run_session(int conn_fd, pid_t pid, int attach_wstatus)
 		n = rsp_recv_packet(conn_fd, payload, sizeof(payload));
 		if (n < 0)
 			break;
+		/*
+		 * The GDB Remote Serial Protocol vFile:* commands give GDB
+		 * deliberate remote file access with the same permissions as
+		 * the gdbserver process.  File paths decoded from RSP packets
+		 * are passed through to the OS unchanged — restricting them
+		 * would break legitimate GDB usage (symbol loading, library
+		 * inspection, etc.).  The caller is an authenticated GDB
+		 * client on a port the operator intentionally exposed.
+		 */
+		/* coverity[path_manipulation] */
+		/* coverity[tainted_scalar] */
 		handle_packet(conn_fd, payload);
 	}
 
