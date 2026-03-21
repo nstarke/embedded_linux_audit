@@ -1252,5 +1252,3 @@ clean:
 	rm -f $(NCURSES_BUILD_STAMP)
 	-cd $(READLINE_DIR) && $(MAKE) distclean >/dev/null 2>&1 || true
 	rm -f $(READLINE_BUILD_STAMP)
-	-git submodule foreach --recursive 'git clean -xfd >/dev/null 2>&1 || true'
-	-git submodule foreach --recursive 'git reset --hard >/dev/null 2>&1 || true'
