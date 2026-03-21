@@ -35,3 +35,4 @@ jobs:
           build_language: cxx
           build_platform: linux64
           command: make
+          cov_options: --exclude-file "third_party/.*"
