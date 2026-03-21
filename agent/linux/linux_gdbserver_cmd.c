@@ -3107,7 +3107,8 @@ static void vfile_send_data(int conn_fd, int retcode,
 	buf[pos++] = '#';
 	buf[pos++] = hx[cksum >> 4];
 	buf[pos++] = hx[cksum & 0x0f];
-	send(conn_fd, buf, pos, 0);
+	if (send(conn_fd, buf, pos, 0) < 0)
+		return;
 }
 
 /* -----------------------------------------------------------------------
