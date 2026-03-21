@@ -164,6 +164,7 @@ static uint64_t        g_pass_signals; /* bitmask of signals to pass to inferior
 static pid_t           g_current_tid;  /* most-recently-set thread (H packet) */
 static int             g_last_wstatus; /* wstatus from last waitpid — for '?' */
 static int             g_swbreak_feature;  /* GDB negotiated swbreak+ */
+static int             g_multiprocess;     /* GDB negotiated multiprocess+ */
 static int             g_catch_syscalls;   /* QCatchSyscalls enabled */
 static int             g_in_syscall;       /* 0=expecting entry, 1=expecting exit */
 static uint64_t        g_last_sysno;       /* syscall# saved at entry for exit stop */
@@ -327,6 +328,42 @@ static int rsp_recv_packet(int fd, char *payload, size_t payload_sz)
 }
 
 /* -----------------------------------------------------------------------
+ * Thread-id parser (handles both "p<pid>.<tid>" and plain "<tid>")
+ * ---------------------------------------------------------------------- */
+
+/*
+ * Parse an RSP thread-id from the string at s.  Stores the parsed TID in
+ * *out_tid and (if the multiprocess "p<pid>.<tid>" form is present) the PID
+ * in *out_pid; otherwise *out_pid is set to 0.  Returns the number of input
+ * characters consumed, or -1 on parse error.  Either output pointer may be
+ * NULL if the caller doesn't need that value.
+ */
+static int parse_thread_id(const char *s, pid_t *out_pid, pid_t *out_tid)
+{
+	unsigned long long p, t;
+	int n = 0;
+
+	if (!s || !*s)
+		return -1;
+
+	if (s[0] == 'p') {
+		if (sscanf(s + 1, "%llx.%llx%n", &p, &t, &n) == 2) {
+			if (out_pid) *out_pid = (pid_t)p;
+			if (out_tid) *out_tid = (pid_t)t;
+			return 1 + n;
+		}
+		return -1;
+	}
+
+	if (sscanf(s, "%llx%n", &t, &n) == 1) {
+		if (out_pid) *out_pid = 0;
+		if (out_tid) *out_tid = (pid_t)t;
+		return n;
+	}
+	return -1;
+}
+
+/* -----------------------------------------------------------------------
  * Stop reply
  * ---------------------------------------------------------------------- */
 
@@ -370,12 +407,27 @@ static void send_stop_reply(int fd, int wstatus)
 #endif
 
 		/* T packet includes thread TID, eliminating a qC round-trip */
-		if (is_swbreak && g_swbreak_feature)
-			snprintf(buf, sizeof(buf), "T%02xthread:%x;swbreak:;",
-				 sig, (unsigned)g_pid);
-		else
-			snprintf(buf, sizeof(buf), "T%02xthread:%x;",
-				 sig, (unsigned)g_pid);
+		if (is_swbreak && g_swbreak_feature) {
+			if (g_multiprocess)
+				snprintf(buf, sizeof(buf),
+					 "T%02xthread:p%x.%x;swbreak:;",
+					 sig, (unsigned)g_pid,
+					 (unsigned)g_current_tid);
+			else
+				snprintf(buf, sizeof(buf),
+					 "T%02xthread:%x;swbreak:;",
+					 sig, (unsigned)g_current_tid);
+		} else {
+			if (g_multiprocess)
+				snprintf(buf, sizeof(buf),
+					 "T%02xthread:p%x.%x;",
+					 sig, (unsigned)g_pid,
+					 (unsigned)g_current_tid);
+			else
+				snprintf(buf, sizeof(buf),
+					 "T%02xthread:%x;",
+					 sig, (unsigned)g_current_tid);
+		}
 	} else if (WIFEXITED(wstatus)) {
 		snprintf(buf, sizeof(buf), "W%02x", WEXITSTATUS(wstatus));
 	} else if (WIFSIGNALED(wstatus)) {
@@ -2424,7 +2476,12 @@ static int build_threads_xml(pid_t pid, char *out, size_t out_sz)
 			comm[comm_len > 0 ? comm_len : 0] = '\0';
 
 			thr = xmlNewChild(root, NULL, BAD_CAST "thread", NULL);
-			snprintf(id_buf, sizeof(id_buf), "%x", (unsigned)tid);
+			if (g_multiprocess)
+				snprintf(id_buf, sizeof(id_buf), "p%x.%x",
+					 (unsigned)pid, (unsigned)tid);
+			else
+				snprintf(id_buf, sizeof(id_buf), "%x",
+					 (unsigned)tid);
 			xmlNewProp(thr, BAD_CAST "id",   BAD_CAST id_buf);
 			xmlNewProp(thr, BAD_CAST "core", BAD_CAST "0");
 			xmlNewProp(thr, BAD_CAST "name", BAD_CAST comm);
@@ -3195,12 +3252,21 @@ static void do_continue(int fd, int initial_sig)
 						catch_it = 1;
 
 				if (catch_it) {
-					snprintf(stop_buf, sizeof(stop_buf),
-						 "T05thread:%x;%s:%llx;",
-						 (unsigned)g_pid,
-						 is_entry ? "syscall_entry"
-							  : "syscall_return",
-						 (unsigned long long)g_last_sysno);
+					if (g_multiprocess)
+						snprintf(stop_buf, sizeof(stop_buf),
+							 "T05thread:p%x.%x;%s:%llx;",
+							 (unsigned)g_pid,
+							 (unsigned)g_current_tid,
+							 is_entry ? "syscall_entry"
+								  : "syscall_return",
+							 (unsigned long long)g_last_sysno);
+					else
+						snprintf(stop_buf, sizeof(stop_buf),
+							 "T05thread:%x;%s:%llx;",
+							 (unsigned)g_current_tid,
+							 is_entry ? "syscall_entry"
+								  : "syscall_return",
+							 (unsigned long long)g_last_sysno);
 					g_last_wstatus = wstatus;
 					rsp_send_str(fd, stop_buf);
 					return;
@@ -3630,22 +3696,41 @@ static void handle_packet(int fd, char *pkt)
 		}
 		break;
 
-	case 'H': /* Set thread — ignored */
+	case 'H': /* Set thread: H<op><thread-id> */
+	{
+		/*
+		 * The operation ('g' = general, 'c' = continue) is in pkt[1].
+		 * The thread-id is either "p<pid>.<tid>" (multiprocess) or a
+		 * plain hex TID.  Special values: 0 = any thread, -1 = all.
+		 * Update g_current_tid so subsequent packets use the right thread.
+		 */
+		pid_t h_tid = 0;
+		if (pkt[2] != '\0') {
+			const char *tid_str = pkt + 2;
+			/* -1 (all) and 0 (any) → keep current thread */
+			if (strcmp(tid_str, "-1") != 0 &&
+			    strcmp(tid_str, "0") != 0) {
+				parse_thread_id(tid_str, NULL, &h_tid);
+				if (h_tid > 0)
+					g_current_tid = h_tid;
+			}
+		}
 		rsp_send_str(fd, "OK");
 		break;
+	}
 
-	case 'T': /* Thread alive: T<tid-hex> */
+	case 'T': /* Thread alive: T<thread-id> */
 	{
-		unsigned long long tid_val;
+		pid_t t_tid;
 		char task_path[64];
 		struct stat tstat;
 
-		if (sscanf(pkt + 1, "%llx", &tid_val) != 1) {
+		if (parse_thread_id(pkt + 1, NULL, &t_tid) < 0 || t_tid <= 0) {
 			rsp_send_str(fd, "E01");
 			break;
 		}
 		snprintf(task_path, sizeof(task_path),
-			 "/proc/%d/task/%llu", (int)g_pid, tid_val);
+			 "/proc/%d/task/%d", (int)g_pid, (int)t_tid);
 		rsp_send_str(fd, stat(task_path, &tstat) == 0 ? "OK" : "E01");
 		break;
 	}
@@ -3728,6 +3813,7 @@ static void handle_packet(int fd, char *pkt)
 			if (*client_feats == ':')
 				client_feats++;
 			g_swbreak_feature = (strstr(client_feats, "swbreak+") != NULL);
+			g_multiprocess    = (strstr(client_feats, "multiprocess+") != NULL);
 
 			snprintf(resp, sizeof(resp),
 				 "PacketSize=%x"
@@ -3744,6 +3830,7 @@ static void handle_packet(int fd, char *pkt)
 				 ";QStartNoAckMode+"
 				 ";QPassSignals+"
 				 ";QCatchSyscalls+"
+				 ";multiprocess+"
 				 ";swbreak+"
 #if defined(__x86_64__)
 				 ";hwbreak+"
@@ -3887,30 +3974,38 @@ static void handle_packet(int fd, char *pkt)
 				rsp_send_str(fd, resp);
 			}
 		} else if (strncmp(pkt, "qC", 2) == 0) {
-			snprintf(resp, sizeof(resp), "QC%x", (unsigned)g_pid);
+			if (g_multiprocess)
+				snprintf(resp, sizeof(resp), "QCp%x.%x",
+					 (unsigned)g_pid,
+					 (unsigned)g_current_tid);
+			else
+				snprintf(resp, sizeof(resp), "QC%x",
+					 (unsigned)g_current_tid);
 			rsp_send_str(fd, resp);
 		} else if (strncmp(pkt, "qThreadExtraInfo,", 17) == 0) {
 			/*
-			 * Format: qThreadExtraInfo,<tid-hex>
+			 * Format: qThreadExtraInfo,<thread-id>
+			 * Handles both "p<pid>.<tid>" and plain "<tid>" forms.
 			 * Response: hex-encoded thread name string.
 			 * Read the name from /proc/<pid>/task/<tid>/comm
 			 * (kernel truncates to 15 chars + NUL).
 			 */
-			unsigned long long tid_val;
+			pid_t qte_tid;
 			char comm_path[48];
 			char comm[16];
 			int comm_fd;
 			ssize_t comm_len;
 			char hex_out[32 + 1]; /* 16 bytes × 2 hex + NUL */
 
-			if (sscanf(pkt + 17, "%llx", &tid_val) != 1) {
+			if (parse_thread_id(pkt + 17, NULL, &qte_tid) < 0 ||
+			    qte_tid <= 0) {
 				rsp_send_str(fd, "");
 				break;
 			}
 
 			snprintf(comm_path, sizeof(comm_path),
-				 "/proc/%d/task/%llu/comm",
-				 (int)g_pid, tid_val);
+				 "/proc/%d/task/%d/comm",
+				 (int)g_pid, (int)qte_tid);
 			comm_fd = open(comm_path, O_RDONLY);
 			if (comm_fd < 0) {
 				rsp_send_str(fd, "");
@@ -3974,13 +4069,20 @@ static void handle_packet(int fd, char *pkt)
 
 			resp[pos++] = 'm';
 			for (i = 0;
-			     i < g_tid_count && pos + 12 < (int)sizeof(resp);
+			     i < g_tid_count && pos + 24 < (int)sizeof(resp);
 			     i++) {
 				if (i > 0)
 					resp[pos++] = ',';
-				pos += snprintf(resp + pos,
-						sizeof(resp) - (size_t)pos,
-						"%x", (unsigned)g_tids[i]);
+				if (g_multiprocess)
+					pos += snprintf(resp + pos,
+							sizeof(resp) - (size_t)pos,
+							"p%x.%x",
+							(unsigned)g_pid,
+							(unsigned)g_tids[i]);
+				else
+					pos += snprintf(resp + pos,
+							sizeof(resp) - (size_t)pos,
+							"%x", (unsigned)g_tids[i]);
 			}
 			g_tid_next  = i;
 			resp[pos]   = '\0';
@@ -3999,14 +4101,22 @@ static void handle_packet(int fd, char *pkt)
 				resp[pos++] = 'm';
 				for (i = start;
 				     i < g_tid_count &&
-				     pos + 12 < (int)sizeof(resp);
+				     pos + 24 < (int)sizeof(resp);
 				     i++) {
 					if (i > start)
 						resp[pos++] = ',';
-					pos += snprintf(
-						resp + pos,
-						sizeof(resp) - (size_t)pos,
-						"%x", (unsigned)g_tids[i]);
+					if (g_multiprocess)
+						pos += snprintf(
+							resp + pos,
+							sizeof(resp) - (size_t)pos,
+							"p%x.%x",
+							(unsigned)g_pid,
+							(unsigned)g_tids[i]);
+					else
+						pos += snprintf(
+							resp + pos,
+							sizeof(resp) - (size_t)pos,
+							"%x", (unsigned)g_tids[i]);
 				}
 				g_tid_next = i;
 				resp[pos]  = '\0';
