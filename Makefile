@@ -381,7 +381,7 @@ READLINE_LIB  := $(READLINE_DIR)/libreadline.a
 READLINE_HISTORY_LIB := $(READLINE_DIR)/libhistory.a
 READLINE_BUILD_CFLAGS ?= -O2 -Wno-incompatible-pointer-types
 LIBEFIVAR_HOST_CFLAGS ?= -O2 -std=gnu11 -funsigned-char -fvisibility=hidden
-LIBEFIVAR_HOST_CPPFLAGS ?= -I$(abspath $(LIBEFIVAR_DIR))/src/include -DEFIVAR_BUILD_ENVIRONMENT
+LIBEFIVAR_HOST_CPPFLAGS ?= -I$(realpath $(LIBEFIVAR_DIR))/src/include -DEFIVAR_BUILD_ENVIRONMENT
 GENERATED_DIR := generated
 LIBEFIVAR_HOST_LDFLAGS ?= $(LIBEFIVAR_HOST_CFLAGS)
 LIBEFIVAR_LINK_LIB := $(GENERATED_DIR)/libefivar-link-$(CC_TAG).a
@@ -923,9 +923,9 @@ $(LIBUBOOTENV_LIB): $(ZLIB_LIB)
 	cmake --build $(LIBUBOOTENV_BUILD) --parallel $(JOBS) --target ubootenv_static
 
 $(LIBEFIVAR_BUILD_STAMP):
-	find $(abspath $(LIBEFIVAR_DIR))/src -maxdepth 1 -name '.*d' -delete 2>/dev/null || true
-	-$(MAKE) -C $(LIBEFIVAR_DIR)/src TOPDIR='$(abspath $(LIBEFIVAR_DIR))' clean >/dev/null 2>&1 || true
-	$(MAKE) -C $(LIBEFIVAR_DIR)/src TOPDIR='$(abspath $(LIBEFIVAR_DIR))' libefivar.a CC='$(CC)' HOSTCC='cc' HOSTCCLD='cc' AR='ar' RANLIB='ranlib' CPPFLAGS='-I$(abspath $(LIBEFIVAR_DIR))/src/include' HOST_CFLAGS='$(LIBEFIVAR_HOST_CFLAGS)' HOST_CPPFLAGS='$(LIBEFIVAR_HOST_CPPFLAGS)' HOST_LDFLAGS='$(LIBEFIVAR_HOST_LDFLAGS)' HOST_CCLDFLAGS='$(LIBEFIVAR_HOST_LDFLAGS)'
+	find $(realpath $(LIBEFIVAR_DIR))/src -maxdepth 1 -name '.*d' -delete 2>/dev/null || true
+	-$(MAKE) -C $(LIBEFIVAR_DIR)/src TOPDIR='$(realpath $(LIBEFIVAR_DIR))' clean >/dev/null 2>&1 || true
+	$(MAKE) -C $(LIBEFIVAR_DIR)/src TOPDIR='$(realpath $(LIBEFIVAR_DIR))' libefivar.a CC='$(CC)' HOSTCC='cc' HOSTCCLD='cc' AR='ar' RANLIB='ranlib' CPPFLAGS='-I$(realpath $(LIBEFIVAR_DIR))/src/include' HOST_CFLAGS='$(LIBEFIVAR_HOST_CFLAGS)' HOST_CPPFLAGS='$(LIBEFIVAR_HOST_CPPFLAGS)' HOST_LDFLAGS='$(LIBEFIVAR_HOST_LDFLAGS)' HOST_CCLDFLAGS='$(LIBEFIVAR_HOST_LDFLAGS)'
 	test -f $(LIBEFIVAR_LIB)
 	touch $@
 
@@ -1048,6 +1048,7 @@ $(OPENSSL_SSL_LIB):
 	$(MAKE) -C $(OPENSSL_DIR) -j$(JOBS) build_generated
 	$(MAKE) -C $(OPENSSL_DIR) -j$(JOBS) build_libs
 	mkdir -p "$(OPENSSL_INSTALL)/include" "$(OPENSSL_INSTALL)/lib" "$(OPENSSL_CMAKE_DIR)"
+	chmod -fR u+w "$(OPENSSL_INSTALL)/include/openssl" 2>/dev/null || true
 	rm -rf "$(OPENSSL_INSTALL)/include/openssl"
 	cp -a "$(OPENSSL_DIR)/include/openssl" "$(OPENSSL_INSTALL)/include/"
 	cp "$(OPENSSL_DIR)/libssl.a" "$(OPENSSL_SSL_LIB)"
