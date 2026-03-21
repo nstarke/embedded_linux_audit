@@ -4556,7 +4556,8 @@ int linux_gdbserver_main(int argc, char **argv)
 		/* Parent: block until child signals ready or error */
 		close(pipefd[1]);
 		result = 'E';
-		(void)read(pipefd[0], &result, 1);
+		if (read(pipefd[0], &result, 1) <= 0)
+			result = 'E'; /* pipe closed or error: treat as failure */
 		close(pipefd[0]);
 		if (result == 'K') {
 			fprintf(stderr,
