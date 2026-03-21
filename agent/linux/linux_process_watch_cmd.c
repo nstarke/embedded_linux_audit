@@ -500,7 +500,8 @@ static int cmd_watch_on(const char *needle,
 	pids[count][0] = '\0'; /* PIDs populated on first poll */
 	count++;
 
-	state_write(needles, pids, count);
+	if (state_write(needles, pids, count) < 0)
+		fprintf(stderr, "process watch: failed to write state\n");
 	lock_release(lock_fd);
 
 	if (!daemon_is_running()) {
