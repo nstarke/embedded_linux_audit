@@ -147,6 +147,14 @@ static int             g_noack;        /* set by QStartNoAckMode */
 static uint64_t        g_pass_signals; /* bitmask of signals to pass to inferior */
 static pid_t           g_current_tid;  /* most-recently-set thread (H packet) */
 static int             g_last_wstatus; /* wstatus from last waitpid — for '?' */
+static int             g_catch_syscalls;   /* QCatchSyscalls enabled */
+static int             g_in_syscall;       /* 0=expecting entry, 1=expecting exit */
+static uint64_t        g_last_sysno;       /* syscall# saved at entry for exit stop */
+
+/* Syscall filter list: if cnt==0 catch all; otherwise only listed sysno */
+#define ELA_GDB_MAX_CATCH_SYSCALLS 64
+static uint64_t        g_catch_sysno[ELA_GDB_MAX_CATCH_SYSCALLS];
+static int             g_catch_sysno_cnt;
 
 /* Thread list populated by qfThreadInfo and paged by qsThreadInfo */
 #define ELA_GDB_MAX_THREADS  256
@@ -2016,6 +2024,69 @@ static int regs_write(const char *hex, size_t hex_len)
 #endif /* arch */
 
 /* -----------------------------------------------------------------------
+ * Syscall number reader  (used by QCatchSyscalls stop detection)
+ * ---------------------------------------------------------------------- */
+
+/*
+ * Read the current syscall number from the stopped inferior.
+ * At both entry and exit the kernel leaves the syscall number in the
+ * canonical register for each ABI:
+ *   x86_64  — orig_rax
+ *   aarch64 — x8  (regs[8])
+ *   arm32   — r7  (uregs[7], EABI)
+ *   mips    — v0  (r2, gregset index MIPS_EF_R0+2)
+ *   ppc     — r0  (gregset index 0)
+ *   riscv   — a7  (x17, regs[17] with regs[0]==pc)
+ */
+static uint64_t read_sysno(void)
+{
+#if defined(__x86_64__)
+	struct user_regs_struct r;
+	if (ptrace(PTRACE_GETREGS, g_pid, NULL, &r) == 0)
+		return (uint64_t)r.orig_rax;
+#elif defined(__aarch64__)
+	{
+		uint64_t regs[34]; /* pc + 31 gprs + sp + pstate */
+		struct iovec iov = { regs, sizeof(regs) };
+		if (ptrace(PTRACE_GETREGSET, g_pid,
+			   (void *)NT_PRSTATUS, &iov) == 0)
+			return regs[8]; /* x8 */
+	}
+#elif defined(__arm__)
+	{
+		struct user_regs r;
+		if (ptrace(PTRACE_GETREGS, g_pid, NULL, &r) == 0)
+			return (uint64_t)r.uregs[7]; /* r7 (EABI) */
+	}
+#elif defined(__mips__)
+	{
+		unsigned long regs[MIPS_ELF_NGREG];
+		struct iovec iov = { regs, sizeof(regs) };
+		if (ptrace(PTRACE_GETREGSET, g_pid,
+			   (void *)NT_PRSTATUS, &iov) == 0)
+			return (uint64_t)regs[MIPS_EF_R0 + 2]; /* v0 */
+	}
+#elif defined(__powerpc__)
+	{
+		unsigned long regs[PPC_ELF_NGREG];
+		struct iovec iov = { regs, sizeof(regs) };
+		if (ptrace(PTRACE_GETREGSET, g_pid,
+			   (void *)NT_PRSTATUS, &iov) == 0)
+			return (uint64_t)regs[0]; /* r0 */
+	}
+#elif defined(__riscv)
+	{
+		unsigned long regs[RISCV_PT_NREGS];
+		struct iovec iov = { regs, sizeof(regs) };
+		if (ptrace(PTRACE_GETREGSET, g_pid,
+			   (void *)NT_PRSTATUS, &iov) == 0)
+			return (uint64_t)regs[17]; /* a7 = x17 */
+	}
+#endif
+	return (uint64_t)-1;
+}
+
+/* -----------------------------------------------------------------------
  * Memory read/write via ptrace (word-aligned PEEKDATA/POKEDATA)
  * ---------------------------------------------------------------------- */
 
@@ -2992,6 +3063,106 @@ static void vfile_send_data(int conn_fd, int retcode,
  * RSP packet dispatch
  * ---------------------------------------------------------------------- */
 
+/* -----------------------------------------------------------------------
+ * monitor (qRcmd) console output helper
+ * ---------------------------------------------------------------------- */
+
+/* Send one line of monitor output to the GDB console via an O packet. */
+static void rcmd_output(int fd, const char *msg)
+{
+	/* O<hex-encoded text> — up to 512 bytes of plain text */
+	char buf[512 * 2 + 2]; /* 'O' + hex + NUL */
+	size_t len = strlen(msg);
+	if (len > 512)
+		len = 512;
+	buf[0] = 'O';
+	if (ela_gdb_hex_encode((const uint8_t *)msg, len,
+			       buf + 1, sizeof(buf) - 1) == 0)
+		rsp_send_str(fd, buf);
+}
+
+/* -----------------------------------------------------------------------
+ * Syscall-aware continue helper  (shared by c, C, vCont;c, vCont;C)
+ * ---------------------------------------------------------------------- */
+
+/*
+ * Run the inferior with PTRACE_CONT (or PTRACE_SYSCALL when
+ * QCatchSyscalls is active), looping to:
+ *   • forward pass-through signals (QPassSignals)
+ *   • silently skip syscall stops not in the catch filter
+ *   • stop and report qualifying syscall-entry/return stops
+ *
+ * `initial_sig` is forwarded to the first ptrace call (0 = no signal).
+ */
+static void do_continue(int fd, int initial_sig)
+{
+	int fwd_sig = initial_sig;
+	int wstatus;
+
+	for (;;) {
+		int req = g_catch_syscalls ? PTRACE_SYSCALL : PTRACE_CONT;
+		ptrace(req, g_pid, NULL, (void *)(uintptr_t)fwd_sig);
+		waitpid(g_pid, &wstatus, 0);
+		fwd_sig = 0;
+
+		if (!WIFSTOPPED(wstatus))
+			break;
+
+		{
+			int sig = WSTOPSIG(wstatus);
+
+			/*
+			 * SIGTRAP|0x80 identifies a syscall stop when
+			 * PTRACE_O_TRACESYSGOOD is set (done in run_session).
+			 */
+			if (g_catch_syscalls && sig == (SIGTRAP | 0x80)) {
+				char stop_buf[96];
+				int is_entry = (g_in_syscall == 0);
+				int catch_it, i;
+
+				if (is_entry) {
+					g_last_sysno = read_sysno();
+					g_in_syscall = 1;
+				} else {
+					g_in_syscall = 0;
+				}
+
+				/* Apply filter (cnt==0 → catch all) */
+				catch_it = (g_catch_sysno_cnt == 0);
+				for (i = 0; !catch_it && i < g_catch_sysno_cnt;
+				     i++)
+					if (g_catch_sysno[i] == g_last_sysno)
+						catch_it = 1;
+
+				if (catch_it) {
+					snprintf(stop_buf, sizeof(stop_buf),
+						 "T05thread:%x;%s:%llx;",
+						 (unsigned)g_pid,
+						 is_entry ? "syscall_entry"
+							  : "syscall_return",
+						 (unsigned long long)g_last_sysno);
+					g_last_wstatus = wstatus;
+					rsp_send_str(fd, stop_buf);
+					return;
+				}
+				continue; /* filtered — keep running */
+			}
+
+			/* Regular signal pass-through */
+			if (sig > 0 && sig < 64 &&
+			    (g_pass_signals & (1ULL << sig))) {
+				fwd_sig = sig;
+				continue;
+			}
+		}
+
+		break; /* genuine stop */
+	}
+
+	g_last_wstatus = wstatus;
+	send_stop_reply(fd, wstatus);
+}
+
 static void handle_packet(int fd, char *pkt)
 {
 	char resp[ELA_GDB_RSP_MAX_FRAMED];
@@ -3117,24 +3288,8 @@ static void handle_packet(int fd, char *pkt)
 		break;
 
 	case 'c': /* Continue */
-	{
-		int fwd_sig = 0;
-		do {
-			ptrace(PTRACE_CONT, g_pid, NULL,
-			       (void *)(uintptr_t)fwd_sig);
-			waitpid(g_pid, &wstatus, 0);
-			fwd_sig = 0;
-			if (WIFSTOPPED(wstatus)) {
-				int sig = WSTOPSIG(wstatus);
-				if (sig > 0 && sig < 64 &&
-				    (g_pass_signals & (1ULL << sig)))
-					fwd_sig = sig; /* pass through */
-			}
-		} while (fwd_sig);
-		g_last_wstatus = wstatus;
-		send_stop_reply(fd, wstatus);
+		do_continue(fd, 0);
 		break;
-	}
 
 	case 's': /* Single step */
 		ptrace(PTRACE_SINGLESTEP, g_pid, NULL, NULL);
@@ -3144,24 +3299,8 @@ static void handle_packet(int fd, char *pkt)
 		break;
 
 	case 'C': /* Continue with signal: C<sig>[;<addr>] */
-	{
-		int fwd_sig = (int)strtol(pkt + 1, NULL, 16);
-		do {
-			ptrace(PTRACE_CONT, g_pid, NULL,
-			       (void *)(uintptr_t)fwd_sig);
-			waitpid(g_pid, &wstatus, 0);
-			fwd_sig = 0;
-			if (WIFSTOPPED(wstatus)) {
-				int sig = WSTOPSIG(wstatus);
-				if (sig > 0 && sig < 64 &&
-				    (g_pass_signals & (1ULL << sig)))
-					fwd_sig = sig;
-			}
-		} while (fwd_sig);
-		g_last_wstatus = wstatus;
-		send_stop_reply(fd, wstatus);
+		do_continue(fd, (int)strtol(pkt + 1, NULL, 16));
 		break;
-	}
 
 	case 'S': /* Step with signal: S<sig>[;<addr>] */
 	{
@@ -3178,28 +3317,10 @@ static void handle_packet(int fd, char *pkt)
 		if (strcmp(pkt, "vCont?") == 0) {
 			rsp_send_str(fd, "vCont;c;C;s;S");
 		} else if (strncmp(pkt, "vCont;c", 7) == 0) {
-			int fwd_sig = 0;
-			do {
-				ptrace(PTRACE_CONT, g_pid, NULL,
-				       (void *)(uintptr_t)fwd_sig);
-				waitpid(g_pid, &wstatus, 0);
-				fwd_sig = 0;
-				if (WIFSTOPPED(wstatus)) {
-					int sig = WSTOPSIG(wstatus);
-					if (sig > 0 && sig < 64 &&
-					    (g_pass_signals & (1ULL << sig)))
-						fwd_sig = sig;
-				}
-			} while (fwd_sig);
-			g_last_wstatus = wstatus;
-			send_stop_reply(fd, wstatus);
+			do_continue(fd, 0);
 		} else if (strncmp(pkt, "vCont;C", 7) == 0) {
 			/* Continue with signal: vCont;C<sig>[:tid] */
-			int sig = (int)strtol(pkt + 7, NULL, 16);
-			ptrace(PTRACE_CONT, g_pid, NULL, (void *)(uintptr_t)sig);
-			waitpid(g_pid, &wstatus, 0);
-			g_last_wstatus = wstatus;
-			send_stop_reply(fd, wstatus);
+			do_continue(fd, (int)strtol(pkt + 7, NULL, 16));
 		} else if (strncmp(pkt, "vCont;s", 7) == 0) {
 			ptrace(PTRACE_SINGLESTEP, g_pid, NULL, NULL);
 			waitpid(g_pid, &wstatus, 0);
@@ -3365,6 +3486,43 @@ static void handle_packet(int fd, char *pkt)
 			/* Only local filesystem is supported; accept any pid. */
 			vfile_send_rc(fd, 0, 0);
 
+		} else if (strncmp(pkt, "vAttach;", 8) == 0) {
+			/*
+			 * vAttach;<pid-hex> — detach from the current process
+			 * and attach to a new one.  All breakpoints are removed
+			 * from the old process before detaching.  Session state
+			 * (breakpoints, XML caches, syscall-catch toggle) is
+			 * reset for the new PID.
+			 */
+			pid_t new_pid = (pid_t)strtol(pkt + 8, NULL, 16);
+			int new_ws;
+
+			bp_clear_all();
+			ptrace(PTRACE_DETACH, g_pid, NULL, NULL);
+
+			if (ptrace(PTRACE_ATTACH, new_pid, NULL, NULL) != 0 ||
+			    waitpid(new_pid, &new_ws, 0) < 0) {
+				/* Attach failed — session is now unattached */
+				rsp_send_str(fd, "E01");
+				g_stop = 1;
+				break;
+			}
+
+			ptrace(PTRACE_SETOPTIONS, new_pid, NULL,
+			       (void *)(uintptr_t)PTRACE_O_TRACESYSGOOD);
+
+			g_pid             = new_pid;
+			g_last_wstatus    = new_ws;
+			g_in_syscall      = 0;
+			g_last_sysno      = 0;
+			g_svr4_xml_len    = -1;
+			g_threads_xml_len = -1;
+			g_memmap_xml_len  = -1;
+			g_current_tid     = new_pid;
+			memset(g_bps, 0, sizeof(g_bps));
+
+			send_stop_reply(fd, new_ws);
+
 		} else if (strncmp(pkt, "vKill;", 6) == 0) {
 			/*
 			 * vKill;<pid-hex> — hard-kill the named process.
@@ -3484,8 +3642,10 @@ static void handle_packet(int fd, char *pkt)
 				 ";qXfer:siginfo:read+"
 				 ";qSearch:memory+"
 				 ";vFile+"
+				 ";vAttach+"
 				 ";QStartNoAckMode+"
 				 ";QPassSignals+"
+				 ";QCatchSyscalls+"
 #if defined(__x86_64__)
 				 ";hwbreak+"
 #endif
@@ -3509,6 +3669,83 @@ static void handle_packet(int fd, char *pkt)
 			 * actual load address.  Critical for PIE binaries.
 			 */
 			handle_qoffsets(fd);
+		} else if (strncmp(pkt, "qRcmd,", 6) == 0) {
+			/*
+			 * monitor <cmd> — server-side diagnostic commands.
+			 * The command is hex-encoded in the packet.
+			 * Each output line is sent as O<hex-text>.
+			 * The final response is always OK.
+			 *
+			 * Supported commands:
+			 *   pid   — print PID of attached process
+			 *   exe   — print executable path
+			 *   maps  — print /proc/<pid>/maps
+			 *   help  — list commands
+			 */
+			char cmd[256];
+			int cmd_len;
+			int ci;
+
+			cmd_len = ela_gdb_hex_decode(pkt + 6,
+						     (uint8_t *)cmd,
+						     sizeof(cmd) - 1);
+			if (cmd_len < 0) {
+				rsp_send_str(fd, "E01"); break;
+			}
+			cmd[cmd_len] = '\0';
+			/* Trim trailing whitespace / newline */
+			for (ci = cmd_len - 1;
+			     ci >= 0 && (cmd[ci] == '\n' || cmd[ci] == '\r' ||
+					 cmd[ci] == ' ');
+			     ci--)
+				cmd[ci] = '\0';
+
+			if (strcmp(cmd, "pid") == 0) {
+				char out[32];
+				snprintf(out, sizeof(out),
+					 "pid: %d\n", (int)g_pid);
+				rcmd_output(fd, out);
+
+			} else if (strcmp(cmd, "exe") == 0) {
+				char link[32], exe_buf[4096];
+				ssize_t elen;
+				snprintf(link, sizeof(link),
+					 "/proc/%d/exe", (int)g_pid);
+				elen = readlink(link, exe_buf,
+						sizeof(exe_buf) - 2);
+				if (elen < 0) {
+					rcmd_output(fd, "error: readlink\n");
+				} else {
+					exe_buf[elen]     = '\n';
+					exe_buf[elen + 1] = '\0';
+					rcmd_output(fd, exe_buf);
+				}
+
+			} else if (strcmp(cmd, "maps") == 0) {
+				char maps_path[32];
+				FILE *mf;
+				char mline[256];
+				snprintf(maps_path, sizeof(maps_path),
+					 "/proc/%d/maps", (int)g_pid);
+				mf = fopen(maps_path, "r");
+				if (!mf) {
+					rcmd_output(fd, "error: open maps\n");
+				} else {
+					while (fgets(mline, sizeof(mline), mf))
+						rcmd_output(fd, mline);
+					fclose(mf);
+				}
+
+			} else if (strcmp(cmd, "help") == 0) {
+				rcmd_output(fd, "commands: pid exe maps help\n");
+
+			} else {
+				char unk[280];
+				snprintf(unk, sizeof(unk),
+					 "unknown: %s\n", cmd);
+				rcmd_output(fd, unk);
+			}
+			rsp_send_str(fd, "OK");
 		} else if (strncmp(pkt, "qSearch:memory:", 15) == 0) {
 			/*
 			 * Format: qSearch:memory:<addr>;<len>;<pattern-hex>
@@ -4023,6 +4260,41 @@ static void handle_packet(int fd, char *pkt)
 		if (strcmp(pkt, "QStartNoAckMode") == 0) {
 			rsp_send_str(fd, "OK");
 			g_noack = 1;
+		} else if (strncmp(pkt, "QCatchSyscalls:", 15) == 0) {
+			/*
+			 * QCatchSyscalls:0             — disable
+			 * QCatchSyscalls:1             — catch all syscalls
+			 * QCatchSyscalls:1;n1;n2;...   — catch listed sysno
+			 *
+			 * Syscall stops are distinguished from breakpoint
+			 * SIGTRAP by PTRACE_O_TRACESYSGOOD (set at session
+			 * start), which adds 0x80 to the stop signal.
+			 */
+			if (pkt[15] == '0') {
+				g_catch_syscalls  = 0;
+				g_catch_sysno_cnt = 0;
+				g_in_syscall      = 0;
+				rsp_send_str(fd, "OK");
+			} else if (pkt[15] == '1') {
+				const char *p = pkt + 16; /* skip '1' */
+				g_catch_syscalls  = 1;
+				g_catch_sysno_cnt = 0;
+				g_in_syscall      = 0;
+				while (*p == ';' && g_catch_sysno_cnt <
+				       ELA_GDB_MAX_CATCH_SYSCALLS) {
+					char *end;
+					uint64_t sno = strtoull(p + 1,
+								&end, 16);
+					if (end == p + 1)
+						break;
+					g_catch_sysno[g_catch_sysno_cnt++] =
+						sno;
+					p = end;
+				}
+				rsp_send_str(fd, "OK");
+			} else {
+				rsp_send_str(fd, "E01");
+			}
 		} else if (strncmp(pkt, "QPassSignals:", 13) == 0) {
 			/*
 			 * QPassSignals:<sig1>;<sig2>;...
@@ -4076,18 +4348,31 @@ static int run_session(int conn_fd, pid_t pid, int attach_wstatus)
 	char payload[ELA_GDB_RSP_MAX_PACKET + 1];
 	int n;
 
-	g_pid             = pid;
-	g_stop            = 0;
-	g_tid_count       = 0;
-	g_tid_next        = 0;
-	g_svr4_xml_len    = -1;
-	g_threads_xml_len = -1;
-	g_memmap_xml_len  = -1;
-	g_noack           = 0;
-	g_pass_signals    = 0;
-	g_current_tid     = pid;
-	g_last_wstatus    = attach_wstatus;
+	g_pid              = pid;
+	g_stop             = 0;
+	g_tid_count        = 0;
+	g_tid_next         = 0;
+	g_svr4_xml_len     = -1;
+	g_threads_xml_len  = -1;
+	g_memmap_xml_len   = -1;
+	g_noack            = 0;
+	g_pass_signals     = 0;
+	g_current_tid      = pid;
+	g_last_wstatus     = attach_wstatus;
+	g_catch_syscalls   = 0;
+	g_catch_sysno_cnt  = 0;
+	g_in_syscall       = 0;
+	g_last_sysno       = 0;
 	memset(g_bps, 0, sizeof(g_bps));
+
+	/*
+	 * Make syscall stops distinguishable from regular SIGTRAP:
+	 * PTRACE_O_TRACESYSGOOD causes the kernel to set bit 7 of the
+	 * stop signal (SIGTRAP|0x80) for PTRACE_SYSCALL stops, leaving
+	 * regular breakpoint/signal traps as plain SIGTRAP (5).
+	 */
+	ptrace(PTRACE_SETOPTIONS, pid, NULL,
+	       (void *)(uintptr_t)PTRACE_O_TRACESYSGOOD);
 
 	while (!g_stop) {
 		n = rsp_recv_packet(conn_fd, payload, sizeof(payload));
