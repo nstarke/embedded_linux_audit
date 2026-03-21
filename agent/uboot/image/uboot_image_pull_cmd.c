@@ -238,6 +238,12 @@ static int pull_image_to_output_http(const char *dev, uint64_t offset, const cha
 		}
 	}
 
+	if (total_size == 0 || total_size > 64 * 1024 * 1024) {
+		uboot_img_err_printf("Image total_size out of range: %ju\n", (uintmax_t)total_size);
+		close(fd);
+		return 1;
+	}
+
 	img = malloc((size_t)total_size);
 	if (!img) {
 		uboot_img_err_printf("Unable to allocate image buffer (%ju bytes)\n", (uintmax_t)total_size);
