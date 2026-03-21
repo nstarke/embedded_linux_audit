@@ -587,6 +587,10 @@ static ssize_t ws_recv_frame(const struct ela_ws_conn *ws,
 		size_t to_skip = ela_ws_payload_skip_len(payload_len, buf_sz);
 		char   discard[64];
 
+		/* Reject absurdly large frames to bound the drain loop */
+		if (to_skip > 1024 * 1024)
+			return -1;
+
 		if (ws_conn_read(ws, buf, to_read) < 0)
 			return -1;
 		while (to_skip > 0) {
