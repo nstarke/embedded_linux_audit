@@ -73,6 +73,8 @@ static void interactive_usage(const char *prog)
 	       "  linux list-symlinks\n"
 	       "  linux remote-copy\n"
 	       "  linux ssh\n"
+	       "  linux process\n"
+	       "  linux gdbserver\n"
 	       "  tpm2\n"
 	       "  efi orom\n"
 	       "  efi dump-vars\n"

@@ -1068,6 +1068,7 @@ $(GENERATED_CA_SRC): tools/embed_ca_bundle.py $(CA_BUNDLE_PEM)
 	python3 tools/embed_ca_bundle.py --input "$(CA_BUNDLE_PEM)" --output "$@"
 
 $(LIBEFIVAR_LINK_LIB): $(LIBEFIVAR_BUILD_STAMP) | $(GENERATED_DIR) check-llvm-objcopy
+	chmod u+w "$(GENERATED_DIR)" 2>/dev/null || true
 	rm -rf "$(LIBEFIVAR_REPACK_DIR)"
 	mkdir -p "$(LIBEFIVAR_REPACK_DIR)"
 	cd "$(LIBEFIVAR_REPACK_DIR)" && ar x "$(abspath $(LIBEFIVAR_LIB))"
