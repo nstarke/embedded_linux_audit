@@ -874,24 +874,28 @@ int embedded_linux_audit_scan_main(int argc, char **argv)
 
 	if (signature_blob_path && access(signature_blob_path, R_OK) != 0) {
 		err_printf("Cannot read --signature-blob %s: %s\n", signature_blob_path, strerror(errno));
-		return 2;
+		ret = 2;
+		goto out;
 	}
 
 	if (signature_pubkey_path && access(signature_pubkey_path, R_OK) != 0) {
 		err_printf("Cannot read --signature-pubkey %s: %s\n", signature_pubkey_path, strerror(errno));
-		return 2;
+		ret = 2;
+		goto out;
 	}
 
 	if (size > (uint64_t)SIZE_MAX) {
 		err_printf("Requested --size is too large for this host\n");
-		return 2;
+		ret = 2;
+		goto out;
 	}
 
 	read_len = (size_t)size;
 	buf = malloc(read_len);
 	if (!buf) {
 		err_printf("Unable to allocate %zu bytes for audit input\n", read_len);
-		return 1;
+		ret = 1;
+		goto out;
 	}
 
 	fd = open(dev, O_RDONLY | O_CLOEXEC);
