@@ -339,7 +339,13 @@ static void send_stop_reply(int fd, int wstatus)
 		 * step traps using PTRACE_GETSIGINFO: TRAP_BRKPT means the
 		 * process hit an INT3 (or a Z0 breakpoint we inserted),
 		 * whereas TRAP_TRACE is a single-step event.
+		 *
+		 * TRAP_BRKPT (1) is defined in <signal.h> on Linux; provide
+		 * a fallback in case the build environment omits it.
 		 */
+#  ifndef TRAP_BRKPT
+#    define TRAP_BRKPT 1
+#  endif
 		if (sig == SIGTRAP) {
 			siginfo_t si;
 			if (ptrace(PTRACE_GETSIGINFO, g_pid, NULL, &si) == 0 &&
