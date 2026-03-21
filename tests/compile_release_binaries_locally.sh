@@ -237,7 +237,11 @@ set_isa_config() {
             zig_targets="powerpc64le-linux-musl,powerpc64le-linux-gnu"
             ;;
         powerpc64-be)
-            zig_targets="powerpc64-linux-musl,powerpc64-linux-gnu"
+            # powerpc64-linux-gnu is excluded: zig 0.14.0's bundled glibc
+            # headers for powerpc64 BE ship only gnu/stubs-64-v1.h but the
+            # ELFv2 features.h unconditionally includes gnu/stubs-64-v2.h,
+            # causing a fatal compile error.  musl has no ABI versioning issue.
+            zig_targets="powerpc64-linux-musl"
             ;;
         powerpc-be)
             zig_targets="powerpc-linux-musleabi,powerpc-linux-musleabihf,powerpc-linux-gnueabi,powerpc-linux-gnueabihf"

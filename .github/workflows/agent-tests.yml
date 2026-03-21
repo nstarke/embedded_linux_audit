@@ -222,7 +222,7 @@ jobs:
           - name: powerpc-le
             zig_targets: powerpc64le-linux-musl,powerpc64le-linux-gnu
           - name: powerpc64-be
-            zig_targets: powerpc64-linux-musl,powerpc64-linux-gnu
+            zig_targets: powerpc64-linux-musl
           - name: powerpc-be
             zig_targets: powerpc-linux-musleabi,powerpc-linux-musleabihf,powerpc-linux-gnueabi,powerpc-linux-gnueabihf
           - name: x86
