@@ -807,7 +807,7 @@ static void ws_send_ping(const struct ela_ws_conn *ws)
 	size_t frame_len = 0;
 
 	if (ela_ws_build_ping_frame(frame, &frame_len) == 0)
-		ws_conn_write(ws, frame, frame_len);
+		(void)ws_conn_write(ws, frame, frame_len); /* best-effort; drop detected on next recv */
 }
 
 int ela_ws_run_interactive(struct ela_ws_conn *ws, const char *prog)
