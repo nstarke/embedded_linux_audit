@@ -72,6 +72,7 @@ int run_uboot_validate_env_security_util_tests(void);
 int run_uboot_validate_cmdline_init_util_tests(void);
 int run_linux_process_watch_util_tests(void);
 int run_linux_gdbserver_util_tests(void);
+int run_linux_gdbserver_pkt_util_tests(void);
 
 int main(void)
 {
@@ -149,6 +150,7 @@ int main(void)
 	rc |= run_uboot_validate_cmdline_init_util_tests();
 	rc |= run_linux_process_watch_util_tests();
 	rc |= run_linux_gdbserver_util_tests();
+	rc |= run_linux_gdbserver_pkt_util_tests();
 
 	return rc;
 }
