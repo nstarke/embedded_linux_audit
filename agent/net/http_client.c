@@ -1641,6 +1641,10 @@ static int __attribute__((unused)) ela_http_post_https_once(const char *effectiv
 	curl_easy_setopt(curl, CURLOPT_URL, effective_uri);
 	curl_easy_setopt(curl, CURLOPT_POST, 1L);
 	curl_easy_setopt(curl, CURLOPT_POSTFIELDS, (const char *)data);
+	/* False-positive suppression: CURLOPT_POSTFIELDSIZE_LARGE only returns
+	 * CURLE_BAD_FUNCTION_ARGUMENT when the value is negative; (curl_off_t)len
+	 * is always >= 0 because len is size_t. */
+	/* coverity[check_return] */
 	curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE_LARGE, (curl_off_t)len);
 	curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
 	curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);

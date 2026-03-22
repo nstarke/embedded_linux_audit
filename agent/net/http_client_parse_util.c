@@ -138,6 +138,9 @@ int ela_http_parse_dns_a_response(const uint8_t *resp, int resp_len,
 		while (pos < resp_len) {
 			if (resp[pos] == 0)             { pos++; break; }
 			if ((resp[pos] & 0xC0) == 0xC0) { pos += 2; break; }
+			/* Guard: label length must not extend past the packet. */
+			if (resp[pos] > resp_len - pos - 1)
+				return -1;
 			pos += resp[pos] + 1;
 		}
 		pos += 4; /* QTYPE + QCLASS */
@@ -153,6 +156,9 @@ int ela_http_parse_dns_a_response(const uint8_t *resp, int resp_len,
 			while (pos < resp_len) {
 				if (resp[pos] == 0)             { pos++; break; }
 				if ((resp[pos] & 0xC0) == 0xC0) { pos += 2; break; }
+				/* Guard: label length must not extend past the packet. */
+				if (resp[pos] > resp_len - pos - 1)
+					return -1;
 				pos += resp[pos] + 1;
 			}
 		}
