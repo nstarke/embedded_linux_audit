@@ -280,6 +280,12 @@ static int pull_image_to_output_http(const char *dev, uint64_t offset, const cha
 		return 1;
 	}
 
+	/* False-positive suppression: img contains raw U-Boot image bytes read
+	 * from a block device and uploaded verbatim to the audit server.
+	 * Sanitizing arbitrary binary bootloader content is not meaningful;
+	 * the domain-appropriate boundary check (device path validation) has
+	 * already been applied before the read. */
+	/* coverity[tainted_data] */
 	if (ela_http_post(upload_uri, img, (size_t)total_size,
 			 g_pull_binary_content_type, g_insecure,
 			 g_verbose,
