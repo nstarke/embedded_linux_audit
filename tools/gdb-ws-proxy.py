@@ -37,7 +37,7 @@ except ImportError:
 async def bridge(url: str, ssl_ctx, headers: dict) -> None:
     async with websockets.connect(url, ssl=ssl_ctx,
                                   additional_headers=headers) as ws:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
 
         async def stdin_to_ws() -> None:
             while True:
@@ -65,6 +65,22 @@ async def bridge(url: str, ssl_ctx, headers: dict) -> None:
                 await task
             except asyncio.CancelledError:
                 pass
+
+    close_code = getattr(ws, 'close_code', None)
+    close_reason = getattr(ws, 'close_reason', '') or ''
+    if close_code == 4001:
+        sys.stderr.write(
+            'wss-remote: agent disconnected — the gdbserver tunnel on the '
+            'device closed the session.\n'
+            '  Check that "linux gdbserver tunnel <PID> <WSS_URL>" is '
+            'still running and that ptrace succeeded.\n'
+        )
+    elif close_code is not None and close_code not in (1000, 1001):
+        sys.stderr.write(
+            f'wss-remote: connection closed by server '
+            f'(code={close_code}'
+            f'{": " + close_reason if close_reason else ""})\n'
+        )
 
 
 def main() -> None:

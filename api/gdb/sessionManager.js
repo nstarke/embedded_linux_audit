@@ -27,11 +27,15 @@ function createSessionManager() {
     }
   }
 
-  function purge(key) {
+  function purge(key, outCode, outReason) {
     const s = sessions.get(key);
     if (!s) return;
-    if (s.in)  { try { s.in.close();  } catch {} }
-    if (s.out) { try { s.out.close(); } catch {} }
+    if (s.in)  { try { s.in.close(1001, 'session ended'); } catch {} }
+    if (s.out) {
+      try {
+        s.out.close(outCode || 1001, outReason || 'session ended');
+      } catch {}
+    }
     sessions.delete(key);
   }
 
