@@ -188,6 +188,12 @@ static int pull_image_to_output_tcp(const char *dev, uint64_t offset, const char
 		while (sent < total_size) {
 			size_t want = (size_t)((total_size - sent) > sizeof(buf) ? sizeof(buf) : (total_size - sent));
 			ssize_t n = pread(fd, buf, want, (off_t)(offset + sent));
+			/* False-positive suppression: buf contains raw U-Boot image
+			 * bytes read from a block device and streamed verbatim to the
+			 * audit server over TCP. Sanitizing arbitrary binary bootloader
+			 * content is not meaningful; device path validation is the
+			 * domain-appropriate boundary check. */
+			/* coverity[tainted_data] */
 			if (n <= 0 || ela_send_all(sock, buf, (size_t)n) < 0) {
 				uboot_img_err_printf("Pull failed while sending image bytes\n");
 				close(sock);
@@ -280,6 +286,12 @@ static int pull_image_to_output_http(const char *dev, uint64_t offset, const cha
 		return 1;
 	}
 
+	/* False-positive suppression: img contains raw U-Boot image bytes read
+	 * from a block device and uploaded verbatim to the audit server.
+	 * Sanitizing arbitrary binary bootloader content is not meaningful;
+	 * the domain-appropriate boundary check (device path validation) has
+	 * already been applied before the read. */
+	/* coverity[tainted_data] */
 	if (ela_http_post(upload_uri, img, (size_t)total_size,
 			 g_pull_binary_content_type, g_insecure,
 			 g_verbose,

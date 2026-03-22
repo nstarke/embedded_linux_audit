@@ -342,6 +342,7 @@ static void emit_v(FILE *stream, const char *fmt, va_list ap)
 			send_to_output_socket(stack, (size_t)needed);
 			append_output_http_buffer(stack, (size_t)needed);
 		}
+		va_end(ar);
 		return;
 	}
 

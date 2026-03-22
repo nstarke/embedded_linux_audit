@@ -23,7 +23,7 @@ static int ensure_fw_env_config_exists(void)
 	const char *output_http = getenv("ELA_OUTPUT_HTTP");
 	const char *output_https = getenv("ELA_OUTPUT_HTTPS");
 	const char *output_insecure = getenv("ELA_OUTPUT_INSECURE");
-	char *argv[8];
+	char *argv[10]; /* "env", "--output-config", up to 3x flag+value pairs, "--insecure", NULL */
 	int argc = 0;
 
 	argv[argc++] = "env";

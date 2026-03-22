@@ -52,3 +52,85 @@ Software breakpoints (`Z0`) are handled by writing an `INT3` (`0xcc`) byte into 
 # In gdb-multiarch (on the auditing host):
 # (gdb) target remote <agent-ip>:2345
 ```
+
+---
+
+# `embedded_linux_audit linux gdbserver tunnel` Subcommand
+
+Routes the GDB Remote Serial Protocol over WebSocket through the ELA GDB bridge API instead of opening a direct TCP port. This is useful when the target device is not directly reachable from the analyst workstation but can reach the ELA server.
+
+The agent attaches to the process, generates a random 128-bit session key, and connects to `/gdb/in/<32-hex-key>` on the bridge. The analyst's GDB connects to `/gdb/out/<32-hex-key>` and the bridge relays binary frames bidirectionally.
+
+## `gdbserver tunnel` arguments
+
+- `<PID>` — required process ID to attach to
+- `<WSS_BASE_URL>` — required base WebSocket URL of the ELA server (e.g. `wss://ela.example.com` or `ws://ela.example.com` for plain HTTP)
+- `--insecure` — optional; disables TLS certificate verification when connecting to the bridge
+
+## Session key
+
+A 16-byte key is read from `/dev/urandom` and formatted as 32 lowercase hex characters. The agent prints the full `wss://` URLs to stderr after a successful attach:
+
+```
+GDB tunnel ready:
+  in:  wss://ela.example.com/gdb/in/aabbccddeeff00112233445566778899
+  out: wss://ela.example.com/gdb/out/aabbccddeeff00112233445566778899
+Connect GDB with:
+  wss-remote wss://ela.example.com/gdb/out/aabbccddeeff00112233445566778899
+```
+
+Copy the `out` URL and use it in `gdb-multiarch` on the analyst workstation.
+
+## Connecting with `wss-remote`
+
+`wss-remote` is a GDB Python command registered by `tools/gdb-ws-insecure.py`. It wraps `target remote` with WebSocket support and optional `Authorization` header injection.
+
+### Installing `wss-remote` into `~/.gdbinit`
+
+**Automatic** — `nginx/install.sh` appends the `source` line during setup:
+
+```sh
+./nginx/install.sh ela.example.com
+```
+
+**Manual** — from the repository root:
+
+```sh
+echo "source $(pwd)/tools/gdb-ws-insecure.py" >> ~/.gdbinit
+```
+
+After either method, `wss-remote` is available in every subsequent `gdb-multiarch` session.
+
+You can also load it for a single session without modifying `~/.gdbinit`:
+
+```
+(gdb) source /path/to/tools/gdb-ws-insecure.py
+```
+
+### `wss-remote` usage
+
+```
+wss-remote [--insecure] [--token TOKEN] wss://HOST/gdb/out/<32-hex-key>
+```
+
+- Without `--insecure`: uses GDB's native WebSocket transport (requires GDB 14+ built with WebSocket support).
+- With `--insecure`: falls back to the `tools/gdb-ws-proxy.py` stdin/stdout pipe with TLS verification disabled. Works with any GDB version that supports `target remote | command`.
+- `--token TOKEN`: override the API bearer token. If omitted, `ELA_API_KEY` from the environment is used.
+
+## Example workflow
+
+```bash
+# --- On the target device (via ela shell or terminal) ---
+./embedded_linux_audit linux gdbserver tunnel --insecure 1234 wss://ela.example.com
+
+# Agent prints:
+#   GDB tunnel ready:
+#     out: wss://ela.example.com/gdb/out/aabbccddeeff00112233445566778899
+#   Connect GDB with:
+#     wss-remote wss://ela.example.com/gdb/out/aabbccddeeff00112233445566778899
+
+# --- On the analyst workstation ---
+export ELA_API_KEY=<your-api-key>
+gdb-multiarch ./firmware.elf
+(gdb) wss-remote --insecure wss://ela.example.com/gdb/out/aabbccddeeff00112233445566778899
+```

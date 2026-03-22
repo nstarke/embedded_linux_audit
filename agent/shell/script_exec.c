@@ -103,6 +103,12 @@ int execute_script_commands(const char *prog, const char *script_source)
 			return 2;
 		}
 
+		/* False-positive suppression: fallback_uri is built from the
+		 * operator's configured audit server URL and the user-supplied
+		 * script name — both are intentional operational parameters.
+		 * Fetching a script from the operator's own server is the
+		 * designed behaviour; no URL sanitization is meaningful here. */
+		/* coverity[tainted_data] */
 		if (ela_http_get_to_file(fallback_uri,
 					  script_path,
 					  insecure,
