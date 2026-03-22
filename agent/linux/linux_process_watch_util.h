@@ -54,12 +54,14 @@ bool ela_process_watch_pids_equal(const char *a, const char *b);
 /*
  * Format a process-restart event record into a freshly-malloc'd buffer.
  * fmt must be "txt", "csv", or "json".
+ * exe is the executable path of the new process (may be "" if unavailable).
  * On success sets *out (caller must free) and *out_len; returns 0.
  * Returns -1 on allocation failure or bad arguments.
  */
 int ela_process_watch_format_event(const char *needle,
-				    const char *old_pids,
-				    const char *new_pids,
+				    const char *old_pid,
+				    const char *new_pid,
+				    const char *exe,
 				    const char *fmt,
 				    char **out,
 				    size_t *out_len);

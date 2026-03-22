@@ -20,6 +20,10 @@
 
 #define MAX_WATCH_ENTRIES 64
 
+#ifndef PATH_MAX
+#define PATH_MAX 4096
+#endif
+
 /* =========================================================================
  * Daemon state
  * ====================================================================== */
@@ -247,15 +251,31 @@ static int scan_pids_for_needle(const char *needle,
  * Output helpers (daemon-side)
  * ====================================================================== */
 
+static void read_exe_for_pid(pid_t pid, char *out, size_t out_sz)
+{
+	char path[64];
+	ssize_t n;
+
+	out[0] = '\0';
+	if (pid <= 0 || out_sz < 2)
+		return;
+	snprintf(path, sizeof(path), "/proc/%ld/exe", (long)pid);
+	n = readlink(path, out, out_sz - 1);
+	if (n > 0)
+		out[n] = '\0';
+	else
+		out[0] = '\0';
+}
+
 static void emit_event(const char *needle,
-		       const char *old_pids, const char *new_pids,
-		       const char *fmt)
+		       const char *old_pid, const char *new_pid,
+		       const char *exe, const char *fmt)
 {
 	char *buf = NULL;
 	size_t len = 0;
 	char errbuf[256];
 
-	if (ela_process_watch_format_event(needle, old_pids, new_pids,
+	if (ela_process_watch_format_event(needle, old_pid, new_pid, exe,
 					   fmt, &buf, &len) != 0 || !buf)
 		return;
 
@@ -278,6 +298,78 @@ static void emit_event(const char *needle,
 	}
 
 	free(buf);
+}
+
+/* =========================================================================
+ * PID set diff helpers
+ * ====================================================================== */
+
+#define PID_PARSE_MAX 256
+
+static int parse_pid_list(const char *s, pid_t *out, int max)
+{
+	int count = 0;
+	const char *p = s;
+	char *end;
+	long v;
+
+	if (!s || !*s)
+		return 0;
+	while (*p && count < max) {
+		v = strtol(p, &end, 10);
+		if (end == p)
+			break;
+		if (v > 0)
+			out[count++] = (pid_t)v;
+		p = end;
+		if (*p == ',')
+			p++;
+	}
+	return count;
+}
+
+/* Fills out[] with PIDs that are in 'a' but not in 'b'. */
+static int pid_set_subtract(const pid_t *a, int a_count,
+			     const pid_t *b, int b_count,
+			     pid_t *out, int max)
+{
+	int i, j, n = 0;
+
+	for (i = 0; i < a_count && n < max; i++) {
+		bool found = false;
+
+		for (j = 0; j < b_count; j++) {
+			if (a[i] == b[j]) {
+				found = true;
+				break;
+			}
+		}
+		if (!found)
+			out[n++] = a[i];
+	}
+	return n;
+}
+
+static void format_pid_list(const pid_t *pids, int count,
+			     char *out, size_t out_sz)
+{
+	size_t pos = 0;
+	char tmp[32];
+	int i, w;
+
+	out[0] = '\0';
+	for (i = 0; i < count; i++) {
+		w = snprintf(tmp, sizeof(tmp), "%ld", (long)pids[i]);
+		if (w <= 0)
+			continue;
+		if (pos + (i > 0 ? 1U : 0U) + (size_t)w + 1U > out_sz)
+			break;
+		if (i > 0)
+			out[pos++] = ',';
+		memcpy(out + pos, tmp, (size_t)w);
+		pos += (size_t)w;
+		out[pos] = '\0';
+	}
 }
 
 /* =========================================================================
@@ -341,7 +433,37 @@ static void poll_loop(const char *fmt)
 				continue;
 
 			if (!ela_process_watch_pids_equal(known_pids[i], current_pids)) {
-				emit_event(needles[i], known_pids[i], current_pids, fmt);
+				pid_t old_arr[PID_PARSE_MAX], new_arr[PID_PARSE_MAX];
+				pid_t dep[PID_PARSE_MAX], arr[PID_PARSE_MAX];
+				int old_n, new_n, dep_n, arr_n, pairs, j;
+				char old_pid_str[32], new_pid_str[32];
+				char exe[PATH_MAX];
+
+				old_n = parse_pid_list(known_pids[i], old_arr, PID_PARSE_MAX);
+				new_n = parse_pid_list(current_pids,  new_arr, PID_PARSE_MAX);
+				dep_n = pid_set_subtract(old_arr, old_n, new_arr, new_n, dep, PID_PARSE_MAX);
+				arr_n = pid_set_subtract(new_arr, new_n, old_arr, old_n, arr, PID_PARSE_MAX);
+
+				/* Emit one event per change.  Pair departed and
+				 * arrived PIDs by position when counts match;
+				 * emit unpaired entries with an empty counterpart. */
+				pairs = dep_n < arr_n ? dep_n : arr_n;
+				for (j = 0; j < pairs; j++) {
+					snprintf(old_pid_str, sizeof(old_pid_str), "%ld", (long)dep[j]);
+					snprintf(new_pid_str, sizeof(new_pid_str), "%ld", (long)arr[j]);
+					read_exe_for_pid(arr[j], exe, sizeof(exe));
+					emit_event(needles[i], old_pid_str, new_pid_str, exe, fmt);
+				}
+				for (j = pairs; j < arr_n; j++) {
+					snprintf(new_pid_str, sizeof(new_pid_str), "%ld", (long)arr[j]);
+					read_exe_for_pid(arr[j], exe, sizeof(exe));
+					emit_event(needles[i], "", new_pid_str, exe, fmt);
+				}
+				for (j = pairs; j < dep_n; j++) {
+					snprintf(old_pid_str, sizeof(old_pid_str), "%ld", (long)dep[j]);
+					emit_event(needles[i], old_pid_str, "", "", fmt);
+				}
+
 				snprintf(known_pids[i], ELA_PROCESS_WATCH_PIDS_MAX_LEN,
 					 "%s", current_pids);
 			}
@@ -382,20 +504,6 @@ static int daemon_start(const char *fmt,
 	setsid();
 	signal(SIGTERM, watch_signal_handler);
 	signal(SIGINT,  watch_signal_handler);
-
-	{
-		int devnull = open("/dev/null", O_RDWR);
-		if (devnull >= 0) {
-			dup2(devnull, STDIN_FILENO);
-			dup2(devnull, STDOUT_FILENO);
-			dup2(devnull, STDERR_FILENO);
-			/* When devnull <= STDERR_FILENO one of the dup2 calls
-			 * targeted devnull itself, so no extra fd remains open. */
-			/* coverity[resource_leak] */
-			if (devnull > STDERR_FILENO)
-				close(devnull);
-		}
-	}
 
 	if (tcp_target && *tcp_target)
 		g_watch_sock = ela_connect_tcp_ipv4(tcp_target);
@@ -571,12 +679,16 @@ static int cmd_watch_off(const char *needle)
 	return 0;
 }
 
-static int cmd_watch_list(const char *fmt)
+static int cmd_watch_list(const char *fmt,
+			   const char *tcp_target,
+			   const char *http_uri,
+			   bool insecure)
 {
 	char needles[MAX_WATCH_ENTRIES][ELA_PROCESS_WATCH_NEEDLE_MAX + 1];
 	char pids[MAX_WATCH_ENTRIES][ELA_PROCESS_WATCH_PIDS_MAX_LEN];
 	int count = 0;
 	int lock_fd;
+	int sock = -1;
 	int i;
 
 	lock_fd = lock_acquire();
@@ -592,8 +704,12 @@ static int cmd_watch_list(const char *fmt)
 		return 0;
 	}
 
+	if (tcp_target && *tcp_target)
+		sock = ela_connect_tcp_ipv4(tcp_target);
+
 	for (i = 0; i < count; i++) {
 		char current_pids[ELA_PROCESS_WATCH_PIDS_MAX_LEN];
+		char errbuf[256];
 		char *buf = NULL;
 		size_t len = 0;
 
@@ -607,12 +723,34 @@ static int cmd_watch_list(const char *fmt)
 			strncpy(current_pids, "(none)", sizeof(current_pids) - 1);
 
 		if (ela_process_watch_format_list_entry(needles[i], current_pids,
-							fmt, &buf, &len) == 0 &&
-		    buf) {
+							fmt, &buf, &len) != 0 || !buf)
+			continue;
+
+		if (sock < 0 && !http_uri)
 			fwrite(buf, 1, len, stdout);
-			free(buf);
+
+		if (sock >= 0)
+			(void)ela_send_all(sock, (const uint8_t *)buf, len);
+
+		if (http_uri) {
+			char *uri = ela_http_build_upload_uri(http_uri,
+							      "process_watch", NULL);
+			if (uri) {
+				(void)ela_http_post(uri,
+						    (const uint8_t *)buf, len,
+						    ela_process_watch_content_type(fmt),
+						    insecure, false,
+						    errbuf, sizeof(errbuf));
+				free(uri);
+			}
 		}
+
+		free(buf);
 	}
+
+	if (sock >= 0)
+		close(sock);
+
 	return 0;
 }
 
@@ -661,7 +799,7 @@ static int watch_main(int argc, char **argv,
 			usage_watch(argv[0]);
 			return 2;
 		}
-		return cmd_watch_list(fmt);
+		return cmd_watch_list(fmt, tcp_target, http_uri, insecure);
 	}
 
 	if (strcmp(action, "on") && strcmp(action, "off")) {
