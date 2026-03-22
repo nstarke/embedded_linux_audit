@@ -900,8 +900,6 @@ static int regs_write(const char *hex, size_t hex_len)
 #endif
 
 /*
- * Common MIPS ptrace helper: fetch elf_gregset_t via PTRACE_GETREGSET.
- * Used by both the 32-bit and 64-bit variants below.
  * The kernel-side elf_gregset_t is unsigned long[45]; on MIPS64 each slot
  * is 8 bytes, on MIPS32 each slot is 4 bytes.
  *
@@ -916,7 +914,31 @@ static int regs_write(const char *hex, size_t hex_len)
  *   f0-f31    (FPRs,  GDB regs 38-69, zero-filled for FPUless targets)
  *   fcsr      (GDB reg 70, zero)
  *   fir       (GDB reg 71, zero)
+ *
+ * Older MIPS kernels (pre-3.14) do not implement PTRACE_GETREGSET.
+ * mips_get_regs/mips_set_regs fall back to PTRACE_GETREGS/PTRACE_SETREGS
+ * which have been available since the earliest MIPS Linux kernels.
+ * Both interfaces use the same elf_gregset_t layout.
  */
+static int mips_get_regs(unsigned long *regs, size_t regs_sz)
+{
+	struct iovec iov = { regs, regs_sz };
+
+	if (ptrace(PTRACE_GETREGSET, g_pid,
+		   (void *)(uintptr_t)NT_PRSTATUS, &iov) == 0)
+		return 0;
+	return ptrace(PTRACE_GETREGS, g_pid, NULL, regs) != 0 ? -1 : 0;
+}
+
+static int mips_set_regs(unsigned long *regs, size_t regs_sz)
+{
+	struct iovec iov = { regs, regs_sz };
+
+	if (ptrace(PTRACE_SETREGSET, g_pid,
+		   (void *)(uintptr_t)NT_PRSTATUS, &iov) == 0)
+		return 0;
+	return ptrace(PTRACE_SETREGS, g_pid, NULL, regs) != 0 ? -1 : 0;
+}
 
 #ifdef __mips64
 
@@ -926,13 +948,11 @@ static int regs_write(const char *hex, size_t hex_len)
 static int regs_read(char *out, size_t out_sz)
 {
 	unsigned long regs[MIPS_ELF_NGREG];
-	struct iovec iov = { regs, sizeof(regs) };
 	char tmp[17];
 	size_t pos = 0;
 	int i;
 
-	if (ptrace(PTRACE_GETREGSET, g_pid,
-		   (void *)(uintptr_t)NT_PRSTATUS, &iov) != 0)
+	if (mips_get_regs(regs, sizeof(regs)) != 0)
 		return -1;
 
 #define EMIT64(v) do { \
@@ -972,10 +992,8 @@ static int regs_read(char *out, size_t out_sz)
 static int reg_read_one(int regnum, char *out, size_t out_sz)
 {
 	unsigned long regs[MIPS_ELF_NGREG];
-	struct iovec iov = { regs, sizeof(regs) };
 
-	if (ptrace(PTRACE_GETREGSET, g_pid,
-		   (void *)(uintptr_t)NT_PRSTATUS, &iov) != 0)
+	if (mips_get_regs(regs, sizeof(regs)) != 0)
 		return -1;
 
 	if (regnum >= 0 && regnum <= 31)
@@ -1001,11 +1019,9 @@ static int reg_read_one(int regnum, char *out, size_t out_sz)
 static int reg_write_one(int regnum, const char *hex_val)
 {
 	unsigned long regs[MIPS_ELF_NGREG];
-	struct iovec iov = { regs, sizeof(regs) };
 	uint64_t v64;
 
-	if (ptrace(PTRACE_GETREGSET, g_pid,
-		   (void *)(uintptr_t)NT_PRSTATUS, &iov) != 0)
+	if (mips_get_regs(regs, sizeof(regs)) != 0)
 		return -1;
 
 	if (regnum >= 0 && regnum <= 31) {
@@ -1038,24 +1054,20 @@ static int reg_write_one(int regnum, const char *hex_val)
 		}
 	}
 
-	iov.iov_len = sizeof(regs);
-	return ptrace(PTRACE_SETREGSET, g_pid,
-		      (void *)(uintptr_t)NT_PRSTATUS, &iov) != 0 ? -1 : 0;
+	return mips_set_regs(regs, sizeof(regs));
 }
 
 /* MIPS64 g-packet: 1152 hex (38 GPRs/ctl × 16 + 32 FP × 16 + 2 ctl × 16) */
 static int regs_write(const char *hex, size_t hex_len)
 {
 	unsigned long regs[MIPS_ELF_NGREG];
-	struct iovec iov = { regs, sizeof(regs) };
 	uint64_t v64;
 	size_t pos = 0;
 	int i;
 
 	if (hex_len < 1152)
 		return -1;
-	if (ptrace(PTRACE_GETREGSET, g_pid,
-		   (void *)(uintptr_t)NT_PRSTATUS, &iov) != 0)
+	if (mips_get_regs(regs, sizeof(regs)) != 0)
 		return -1;
 
 	for (i = 0; i < 32; i++) {
@@ -1071,9 +1083,7 @@ static int regs_write(const char *hex, size_t hex_len)
 	if (mips_dec64(hex+pos,&v64)) return -1; regs[MIPS_EF_EPC]      =(unsigned long)v64;
 	/* FP registers not written to kernel */
 
-	iov.iov_len = sizeof(regs);
-	return ptrace(PTRACE_SETREGSET, g_pid,
-		      (void *)(uintptr_t)NT_PRSTATUS, &iov) != 0 ? -1 : 0;
+	return mips_set_regs(regs, sizeof(regs));
 }
 
 #else /* MIPS32 */
@@ -1084,13 +1094,11 @@ static int regs_write(const char *hex, size_t hex_len)
 static int regs_read(char *out, size_t out_sz)
 {
 	unsigned long regs[MIPS_ELF_NGREG];
-	struct iovec iov = { regs, sizeof(regs) };
 	char tmp[9];
 	size_t pos = 0;
 	int i;
 
-	if (ptrace(PTRACE_GETREGSET, g_pid,
-		   (void *)(uintptr_t)NT_PRSTATUS, &iov) != 0)
+	if (mips_get_regs(regs, sizeof(regs)) != 0)
 		return -1;
 
 #define EMIT32(v) do { \
@@ -1130,10 +1138,8 @@ static int regs_read(char *out, size_t out_sz)
 static int reg_read_one(int regnum, char *out, size_t out_sz)
 {
 	unsigned long regs[MIPS_ELF_NGREG];
-	struct iovec iov = { regs, sizeof(regs) };
 
-	if (ptrace(PTRACE_GETREGSET, g_pid,
-		   (void *)(uintptr_t)NT_PRSTATUS, &iov) != 0)
+	if (mips_get_regs(regs, sizeof(regs)) != 0)
 		return -1;
 
 	if (regnum >= 0 && regnum <= 31)
@@ -1159,11 +1165,9 @@ static int reg_read_one(int regnum, char *out, size_t out_sz)
 static int reg_write_one(int regnum, const char *hex_val)
 {
 	unsigned long regs[MIPS_ELF_NGREG];
-	struct iovec iov = { regs, sizeof(regs) };
 	uint32_t v32;
 
-	if (ptrace(PTRACE_GETREGSET, g_pid,
-		   (void *)(uintptr_t)NT_PRSTATUS, &iov) != 0)
+	if (mips_get_regs(regs, sizeof(regs)) != 0)
 		return -1;
 
 	if (regnum >= 0 && regnum <= 31) {
@@ -1196,24 +1200,20 @@ static int reg_write_one(int regnum, const char *hex_val)
 		}
 	}
 
-	iov.iov_len = sizeof(regs);
-	return ptrace(PTRACE_SETREGSET, g_pid,
-		      (void *)(uintptr_t)NT_PRSTATUS, &iov) != 0 ? -1 : 0;
+	return mips_set_regs(regs, sizeof(regs));
 }
 
 /* MIPS32 g-packet: 576 hex (38 GPRs/ctl × 8 + 32 FP × 8 + 2 ctl × 8) */
 static int regs_write(const char *hex, size_t hex_len)
 {
 	unsigned long regs[MIPS_ELF_NGREG];
-	struct iovec iov = { regs, sizeof(regs) };
 	uint32_t v32;
 	size_t pos = 0;
 	int i;
 
 	if (hex_len < 576)
 		return -1;
-	if (ptrace(PTRACE_GETREGSET, g_pid,
-		   (void *)(uintptr_t)NT_PRSTATUS, &iov) != 0)
+	if (mips_get_regs(regs, sizeof(regs)) != 0)
 		return -1;
 
 	for (i = 0; i < 32; i++) {
@@ -1229,9 +1229,7 @@ static int regs_write(const char *hex, size_t hex_len)
 	if (mips_dec32(hex+pos,&v32)) return -1; regs[MIPS_EF_EPC]      =(unsigned long)v32;
 	/* FP registers not written to kernel */
 
-	iov.iov_len = sizeof(regs);
-	return ptrace(PTRACE_SETREGSET, g_pid,
-		      (void *)(uintptr_t)NT_PRSTATUS, &iov) != 0 ? -1 : 0;
+	return mips_set_regs(regs, sizeof(regs));
 }
 
 #endif /* __mips64 */
