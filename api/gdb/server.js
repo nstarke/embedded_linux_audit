@@ -69,7 +69,7 @@ wss.on('connection', (ws, req) => {
     }
     // Agent disconnect tears down the whole session.
     if (direction === 'in') {
-      sm.purge(hexkey);
+      sm.purge(hexkey, 4001, 'agent disconnected');
     } else if (!s.in && !s.out) {
       sessions.delete(hexkey);
     }
