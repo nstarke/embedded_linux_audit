@@ -430,9 +430,9 @@ fi
 
 echo "Starting database and API containers before nginx..."
 if [ "$BUILD" -eq 1 ]; then
-    "$@" up -d --build postgres agent-api terminal-api
+    "$@" up -d --build postgres agent-api terminal-api gdb-api
 else
-    "$@" up -d postgres agent-api terminal-api
+    "$@" up -d postgres agent-api terminal-api gdb-api
 fi
 
 if [ "$DETACH" -eq 1 ]; then
@@ -453,6 +453,26 @@ else
     fi
 fi
 
+# ---------------------------------------------------------------------------
+# GDB WebSocket extension — add to the invoking user's ~/.gdbinit so that
+# `wss-remote [--insecure] wss://...` is available in every gdb-multiarch
+# session without a manual `source` step.
+# ---------------------------------------------------------------------------
+_real_user="${SUDO_USER:-$USER}"
+_real_home="$(getent passwd "$_real_user" 2>/dev/null | cut -d: -f6 || eval echo "~$_real_user")"
+GDBINIT_FILE="$_real_home/.gdbinit"
+GDBINIT_LINE="source $REPO_ROOT/tools/gdb-ws-insecure.py"
+
+if [ -n "$_real_home" ] && [ "$_real_home" != "/" ]; then
+    if grep -qF "$GDBINIT_LINE" "$GDBINIT_FILE" 2>/dev/null; then
+        echo "GDB WebSocket extension already present in $GDBINIT_FILE"
+    else
+        printf '%s\n' "$GDBINIT_LINE" >> "$GDBINIT_FILE"
+        echo "Added GDB WebSocket extension to $GDBINIT_FILE"
+        echo "  In gdb-multiarch: wss-remote [--insecure] wss://$HOSTNAME/gdb/out/<key>"
+    fi
+fi
+
 if [ "$DETACH" -eq 1 ]; then
     echo
     echo "Stack status:"
@@ -462,5 +482,7 @@ if [ "$DETACH" -eq 1 ]; then
     echo "Frontend URL (HTTPS): https://$HOSTNAME/"
     echo "Terminal URL base:    ws://$HOSTNAME/terminal/<mac>"
     echo "Terminal URL base:    wss://$HOSTNAME/terminal/<mac>"
+    echo "GDB tunnel (agent):   linux gdbserver tunnel [--insecure] <PID> wss://$HOSTNAME"
+    echo "GDB tunnel (GDB):     wss-remote [--insecure] wss://$HOSTNAME/gdb/out/<key>"
     echo "Follow logs with: docker compose -f $COMPOSE_FILE logs -f"
 fi

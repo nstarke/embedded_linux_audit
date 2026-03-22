@@ -479,6 +479,114 @@ fail:
 	return -1;
 }
 
+int ela_ws_connect_url(const char *url, int insecure,
+		       struct ela_ws_conn *ws_out)
+{
+	char     host[256];
+	char     path[512];
+	uint16_t port;
+	int      is_tls;
+	int      sock = -1;
+	const char *api_key;
+
+	if (!url || !ws_out)
+		return -1;
+
+	memset(ws_out, 0, sizeof(*ws_out));
+	ws_out->sock = -1;
+
+	if (ela_ws_parse_url(url, host, sizeof(host), &port, path,
+			     sizeof(path), &is_tls) != 0) {
+		fprintf(stderr, "ws: malformed URL: %s\n", url);
+		return -1;
+	}
+
+	api_key = ela_api_key_get();
+	if (api_key && *api_key)
+		snprintf(ws_out->auth_token, sizeof(ws_out->auth_token),
+			 "%s", api_key);
+
+	sock = connect_tcp_host_port_any(host, port);
+	if (sock < 0) {
+		fprintf(stderr, "ws: connect to %s:%u failed\n",
+			host, (unsigned int)port);
+		return -1;
+	}
+	ws_out->sock   = sock;
+	ws_out->is_tls = is_tls;
+
+	if (is_tls) {
+		ws_ssl_ctx_t *ctx = NULL;
+		ws_ssl_t     *ssl = NULL;
+		int           rc;
+
+		ws_tls_init();
+		ctx = ws_ctx_new();
+		if (!ctx) {
+			fprintf(stderr, "ws: TLS context creation failed\n");
+			goto fail;
+		}
+
+		if (insecure) {
+			ws_ctx_set_verify_none(ctx);
+		} else if (ela_default_ca_bundle_pem_len > 0) {
+			if (ws_ctx_load_ca(ctx, ela_default_ca_bundle_pem,
+					   ela_default_ca_bundle_pem_len) !=
+			    WS_TLS_SUCCESS) {
+				fprintf(stderr, "ws: failed to load CA bundle\n");
+				ws_ctx_free(ctx);
+				goto fail;
+			}
+		}
+
+		ssl = ws_ssl_new(ctx);
+		if (!ssl) {
+			fprintf(stderr, "ws: TLS session creation failed\n");
+			ws_ctx_free(ctx);
+			goto fail;
+		}
+
+		ws_ssl_set_fd(ssl, sock);
+		if (!insecure)
+			ws_ssl_set_sni(ssl, host);
+
+		do {
+			rc = ws_ssl_connect(ssl);
+		} while (rc != WS_TLS_SUCCESS &&
+			 (ws_ssl_get_error(ssl, rc) == WS_TLS_WANT_READ ||
+			  ws_ssl_get_error(ssl, rc) == WS_TLS_WANT_WRITE));
+
+		if (rc != WS_TLS_SUCCESS) {
+			fprintf(stderr, "ws: TLS handshake failed\n");
+			ws_ssl_free(ssl);
+			ws_ctx_free(ctx);
+			goto fail;
+		}
+
+		ws_out->ssl     = ssl;
+		ws_out->ssl_ctx = ctx;
+	}
+
+	if (ws_do_handshake(ws_out, host, port, path, is_tls) != 0)
+		goto fail_tls;
+
+	return 0;
+
+fail_tls:
+	if (ws_out->ssl) {
+		ws_ssl_free((ws_ssl_t *)ws_out->ssl);
+		ws_out->ssl = NULL;
+	}
+	if (ws_out->ssl_ctx) {
+		ws_ctx_free((ws_ssl_ctx_t *)ws_out->ssl_ctx);
+		ws_out->ssl_ctx = NULL;
+	}
+fail:
+	close(sock);
+	ws_out->sock = -1;
+	return -1;
+}
+
 void ela_ws_close_parent_fd(const struct ela_ws_conn *ws)
 {
 	if (!ws)
@@ -856,6 +964,108 @@ int ela_ws_run_interactive(struct ela_ws_conn *ws, const char *prog)
 		ws->sock = -1;
 	}
 	return ela_ws_interactive_exit_code(child_exited);
+}
+
+/* -------------------------------------------------------------------------
+ * GDB RSP tunnel bridge
+ * ---------------------------------------------------------------------- */
+
+/* Send a single binary frame (FIN=1, MASK=1, opcode=0x02) */
+static int ws_send_binary(const struct ela_ws_conn *ws,
+			  const void *payload, size_t payload_len)
+{
+	uint8_t  mask[4];
+	uint8_t *frame = NULL;
+	size_t   frame_len = 0;
+	int      fd;
+
+	fd = open("/dev/urandom", O_RDONLY);
+	if (fd >= 0) {
+		ssize_t n = read(fd, mask, 4);
+		close(fd);
+		if (n != 4)
+			ela_ws_default_mask_key(mask);
+	} else {
+		ela_ws_default_mask_key(mask);
+	}
+
+	if (ela_ws_build_masked_frame(ELA_WS_OPCODE_BINARY, mask,
+				      payload, payload_len,
+				      &frame, &frame_len) != 0)
+		return -1;
+	if (ws_conn_write(ws, frame, frame_len) < 0) {
+		free(frame);
+		return -1;
+	}
+	free(frame);
+	return 0;
+}
+
+int ela_ws_run_gdb_bridge(struct ela_ws_conn *ws, int rsp_fd)
+{
+	char    ws_buf[16384];
+	char    rsp_buf[16384];
+
+	if (!ws || rsp_fd < 0)
+		return -1;
+
+	for (;;) {
+		fd_set         rfds;
+		struct timeval tv;
+		int            maxfd, sel;
+		int            ws_readable, pending_bytes = 0;
+		uint8_t        opcode;
+		ssize_t        frame_len;
+		ssize_t        n;
+
+		FD_ZERO(&rfds);
+		FD_SET(ws->sock, &rfds);
+		FD_SET(rsp_fd, &rfds);
+		maxfd = ws->sock > rsp_fd ? ws->sock : rsp_fd;
+
+		tv.tv_sec  = 5;
+		tv.tv_usec = 0;
+		sel = select(maxfd + 1, &rfds, NULL, NULL, &tv);
+		if (sel < 0) {
+			if (errno == EINTR)
+				continue;
+			break;
+		}
+
+		ws_readable = FD_ISSET(ws->sock, &rfds);
+		if (!ws_readable && ws->is_tls && ws->ssl) {
+#ifdef ELA_HAS_WOLFSSL
+			pending_bytes = wolfSSL_pending((ws_ssl_t *)ws->ssl);
+#else
+			pending_bytes = SSL_pending((ws_ssl_t *)ws->ssl);
+#endif
+		}
+
+		if (ela_ws_socket_readable(ws_readable,
+					   ws->is_tls != 0, pending_bytes)) {
+			frame_len = ws_recv_frame(ws, &opcode,
+						  ws_buf, sizeof(ws_buf) - 1);
+			if (frame_len < 0)
+				break;
+			if (opcode == ELA_WS_OPCODE_CLOSE)
+				break;
+			if (opcode == ELA_WS_OPCODE_BINARY && frame_len > 0) {
+				if (ws_fd_write_all(rsp_fd, ws_buf,
+						    (size_t)frame_len) < 0)
+					break;
+			}
+		}
+
+		if (FD_ISSET(rsp_fd, &rfds)) {
+			n = read(rsp_fd, rsp_buf, sizeof(rsp_buf));
+			if (n <= 0)
+				break;
+			if (ws_send_binary(ws, rsp_buf, (size_t)n) < 0)
+				break;
+		}
+	}
+
+	return 0;
 }
 
 /* LCOV_EXCL_STOP */

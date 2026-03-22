@@ -26,6 +26,22 @@ int ela_ws_connect(const char *base_url, int insecure,
 		   struct ela_ws_conn *ws_out);
 
 /*
+ * Connect to a WebSocket server using exactly the given URL (no path
+ * rewriting or MAC suffix).  insecure=1 disables TLS verification.
+ * Returns 0 on success, -1 on error.
+ */
+int ela_ws_connect_url(const char *url, int insecure,
+		       struct ela_ws_conn *ws_out);
+
+/*
+ * Bidirectional binary proxy between a WebSocket connection and a raw fd
+ * (e.g. one end of a socketpair carrying GDB RSP bytes).
+ * Received binary WS frames are written to rsp_fd; bytes read from rsp_fd
+ * are sent as binary WS frames.  Returns when either side closes/errors.
+ */
+int ela_ws_run_gdb_bridge(struct ela_ws_conn *ws, int rsp_fd);
+
+/*
  * Close the parent's copy of the socket after fork() without sending a
  * WebSocket CLOSE frame, which would disrupt the child's session.
  */
