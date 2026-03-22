@@ -262,7 +262,7 @@ static void test_event_null_needle_returns_minus1(void)
 	char *out = NULL;
 	size_t len = 0;
 
-	ELA_ASSERT_INT_EQ(-1, ela_process_watch_format_event(NULL, "1234", "5678", "txt", &out, &len));
+	ELA_ASSERT_INT_EQ(-1, ela_process_watch_format_event(NULL, "1234", "5678", "", "txt", &out, &len));
 }
 
 static void test_event_null_old_pids_returns_minus1(void)
@@ -270,7 +270,7 @@ static void test_event_null_old_pids_returns_minus1(void)
 	char *out = NULL;
 	size_t len = 0;
 
-	ELA_ASSERT_INT_EQ(-1, ela_process_watch_format_event("sshd", NULL, "5678", "txt", &out, &len));
+	ELA_ASSERT_INT_EQ(-1, ela_process_watch_format_event("sshd", NULL, "5678", "", "txt", &out, &len));
 }
 
 static void test_event_null_new_pids_returns_minus1(void)
@@ -278,7 +278,7 @@ static void test_event_null_new_pids_returns_minus1(void)
 	char *out = NULL;
 	size_t len = 0;
 
-	ELA_ASSERT_INT_EQ(-1, ela_process_watch_format_event("sshd", "1234", NULL, "txt", &out, &len));
+	ELA_ASSERT_INT_EQ(-1, ela_process_watch_format_event("sshd", "1234", NULL, "", "txt", &out, &len));
 }
 
 static void test_event_txt_format(void)
@@ -287,15 +287,16 @@ static void test_event_txt_format(void)
 	size_t len = 0;
 
 	ELA_ASSERT_INT_EQ(0, ela_process_watch_format_event("sshd", "1234", "5678",
-							     "txt", &out, &len));
+							     "/usr/sbin/sshd", "txt", &out, &len));
 	ELA_ASSERT_TRUE(out != NULL);
 	ELA_ASSERT_TRUE(len > 0);
 	ELA_ASSERT_TRUE(strstr(out, "process_watch") != NULL);
 	ELA_ASSERT_TRUE(strstr(out, "sshd") != NULL);
 	ELA_ASSERT_TRUE(strstr(out, "1234") != NULL);
 	ELA_ASSERT_TRUE(strstr(out, "5678") != NULL);
-	ELA_ASSERT_TRUE(strstr(out, "old_pids") != NULL);
-	ELA_ASSERT_TRUE(strstr(out, "new_pids") != NULL);
+	ELA_ASSERT_TRUE(strstr(out, "old_pid") != NULL);
+	ELA_ASSERT_TRUE(strstr(out, "new_pid") != NULL);
+	ELA_ASSERT_TRUE(strstr(out, "/usr/sbin/sshd") != NULL);
 	free(out);
 }
 
@@ -305,12 +306,13 @@ static void test_event_csv_format(void)
 	size_t len = 0;
 
 	ELA_ASSERT_INT_EQ(0, ela_process_watch_format_event("sshd", "1234", "5678",
-							     "csv", &out, &len));
+							     "/usr/sbin/sshd", "csv", &out, &len));
 	ELA_ASSERT_TRUE(out != NULL);
 	ELA_ASSERT_TRUE(strstr(out, "process_watch") != NULL);
 	ELA_ASSERT_TRUE(strstr(out, "sshd") != NULL);
 	ELA_ASSERT_TRUE(strstr(out, "1234") != NULL);
 	ELA_ASSERT_TRUE(strstr(out, "5678") != NULL);
+	ELA_ASSERT_TRUE(strstr(out, "/usr/sbin/sshd") != NULL);
 	/* CSV rows must end with a newline */
 	ELA_ASSERT_INT_EQ('\n', out[len - 1]);
 	free(out);
@@ -322,12 +324,13 @@ static void test_event_json_format(void)
 	size_t len = 0;
 
 	ELA_ASSERT_INT_EQ(0, ela_process_watch_format_event("sshd", "1234", "5678",
-							     "json", &out, &len));
+							     "/usr/sbin/sshd", "json", &out, &len));
 	ELA_ASSERT_TRUE(out != NULL);
 	ELA_ASSERT_TRUE(strstr(out, "\"process_watch\"") != NULL);
 	ELA_ASSERT_TRUE(strstr(out, "\"sshd\"") != NULL);
-	ELA_ASSERT_TRUE(strstr(out, "\"old_pids\"") != NULL);
-	ELA_ASSERT_TRUE(strstr(out, "\"new_pids\"") != NULL);
+	ELA_ASSERT_TRUE(strstr(out, "\"old_pid\"") != NULL);
+	ELA_ASSERT_TRUE(strstr(out, "\"new_pid\"") != NULL);
+	ELA_ASSERT_TRUE(strstr(out, "\"/usr/sbin/sshd\"") != NULL);
 	ELA_ASSERT_INT_EQ('\n', out[len - 1]);
 	free(out);
 }

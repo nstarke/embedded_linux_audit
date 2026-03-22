@@ -85,6 +85,7 @@ static int format_record(const char *record_type,
 			  const char *needle,
 			  const char *field1_name, const char *field1_val,
 			  const char *field2_name, const char *field2_val,
+			  const char *field3_name, const char *field3_val,
 			  const char *fmt,
 			  char **out, size_t *out_len)
 {
@@ -111,6 +112,9 @@ static int format_record(const char *record_type,
 		if (field2_name && field2_val)
 			json_object_object_add(obj, field2_name,
 					       json_object_new_string(field2_val));
+		if (field3_name && field3_val)
+			json_object_object_add(obj, field3_name,
+					       json_object_new_string(field3_val));
 		js = json_object_to_json_string_ext(
 			obj, JSON_C_TO_STRING_PLAIN | JSON_C_TO_STRING_NOSLASHESCAPE);
 		js_len = strlen(js);
@@ -132,7 +136,20 @@ static int format_record(const char *record_type,
 			return -1;
 		wn = csv_write(fn, needle_sz, needle, strlen(needle));
 
-		if (field2_name && field2_val) {
+		if (field2_name && field2_val && field3_name && field3_val) {
+			/* record_type,needle,field1_val,field2_val,field3_val\n */
+			size_t total = strlen(record_type) + 1U + wn + 1U +
+				       strlen(field1_val) + 1U +
+				       strlen(field2_val) + 1U +
+				       strlen(field3_val) + 2U;
+			buf = malloc(total);
+			if (buf) {
+				n = snprintf(buf, total, "%s,%s,%s,%s,%s\n",
+					     record_type, fn,
+					     field1_val, field2_val, field3_val);
+				*out_len = (n > 0) ? (size_t)n : 0;
+			}
+		} else if (field2_name && field2_val) {
 			/* record_type,needle,field1_val,field2_val\n */
 			size_t total = strlen(record_type) + 1U + wn + 1U +
 				       strlen(field1_val) + 1U +
@@ -163,9 +180,18 @@ static int format_record(const char *record_type,
 				strlen(field1_name) + strlen(field1_val) + 64U;
 		if (field2_name && field2_val)
 			needed += strlen(field2_name) + strlen(field2_val) + 8U;
+		if (field3_name && field3_val)
+			needed += strlen(field3_name) + strlen(field3_val) + 8U;
 		buf = malloc(needed);
 		if (buf) {
-			if (field2_name && field2_val) {
+			if (field2_name && field2_val && field3_name && field3_val) {
+				n = snprintf(buf, needed,
+					     "%s: needle=%s %s=%s %s=%s %s=%s\n",
+					     record_type, needle,
+					     field1_name, field1_val,
+					     field2_name, field2_val,
+					     field3_name, field3_val);
+			} else if (field2_name && field2_val) {
 				n = snprintf(buf, needed,
 					     "%s: needle=%s %s=%s %s=%s\n",
 					     record_type, needle,
@@ -188,16 +214,18 @@ static int format_record(const char *record_type,
 }
 
 int ela_process_watch_format_event(const char *needle,
-				    const char *old_pids,
-				    const char *new_pids,
+				    const char *old_pid,
+				    const char *new_pid,
+				    const char *exe,
 				    const char *fmt,
 				    char **out, size_t *out_len)
 {
-	if (!needle || !old_pids || !new_pids || !fmt || !out || !out_len)
+	if (!needle || !old_pid || !new_pid || !exe || !fmt || !out || !out_len)
 		return -1;
 	return format_record("process_watch", needle,
-			     "old_pids", old_pids,
-			     "new_pids", new_pids,
+			     "old_pid", old_pid,
+			     "new_pid", new_pid,
+			     "exe", exe,
 			     fmt, out, out_len);
 }
 
@@ -210,6 +238,7 @@ int ela_process_watch_format_list_entry(const char *needle,
 		return -1;
 	return format_record("process_watch_list", needle,
 			     "pids", pids,
+			     NULL, NULL,
 			     NULL, NULL,
 			     fmt, out, out_len);
 }
