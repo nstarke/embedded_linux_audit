@@ -247,15 +247,6 @@ static int scan_pids_for_needle(const char *needle,
  * Output helpers (daemon-side)
  * ====================================================================== */
 
-static const char *event_content_type(const char *fmt)
-{
-	if (!strcmp(fmt, "json"))
-		return "application/json; charset=utf-8";
-	if (!strcmp(fmt, "csv"))
-		return "text/csv; charset=utf-8";
-	return "text/plain; charset=utf-8";
-}
-
 static void emit_event(const char *needle,
 		       const char *old_pids, const char *new_pids,
 		       const char *fmt)
@@ -279,7 +270,7 @@ static void emit_event(const char *needle,
 						      "process_watch", NULL);
 		if (uri) {
 			(void)ela_http_post(uri, (const uint8_t *)buf, len,
-					    event_content_type(fmt),
+					    ela_process_watch_content_type(fmt),
 					    g_watch_insecure, false,
 					    errbuf, sizeof(errbuf));
 			free(uri);

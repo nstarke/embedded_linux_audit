@@ -213,3 +213,12 @@ int ela_process_watch_format_list_entry(const char *needle,
 			     NULL, NULL,
 			     fmt, out, out_len);
 }
+
+const char *ela_process_watch_content_type(const char *fmt)
+{
+	if (fmt && !strcmp(fmt, "json"))
+		return "application/json; charset=utf-8";
+	if (fmt && !strcmp(fmt, "csv"))
+		return "text/csv; charset=utf-8";
+	return "text/plain; charset=utf-8";
+}

@@ -98,6 +98,21 @@ static void test_parse_small_needle_buf_returns_minus1(void)
 	ELA_ASSERT_INT_EQ(-1, ela_process_watch_state_parse_line("sshd\t1234\n", n, sizeof(n), p, sizeof(p)));
 }
 
+static void test_parse_small_pids_buf_returns_minus1(void)
+{
+	char n[64], p[3]; /* "1234" won't fit in 3 bytes */
+
+	ELA_ASSERT_INT_EQ(-1, ela_process_watch_state_parse_line("sshd\t1234\n", n, sizeof(n), p, sizeof(p)));
+}
+
+static void test_parse_empty_needle_returns_minus1(void)
+{
+	char n[64], p[64];
+
+	/* Tab at position 0 means zero-length needle — invalid */
+	ELA_ASSERT_INT_EQ(-1, ela_process_watch_state_parse_line("\t1234\n", n, sizeof(n), p, sizeof(p)));
+}
+
 static void test_parse_valid_line_with_single_pid(void)
 {
 	char n[64], p[64];
@@ -166,6 +181,13 @@ static void test_format_small_buf_returns_minus1(void)
 	char out[4]; /* "sshd\t1234\n" needs more than 4 bytes */
 
 	ELA_ASSERT_INT_EQ(-1, ela_process_watch_state_format_line("sshd", "1234", out, sizeof(out)));
+}
+
+static void test_format_empty_needle_returns_minus1(void)
+{
+	char out[64];
+
+	ELA_ASSERT_INT_EQ(-1, ela_process_watch_state_format_line("", "1234", out, sizeof(out)));
 }
 
 static void test_format_valid_produces_tab_separated_line(void)
@@ -388,6 +410,58 @@ static void test_list_empty_pids_ok(void)
 }
 
 /* =========================================================================
+ * ela_process_watch_content_type
+ * ====================================================================== */
+
+static void test_content_type_json(void)
+{
+	ELA_ASSERT_STR_EQ("application/json; charset=utf-8",
+			  ela_process_watch_content_type("json"));
+}
+
+static void test_content_type_csv(void)
+{
+	ELA_ASSERT_STR_EQ("text/csv; charset=utf-8",
+			  ela_process_watch_content_type("csv"));
+}
+
+static void test_content_type_txt(void)
+{
+	ELA_ASSERT_STR_EQ("text/plain; charset=utf-8",
+			  ela_process_watch_content_type("txt"));
+}
+
+static void test_content_type_unknown(void)
+{
+	ELA_ASSERT_STR_EQ("text/plain; charset=utf-8",
+			  ela_process_watch_content_type("xml"));
+}
+
+static void test_content_type_null(void)
+{
+	ELA_ASSERT_STR_EQ("text/plain; charset=utf-8",
+			  ela_process_watch_content_type(NULL));
+}
+
+/* =========================================================================
+ * Round-trip: format_line then state_parse_line
+ * ====================================================================== */
+
+static void test_roundtrip_format_then_parse(void)
+{
+	char line[256];
+	char needle_out[64], pids_out[64];
+
+	ELA_ASSERT_INT_EQ(0, ela_process_watch_state_format_line(
+		"nginx", "100,200,300", line, sizeof(line)));
+	ELA_ASSERT_INT_EQ(0, ela_process_watch_state_parse_line(
+		line, needle_out, sizeof(needle_out),
+		pids_out, sizeof(pids_out)));
+	ELA_ASSERT_STR_EQ("nginx",       needle_out);
+	ELA_ASSERT_STR_EQ("100,200,300", pids_out);
+}
+
+/* =========================================================================
  * Suite registration
  * ====================================================================== */
 
@@ -409,6 +483,8 @@ int run_linux_process_watch_util_tests(void)
 		{ "parse/null_pids_out",       test_parse_null_pids_out_returns_minus1 },
 		{ "parse/no_tab",              test_parse_no_tab_returns_minus1 },
 		{ "parse/small_needle_buf",    test_parse_small_needle_buf_returns_minus1 },
+		{ "parse/small_pids_buf",      test_parse_small_pids_buf_returns_minus1 },
+		{ "parse/empty_needle",        test_parse_empty_needle_returns_minus1 },
 		{ "parse/single_pid",          test_parse_valid_line_with_single_pid },
 		{ "parse/multiple_pids",       test_parse_valid_line_with_multiple_pids },
 		{ "parse/empty_pids",          test_parse_valid_line_empty_pids },
@@ -418,6 +494,7 @@ int run_linux_process_watch_util_tests(void)
 		{ "format_line/null_pids",     test_format_null_pids_returns_minus1 },
 		{ "format_line/null_out",      test_format_null_out_returns_minus1 },
 		{ "format_line/small_buf",     test_format_small_buf_returns_minus1 },
+		{ "format_line/empty_needle",  test_format_empty_needle_returns_minus1 },
 		{ "format_line/valid",         test_format_valid_produces_tab_separated_line },
 		{ "format_line/empty_pids",    test_format_empty_pids_allowed },
 		/* ela_process_watch_pids_equal */
@@ -443,6 +520,14 @@ int run_linux_process_watch_util_tests(void)
 		{ "list/csv",                  test_list_csv_format },
 		{ "list/json",                 test_list_json_format },
 		{ "list/empty_pids",           test_list_empty_pids_ok },
+		/* ela_process_watch_content_type */
+		{ "content_type/json",         test_content_type_json },
+		{ "content_type/csv",          test_content_type_csv },
+		{ "content_type/txt",          test_content_type_txt },
+		{ "content_type/unknown",      test_content_type_unknown },
+		{ "content_type/null",         test_content_type_null },
+		/* roundtrip */
+		{ "roundtrip/format_parse",    test_roundtrip_format_then_parse },
 	};
 
 	return ela_run_test_suite("linux_process_watch_util",

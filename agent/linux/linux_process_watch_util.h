@@ -76,4 +76,11 @@ int ela_process_watch_format_list_entry(const char *needle,
 					 char **out,
 					 size_t *out_len);
 
+/*
+ * Return the HTTP Content-Type header value for a given output format.
+ * fmt may be "json", "csv", or anything else (treated as plain text).
+ * Never returns NULL.
+ */
+const char *ela_process_watch_content_type(const char *fmt);
+
 #endif /* LINUX_PROCESS_WATCH_UTIL_H */
