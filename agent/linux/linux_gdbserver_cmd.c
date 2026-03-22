@@ -4598,6 +4598,7 @@ static int linux_gdbserver_tunnel(int argc, char **argv)
 	int                arg_idx   = 1;
 	int                sv[2];
 	int                pipefd[2];
+	int                sync_pfd[2];
 	pid_t              child;
 	char               result;
 	int                wstatus;
@@ -4723,10 +4724,10 @@ static int linux_gdbserver_tunnel(int argc, char **argv)
 		exit(1);
 	}
 
-	/* Fork grandchild to run the blocking RSP engine on sv[0] */
-	rsp_child = fork();
-	if (rsp_child < 0) {
-		perror("fork grandchild");
+	/* Sync pipe: middle child writes "R" after PTRACE_DETACH so the
+	 * grandchild knows it is safe to call PTRACE_ATTACH. */
+	if (pipe(sync_pfd) != 0) {
+		perror("sync pipe");
 		ela_ws_close(&ws);
 		ptrace(PTRACE_DETACH, pid, NULL, NULL);
 		close(sv[0]);
@@ -4736,14 +4737,53 @@ static int linux_gdbserver_tunnel(int argc, char **argv)
 		exit(1);
 	}
 
+	/* Fork grandchild to run the blocking RSP engine on sv[0] */
+	rsp_child = fork();
+	if (rsp_child < 0) {
+		perror("fork grandchild");
+		ela_ws_close(&ws);
+		ptrace(PTRACE_DETACH, pid, NULL, NULL);
+		close(sv[0]);
+		close(sv[1]);
+		close(sync_pfd[0]);
+		close(sync_pfd[1]);
+		(void)write(pipefd[1], "E", 1);
+		close(pipefd[1]);
+		exit(1);
+	}
+
 	if (rsp_child == 0) {
-		/* Grandchild: RSP engine — release the WebSocket.
-		 * After fork each process has its own COW heap copy of the SSL
-		 * objects; ela_ws_close() frees the grandchild's copies and
-		 * closes the socket fd (which only decrements the refcount —
-		 * the middle child still holds its own copy of the fd open). */
+		/* Grandchild: RSP engine.
+		 *
+		 * ptrace is owned by the middle child (the process that called
+		 * PTRACE_ATTACH).  Linux ptrace is process-scoped: only the
+		 * attaching process may issue further ptrace calls.  We must
+		 * therefore wait for the middle child to PTRACE_DETACH before
+		 * calling PTRACE_ATTACH ourselves.  The sync_pfd pipe carries
+		 * the "R" (released) signal once the middle child has detached.
+		 */
+		int gc_wstatus = 0;
+		char sync_c    = 'E';
+
 		close(sv[1]);
 		ela_ws_close(&ws);
+		close(sync_pfd[1]); /* grandchild only reads */
+
+		/* Wait for middle child to release ptrace */
+		if (read(sync_pfd[0], &sync_c, 1) <= 0 || sync_c != 'R') {
+			close(sync_pfd[0]);
+			exit(1);
+		}
+		close(sync_pfd[0]);
+
+		/* Re-attach now that the middle child has detached */
+		if (ptrace(PTRACE_ATTACH, pid, NULL, NULL) != 0) {
+			exit(1);
+		}
+		if (waitpid(pid, &gc_wstatus, 0) < 0) {
+			ptrace(PTRACE_DETACH, pid, NULL, NULL);
+			exit(1);
+		}
 
 		devnull = open("/dev/null", O_RDWR);
 		if (devnull >= 0) {
@@ -4753,7 +4793,7 @@ static int linux_gdbserver_tunnel(int argc, char **argv)
 			if (devnull > STDERR_FILENO)
 				close(devnull);
 		}
-		run_session(sv[0], pid, wstatus);
+		run_session(sv[0], pid, gc_wstatus);
 		close(sv[0]);
 		ptrace(PTRACE_DETACH, pid, NULL, NULL);
 		exit(0);
@@ -4761,6 +4801,15 @@ static int linux_gdbserver_tunnel(int argc, char **argv)
 
 	/* Middle child: WS ↔ RSP proxy */
 	close(sv[0]);
+	close(sync_pfd[0]); /* middle child only writes */
+
+	/* Release ptrace so the grandchild can re-attach.
+	 * This must happen before signalling the grandchild. */
+	ptrace(PTRACE_DETACH, pid, NULL, NULL);
+
+	/* Notify grandchild that ptrace has been released */
+	(void)write(sync_pfd[1], "R", 1);
+	close(sync_pfd[1]);
 
 	/* Signal parent that attach + WS connect succeeded */
 	(void)write(pipefd[1], "K", 1);
@@ -4781,7 +4830,7 @@ static int linux_gdbserver_tunnel(int argc, char **argv)
 	close(sv[1]);
 	kill(rsp_child, SIGTERM);
 	waitpid(rsp_child, NULL, 0);
-	ptrace(PTRACE_DETACH, pid, NULL, NULL);
+	/* ptrace is now owned by the grandchild; no detach needed here */
 	exit(0);
 }
 
