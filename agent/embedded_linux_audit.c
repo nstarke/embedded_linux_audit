@@ -613,13 +613,19 @@ int main(int argc, char **argv)
 	struct ela_conf boot_conf = {0};
 
 	ela_conf_load(&boot_conf);
-	/* Validate output_format against the whitelist before exporting to the
-	 * environment.  ela_conf_apply_line() already enforces this at store
-	 * time, but making the check explicit here keeps taint-analysis tools
-	 * happy: the field is derived from a file and must be whitelisted
-	 * before being passed to any function that touches the environment. */
+	/* Validate conf fields against their whitelists before exporting to the
+	 * environment.  ela_conf_apply_line() already enforces these at store
+	 * time, but making the checks explicit here keeps taint-analysis tools
+	 * happy: fields are derived from a file and must be whitelisted before
+	 * being passed to any function that touches the environment. */
 	if (!ela_output_format_is_valid(boot_conf.output_format))
 		boot_conf.output_format[0] = '\0';
+	/* output_http must be an http:// or https:// URL; anything else is
+	 * rejected to prevent untrusted file content reaching setenv(). */
+	if (boot_conf.output_http[0] &&
+	    strncmp(boot_conf.output_http, "http://",  7) != 0 &&
+	    strncmp(boot_conf.output_http, "https://", 8) != 0)
+		boot_conf.output_http[0] = '\0';
 	ela_conf_export_to_env(&boot_conf);
 
 	if (argc < 2 && !(getenv("ELA_SCRIPT") && *getenv("ELA_SCRIPT")))
