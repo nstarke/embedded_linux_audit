@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later - Copyright (c) 2026 Nicholas Starke
 
 #include "linux_gdbserver_util.h"
+#include "linux_gdbserver_pkt_util.h"
 #include "../embedded_linux_audit_cmd.h"
 
 #include <libxml/tree.h>
@@ -325,42 +326,6 @@ static int rsp_recv_packet(int fd, char *payload, size_t payload_sz)
 	}
 
 	return ela_gdb_rsp_unframe(raw, pos, payload, payload_sz);
-}
-
-/* -----------------------------------------------------------------------
- * Thread-id parser (handles both "p<pid>.<tid>" and plain "<tid>")
- * ---------------------------------------------------------------------- */
-
-/*
- * Parse an RSP thread-id from the string at s.  Stores the parsed TID in
- * *out_tid and (if the multiprocess "p<pid>.<tid>" form is present) the PID
- * in *out_pid; otherwise *out_pid is set to 0.  Returns the number of input
- * characters consumed, or -1 on parse error.  Either output pointer may be
- * NULL if the caller doesn't need that value.
- */
-static int parse_thread_id(const char *s, pid_t *out_pid, pid_t *out_tid)
-{
-	unsigned long long p, t;
-	int n = 0;
-
-	if (!s || !*s)
-		return -1;
-
-	if (s[0] == 'p') {
-		if (sscanf(s + 1, "%llx.%llx%n", &p, &t, &n) == 2) {
-			if (out_pid) *out_pid = (pid_t)p;
-			if (out_tid) *out_tid = (pid_t)t;
-			return 1 + n;
-		}
-		return -1;
-	}
-
-	if (sscanf(s, "%llx%n", &t, &n) == 1) {
-		if (out_pid) *out_pid = 0;
-		if (out_tid) *out_tid = (pid_t)t;
-		return n;
-	}
-	return -1;
 }
 
 /* -----------------------------------------------------------------------
@@ -900,8 +865,6 @@ static int regs_write(const char *hex, size_t hex_len)
 #endif
 
 /*
- * Common MIPS ptrace helper: fetch elf_gregset_t via PTRACE_GETREGSET.
- * Used by both the 32-bit and 64-bit variants below.
  * The kernel-side elf_gregset_t is unsigned long[45]; on MIPS64 each slot
  * is 8 bytes, on MIPS32 each slot is 4 bytes.
  *
@@ -916,7 +879,31 @@ static int regs_write(const char *hex, size_t hex_len)
  *   f0-f31    (FPRs,  GDB regs 38-69, zero-filled for FPUless targets)
  *   fcsr      (GDB reg 70, zero)
  *   fir       (GDB reg 71, zero)
+ *
+ * Older MIPS kernels (pre-3.14) do not implement PTRACE_GETREGSET.
+ * mips_get_regs/mips_set_regs fall back to PTRACE_GETREGS/PTRACE_SETREGS
+ * which have been available since the earliest MIPS Linux kernels.
+ * Both interfaces use the same elf_gregset_t layout.
  */
+static int mips_get_regs(unsigned long *regs, size_t regs_sz)
+{
+	struct iovec iov = { regs, regs_sz };
+
+	if (ptrace(PTRACE_GETREGSET, g_pid,
+		   (void *)(uintptr_t)NT_PRSTATUS, &iov) == 0)
+		return 0;
+	return ptrace(PTRACE_GETREGS, g_pid, NULL, regs) != 0 ? -1 : 0;
+}
+
+static int mips_set_regs(unsigned long *regs, size_t regs_sz)
+{
+	struct iovec iov = { regs, regs_sz };
+
+	if (ptrace(PTRACE_SETREGSET, g_pid,
+		   (void *)(uintptr_t)NT_PRSTATUS, &iov) == 0)
+		return 0;
+	return ptrace(PTRACE_SETREGS, g_pid, NULL, regs) != 0 ? -1 : 0;
+}
 
 #ifdef __mips64
 
@@ -926,13 +913,11 @@ static int regs_write(const char *hex, size_t hex_len)
 static int regs_read(char *out, size_t out_sz)
 {
 	unsigned long regs[MIPS_ELF_NGREG];
-	struct iovec iov = { regs, sizeof(regs) };
 	char tmp[17];
 	size_t pos = 0;
 	int i;
 
-	if (ptrace(PTRACE_GETREGSET, g_pid,
-		   (void *)(uintptr_t)NT_PRSTATUS, &iov) != 0)
+	if (mips_get_regs(regs, sizeof(regs)) != 0)
 		return -1;
 
 #define EMIT64(v) do { \
@@ -972,10 +957,8 @@ static int regs_read(char *out, size_t out_sz)
 static int reg_read_one(int regnum, char *out, size_t out_sz)
 {
 	unsigned long regs[MIPS_ELF_NGREG];
-	struct iovec iov = { regs, sizeof(regs) };
 
-	if (ptrace(PTRACE_GETREGSET, g_pid,
-		   (void *)(uintptr_t)NT_PRSTATUS, &iov) != 0)
+	if (mips_get_regs(regs, sizeof(regs)) != 0)
 		return -1;
 
 	if (regnum >= 0 && regnum <= 31)
@@ -1001,11 +984,9 @@ static int reg_read_one(int regnum, char *out, size_t out_sz)
 static int reg_write_one(int regnum, const char *hex_val)
 {
 	unsigned long regs[MIPS_ELF_NGREG];
-	struct iovec iov = { regs, sizeof(regs) };
 	uint64_t v64;
 
-	if (ptrace(PTRACE_GETREGSET, g_pid,
-		   (void *)(uintptr_t)NT_PRSTATUS, &iov) != 0)
+	if (mips_get_regs(regs, sizeof(regs)) != 0)
 		return -1;
 
 	if (regnum >= 0 && regnum <= 31) {
@@ -1038,24 +1019,20 @@ static int reg_write_one(int regnum, const char *hex_val)
 		}
 	}
 
-	iov.iov_len = sizeof(regs);
-	return ptrace(PTRACE_SETREGSET, g_pid,
-		      (void *)(uintptr_t)NT_PRSTATUS, &iov) != 0 ? -1 : 0;
+	return mips_set_regs(regs, sizeof(regs));
 }
 
 /* MIPS64 g-packet: 1152 hex (38 GPRs/ctl × 16 + 32 FP × 16 + 2 ctl × 16) */
 static int regs_write(const char *hex, size_t hex_len)
 {
 	unsigned long regs[MIPS_ELF_NGREG];
-	struct iovec iov = { regs, sizeof(regs) };
 	uint64_t v64;
 	size_t pos = 0;
 	int i;
 
 	if (hex_len < 1152)
 		return -1;
-	if (ptrace(PTRACE_GETREGSET, g_pid,
-		   (void *)(uintptr_t)NT_PRSTATUS, &iov) != 0)
+	if (mips_get_regs(regs, sizeof(regs)) != 0)
 		return -1;
 
 	for (i = 0; i < 32; i++) {
@@ -1071,9 +1048,7 @@ static int regs_write(const char *hex, size_t hex_len)
 	if (mips_dec64(hex+pos,&v64)) return -1; regs[MIPS_EF_EPC]      =(unsigned long)v64;
 	/* FP registers not written to kernel */
 
-	iov.iov_len = sizeof(regs);
-	return ptrace(PTRACE_SETREGSET, g_pid,
-		      (void *)(uintptr_t)NT_PRSTATUS, &iov) != 0 ? -1 : 0;
+	return mips_set_regs(regs, sizeof(regs));
 }
 
 #else /* MIPS32 */
@@ -1084,13 +1059,11 @@ static int regs_write(const char *hex, size_t hex_len)
 static int regs_read(char *out, size_t out_sz)
 {
 	unsigned long regs[MIPS_ELF_NGREG];
-	struct iovec iov = { regs, sizeof(regs) };
 	char tmp[9];
 	size_t pos = 0;
 	int i;
 
-	if (ptrace(PTRACE_GETREGSET, g_pid,
-		   (void *)(uintptr_t)NT_PRSTATUS, &iov) != 0)
+	if (mips_get_regs(regs, sizeof(regs)) != 0)
 		return -1;
 
 #define EMIT32(v) do { \
@@ -1130,10 +1103,8 @@ static int regs_read(char *out, size_t out_sz)
 static int reg_read_one(int regnum, char *out, size_t out_sz)
 {
 	unsigned long regs[MIPS_ELF_NGREG];
-	struct iovec iov = { regs, sizeof(regs) };
 
-	if (ptrace(PTRACE_GETREGSET, g_pid,
-		   (void *)(uintptr_t)NT_PRSTATUS, &iov) != 0)
+	if (mips_get_regs(regs, sizeof(regs)) != 0)
 		return -1;
 
 	if (regnum >= 0 && regnum <= 31)
@@ -1159,11 +1130,9 @@ static int reg_read_one(int regnum, char *out, size_t out_sz)
 static int reg_write_one(int regnum, const char *hex_val)
 {
 	unsigned long regs[MIPS_ELF_NGREG];
-	struct iovec iov = { regs, sizeof(regs) };
 	uint32_t v32;
 
-	if (ptrace(PTRACE_GETREGSET, g_pid,
-		   (void *)(uintptr_t)NT_PRSTATUS, &iov) != 0)
+	if (mips_get_regs(regs, sizeof(regs)) != 0)
 		return -1;
 
 	if (regnum >= 0 && regnum <= 31) {
@@ -1196,24 +1165,20 @@ static int reg_write_one(int regnum, const char *hex_val)
 		}
 	}
 
-	iov.iov_len = sizeof(regs);
-	return ptrace(PTRACE_SETREGSET, g_pid,
-		      (void *)(uintptr_t)NT_PRSTATUS, &iov) != 0 ? -1 : 0;
+	return mips_set_regs(regs, sizeof(regs));
 }
 
 /* MIPS32 g-packet: 576 hex (38 GPRs/ctl × 8 + 32 FP × 8 + 2 ctl × 8) */
 static int regs_write(const char *hex, size_t hex_len)
 {
 	unsigned long regs[MIPS_ELF_NGREG];
-	struct iovec iov = { regs, sizeof(regs) };
 	uint32_t v32;
 	size_t pos = 0;
 	int i;
 
 	if (hex_len < 576)
 		return -1;
-	if (ptrace(PTRACE_GETREGSET, g_pid,
-		   (void *)(uintptr_t)NT_PRSTATUS, &iov) != 0)
+	if (mips_get_regs(regs, sizeof(regs)) != 0)
 		return -1;
 
 	for (i = 0; i < 32; i++) {
@@ -1229,9 +1194,7 @@ static int regs_write(const char *hex, size_t hex_len)
 	if (mips_dec32(hex+pos,&v32)) return -1; regs[MIPS_EF_EPC]      =(unsigned long)v32;
 	/* FP registers not written to kernel */
 
-	iov.iov_len = sizeof(regs);
-	return ptrace(PTRACE_SETREGSET, g_pid,
-		      (void *)(uintptr_t)NT_PRSTATUS, &iov) != 0 ? -1 : 0;
+	return mips_set_regs(regs, sizeof(regs));
 }
 
 #endif /* __mips64 */
@@ -2692,40 +2655,6 @@ static int build_libraries_svr4_xml(pid_t pid, char *out, size_t out_sz)
 }
 
 /* -----------------------------------------------------------------------
- * RSP binary unescape
- * ---------------------------------------------------------------------- */
-
-/*
- * Decode RSP binary encoding from `src` into `dst`.
- * The only encoding rule: 0x7d ('}') is an escape byte; the byte that
- * follows is XOR'd with 0x20 to recover the real value.
- * Writes exactly `expected` decoded bytes; `max_src` is a hard limit on
- * how many source bytes may be consumed (prevents reading past the payload
- * buffer when the caller does not have its length).
- * Returns `expected` on success, -1 if the source is exhausted first.
- */
-static int rsp_binary_unescape(const char *src, size_t max_src,
-				uint8_t *dst, size_t expected)
-{
-	size_t in = 0, out = 0;
-
-	while (out < expected) {
-		if (in >= max_src)
-			return -1;
-		if ((unsigned char)src[in] == 0x7du) {
-			in++;
-			if (in >= max_src)
-				return -1;
-			dst[out++] = (uint8_t)((unsigned char)src[in] ^ 0x20u);
-		} else {
-			dst[out++] = (uint8_t)(unsigned char)src[in];
-		}
-		in++;
-	}
-	return (int)out;
-}
-
-/* -----------------------------------------------------------------------
  * Memory search helper  (qSearch:memory)
  * ---------------------------------------------------------------------- */
 
@@ -3075,55 +3004,6 @@ static int wp_remove_x86(uint64_t addr)
  * vFile helpers
  * ---------------------------------------------------------------------- */
 
-/* Big-endian encode helpers for the GDB portable stat structure. */
-static void vfile_put_be32(uint8_t *p, uint32_t v)
-{
-	p[0] = (uint8_t)(v >> 24); p[1] = (uint8_t)(v >> 16);
-	p[2] = (uint8_t)(v >>  8); p[3] = (uint8_t)(v);
-}
-
-static void vfile_put_be64(uint8_t *p, uint64_t v)
-{
-	vfile_put_be32(p,     (uint32_t)(v >> 32));
-	vfile_put_be32(p + 4, (uint32_t)(v));
-}
-
-/*
- * Encode a host struct stat into the 64-byte GDB fio_stat structure.
- * Fields are big-endian; layout: 7×uint32 + 3×uint64 + 3×uint32.
- */
-static void vfile_encode_stat(uint8_t *buf, const struct stat *st)
-{
-	memset(buf, 0, 64);
-	vfile_put_be32(buf +  0, (uint32_t)st->st_dev);
-	vfile_put_be32(buf +  4, (uint32_t)st->st_ino);
-	vfile_put_be32(buf +  8, (uint32_t)st->st_mode);
-	vfile_put_be32(buf + 12, (uint32_t)st->st_nlink);
-	vfile_put_be32(buf + 16, (uint32_t)st->st_uid);
-	vfile_put_be32(buf + 20, (uint32_t)st->st_gid);
-	vfile_put_be32(buf + 24, (uint32_t)st->st_rdev);
-	vfile_put_be64(buf + 28, (uint64_t)st->st_size);
-	vfile_put_be64(buf + 36, (uint64_t)st->st_blksize);
-	vfile_put_be64(buf + 44, (uint64_t)st->st_blocks);
-	vfile_put_be32(buf + 52, (uint32_t)st->st_atime);
-	vfile_put_be32(buf + 56, (uint32_t)st->st_mtime);
-	vfile_put_be32(buf + 60, (uint32_t)st->st_ctime);
-}
-
-/*
- * Translate GDB fileio open flags to Linux open flags.
- * GDB uses its own constants (from gdb/fileio.h); Linux values differ.
- */
-static int vfile_gdb_flags_to_linux(int gflags)
-{
-	int lflags = gflags & 3; /* O_RDONLY/O_WRONLY/O_RDWR values match */
-	if (gflags & 0x008) lflags |= O_APPEND;
-	if (gflags & 0x200) lflags |= O_CREAT;
-	if (gflags & 0x400) lflags |= O_TRUNC;
-	if (gflags & 0x800) lflags |= O_EXCL;
-	return lflags;
-}
-
 /* Send a vFile F-response with only a return code (no binary attachment). */
 static void vfile_send_rc(int conn_fd, int retcode, int err)
 {
@@ -3292,7 +3172,7 @@ static void do_continue(int fd, int initial_sig)
 static void handle_packet(int fd, char *pkt)
 {
 	char resp[ELA_GDB_RSP_MAX_FRAMED];
-	char hex[ELA_GDB_RSP_MAX_PACKET];
+	char hex[ELA_GDB_RSP_MAX_PACKET + 1]; /* +1 for null after max 2048-byte hex payload */
 	uint64_t addr, len_val;
 	uint8_t data_buf[2048];
 	char *sep, *colon;
@@ -3402,7 +3282,7 @@ static void handle_packet(int fd, char *pkt)
 			rsp_send_str(fd, "OK");
 			break;
 		}
-		n = rsp_binary_unescape(colon + 1, 2 * (size_t)len_val,
+		n = ela_gdb_rsp_binary_unescape(colon + 1, 2 * (size_t)len_val,
 					data_buf, (size_t)len_val);
 		if (n < 0 || (size_t)n != len_val) {
 			rsp_send_str(fd, "E03"); break;
@@ -3498,7 +3378,7 @@ static void handle_packet(int fd, char *pkt)
 			 */
 			/* coverity[resource_leak] */
 			vfd    = open(name_buf,
-				      vfile_gdb_flags_to_linux(gflags),
+				      ela_gdb_vfile_flags_to_linux(gflags),
 				      (mode_t)fmode);
 			vfile_send_rc(fd, vfd < 0 ? -1 : vfd,
 				      vfd < 0 ? errno : 0);
@@ -3559,7 +3439,7 @@ static void handle_packet(int fd, char *pkt)
 			offset = (off_t)strtoull(cm2 + 1, NULL, 16);
 			if (count > sizeof(data_buf))
 				count = sizeof(data_buf);
-			decoded = rsp_binary_unescape(semi + 1, count * 2 + 1,
+			decoded = ela_gdb_rsp_binary_unescape(semi + 1, count * 2 + 1,
 						      data_buf, count);
 			if (decoded < 0) { vfile_send_rc(fd, -1, EINVAL); break; }
 			errno = 0;
@@ -3577,7 +3457,7 @@ static void handle_packet(int fd, char *pkt)
 				vfile_send_rc(fd, -1, errno);
 				break;
 			}
-			vfile_encode_stat(stat_buf, &st);
+			ela_gdb_vfile_encode_stat(stat_buf, &st);
 			vfile_send_data(fd, (int)sizeof(stat_buf),
 					stat_buf, sizeof(stat_buf));
 
@@ -3595,7 +3475,7 @@ static void handle_packet(int fd, char *pkt)
 				vfile_send_rc(fd, -1, errno);
 				break;
 			}
-			vfile_encode_stat(stat_buf, &st);
+			ela_gdb_vfile_encode_stat(stat_buf, &st);
 			vfile_send_data(fd, (int)sizeof(stat_buf),
 					stat_buf, sizeof(stat_buf));
 
@@ -3710,7 +3590,7 @@ static void handle_packet(int fd, char *pkt)
 			/* -1 (all) and 0 (any) → keep current thread */
 			if (strcmp(tid_str, "-1") != 0 &&
 			    strcmp(tid_str, "0") != 0) {
-				parse_thread_id(tid_str, NULL, &h_tid);
+				ela_gdb_parse_thread_id(tid_str, NULL, &h_tid);
 				if (h_tid > 0)
 					g_current_tid = h_tid;
 			}
@@ -3725,7 +3605,7 @@ static void handle_packet(int fd, char *pkt)
 		char task_path[64];
 		struct stat tstat;
 
-		if (parse_thread_id(pkt + 1, NULL, &t_tid) < 0 || t_tid <= 0) {
+		if (ela_gdb_parse_thread_id(pkt + 1, NULL, &t_tid) < 0 || t_tid <= 0) {
 			rsp_send_str(fd, "E01");
 			break;
 		}
@@ -3997,7 +3877,7 @@ static void handle_packet(int fd, char *pkt)
 			ssize_t comm_len;
 			char hex_out[32 + 1]; /* 16 bytes × 2 hex + NUL */
 
-			if (parse_thread_id(pkt + 17, NULL, &qte_tid) < 0 ||
+			if (ela_gdb_parse_thread_id(pkt + 17, NULL, &qte_tid) < 0 ||
 			    qte_tid <= 0) {
 				rsp_send_str(fd, "");
 				break;
