@@ -3292,7 +3292,7 @@ static void do_continue(int fd, int initial_sig)
 static void handle_packet(int fd, char *pkt)
 {
 	char resp[ELA_GDB_RSP_MAX_FRAMED];
-	char hex[ELA_GDB_RSP_MAX_PACKET];
+	char hex[ELA_GDB_RSP_MAX_PACKET + 1]; /* +1 for null after max 2048-byte hex payload */
 	uint64_t addr, len_val;
 	uint8_t data_buf[2048];
 	char *sep, *colon;
