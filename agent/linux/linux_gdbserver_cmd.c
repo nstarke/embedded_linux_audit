@@ -4551,6 +4551,40 @@ static int tunnel_generate_hex_key(char *out)
 	return 0;
 }
 
+static void ptrace_attach_failed(pid_t pid)
+{
+	int e = errno;
+
+	fprintf(stderr, "ptrace attach: %s\n", strerror(e));
+
+	if (e == EPERM) {
+		char scope_buf[4] = "?";
+		FILE *fp = fopen("/proc/sys/kernel/yama/ptrace_scope", "r");
+
+		if (fp) {
+			if (fgets(scope_buf, sizeof(scope_buf), fp) == NULL)
+				scope_buf[0] = '?';
+			else {
+				/* strip newline */
+				char *nl = strchr(scope_buf, '\n');
+				if (nl) *nl = '\0';
+			}
+			fclose(fp);
+		}
+
+		fprintf(stderr,
+			"Cannot attach to PID %ld.\n"
+			"  /proc/sys/kernel/yama/ptrace_scope = %s\n"
+			"  Fix options (pick one):\n"
+			"    1. Run as root (or with CAP_SYS_PTRACE)\n"
+			"    2. echo 0 > /proc/sys/kernel/yama/ptrace_scope\n"
+			"    3. Attach to a process you own that is a direct child\n",
+			(long)pid, scope_buf);
+	} else if (e == ESRCH) {
+		fprintf(stderr, "PID %ld does not exist.\n", (long)pid);
+	}
+}
+
 static int linux_gdbserver_tunnel(int argc, char **argv)
 {
 	pid_t              pid;
@@ -4653,7 +4687,7 @@ static int linux_gdbserver_tunnel(int argc, char **argv)
 	signal(SIGTERM, handle_signal);
 
 	if (ptrace(PTRACE_ATTACH, pid, NULL, NULL) != 0) {
-		perror("ptrace attach");
+		ptrace_attach_failed(pid);
 		(void)write(pipefd[1], "E", 1);
 		close(pipefd[1]);
 		exit(1);
@@ -4836,7 +4870,7 @@ int linux_gdbserver_main(int argc, char **argv)
 	signal(SIGTERM, handle_signal);
 
 	if (ptrace(PTRACE_ATTACH, pid, NULL, NULL) != 0) {
-		perror("ptrace attach");
+		ptrace_attach_failed(pid);
 		(void)write(pipefd[1], "E", 1);
 		close(pipefd[1]);
 		exit(1);
