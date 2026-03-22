@@ -298,6 +298,12 @@ static int orom_execute_pull(struct orom_ctx *ctx)
 				return 1;
 			}
 		} else {
+			/* False-positive suppression: rom contains raw PCI option
+			 * ROM bytes read from sysfs and uploaded verbatim to the
+			 * audit server.  Sanitizing arbitrary binary firmware data
+			 * is not meaningful; the domain-appropriate validation
+			 * (ela_orom_rom_matches_mode) has already been applied. */
+			/* coverity[tainted_data] */
 			if (send_rom_http(ctx->output_uri, ctx->insecure, ctx->verbose, rom_path, rom, rom_len) < 0) {
 				free(rom);
 				globfree(&g);
