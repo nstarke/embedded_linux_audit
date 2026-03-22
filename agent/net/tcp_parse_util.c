@@ -100,6 +100,8 @@ int ela_dns_extract_first_a_record(const uint8_t *resp, size_t resp_len, char *i
 	ancount = (resp[6] << 8) | resp[7];
 	if (ancount <= 0)
 		return -1;
+	if (qdcount > 256)
+		qdcount = 256; /* cap tainted network value */
 	if (ancount > 256)
 		ancount = 256; /* cap tainted network value */
 
