@@ -1643,8 +1643,18 @@ static int __attribute__((unused)) ela_http_post_https_once(const char *effectiv
 	curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
 
 	if (insecure) {
-		curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
-		curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
+		rc = curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
+		if (rc == CURLE_OK)
+			rc = curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
+		if (rc != CURLE_OK) {
+			if (errbuf && errbuf_len)
+				snprintf(errbuf, errbuf_len,
+					 "failed to disable TLS verification: %s",
+					 curl_easy_strerror(rc));
+			curl_slist_free_all(headers);
+			curl_easy_cleanup(curl);
+			return -1;
+		}
 	} else {
 		rc = curl_easy_setopt(curl, CURLOPT_SSL_CTX_FUNCTION, curl_ssl_ctx_load_embedded_ca);
 		if (rc == CURLE_OK)

@@ -185,6 +185,11 @@ static int send_file_to_tcp(const char *path, const char *output_tcp, bool verbo
 		}
 		if (n == 0)
 			break;
+		/* False-positive suppression: buf contains raw bytes read from a
+		 * local file being streamed to a TCP sink.  Sanitizing arbitrary
+		 * binary file content is not meaningful; the access-control
+		 * boundary is ela_path_is_allowed() enforced by the caller. */
+		/* coverity[tainted_data] */
 		if (ela_send_all(sock, buf, (size_t)n) < 0) {
 			fprintf(stderr, "Failed sending bytes to %s\n", output_tcp);
 			close(sock);
@@ -257,6 +262,12 @@ static int send_file_to_http(const char *path, const char *output_uri, bool inse
 		goto out;
 	}
 
+	/* False-positive suppression: data contains raw bytes read from a local
+	 * file and is being uploaded as-is to the user's audit server.  No
+	 * sanitization of arbitrary binary file content is meaningful here;
+	 * the correct access-control boundary is ela_path_is_allowed(), which
+	 * has already been enforced by the caller before this function runs. */
+	/* coverity[tainted_data] */
 	if (ela_http_post(upload_uri,
 			   data,
 			   data_len,

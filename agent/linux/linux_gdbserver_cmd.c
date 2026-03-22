@@ -4703,14 +4703,13 @@ static int linux_gdbserver_tunnel(int argc, char **argv)
 	}
 
 	if (rsp_child == 0) {
-		/* Grandchild: RSP engine — close WS fd (not needed here) */
+		/* Grandchild: RSP engine — release the WebSocket.
+		 * After fork each process has its own COW heap copy of the SSL
+		 * objects; ela_ws_close() frees the grandchild's copies and
+		 * closes the socket fd (which only decrements the refcount —
+		 * the middle child still holds its own copy of the fd open). */
 		close(sv[1]);
-		if (ws.sock >= 0) {
-			close(ws.sock);
-			ws.sock = -1;
-		}
-		ws.ssl     = NULL;
-		ws.ssl_ctx = NULL;
+		ela_ws_close(&ws);
 
 		devnull = open("/dev/null", O_RDWR);
 		if (devnull >= 0) {
