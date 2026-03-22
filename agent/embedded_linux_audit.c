@@ -7,6 +7,7 @@
 #include "net/ws_url_util.h"
 #include "shell/interactive.h"
 #include "shell/script_exec.h"
+#include "util/command_parse_util.h"
 #include "util/dispatch_util.h"
 #include "util/dispatch_parse_util.h"
 
@@ -418,6 +419,12 @@ int embedded_linux_audit_dispatch(int argc, char **argv)
 					       0);
 
 	if (opts.script_path) {
+		/* False-positive suppression: opts.script_path is a user-supplied
+		 * CLI argument (--script <path>) or the ELA_SCRIPT env var.  This
+		 * tool runs unprivileged as the invoking user; there is no security
+		 * boundary between the caller and the path value, so no whitelisting
+		 * of an arbitrary file path is meaningful or possible here. */
+		/* coverity[tainted_data] */
 		ret = execute_script_commands(argv[0], opts.script_path);
 		goto done;
 	}
@@ -606,6 +613,13 @@ int main(int argc, char **argv)
 	struct ela_conf boot_conf = {0};
 
 	ela_conf_load(&boot_conf);
+	/* Validate output_format against the whitelist before exporting to the
+	 * environment.  ela_conf_apply_line() already enforces this at store
+	 * time, but making the check explicit here keeps taint-analysis tools
+	 * happy: the field is derived from a file and must be whitelisted
+	 * before being passed to any function that touches the environment. */
+	if (!ela_output_format_is_valid(boot_conf.output_format))
+		boot_conf.output_format[0] = '\0';
 	ela_conf_export_to_env(&boot_conf);
 
 	if (argc < 2 && !(getenv("ELA_SCRIPT") && *getenv("ELA_SCRIPT")))
