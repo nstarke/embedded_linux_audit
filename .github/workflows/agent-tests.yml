@@ -102,6 +102,41 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: true
 
+  gdb-api-jest:
+    name: tests/api/gdb/jest
+    if: ${{ github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ github.token }}
+          submodules: recursive
+          ref: ${{ github.event_name == 'workflow_run' && (github.event.workflow_run.head_branch || github.event.workflow_run.head_sha) || github.sha }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install JS test dependencies
+        run: |
+          set -euo pipefail
+          npm install
+
+      - name: Run GDB API Jest tests
+        run: |
+          set -euo pipefail
+          node_modules/.bin/jest --runInBand --coverage tests/unit/api/gdb
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: coverage/lcov.info
+          flags: gdb
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: true
+
   terminal-api-jest:
     name: tests/api/terminal/jest
     if: ${{ github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}

@@ -483,6 +483,7 @@ AGENT_UNIT_TEST_SRC := \
 	tests/unit/agent/test_linux_process_watch_util.c \
 	tests/unit/agent/test_linux_gdbserver_util.c \
 	tests/unit/agent/test_linux_gdbserver_pkt_util.c \
+	tests/unit/agent/test_linux_gdbserver_tunnel_util.c \
 	tests/unit/agent/test_device_scan.c \
 	tests/unit/agent/test_dispatch_util.c \
 	tests/unit/agent/test_dispatch_parse_util.c \
@@ -561,6 +562,7 @@ AGENT_UNIT_TEST_DEPS := \
 	agent/linux/linux_process_watch_util.c \
 	agent/linux/linux_gdbserver_util.c \
 	agent/linux/linux_gdbserver_pkt_util.c \
+	agent/linux/linux_gdbserver_tunnel_util.c \
 	agent/device/device_scan.c \
 	agent/shell/script_exec_util.c \
 	agent/shell/interactive_util.c \
@@ -600,6 +602,7 @@ AGENT_UNIT_TEST_DEPS := \
 	agent/linux/linux_process_watch_util.h \
 	agent/linux/linux_gdbserver_util.h \
 	agent/linux/linux_gdbserver_pkt_util.h \
+	agent/linux/linux_gdbserver_tunnel_util.h \
 	agent/net/ela_conf_util.h \
 	agent/net/ela_conf.h \
 	agent/net/ws_url_util.h \
@@ -799,6 +802,7 @@ SRC := \
 	agent/linux/linux_process_watch_cmd.c \
 	agent/linux/linux_gdbserver_util.c \
 	agent/linux/linux_gdbserver_pkt_util.c \
+	agent/linux/linux_gdbserver_tunnel_util.c \
 	agent/linux/linux_gdbserver_cmd.c \
 	agent/tpm2/tpm2_cmd.c \
 	agent/tpm2/tpm2_util.c \
@@ -1215,6 +1219,7 @@ $(AGENT_UNIT_TEST_BIN): $(AGENT_UNIT_TEST_SRC) $(AGENT_UNIT_TEST_DEPS) $(JSONC_L
 			agent/linux/linux_process_watch_util.c \
 			agent/linux/linux_gdbserver_util.c \
 			agent/linux/linux_gdbserver_pkt_util.c \
+			agent/linux/linux_gdbserver_tunnel_util.c \
 			agent/device/device_scan.c \
 			agent/shell/script_exec_util.c \
 			agent/shell/interactive_util.c \

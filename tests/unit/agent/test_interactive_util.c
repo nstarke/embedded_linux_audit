@@ -95,11 +95,13 @@ static void test_candidates_linux_process_watch_arg_returns_null(void)
 
 static void test_candidates_linux_gdbserver_returns_linux_list(void)
 {
-	/* gdbserver takes positional args, not subcommands — no completions beyond linux */
+	/* gdbserver has a 'tunnel' subcommand */
 	char *argv[] = { "linux", "gdbserver" };
 	const char *const *candidates = ela_interactive_candidates_for_position(3, argv);
 
-	ELA_ASSERT_TRUE(candidates == NULL);
+	ELA_ASSERT_TRUE(candidates != NULL);
+	ELA_ASSERT_STR_EQ("tunnel", candidates[0]);
+	ELA_ASSERT_TRUE(candidates[1] == NULL);
 }
 
 static void test_candidates_group_arch(void)

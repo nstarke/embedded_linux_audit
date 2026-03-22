@@ -7,8 +7,9 @@
 #include <stdint.h>
 #include <sys/types.h>
 
-#define ELA_WS_OPCODE_TEXT  0x01
-#define ELA_WS_OPCODE_CLOSE 0x08
+#define ELA_WS_OPCODE_TEXT   0x01
+#define ELA_WS_OPCODE_BINARY 0x02
+#define ELA_WS_OPCODE_CLOSE  0x08
 #define ELA_WS_OPCODE_PING  0x09
 #define ELA_WS_OPCODE_PONG  0x0A
 

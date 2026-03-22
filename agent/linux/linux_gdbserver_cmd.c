@@ -2,7 +2,9 @@
 
 #include "linux_gdbserver_util.h"
 #include "linux_gdbserver_pkt_util.h"
+#include "linux_gdbserver_tunnel_util.h"
 #include "../embedded_linux_audit_cmd.h"
+#include "../net/ws_client.h"
 
 #include <libxml/tree.h>
 
@@ -4522,6 +4524,235 @@ static int tcp_listen_port(uint16_t port)
 }
 
 /* -----------------------------------------------------------------------
+ * linux gdbserver tunnel [--insecure] <PID> <wss://host>
+ *
+ * Generates a 32-char hex session key, attaches to PID, creates a
+ * socketpair, forks a grandchild to run the RSP engine on sv[0], and
+ * proxies binary WebSocket frames ↔ sv[1] via the ela-gdb bridge at
+ * <base_url>/gdb/in/<hex32>.  Prints the full wss:// URL for GDB:
+ *   target remote wss://host/gdb/out/<hex32>
+ * ---------------------------------------------------------------------- */
+
+static int tunnel_generate_hex_key(char *out)
+{
+	uint8_t  raw[16];
+	int      fd;
+	ssize_t  n;
+
+	fd = open("/dev/urandom", O_RDONLY);
+	if (fd < 0)
+		return -1;
+	n = read(fd, raw, sizeof(raw));
+	close(fd);
+	if (n != (ssize_t)sizeof(raw))
+		return -1;
+
+	ela_gdb_tunnel_format_hex_key(raw, sizeof(raw), out);
+	return 0;
+}
+
+static int linux_gdbserver_tunnel(int argc, char **argv)
+{
+	pid_t              pid;
+	long               val;
+	char              *endptr;
+	const char        *base_url;
+	char               hex_key[33];
+	char               in_url[600];
+	char               out_url[600];
+	int                insecure  = 0;
+	int                arg_idx   = 1;
+	int                sv[2];
+	int                pipefd[2];
+	pid_t              child;
+	char               result;
+	int                wstatus;
+	int                devnull;
+	struct ela_ws_conn ws;
+	pid_t              rsp_child;
+
+	/* Optional --insecure flag before PID */
+	if (argc > 1 && strcmp(argv[1], "--insecure") == 0) {
+		insecure = 1;
+		arg_idx  = 2;
+	}
+
+	if (argc < arg_idx + 2) {
+		fprintf(stderr,
+			"Usage: linux gdbserver tunnel [--insecure] <PID> <WSS_BASE_URL>\n"
+			"  --insecure    : skip TLS certificate verification\n"
+			"  PID           : process to attach to\n"
+			"  WSS_BASE_URL  : wss://host  (key generated automatically)\n"
+			"\n"
+			"The agent prints the full wss:// URL on success; give the\n"
+			"gdb/out URL to gdb-multiarch:\n"
+			"  target remote wss://host/gdb/out/<generated-key>\n"
+			"  (insecure: source tools/gdb-ws-insecure.py, then\n"
+			"   wss-remote --insecure wss://host/gdb/out/<key>)\n");
+		return 1;
+	}
+
+	val = strtol(argv[arg_idx], &endptr, 10);
+	if (endptr == argv[arg_idx] || *endptr != '\0' || val <= 0) {
+		fprintf(stderr, "Invalid PID: %s\n", argv[arg_idx]);
+		return 1;
+	}
+	pid = (pid_t)val;
+
+	base_url = argv[arg_idx + 1];
+
+	/* Generate a fresh 32-char hex session key */
+	if (tunnel_generate_hex_key(hex_key) != 0) {
+		fprintf(stderr, "Failed to generate session key\n");
+		return 1;
+	}
+
+	if (ela_gdb_tunnel_build_urls(base_url, hex_key,
+				      in_url,  sizeof(in_url),
+				      out_url, sizeof(out_url)) != 0) {
+		fprintf(stderr, "URL too long\n");
+		return 1;
+	}
+
+	if (pipe(pipefd) != 0) {
+		perror("pipe");
+		return 1;
+	}
+
+	child = fork();
+	if (child < 0) {
+		perror("fork");
+		close(pipefd[0]);
+		close(pipefd[1]);
+		return 1;
+	}
+
+	if (child > 0) {
+		/* Parent: block until child signals ready or error */
+		close(pipefd[1]);
+		result = 'E';
+		if (read(pipefd[0], &result, 1) <= 0)
+			result = 'E';
+		close(pipefd[0]);
+		if (result == 'K') {
+			fprintf(stderr,
+				"gdbserver tunnel attached to PID %d "
+				"(background).\n"
+				"  In gdb-multiarch:\n"
+				"    target remote %s\n",
+				(int)pid, out_url);
+			return 0;
+		}
+		return 1;
+	}
+
+	/* Child: become session leader */
+	close(pipefd[0]);
+	setsid();
+	signal(SIGINT,  handle_signal);
+	signal(SIGTERM, handle_signal);
+
+	if (ptrace(PTRACE_ATTACH, pid, NULL, NULL) != 0) {
+		perror("ptrace attach");
+		(void)write(pipefd[1], "E", 1);
+		close(pipefd[1]);
+		exit(1);
+	}
+
+	if (waitpid(pid, &wstatus, 0) < 0) {
+		perror("waitpid");
+		ptrace(PTRACE_DETACH, pid, NULL, NULL);
+		(void)write(pipefd[1], "E", 1);
+		close(pipefd[1]);
+		exit(1);
+	}
+
+	if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) != 0) {
+		perror("socketpair");
+		ptrace(PTRACE_DETACH, pid, NULL, NULL);
+		(void)write(pipefd[1], "E", 1);
+		close(pipefd[1]);
+		exit(1);
+	}
+
+	/* Connect to the GDB bridge server before forking the RSP engine */
+	memset(&ws, 0, sizeof(ws));
+	ws.sock = -1;
+	if (ela_ws_connect_url(in_url, insecure, &ws) != 0) {
+		fprintf(stderr, "gdbserver tunnel: failed to connect to %s\n",
+			in_url);
+		ptrace(PTRACE_DETACH, pid, NULL, NULL);
+		close(sv[0]);
+		close(sv[1]);
+		(void)write(pipefd[1], "E", 1);
+		close(pipefd[1]);
+		exit(1);
+	}
+
+	/* Fork grandchild to run the blocking RSP engine on sv[0] */
+	rsp_child = fork();
+	if (rsp_child < 0) {
+		perror("fork grandchild");
+		ela_ws_close(&ws);
+		ptrace(PTRACE_DETACH, pid, NULL, NULL);
+		close(sv[0]);
+		close(sv[1]);
+		(void)write(pipefd[1], "E", 1);
+		close(pipefd[1]);
+		exit(1);
+	}
+
+	if (rsp_child == 0) {
+		/* Grandchild: RSP engine — close WS fd (not needed here) */
+		close(sv[1]);
+		if (ws.sock >= 0) {
+			close(ws.sock);
+			ws.sock = -1;
+		}
+		ws.ssl     = NULL;
+		ws.ssl_ctx = NULL;
+
+		devnull = open("/dev/null", O_RDWR);
+		if (devnull >= 0) {
+			dup2(devnull, STDIN_FILENO);
+			dup2(devnull, STDOUT_FILENO);
+			dup2(devnull, STDERR_FILENO);
+			if (devnull > STDERR_FILENO)
+				close(devnull);
+		}
+		run_session(sv[0], pid, wstatus);
+		close(sv[0]);
+		ptrace(PTRACE_DETACH, pid, NULL, NULL);
+		exit(0);
+	}
+
+	/* Middle child: WS ↔ RSP proxy */
+	close(sv[0]);
+
+	/* Signal parent that attach + WS connect succeeded */
+	(void)write(pipefd[1], "K", 1);
+	close(pipefd[1]);
+
+	devnull = open("/dev/null", O_RDWR);
+	if (devnull >= 0) {
+		dup2(devnull, STDIN_FILENO);
+		dup2(devnull, STDOUT_FILENO);
+		dup2(devnull, STDERR_FILENO);
+		if (devnull > STDERR_FILENO)
+			close(devnull);
+	}
+
+	ela_ws_run_gdb_bridge(&ws, sv[1]);
+
+	ela_ws_close(&ws);
+	close(sv[1]);
+	kill(rsp_child, SIGTERM);
+	waitpid(rsp_child, NULL, 0);
+	ptrace(PTRACE_DETACH, pid, NULL, NULL);
+	exit(0);
+}
+
+/* -----------------------------------------------------------------------
  * Entry point: linux gdbserver <PID> <PORT>
  * ---------------------------------------------------------------------- */
 
@@ -4539,13 +4770,19 @@ int linux_gdbserver_main(int argc, char **argv)
 	char result;
 	int devnull;
 
+	if (argc >= 2 && strcmp(argv[1], "tunnel") == 0)
+		return linux_gdbserver_tunnel(argc - 1, argv + 1);
+
 	if (argc < 3) {
 		fprintf(stderr,
 			"Usage: linux gdbserver <PID> <PORT>\n"
-			"  PID   : process ID to attach to\n"
-			"  PORT  : TCP port for gdb-multiarch to connect on\n"
+			"       linux gdbserver tunnel [--insecure] <PID> <WSS_BASE_URL>\n"
+			"  PID           : process ID to attach to\n"
+			"  PORT          : TCP port for gdb-multiarch to connect on\n"
+			"  WSS_BASE_URL  : wss://host  (session key generated automatically)\n"
 			"\n"
-			"In gdb-multiarch: target remote <agent-ip>:<PORT>\n");
+			"Direct TCP: target remote <agent-ip>:<PORT>\n"
+			"Tunnel:     target remote wss://host/gdb/out/<key>  (printed on connect)\n");
 		return 1;
 	}
 

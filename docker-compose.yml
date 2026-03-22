@@ -58,12 +58,23 @@ services:
     volumes:
       - ${ELA_TERMINAL_SOCKET_DIR:-/run/ela-terminal}:/run/ela-terminal
 
+  gdb-api:
+    build:
+      context: .
+      dockerfile: api/gdb/Dockerfile
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      ELA_GDB_HOST: 0.0.0.0
+      ELA_GDB_PORT: 9000
+
   nginx:
     image: nginx:1.27-alpine
     restart: unless-stopped
     depends_on:
       - agent-api
       - terminal-api
+      - gdb-api
     ports:
       - "80:80"
       - "443:443"

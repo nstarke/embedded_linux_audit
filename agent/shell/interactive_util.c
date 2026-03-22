@@ -19,6 +19,7 @@ static const char *const interactive_group_uboot[] = { "env", "image", "audit", 
 static const char *const interactive_group_linux[] = {
 	"dmesg", "download-file", "execute-command", "grep", "list-files", "list-symlinks", "remote-copy", "ssh", "process", "gdbserver", NULL,
 };
+static const char *const interactive_group_linux_gdbserver[] = { "tunnel", NULL };
 static const char *const interactive_group_linux_process[] = { "watch", NULL };
 static const char *const interactive_group_linux_process_watch[] = { "on", "off", "list", NULL };
 static const char *const interactive_group_efi[] = { "orom", "dump-vars", NULL };
@@ -49,6 +50,8 @@ const char *const *ela_interactive_candidates_for_position(int argc, char **argv
 				if (argc == 4 && !strcmp(argv[2], "watch"))
 					return interactive_group_linux_process_watch;
 			}
+			if (!strcmp(argv[1], "gdbserver") && argc == 3)
+				return interactive_group_linux_gdbserver;
 			return NULL;
 		}
 		return interactive_group_linux;
