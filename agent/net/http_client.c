@@ -1514,6 +1514,10 @@ static int ela_dns_query_a(const char *ns_ip, const char *hostname,
 
 	n = recv(sock, resp, sizeof(resp), 0);
 	close(sock);
+	if (n < 12)
+		return -1;
+	if (n > (ssize_t)sizeof(resp))
+		n = (ssize_t)sizeof(resp); /* cap tainted recv length */
 	return ela_http_parse_dns_a_response(resp, (int)n, ip_buf, ip_buf_len);
 }
 
