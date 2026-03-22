@@ -549,7 +549,13 @@ static int auto_scan_signature_artifacts(char **blob_path_out, char **pubkey_pat
 					if (blob_path)
 						snprintf(blob_path, (size_t)n + 1, "%s/auto_signature_blob.fit", auto_dir);
 				}
-				if (blob_path && extract_region_to_file(dev, fit_off, fit_size, blob_path) != 0) {
+				/* False-positive suppression: fit_size is a FIT header
+			 * total-size field (big-endian u32 from the device) that
+			 * find_fit_blob_in_device() has already validated to be
+			 * non-zero and <= 64 MiB before returning 0.  Coverity does
+			 * not track the range check performed inside the callee. */
+			/* coverity[tainted_data] */
+			if (blob_path && extract_region_to_file(dev, fit_off, fit_size, blob_path) != 0) {
 					free(blob_path);
 					blob_path = NULL;
 				}
