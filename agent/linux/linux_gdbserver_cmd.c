@@ -2611,12 +2611,13 @@ static int build_libraries_svr4_xml(pid_t pid, char *out, size_t out_sz)
 			child = xmlNewChild(root, NULL,
 					    BAD_CAST "library", NULL);
 			xmlNewProp(child, BAD_CAST "name", BAD_CAST path);
-			xmlNewProp(child, BAD_CAST "lm",   BAD_CAST "0x0");
+			xmlNewProp(child, BAD_CAST "lm",    BAD_CAST "0x0");
 			snprintf(addr_buf, sizeof(addr_buf),
 				 "0x%llx", start_addr);
 			xmlNewProp(child, BAD_CAST "l_addr",
 				   BAD_CAST addr_buf);
 			xmlNewProp(child, BAD_CAST "l_ld",  BAD_CAST "0x0");
+			xmlNewProp(child, BAD_CAST "lmid",  BAD_CAST "0x0");
 		}
 		fclose(f);
 	}
@@ -3643,9 +3644,15 @@ static void handle_packet(int fd, char *pkt)
 				rsp_send_str(fd, "OK");
 #if defined(__x86_64__)
 		} else if (ztype >= 1 && ztype <= 4) {
-			/* Hardware watchpoint via DR0-DR3/DR7 */
+			/*
+			 * Hardware watchpoints via DR0-DR3/DR7.  We only
+			 * ptrace-attach to a single thread, so debug registers
+			 * are unreliable for multi-threaded targets.  Return ""
+			 * (not supported) on any failure so GDB silently falls
+			 * back to software breakpoints instead of aborting.
+			 */
 			if (wp_insert_x86(addr, ztype, (int)kind) != 0)
-				rsp_send_str(fd, "E01");
+				rsp_send_str(fd, "");
 			else
 				rsp_send_str(fd, "OK");
 #endif
@@ -3674,7 +3681,7 @@ static void handle_packet(int fd, char *pkt)
 #if defined(__x86_64__)
 		} else if (ztype >= 1 && ztype <= 4) {
 			if (wp_remove_x86(addr) != 0)
-				rsp_send_str(fd, "E01");
+				rsp_send_str(fd, "");
 			else
 				rsp_send_str(fd, "OK");
 #endif
@@ -3719,9 +3726,6 @@ static void handle_packet(int fd, char *pkt)
 				 ";QCatchSyscalls+"
 				 ";multiprocess+"
 				 ";swbreak+"
-#if defined(__x86_64__)
-				 ";hwbreak+"
-#endif
 				 ,
 				 ELA_GDB_RSP_MAX_PACKET);
 
