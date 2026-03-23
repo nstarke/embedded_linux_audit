@@ -19,6 +19,7 @@
 #include "../embedded_linux_audit_cmd.h"
 #include "../shell/interactive.h"
 
+#include <stdarg.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
@@ -1001,13 +1002,45 @@ static int ws_send_binary(const struct ela_ws_conn *ws,
 	return 0;
 }
 
-int ela_ws_run_gdb_bridge(struct ela_ws_conn *ws, int rsp_fd)
+/* Write a single log line to debug_fd with a [relay PID] prefix. */
+static void gdb_relay_log(int debug_fd, const char *fmt, ...)
+	__attribute__((format(printf, 2, 3)));
+
+static void gdb_relay_log(int debug_fd, const char *fmt, ...)
+{
+	char    buf[256];
+	int     n, total;
+	va_list ap;
+
+	if (debug_fd < 0)
+		return;
+
+	n = snprintf(buf, sizeof(buf), "[ela-relay %d] ", (int)getpid());
+	if (n < 0 || n >= (int)sizeof(buf))
+		return;
+
+	va_start(ap, fmt);
+	total = n + vsnprintf(buf + n, sizeof(buf) - (size_t)n, fmt, ap);
+	va_end(ap);
+
+	if (total >= (int)sizeof(buf))
+		total = (int)sizeof(buf) - 1;
+	buf[total++] = '\n';
+	(void)write(debug_fd, buf, (size_t)total);
+}
+
+int ela_ws_run_gdb_bridge(struct ela_ws_conn *ws, int rsp_fd, int debug_fd)
 {
 	char    ws_buf[16384];
 	char    rsp_buf[16384];
+	long    ws_frames = 0;
+	long    rsp_reads = 0;
 
 	if (!ws || rsp_fd < 0)
 		return -1;
+
+	gdb_relay_log(debug_fd, "relay loop started ws.sock=%d rsp_fd=%d",
+		      ws->sock, rsp_fd);
 
 	for (;;) {
 		fd_set         rfds;
@@ -1029,6 +1062,9 @@ int ela_ws_run_gdb_bridge(struct ela_ws_conn *ws, int rsp_fd)
 		if (sel < 0) {
 			if (errno == EINTR)
 				continue;
+			gdb_relay_log(debug_fd,
+				      "select error: %s — exiting relay",
+				      strerror(errno));
 			break;
 		}
 
@@ -1045,26 +1081,68 @@ int ela_ws_run_gdb_bridge(struct ela_ws_conn *ws, int rsp_fd)
 					   ws->is_tls != 0, pending_bytes)) {
 			frame_len = ws_recv_frame(ws, &opcode,
 						  ws_buf, sizeof(ws_buf) - 1);
-			if (frame_len < 0)
+			if (frame_len < 0) {
+				gdb_relay_log(debug_fd,
+					      "ws_recv_frame error after %ld frames"
+					      " — exiting relay", ws_frames);
 				break;
-			if (opcode == ELA_WS_OPCODE_CLOSE)
+			}
+			if (opcode == ELA_WS_OPCODE_CLOSE) {
+				gdb_relay_log(debug_fd,
+					      "received WS CLOSE frame after"
+					      " %ld frames — exiting relay",
+					      ws_frames);
 				break;
+			}
 			if (opcode == ELA_WS_OPCODE_BINARY && frame_len > 0) {
+				ws_frames++;
+				gdb_relay_log(debug_fd,
+					      "WS→rsp frame #%ld opcode=0x%02x"
+					      " len=%zd",
+					      ws_frames, opcode, frame_len);
 				if (ws_fd_write_all(rsp_fd, ws_buf,
-						    (size_t)frame_len) < 0)
+						    (size_t)frame_len) < 0) {
+					gdb_relay_log(debug_fd,
+						      "ws_fd_write_all error: %s"
+						      " — exiting relay",
+						      strerror(errno));
 					break;
+				}
+			} else {
+				gdb_relay_log(debug_fd,
+					      "WS frame ignored: opcode=0x%02x"
+					      " len=%zd", opcode, frame_len);
 			}
 		}
 
 		if (FD_ISSET(rsp_fd, &rfds)) {
 			n = read(rsp_fd, rsp_buf, sizeof(rsp_buf));
-			if (n <= 0)
+			if (n <= 0) {
+				gdb_relay_log(debug_fd,
+					      "rsp_fd read returned %zd"
+					      " (EOF/error %s) after %ld reads"
+					      " — exiting relay",
+					      n, n < 0 ? strerror(errno) : "EOF",
+					      rsp_reads);
 				break;
-			if (ws_send_binary(ws, rsp_buf, (size_t)n) < 0)
+			}
+			rsp_reads++;
+			gdb_relay_log(debug_fd,
+				      "rsp→WS read #%ld len=%zd",
+				      rsp_reads, n);
+			if (ws_send_binary(ws, rsp_buf, (size_t)n) < 0) {
+				gdb_relay_log(debug_fd,
+					      "ws_send_binary error: %s"
+					      " — exiting relay",
+					      strerror(errno));
 				break;
+			}
 		}
 	}
 
+	gdb_relay_log(debug_fd,
+		      "relay loop exited: ws_frames=%ld rsp_reads=%ld",
+		      ws_frames, rsp_reads);
 	return 0;
 }
 

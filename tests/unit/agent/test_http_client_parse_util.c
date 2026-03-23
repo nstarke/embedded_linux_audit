@@ -177,6 +177,46 @@ static void test_dns_a_response_returns_neg1_when_answer_truncated(void)
 		dns_a_simple, 15, ip, sizeof(ip)));
 }
 
+static void test_dns_a_response_returns_neg1_for_oversized_label_in_question(void)
+{
+	/*
+	 * QDCOUNT=1; label length byte 5 claims 5 chars follow, but only 1
+	 * byte remains (resp_len=14, pos=12: 14-12-1=1 < 5).  Top bits are 0
+	 * so it is not a compression pointer.  Bounds guard must return -1.
+	 */
+	static const uint8_t pkt[] = {
+		0xab, 0xcd, 0x81, 0x80,
+		0x00, 0x01,              /* QDCOUNT=1 */
+		0x00, 0x01,              /* ANCOUNT=1 */
+		0x00, 0x00, 0x00, 0x00,
+		0x05, 'x',               /* label len=5, only 1 byte present */
+	};
+	char ip[16];
+
+	ELA_ASSERT_INT_EQ(-1, ela_http_parse_dns_a_response(
+		pkt, (int)sizeof(pkt), ip, sizeof(ip)));
+}
+
+static void test_dns_a_response_returns_neg1_for_oversized_label_in_answer(void)
+{
+	/*
+	 * QDCOUNT=0, ANCOUNT=1; answer NAME label length 5 claims 5 chars but
+	 * only 1 byte remains (resp_len=14, pos=12: 14-12-1=1 < 5).  Top bits
+	 * are 0 so it is not a compression pointer.  Bounds guard must return -1.
+	 */
+	static const uint8_t pkt[] = {
+		0xab, 0xcd, 0x81, 0x80,
+		0x00, 0x00,              /* QDCOUNT=0 */
+		0x00, 0x01,              /* ANCOUNT=1 */
+		0x00, 0x00, 0x00, 0x00,
+		0x05, 'x',               /* answer name: label len=5, 1 byte present */
+	};
+	char ip[16];
+
+	ELA_ASSERT_INT_EQ(-1, ela_http_parse_dns_a_response(
+		pkt, (int)sizeof(pkt), ip, sizeof(ip)));
+}
+
 /* -----------------------------------------------------------------------
  * ela_http_parse_resolv_conf tests
  * ---------------------------------------------------------------------- */
@@ -351,6 +391,8 @@ int run_http_client_parse_util_tests(void)
 		{ "dns_a_response_parses_with_question_section", test_dns_a_response_parses_with_question_section },
 		{ "dns_a_response_returns_neg1_for_cname_only", test_dns_a_response_returns_neg1_for_cname_only },
 		{ "dns_a_response_returns_neg1_when_answer_truncated", test_dns_a_response_returns_neg1_when_answer_truncated },
+		{ "dns_a_response_returns_neg1_for_oversized_label_in_question", test_dns_a_response_returns_neg1_for_oversized_label_in_question },
+		{ "dns_a_response_returns_neg1_for_oversized_label_in_answer", test_dns_a_response_returns_neg1_for_oversized_label_in_answer },
 		/* ela_http_parse_resolv_conf */
 		{ "parse_resolv_conf_parses_single_nameserver", test_parse_resolv_conf_parses_single_nameserver },
 		{ "parse_resolv_conf_parses_multiple_nameservers", test_parse_resolv_conf_parses_multiple_nameservers },

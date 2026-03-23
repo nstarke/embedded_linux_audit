@@ -110,6 +110,9 @@ int ela_dns_extract_first_a_record(const uint8_t *resp, size_t resp_len, char *i
 		while (pos < (int)resp_len) {
 			if (resp[pos] == 0) { pos++; break; }
 			if ((resp[pos] & 0xC0) == 0xC0) { pos += 2; break; }
+			/* Guard: label length must not extend past the packet. */
+			if (resp[pos] > (int)resp_len - pos - 1)
+				return -1;
 			pos += resp[pos] + 1;
 		}
 		pos += 4;
@@ -124,6 +127,9 @@ int ela_dns_extract_first_a_record(const uint8_t *resp, size_t resp_len, char *i
 			while (pos < (int)resp_len) {
 				if (resp[pos] == 0) { pos++; break; }
 				if ((resp[pos] & 0xC0) == 0xC0) { pos += 2; break; }
+				/* Guard: label length must not extend past the packet. */
+				if (resp[pos] > (int)resp_len - pos - 1)
+					return -1;
 				pos += resp[pos] + 1;
 			}
 		}

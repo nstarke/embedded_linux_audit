@@ -38,8 +38,11 @@ int ela_ws_connect_url(const char *url, int insecure,
  * (e.g. one end of a socketpair carrying GDB RSP bytes).
  * Received binary WS frames are written to rsp_fd; bytes read from rsp_fd
  * are sent as binary WS frames.  Returns when either side closes/errors.
+ *
+ * debug_fd: if >= 0 and ELA_DEBUG=1, per-frame log lines are written here
+ * (pass g_gdb_debug_fd from linux_gdbserver_cmd.c, or -1 to disable).
  */
-int ela_ws_run_gdb_bridge(struct ela_ws_conn *ws, int rsp_fd);
+int ela_ws_run_gdb_bridge(struct ela_ws_conn *ws, int rsp_fd, int debug_fd);
 
 /*
  * Close the parent's copy of the socket after fork() without sending a

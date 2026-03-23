@@ -8,6 +8,7 @@
 
 #include <libxml/tree.h>
 
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -4551,6 +4552,59 @@ static int tunnel_generate_hex_key(char *out)
 	return 0;
 }
 
+/* -----------------------------------------------------------------------
+ * GDB tunnel debug logging (enabled by ELA_DEBUG=1).
+ *
+ * Both the middle child and the grandchild redirect stdin/stdout/stderr to
+ * /dev/null so they can run as background daemons.  Any fprintf(stderr,...)
+ * calls in those processes are silently swallowed.  Instead we open a log
+ * file on a higher-numbered fd before the stdio redirect; that fd survives
+ * the dup2() calls and is inherited across fork().
+ *
+ * Usage: set ELA_DEBUG=1, then `tail -f /tmp/ela-gdb-debug.log` on the
+ * device while running `linux gdbserver tunnel ...`.
+ * ---------------------------------------------------------------------- */
+
+static int g_gdb_debug_fd = -1;
+
+static void gdb_debug_open(void)
+{
+	const char *dbg = getenv("ELA_DEBUG");
+
+	if (!dbg || strcmp(dbg, "1") != 0)
+		return;
+	g_gdb_debug_fd = open("/tmp/ela-gdb-debug.log",
+			      O_WRONLY | O_CREAT | O_APPEND, 0644);
+}
+
+static void gdb_debug_log(const char *fmt, ...)
+	__attribute__((format(printf, 1, 2)));
+
+static void gdb_debug_log(const char *fmt, ...)
+{
+	char    buf[320];
+	int     n, total;
+	va_list ap;
+
+	if (g_gdb_debug_fd < 0)
+		return;
+
+	n = snprintf(buf, sizeof(buf), "[ela-gdb %d] ", (int)getpid());
+	if (n < 0 || n >= (int)sizeof(buf))
+		return;
+
+	va_start(ap, fmt);
+	total = n + vsnprintf(buf + n, sizeof(buf) - (size_t)n, fmt, ap);
+	va_end(ap);
+
+	if (total >= (int)sizeof(buf))
+		total = (int)sizeof(buf) - 1;
+	buf[total++] = '\n';
+	(void)write(g_gdb_debug_fd, buf, (size_t)total);
+}
+
+#define GDB_DBG(fmt, ...) gdb_debug_log(fmt, ##__VA_ARGS__)
+
 static void ptrace_attach_failed(pid_t pid)
 {
 	int e = errno;
@@ -4687,33 +4741,48 @@ static int linux_gdbserver_tunnel(int argc, char **argv)
 	signal(SIGINT,  handle_signal);
 	signal(SIGTERM, handle_signal);
 
+	/* Open the debug log now, before any /dev/null redirects, so the fd
+	 * is inherited by both the middle child and grandchild. */
+	gdb_debug_open();
+	GDB_DBG("child started: pid=%d target_pid=%d in_url=%s",
+		(int)getpid(), (int)pid, in_url);
+
 	if (ptrace(PTRACE_ATTACH, pid, NULL, NULL) != 0) {
+		GDB_DBG("PTRACE_ATTACH failed: %s (errno=%d)", strerror(errno), errno);
 		ptrace_attach_failed(pid);
 		(void)write(pipefd[1], "E", 1);
 		close(pipefd[1]);
 		exit(1);
 	}
+	GDB_DBG("PTRACE_ATTACH ok");
 
 	if (waitpid(pid, &wstatus, 0) < 0) {
+		GDB_DBG("waitpid failed: %s", strerror(errno));
 		perror("waitpid");
 		ptrace(PTRACE_DETACH, pid, NULL, NULL);
 		(void)write(pipefd[1], "E", 1);
 		close(pipefd[1]);
 		exit(1);
 	}
+	GDB_DBG("waitpid ok: wstatus=0x%x WIFSTOPPED=%d WSTOPSIG=%d",
+		(unsigned)wstatus, WIFSTOPPED(wstatus), WSTOPSIG(wstatus));
 
 	if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) != 0) {
+		GDB_DBG("socketpair failed: %s", strerror(errno));
 		perror("socketpair");
 		ptrace(PTRACE_DETACH, pid, NULL, NULL);
 		(void)write(pipefd[1], "E", 1);
 		close(pipefd[1]);
 		exit(1);
 	}
+	GDB_DBG("socketpair ok: sv[0]=%d sv[1]=%d", sv[0], sv[1]);
 
 	/* Connect to the GDB bridge server before forking the RSP engine */
 	memset(&ws, 0, sizeof(ws));
 	ws.sock = -1;
+	GDB_DBG("connecting WebSocket to %s (insecure=%d)", in_url, insecure);
 	if (ela_ws_connect_url(in_url, insecure, &ws) != 0) {
+		GDB_DBG("WebSocket connect failed");
 		fprintf(stderr, "gdbserver tunnel: failed to connect to %s\n",
 			in_url);
 		ptrace(PTRACE_DETACH, pid, NULL, NULL);
@@ -4723,10 +4792,12 @@ static int linux_gdbserver_tunnel(int argc, char **argv)
 		close(pipefd[1]);
 		exit(1);
 	}
+	GDB_DBG("WebSocket connected: ws.sock=%d", ws.sock);
 
 	/* Sync pipe: middle child writes "R" after PTRACE_DETACH so the
 	 * grandchild knows it is safe to call PTRACE_ATTACH. */
 	if (pipe(sync_pfd) != 0) {
+		GDB_DBG("sync pipe failed: %s", strerror(errno));
 		perror("sync pipe");
 		ela_ws_close(&ws);
 		ptrace(PTRACE_DETACH, pid, NULL, NULL);
@@ -4738,8 +4809,10 @@ static int linux_gdbserver_tunnel(int argc, char **argv)
 	}
 
 	/* Fork grandchild to run the blocking RSP engine on sv[0] */
+	GDB_DBG("forking grandchild (RSP engine)");
 	rsp_child = fork();
 	if (rsp_child < 0) {
+		GDB_DBG("fork grandchild failed: %s", strerror(errno));
 		perror("fork grandchild");
 		ela_ws_close(&ws);
 		ptrace(PTRACE_DETACH, pid, NULL, NULL);
@@ -4769,21 +4842,36 @@ static int linux_gdbserver_tunnel(int argc, char **argv)
 		ela_ws_close(&ws);
 		close(sync_pfd[1]); /* grandchild only reads */
 
+		GDB_DBG("grandchild started: pid=%d waiting for ptrace release",
+			(int)getpid());
+
 		/* Wait for middle child to release ptrace */
 		if (read(sync_pfd[0], &sync_c, 1) <= 0 || sync_c != 'R') {
+			GDB_DBG("grandchild: sync read failed or bad byte '%c'",
+				sync_c);
 			close(sync_pfd[0]);
 			exit(1);
 		}
 		close(sync_pfd[0]);
+		GDB_DBG("grandchild: sync received, re-attaching ptrace to pid=%d",
+			(int)pid);
 
 		/* Re-attach now that the middle child has detached */
 		if (ptrace(PTRACE_ATTACH, pid, NULL, NULL) != 0) {
+			GDB_DBG("grandchild: PTRACE_ATTACH failed: %s (errno=%d)",
+				strerror(errno), errno);
 			exit(1);
 		}
+		GDB_DBG("grandchild: PTRACE_ATTACH ok");
+
 		if (waitpid(pid, &gc_wstatus, 0) < 0) {
+			GDB_DBG("grandchild: waitpid failed: %s", strerror(errno));
 			ptrace(PTRACE_DETACH, pid, NULL, NULL);
 			exit(1);
 		}
+		GDB_DBG("grandchild: waitpid ok: wstatus=0x%x WIFSTOPPED=%d WSTOPSIG=%d",
+			(unsigned)gc_wstatus, WIFSTOPPED(gc_wstatus),
+			WSTOPSIG(gc_wstatus));
 
 		devnull = open("/dev/null", O_RDWR);
 		if (devnull >= 0) {
@@ -4793,23 +4881,34 @@ static int linux_gdbserver_tunnel(int argc, char **argv)
 			if (devnull > STDERR_FILENO)
 				close(devnull);
 		}
+
+		GDB_DBG("grandchild: entering run_session on sv[0]=%d", sv[0]);
 		run_session(sv[0], pid, gc_wstatus);
+		GDB_DBG("grandchild: run_session returned");
+
 		close(sv[0]);
 		ptrace(PTRACE_DETACH, pid, NULL, NULL);
+		GDB_DBG("grandchild: exiting");
 		exit(0);
 	}
 
 	/* Middle child: WS ↔ RSP proxy */
+	GDB_DBG("middle child: pid=%d grandchild=%d",
+		(int)getpid(), (int)rsp_child);
 	close(sv[0]);
 	close(sync_pfd[0]); /* middle child only writes */
 
 	/* Release ptrace so the grandchild can re-attach.
 	 * This must happen before signalling the grandchild. */
-	ptrace(PTRACE_DETACH, pid, NULL, NULL);
+	if (ptrace(PTRACE_DETACH, pid, NULL, NULL) != 0)
+		GDB_DBG("middle child: PTRACE_DETACH failed: %s", strerror(errno));
+	else
+		GDB_DBG("middle child: PTRACE_DETACH ok");
 
 	/* Notify grandchild that ptrace has been released */
 	(void)write(sync_pfd[1], "R", 1);
 	close(sync_pfd[1]);
+	GDB_DBG("middle child: sync signal sent");
 
 	/* Signal parent that attach + WS connect succeeded */
 	(void)write(pipefd[1], "K", 1);
@@ -4824,13 +4923,17 @@ static int linux_gdbserver_tunnel(int argc, char **argv)
 			close(devnull);
 	}
 
-	ela_ws_run_gdb_bridge(&ws, sv[1]);
+	GDB_DBG("middle child: starting relay ws.sock=%d sv[1]=%d",
+		ws.sock, sv[1]);
+	ela_ws_run_gdb_bridge(&ws, sv[1], g_gdb_debug_fd);
+	GDB_DBG("middle child: relay exited");
 
 	ela_ws_close(&ws);
 	close(sv[1]);
 	kill(rsp_child, SIGTERM);
 	waitpid(rsp_child, NULL, 0);
 	/* ptrace is now owned by the grandchild; no detach needed here */
+	GDB_DBG("middle child: exiting");
 	exit(0);
 }
 
