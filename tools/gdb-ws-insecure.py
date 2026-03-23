@@ -56,6 +56,34 @@ _HEX32_RE = re.compile(r'^[0-9a-f]{32}$')
 _PROXY_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                               'gdb-ws-proxy.py')
 
+# ---------------------------------------------------------------------------
+# pwndbg installs internal hardware breakpoints on _dl_debug_state each time
+# a shared library is loaded.  With a WebSocket-relayed target these cannot
+# be satisfied (the stub handles only a single ptrace thread and advertises
+# zero hardware breakpoint/watchpoint slots).  GDB prints a "Cannot insert
+# hardware breakpoint -N" warning on every continue even though execution
+# is not blocked.  Silence this by replacing gdb.Breakpoint with a thin
+# wrapper that downgrades BP_HARDWARE_BREAKPOINT to BP_BREAKPOINT before
+# creation so the same library-tracking mechanism works via software
+# breakpoints instead.
+# ---------------------------------------------------------------------------
+_orig_Breakpoint = gdb.Breakpoint
+
+
+class _SoftwareOnlyBreakpoint(_orig_Breakpoint):
+    """Silently converts hardware breakpoints to software breakpoints."""
+
+    def __init__(self, spec, type=gdb.BP_BREAKPOINT, **kwargs):  # noqa: A002
+        if type == gdb.BP_HARDWARE_BREAKPOINT:
+            type = gdb.BP_BREAKPOINT
+        super().__init__(spec, type, **kwargs)
+
+
+try:
+    gdb.Breakpoint = _SoftwareOnlyBreakpoint
+except (AttributeError, TypeError):
+    pass  # Older GDB that doesn't allow replacing the Breakpoint class
+
 
 def _parse_args(arg: str):
     """Return (insecure: bool, url: str, token: str|None)."""

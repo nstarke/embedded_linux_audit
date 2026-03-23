@@ -2524,6 +2524,84 @@ static int build_memmap_xml(pid_t pid, char *out, size_t out_sz)
  * ---------------------------------------------------------------------- */
 
 /*
+ * Read the ELF program headers of `path' to find the PT_DYNAMIC segment and
+ * return its runtime virtual address given that the first PT_LOAD segment is
+ * mapped at `load_addr'.
+ *
+ * load_bias = load_addr - first_PT_LOAD.p_vaddr
+ * result    = load_bias + PT_DYNAMIC.p_vaddr
+ *
+ * Returns 0 if the file cannot be opened or contains no PT_DYNAMIC.
+ * Works for both 32-bit and 64-bit ELF in the device's native byte order.
+ */
+static uint64_t elf_dynamic_addr(const char *path, uint64_t load_addr)
+{
+	unsigned char ident[EI_NIDENT];
+	int           fd;
+	uint64_t      first_load_vaddr = 0;
+	uint64_t      dyn_vaddr        = 0;
+	int           found_load       = 0;
+
+	fd = open(path, O_RDONLY);
+	if (fd < 0)
+		return 0;
+
+	if (read(fd, ident, EI_NIDENT) != EI_NIDENT)
+		goto out;
+	if (ident[0] != 0x7f || ident[1] != 'E' ||
+	    ident[2] != 'L'  || ident[3] != 'F')
+		goto out;
+	if (lseek(fd, 0, SEEK_SET) < 0)
+		goto out;
+
+	if (ident[EI_CLASS] == ELFCLASS64) {
+		Elf64_Ehdr ehdr;
+		int i;
+
+		if (read(fd, &ehdr, sizeof(ehdr)) != sizeof(ehdr))
+			goto out;
+		if (lseek(fd, (off_t)ehdr.e_phoff, SEEK_SET) < 0)
+			goto out;
+		for (i = 0; i < (int)ehdr.e_phnum; i++) {
+			Elf64_Phdr phdr;
+			if (read(fd, &phdr, sizeof(phdr)) != sizeof(phdr))
+				break;
+			if (phdr.p_type == PT_LOAD && !found_load) {
+				first_load_vaddr = phdr.p_vaddr;
+				found_load = 1;
+			}
+			if (phdr.p_type == PT_DYNAMIC)
+				dyn_vaddr = phdr.p_vaddr;
+		}
+	} else if (ident[EI_CLASS] == ELFCLASS32) {
+		Elf32_Ehdr ehdr;
+		int i;
+
+		if (read(fd, &ehdr, sizeof(ehdr)) != sizeof(ehdr))
+			goto out;
+		if (lseek(fd, (off_t)ehdr.e_phoff, SEEK_SET) < 0)
+			goto out;
+		for (i = 0; i < (int)ehdr.e_phnum; i++) {
+			Elf32_Phdr phdr;
+			if (read(fd, &phdr, sizeof(phdr)) != sizeof(phdr))
+				break;
+			if (phdr.p_type == PT_LOAD && !found_load) {
+				first_load_vaddr = (uint64_t)phdr.p_vaddr;
+				found_load = 1;
+			}
+			if (phdr.p_type == PT_DYNAMIC)
+				dyn_vaddr = (uint64_t)phdr.p_vaddr;
+		}
+	}
+
+out:
+	close(fd);
+	if (!dyn_vaddr)
+		return 0;
+	return (load_addr - first_load_vaddr) + dyn_vaddr;
+}
+
+/*
  * Build the <library-list-svr4> XML document by walking /proc/<pid>/maps.
  * Duplicate .so entries (multiple segments of the same file) are suppressed
  * by walking root->children and checking the "name" attribute via xmlGetProp,
@@ -2616,7 +2694,11 @@ static int build_libraries_svr4_xml(pid_t pid, char *out, size_t out_sz)
 				 "0x%llx", start_addr);
 			xmlNewProp(child, BAD_CAST "l_addr",
 				   BAD_CAST addr_buf);
-			xmlNewProp(child, BAD_CAST "l_ld",  BAD_CAST "0x0");
+			snprintf(addr_buf, sizeof(addr_buf), "0x%llx",
+				 (unsigned long long)elf_dynamic_addr(
+					 path, (uint64_t)start_addr));
+			xmlNewProp(child, BAD_CAST "l_ld",
+				   BAD_CAST addr_buf);
 			xmlNewProp(child, BAD_CAST "lmid",  BAD_CAST "0x0");
 		}
 		fclose(f);
@@ -4047,6 +4129,24 @@ static void handle_packet(int fd, char *pkt)
 					   sizeof(exe_path) - 1);
 			if (exe_len < 0) { rsp_send_str(fd, "E01"); break; }
 			exe_path[exe_len] = '\0';
+
+			/*
+			 * Linux appends " (deleted)" to /proc/PID/exe when the
+			 * binary's inode is unlinked while the process runs
+			 * (tmpfs, firmware-update-in-place, etc.).  Strip it so
+			 * GDB uses the original path for vFile:open and doesn't
+			 * print "has disappeared; keeping its symbols".
+			 */
+			{
+				static const char del_sfx[] = " (deleted)";
+				size_t sfx_len = sizeof(del_sfx) - 1;
+				if ((size_t)exe_len > sfx_len &&
+				    strcmp(exe_path + (size_t)exe_len
+					   - sfx_len, del_sfx) == 0) {
+					exe_len -= (ssize_t)sfx_len;
+					exe_path[exe_len] = '\0';
+				}
+			}
 
 			if (xfer_off >= (uint64_t)exe_len) {
 				rsp_send_str(fd, "l"); /* past end */
