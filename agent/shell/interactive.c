@@ -295,6 +295,7 @@ static void interactive_restore_terminal(int tty_fd,
 }
 
 #if !defined(ELA_HAS_READLINE)
+/* LCOV_EXCL_START */
 static int interactive_set_raw_mode(int tty_fd,
 				    const struct termios *saved_termios,
 				    bool have_saved_termios)
@@ -683,6 +684,7 @@ oom:
 	free(draft);
 	return NULL;
 }
+/* LCOV_EXCL_STOP */
 #endif
 
 int interactive_loop(const char *prog)
