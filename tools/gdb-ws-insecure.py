@@ -132,6 +132,9 @@ class WssRemote(gdb.Command):
             cmd_parts += ['--token', shlex.quote(token)]
         pipe_cmd = ' '.join(cmd_parts)
         try:
+            # WebSocket relay adds latency; extend per-packet timeout so GDB
+            # doesn't give up waiting for RSP responses over the bridge.
+            gdb.execute('set remotetimeout 30')
             gdb.execute(f'target remote | {pipe_cmd}')
         except gdb.error as e:
             msg = str(e)

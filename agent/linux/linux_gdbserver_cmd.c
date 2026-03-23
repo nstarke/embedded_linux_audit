@@ -3691,27 +3691,16 @@ static void handle_packet(int fd, char *pkt)
 			 * "qSupported:feat1+;feat2+;...".  Record whether GDB
 			 * supports swbreak+ so we can include "swbreak:;" in T
 			 * stop replies when we hit a software breakpoint.
-			 *
-			 * GDB 14+ sends timeout=N to negotiate a per-operation
-			 * response deadline (seconds).  Over high-latency
-			 * transports like a WebSocket relay the default 2 s
-			 * timeout is too short and causes spurious "Ignoring
-			 * packet error" messages.  Echo the value back so GDB
-			 * honours the longer deadline.
+			 * Note: GDB sends timeout=N as a one-way notification
+			 * of its current remotetimeout — the stub must NOT echo
+			 * it back; GDB does not parse it in the response.
 			 */
 			const char *client_feats = pkt + 10;
-			const char *t_pos;
-			int         client_timeout = 0;
-			int         resp_len;
 
 			if (*client_feats == ':')
 				client_feats++;
 			g_swbreak_feature = (strstr(client_feats, "swbreak+") != NULL);
 			g_multiprocess    = (strstr(client_feats, "multiprocess+") != NULL);
-
-			t_pos = strstr(client_feats, "timeout=");
-			if (t_pos)
-				client_timeout = atoi(t_pos + 8);
 
 			snprintf(resp, sizeof(resp),
 				 "PacketSize=%x"
@@ -3735,13 +3724,6 @@ static void handle_packet(int fd, char *pkt)
 #endif
 				 ,
 				 ELA_GDB_RSP_MAX_PACKET);
-
-			if (client_timeout > 0) {
-				resp_len = (int)strlen(resp);
-				snprintf(resp + resp_len,
-					 sizeof(resp) - (size_t)resp_len,
-					 ";timeout=%d", client_timeout);
-			}
 
 			rsp_send_str(fd, resp);
 		} else if (strcmp(pkt, "qAttached") == 0) {
@@ -4554,7 +4536,7 @@ static int tcp_listen_port(uint16_t port)
  * socketpair, forks a grandchild to run the RSP engine on sv[0], and
  * proxies binary WebSocket frames ↔ sv[1] via the ela-gdb bridge at
  * <base_url>/gdb/in/<hex32>.  Prints the full wss:// URL for GDB:
- *   target remote wss://host/gdb/out/<hex32>
+ *   wss-remote [--insecure] wss://host/gdb/out/<hex32>
  * ---------------------------------------------------------------------- */
 
 static int tunnel_generate_hex_key(char *out)
@@ -4698,9 +4680,8 @@ static int linux_gdbserver_tunnel(int argc, char **argv)
 			"\n"
 			"The agent prints the full wss:// URL on success; give the\n"
 			"gdb/out URL to gdb-multiarch:\n"
-			"  target remote wss://host/gdb/out/<generated-key>\n"
-			"  (insecure: source tools/gdb-ws-insecure.py, then\n"
-			"   wss-remote --insecure wss://host/gdb/out/<key>)\n");
+			"  wss-remote [--insecure] wss://host/gdb/out/<generated-key>\n"
+			"  (requires tools/gdb-ws-insecure.py sourced in gdb-multiarch)\n");
 		return 1;
 	}
 
@@ -4751,8 +4732,10 @@ static int linux_gdbserver_tunnel(int argc, char **argv)
 				"gdbserver tunnel attached to PID %d "
 				"(background).\n"
 				"  In gdb-multiarch:\n"
-				"    target remote %s\n",
-				(int)pid, out_url);
+				"    wss-remote %s%s\n",
+				(int)pid,
+				insecure ? "--insecure " : "",
+				out_url);
 			return 0;
 		}
 		return 1;
@@ -4990,7 +4973,7 @@ int linux_gdbserver_main(int argc, char **argv)
 			"  WSS_BASE_URL  : wss://host  (session key generated automatically)\n"
 			"\n"
 			"Direct TCP: target remote <agent-ip>:<PORT>\n"
-			"Tunnel:     target remote wss://host/gdb/out/<key>  (printed on connect)\n");
+			"Tunnel:     wss-remote [--insecure] wss://host/gdb/out/<key>  (printed on connect)\n");
 		return 1;
 	}
 
