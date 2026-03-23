@@ -40,6 +40,10 @@ int ela_ws_build_masked_frame(uint8_t opcode,
 		frame[3] = (uint8_t)payload_len;
 	} else {
 		frame[1] = 0x80 | 127;
+		frame[2] = (uint8_t)(payload_len >> 56);
+		frame[3] = (uint8_t)(payload_len >> 48);
+		frame[4] = (uint8_t)(payload_len >> 40);
+		frame[5] = (uint8_t)(payload_len >> 32);
 		frame[6] = (uint8_t)(payload_len >> 24);
 		frame[7] = (uint8_t)(payload_len >> 16);
 		frame[8] = (uint8_t)(payload_len >> 8);

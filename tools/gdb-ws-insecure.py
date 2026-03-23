@@ -117,56 +117,36 @@ class WssRemote(gdb.Command):
         if not token:
             token = os.environ.get('ELA_API_KEY', '')
 
-        use_proxy = insecure or url.startswith('ws://')
-
-        if use_proxy:
-            # Pipe approach: required for --insecure and for ws:// (plain-text)
-            # URLs, since GDB's native WebSocket transport only supports wss://.
-            cmd_parts = ['python3', shlex.quote(_PROXY_SCRIPT),
-                         '--url', shlex.quote(url)]
-            if insecure:
-                cmd_parts.append('--insecure')
-            if token:
-                cmd_parts += ['--token', shlex.quote(token)]
-            pipe_cmd = ' '.join(cmd_parts)
-            try:
-                gdb.execute(f'target remote | {pipe_cmd}')
-            except gdb.error as e:
-                msg = str(e)
-                gdb.write(f'wss-remote: {msg}\n', gdb.STDERR)
-                lmsg = msg.lower()
-                if 'reset by peer' in lmsg or 'disconnect' in lmsg or 'eof' in lmsg:
-                    gdb.write(
-                        'Tip: the bridge closed the connection — check that:\n'
-                        '  1. "linux gdbserver tunnel <PID> <WSS_URL>" is running '
-                        'on the device\n'
-                        '  2. ptrace succeeded (no "Operation not permitted" error)\n'
-                        '  3. The session key in the URL matches what the agent '
-                        'printed\n',
-                        gdb.STDERR,
-                    )
-        else:
-            # Native GDB WebSocket transport (GDB 14+), wss:// only.
-            # For ws:// or to disable TLS verification, use --insecure.
-            if token:
-                # Inject Authorization header via environment so GDB picks it up.
-                os.environ['GDB_WS_AUTH'] = f'Bearer {token}'
-            try:
-                gdb.execute(f'target remote {url}')
-            except gdb.error as e:
-                msg = str(e)
-                gdb.write(f'wss-remote: {msg}\n', gdb.STDERR)
-                lmsg = msg.lower()
-                if 'reset by peer' in lmsg or 'disconnect' in lmsg or 'eof' in lmsg:
-                    gdb.write(
-                        'Tip: the bridge closed the connection — check that:\n'
-                        '  1. "linux gdbserver tunnel <PID> <WSS_URL>" is running '
-                        'on the device\n'
-                        '  2. ptrace succeeded (no "Operation not permitted" error)\n'
-                        '  3. The session key in the URL matches what the agent '
-                        'printed\n',
-                        gdb.STDERR,
-                    )
+        # GDB has no native WebSocket transport (ws:// or wss://) — confirmed
+        # by examining GDB 17.1 source: parse_connection_spec() only recognises
+        # the "tcp:", "udp:", "tcp4:", etc. prefixes.  Passing a ws:// or wss://
+        # URL directly to "target remote" causes GDB to split the URL at the
+        # last ':' and pass the remainder as the service name to getaddrinfo(),
+        # yielding "Servname not supported for ai_socktype" (EAI_SERVICE).
+        # Always use the gdb-ws-proxy.py pipe bridge for all WebSocket URLs.
+        cmd_parts = ['python3', shlex.quote(_PROXY_SCRIPT),
+                     '--url', shlex.quote(url)]
+        if insecure:
+            cmd_parts.append('--insecure')
+        if token:
+            cmd_parts += ['--token', shlex.quote(token)]
+        pipe_cmd = ' '.join(cmd_parts)
+        try:
+            gdb.execute(f'target remote | {pipe_cmd}')
+        except gdb.error as e:
+            msg = str(e)
+            gdb.write(f'wss-remote: {msg}\n', gdb.STDERR)
+            lmsg = msg.lower()
+            if 'reset by peer' in lmsg or 'disconnect' in lmsg or 'eof' in lmsg:
+                gdb.write(
+                    'Tip: the bridge closed the connection — check that:\n'
+                    '  1. "linux gdbserver tunnel <PID> <WSS_URL>" is running '
+                    'on the device\n'
+                    '  2. ptrace succeeded (no "Operation not permitted" error)\n'
+                    '  3. The session key in the URL matches what the agent '
+                    'printed\n',
+                    gdb.STDERR,
+                )
 
 
 WssRemote()

@@ -1108,6 +1108,14 @@ int ela_ws_run_gdb_bridge(struct ela_ws_conn *ws, int rsp_fd, int debug_fd)
 						      strerror(errno));
 					break;
 				}
+			} else if (opcode == ELA_WS_OPCODE_PING) {
+				uint8_t pong[6];
+				size_t  pong_len = 0;
+				gdb_relay_log(debug_fd,
+					      "WS PING received — sending PONG");
+				if (ela_ws_build_zero_mask_control_frame(
+					    ELA_WS_OPCODE_PONG, pong, &pong_len) == 0)
+					(void)ws_conn_write(ws, pong, pong_len);
 			} else {
 				gdb_relay_log(debug_fd,
 					      "WS frame ignored: opcode=0x%02x"
