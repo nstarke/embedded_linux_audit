@@ -311,6 +311,48 @@ static void test_dns_extract_a_record_simple_no_question(void)
 	ELA_ASSERT_STR_EQ("10.0.0.1", ip);
 }
 
+static void test_dns_extract_a_record_rejects_oversized_label_in_question(void)
+{
+	/*
+	 * QDCOUNT=1; label length byte 5 claims 5 chars follow, but only 1
+	 * byte remains after it (resp_len=14, pos=12: 14-12-1=1 < 5).
+	 * Top bits are 0 so it's not a compression pointer.
+	 * The bounds guard in the question-section loop must return -1.
+	 */
+	static const uint8_t pkt[] = {
+		0xab, 0xcd, 0x81, 0x80,
+		0x00, 0x01,              /* QDCOUNT=1 */
+		0x00, 0x01,              /* ANCOUNT=1 */
+		0x00, 0x00, 0x00, 0x00,
+		0x05, 'x',               /* label len=5, only 1 byte present */
+	};
+	char ip[32];
+
+	ELA_ASSERT_INT_EQ(-1, ela_dns_extract_first_a_record(
+		pkt, sizeof(pkt), ip, sizeof(ip)));
+}
+
+static void test_dns_extract_a_record_rejects_oversized_label_in_answer(void)
+{
+	/*
+	 * QDCOUNT=0, ANCOUNT=1; answer NAME label length 5 claims 5 chars but
+	 * only 1 byte remains (resp_len=14, pos=12: 14-12-1=1 < 5).
+	 * Top bits are 0 so it's not a compression pointer.
+	 * The bounds guard in the answer-section loop must return -1.
+	 */
+	static const uint8_t pkt[] = {
+		0xab, 0xcd, 0x81, 0x80,
+		0x00, 0x00,              /* QDCOUNT=0 */
+		0x00, 0x01,              /* ANCOUNT=1 */
+		0x00, 0x00, 0x00, 0x00,
+		0x05, 'x',               /* answer name: label len=5, 1 byte present */
+	};
+	char ip[32];
+
+	ELA_ASSERT_INT_EQ(-1, ela_dns_extract_first_a_record(
+		pkt, sizeof(pkt), ip, sizeof(ip)));
+}
+
 int run_tcp_parse_util_tests(void)
 {
 	static const struct ela_test_case cases[] = {
@@ -343,6 +385,8 @@ int run_tcp_parse_util_tests(void)
 		{ "dns_extract_a_record_returns_neg1_for_cname_only", test_dns_extract_a_record_returns_neg1_for_cname_only },
 		{ "dns_extract_a_record_returns_neg1_when_truncated", test_dns_extract_a_record_returns_neg1_when_truncated },
 		{ "dns_extract_a_record_simple_no_question", test_dns_extract_a_record_simple_no_question },
+		{ "dns_extract_a_record_rejects_oversized_label_in_question", test_dns_extract_a_record_rejects_oversized_label_in_question },
+		{ "dns_extract_a_record_rejects_oversized_label_in_answer", test_dns_extract_a_record_rejects_oversized_label_in_answer },
 	};
 
 	return ela_run_test_suite("tcp_parse_util", cases, sizeof(cases) / sizeof(cases[0]));
