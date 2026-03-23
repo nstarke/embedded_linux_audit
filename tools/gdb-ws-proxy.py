@@ -41,7 +41,12 @@ async def bridge(url: str, ssl_ctx, headers: dict) -> None:
 
         async def stdin_to_ws() -> None:
             while True:
-                data = await loop.run_in_executor(None, sys.stdin.buffer.read, 4096)
+                # read1() makes at most one raw OS read() call and returns
+                # immediately with whatever bytes are available.  read(n)
+                # loops until n bytes arrive, causing a deadlock with GDB:
+                # GDB writes a small RSP packet and waits for a response;
+                # read(4096) blocks waiting for more bytes that never come.
+                data = await loop.run_in_executor(None, sys.stdin.buffer.read1, 4096)
                 if not data:
                     break
                 await ws.send(data)
