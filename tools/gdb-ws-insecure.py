@@ -18,6 +18,11 @@ It registers two GDB commands:
       verification disabled.  Works with any GDB version that supports
       "target remote | command".
 
+  wss-remote ws://HOST/gdb/out/<32-hex-key>
+      Connect to a plain-text (non-TLS) WebSocket endpoint via the
+      gdb-ws-proxy.py pipe.  GDB's native transport does not support
+      ws://, so the proxy is used automatically regardless of --insecure.
+
 The hex key must be 32 lowercase hex characters matching the key used by
 the embedded agent's "linux gdbserver tunnel [--insecure] <PID> <URL>"
 command (where the agent URL is /gdb/in/<key> and GDB's URL is
@@ -81,14 +86,15 @@ class WssRemote(gdb.Command):
     """Connect gdb-multiarch to a WebSocket RSP target.
 
     Usage:
-      wss-remote [--insecure] [--token TOKEN] wss://HOST/gdb/out/<32-hex-key>
+      wss-remote [--insecure] [--token TOKEN] (wss|ws)://HOST/gdb/out/<32-hex-key>
 
-    Without --insecure, uses GDB's native WebSocket transport (requires
+    wss:// without --insecure: uses GDB's native WebSocket transport (requires
     GDB 14+ built with WebSocket support).
 
-    With --insecure, falls back to the gdb-ws-proxy.py stdin/stdout pipe so
-    that TLS certificate verification can be disabled.  This works with any
-    GDB version that supports "target remote | command".
+    wss:// with --insecure, or any ws:// URL: uses the gdb-ws-proxy.py
+    stdin/stdout pipe.  GDB's native transport only supports wss://, so ws://
+    (plain-text) always goes through the proxy.  Works with any GDB version
+    that supports "target remote | command".
     """
 
     def __init__(self):
@@ -111,10 +117,15 @@ class WssRemote(gdb.Command):
         if not token:
             token = os.environ.get('ELA_API_KEY', '')
 
-        if insecure:
-            # Pipe approach: works regardless of GDB WebSocket support level.
+        use_proxy = insecure or url.startswith('ws://')
+
+        if use_proxy:
+            # Pipe approach: required for --insecure and for ws:// (plain-text)
+            # URLs, since GDB's native WebSocket transport only supports wss://.
             cmd_parts = ['python3', shlex.quote(_PROXY_SCRIPT),
-                         '--url', shlex.quote(url), '--insecure']
+                         '--url', shlex.quote(url)]
+            if insecure:
+                cmd_parts.append('--insecure')
             if token:
                 cmd_parts += ['--token', shlex.quote(token)]
             pipe_cmd = ' '.join(cmd_parts)
@@ -135,9 +146,8 @@ class WssRemote(gdb.Command):
                         gdb.STDERR,
                     )
         else:
-            # Native GDB WebSocket transport (GDB 14+).
-            # If your GDB does not support wss:// natively, use --insecure
-            # (which uses the pipe fallback) or upgrade to GDB 14+.
+            # Native GDB WebSocket transport (GDB 14+), wss:// only.
+            # For ws:// or to disable TLS verification, use --insecure.
             if token:
                 # Inject Authorization header via environment so GDB picks it up.
                 os.environ['GDB_WS_AUTH'] = f'Bearer {token}'
