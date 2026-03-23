@@ -3691,12 +3691,27 @@ static void handle_packet(int fd, char *pkt)
 			 * "qSupported:feat1+;feat2+;...".  Record whether GDB
 			 * supports swbreak+ so we can include "swbreak:;" in T
 			 * stop replies when we hit a software breakpoint.
+			 *
+			 * GDB 14+ sends timeout=N to negotiate a per-operation
+			 * response deadline (seconds).  Over high-latency
+			 * transports like a WebSocket relay the default 2 s
+			 * timeout is too short and causes spurious "Ignoring
+			 * packet error" messages.  Echo the value back so GDB
+			 * honours the longer deadline.
 			 */
 			const char *client_feats = pkt + 10;
+			const char *t_pos;
+			int         client_timeout = 0;
+			int         resp_len;
+
 			if (*client_feats == ':')
 				client_feats++;
 			g_swbreak_feature = (strstr(client_feats, "swbreak+") != NULL);
 			g_multiprocess    = (strstr(client_feats, "multiprocess+") != NULL);
+
+			t_pos = strstr(client_feats, "timeout=");
+			if (t_pos)
+				client_timeout = atoi(t_pos + 8);
 
 			snprintf(resp, sizeof(resp),
 				 "PacketSize=%x"
@@ -3720,6 +3735,14 @@ static void handle_packet(int fd, char *pkt)
 #endif
 				 ,
 				 ELA_GDB_RSP_MAX_PACKET);
+
+			if (client_timeout > 0) {
+				resp_len = (int)strlen(resp);
+				snprintf(resp + resp_len,
+					 sizeof(resp) - (size_t)resp_len,
+					 ";timeout=%d", client_timeout);
+			}
+
 			rsp_send_str(fd, resp);
 		} else if (strcmp(pkt, "qAttached") == 0) {
 			rsp_send_str(fd, "1");

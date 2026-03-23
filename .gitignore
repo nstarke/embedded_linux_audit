@@ -21,3 +21,4 @@ ela-aliases.json
 *.gcno
 *.gcda
 *.gcov
+.gdb_history
