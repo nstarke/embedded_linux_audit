@@ -46,6 +46,10 @@ static void interactive_usage(const char *prog)
 	       "  <Tab>                         Complete commands/groups/subcommands\n"
 #else
 	       "  <Up>/<Down>                   Recall previous commands from history\n"
+	       "  <Left>/<Right>                Move cursor within the current command\n"
+	       "  <Home>/<End>                  Jump to start/end of the current command\n"
+	       "  <Delete>                      Delete character under cursor\n"
+	       "  <Tab>                         Complete commands/groups/subcommands\n"
 #endif
 	       "  set                           Show supported interactive environment variables\n"
 	       "  set ELA_API_URL <url>         Set default HTTP/HTTPS API endpoint\n"
@@ -309,9 +313,13 @@ static int interactive_set_raw_mode(int tty_fd,
 	return tcsetattr(tty_fd, TCSANOW, &raw);
 }
 
-static void interactive_redraw_prompt_line(const char *prompt, const char *line)
+static void interactive_redraw_prompt_line(const char *prompt, const char *line,
+					   size_t len, size_t cursor)
 {
 	printf("\r\033[2K%s%s", prompt ? prompt : "", line ? line : "");
+	/* Move cursor left from the end of the printed text to the edit point. */
+	if (cursor < len)
+		printf("\033[%zuD", len - cursor);
 	fflush(stdout);
 }
 
@@ -320,7 +328,8 @@ static void interactive_redraw_prompt_line(const char *prompt, const char *line)
  * pipe (WebSocket) modes by writing completions/matches to stdout.
  */
 static void interactive_tab_complete_fallback(char **line_ptr, size_t *len_ptr,
-					      size_t *cap_ptr, const char *prompt)
+					      size_t *cap_ptr, size_t *cursor_ptr,
+					      const char *prompt)
 {
 	char *line = *line_ptr;
 	size_t len = *len_ptr;
@@ -390,8 +399,9 @@ static void interactive_tab_complete_fallback(char **line_ptr, size_t *len_ptr,
 		memcpy(line + word_start, full, full_len);
 		line[word_start + full_len]     = ' ';
 		line[word_start + full_len + 1] = '\0';
-		*len_ptr = new_len;
-		interactive_redraw_prompt_line(prompt, line);
+		*len_ptr    = new_len;
+		*cursor_ptr = new_len;
+		interactive_redraw_prompt_line(prompt, line, new_len, new_len);
 		return;
 	}
 
@@ -401,7 +411,8 @@ static void interactive_tab_complete_fallback(char **line_ptr, size_t *len_ptr,
 		printf("%s  ", matches[i]);
 	putchar('\n');
 	fflush(stdout);
-	interactive_redraw_prompt_line(prompt, line ? line : "");
+	interactive_redraw_prompt_line(prompt, line ? line : "",
+				       *len_ptr, *cursor_ptr);
 }
 
 static char *interactive_read_line_fallback(const char *prompt,
@@ -414,6 +425,7 @@ static char *interactive_read_line_fallback(const char *prompt,
 	char *draft = NULL;
 	size_t len = 0;
 	size_t cap = 0;
+	size_t cursor = 0;   /* edit point within line; 0 = before first char */
 	ssize_t history_index;
 	bool tty_input;
 	int read_fd;
@@ -432,7 +444,7 @@ static char *interactive_read_line_fallback(const char *prompt,
 
 	history_index = (ssize_t)(history ? history->count : 0);
 	if (tty_input) {
-		interactive_redraw_prompt_line(prompt, "");
+		interactive_redraw_prompt_line(prompt, "", 0, 0);
 	} else if (prompt && *prompt) {
 		printf("%s", prompt);
 		fflush(stdout);
@@ -468,58 +480,133 @@ static char *interactive_read_line_fallback(const char *prompt,
 			continue;
 		}
 
+		/* Backspace / DEL: delete the character before the cursor. */
 		if (ch == 0x7f || ch == 0x08) {
-			if (len > 0) {
-				line[--len] = '\0';
-				interactive_redraw_prompt_line(prompt, line);
+			if (cursor > 0 && line) {
+				memmove(line + cursor - 1, line + cursor,
+					len - cursor + 1);
+				cursor--;
+				len--;
+				interactive_redraw_prompt_line(prompt, line,
+							       len, cursor);
 			}
 			continue;
 		}
 
 		if (ch == 0x15) { /* Ctrl+U: kill from beginning of line */
-			len = 0;
+			len    = 0;
+			cursor = 0;
 			if (line)
 				line[0] = '\0';
-			interactive_redraw_prompt_line(prompt, "");
+			interactive_redraw_prompt_line(prompt, "", 0, 0);
 			continue;
 		}
 
 		if (ch == '\t') {
-			interactive_tab_complete_fallback(&line, &len, &cap, prompt);
+			interactive_tab_complete_fallback(&line, &len, &cap,
+							  &cursor, prompt);
 			continue;
 		}
 
 		if (ch == '\033') {
 			unsigned char seq[2];
 
-			if (read(read_fd, &seq[0], 1) != 1 || read(read_fd, &seq[1], 1) != 1)
+			if (read(read_fd, &seq[0], 1) != 1 ||
+			    read(read_fd, &seq[1], 1) != 1)
 				continue;
 
-			if (seq[0] == '[' && history) {
+			if (seq[0] != '[') {
+				continue;
+			}
+
+			if (seq[1] == 'C') { /* Right arrow */
+				if (cursor < len) {
+					cursor++;
+					interactive_redraw_prompt_line(
+						prompt, line, len, cursor);
+				}
+			} else if (seq[1] == 'D') { /* Left arrow */
+				if (cursor > 0) {
+					cursor--;
+					interactive_redraw_prompt_line(
+						prompt, line, len, cursor);
+				}
+			} else if (seq[1] == 'H') { /* Home (xterm) */
+				if (cursor != 0) {
+					cursor = 0;
+					interactive_redraw_prompt_line(
+						prompt, line, len, cursor);
+				}
+			} else if (seq[1] == 'F') { /* End (xterm) */
+				if (cursor != len) {
+					cursor = len;
+					interactive_redraw_prompt_line(
+						prompt, line, len, cursor);
+				}
+			} else if (seq[1] >= '1' && seq[1] <= '8') {
+				/*
+				 * VT / rxvt extended sequences: \033[{n}~
+				 * Read and verify the trailing '~'.
+				 */
+				unsigned char tilde;
+
+				if (read(read_fd, &tilde, 1) != 1 ||
+				    tilde != '~')
+					continue;
+				if (seq[1] == '1' || seq[1] == '7') {
+					/* Home */
+					cursor = 0;
+					interactive_redraw_prompt_line(
+						prompt, line, len, cursor);
+				} else if (seq[1] == '3') {
+					/* Delete: remove char under cursor */
+					if (cursor < len && line) {
+						memmove(line + cursor,
+							line + cursor + 1,
+							len - cursor);
+						len--;
+						line[len] = '\0';
+						interactive_redraw_prompt_line(
+							prompt, line,
+							len, cursor);
+					}
+				} else if (seq[1] == '4' || seq[1] == '8') {
+					/* End */
+					cursor = len;
+					interactive_redraw_prompt_line(
+						prompt, line, len, cursor);
+				}
+			} else if (history && (seq[1] == 'A' || seq[1] == 'B')) {
+				/* Up/Down: history navigation */
 				const char *replacement = NULL;
 				size_t replacement_len;
 
-				if (seq[1] == 'A') {
-					if (history->count == 0 || history_index <= 0)
+				if (seq[1] == 'A') { /* Up */
+					if (history->count == 0 ||
+					    history_index <= 0)
 						continue;
-					if (history_index == (ssize_t)history->count) {
+					if (history_index ==
+					    (ssize_t)history->count) {
 						free(draft);
 						draft = strdup(line ? line : "");
 						if (!draft)
 							goto oom;
 					}
 					history_index--;
-					replacement = history->entries[history_index];
-				} else if (seq[1] == 'B') {
-					if (history->count == 0 || history_index >= (ssize_t)history->count)
+					replacement =
+						history->entries[history_index];
+				} else { /* Down */
+					if (history->count == 0 ||
+					    history_index >=
+					    (ssize_t)history->count)
 						continue;
 					history_index++;
-					if (history_index == (ssize_t)history->count)
+					if (history_index ==
+					    (ssize_t)history->count)
 						replacement = draft ? draft : "";
 					else
-						replacement = history->entries[history_index];
-				} else {
-					continue;
+						replacement =
+							history->entries[history_index];
 				}
 
 				replacement_len = strlen(replacement);
@@ -530,16 +617,18 @@ static char *interactive_read_line_fallback(const char *prompt,
 					if (!tmp)
 						goto oom;
 					line = tmp;
-					cap = new_cap;
+					cap  = new_cap;
 				}
-
 				memcpy(line, replacement, replacement_len + 1);
-				len = replacement_len;
-				interactive_redraw_prompt_line(prompt, line);
+				len    = replacement_len;
+				cursor = len;
+				interactive_redraw_prompt_line(prompt, line,
+							       len, cursor);
 			}
 			continue;
 		}
 
+		/* Printable character: insert at the cursor position. */
 		if (isprint(ch)) {
 			if (len + 2 > cap) {
 				size_t new_cap = cap ? cap * 2 : 64;
@@ -552,12 +641,23 @@ static char *interactive_read_line_fallback(const char *prompt,
 				if (!tmp)
 					goto oom;
 				line = tmp;
-				cap = new_cap;
+				cap  = new_cap;
 			}
 
-			line[len++] = (char)ch;
+			/*
+			 * Shift everything from the cursor to the current end
+			 * (including the NUL) one position right, then write
+			 * the new character.  When cursor == len this reduces
+			 * to a plain append.
+			 */
+			if (cursor < len)
+				memmove(line + cursor + 1, line + cursor,
+					len - cursor + 1);
+			line[cursor] = (char)ch;
+			cursor++;
+			len++;
 			line[len] = '\0';
-			interactive_redraw_prompt_line(prompt, line);
+			interactive_redraw_prompt_line(prompt, line, len, cursor);
 		}
 	}
 
