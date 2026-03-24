@@ -2566,8 +2566,8 @@ static uint64_t elf_dynamic_addr(const char *path, uint64_t load_addr)
 			goto out;
 		if (lseek(fd, (off_t)ehdr.e_phoff, SEEK_SET) < 0)
 			goto out;
-		phnum = ehdr.e_phnum < ELA_GDB_MAX_PHNUM
-			? (int)ehdr.e_phnum : ELA_GDB_MAX_PHNUM;
+		phnum = ehdr.e_phnum < 1024
+			? (int)ehdr.e_phnum : 1024;
 		/* coverity[tainted_data] */
 		for (i = 0; i < phnum; i++) {
 			Elf64_Phdr phdr;
@@ -2592,8 +2592,8 @@ static uint64_t elf_dynamic_addr(const char *path, uint64_t load_addr)
 			goto out;
 		if (lseek(fd, (off_t)ehdr.e_phoff, SEEK_SET) < 0)
 			goto out;
-		phnum = ehdr.e_phnum < ELA_GDB_MAX_PHNUM
-			? (int)ehdr.e_phnum : ELA_GDB_MAX_PHNUM;
+		phnum = ehdr.e_phnum < 1024
+			? (int)ehdr.e_phnum : 1024;
 		/* coverity[tainted_data] */
 		for (i = 0; i < phnum; i++) {
 			Elf32_Phdr phdr;
