@@ -44,8 +44,9 @@ void ela_conf_export_to_env(const struct ela_conf *conf)
 	if (conf->output_http[0]) {
 		if (!strncmp(conf->output_http, "https://", 8))
 			setenv("ELA_OUTPUT_HTTPS", conf->output_http, 0);
-		else
+		else if (!strncmp(conf->output_http, "http://", 7))
 			setenv("ELA_OUTPUT_HTTP", conf->output_http, 0);
+		/* else: neither http:// nor https:// — skip (taint guard) */
 	}
 
 	if (conf->output_format[0] && ela_output_format_is_valid(conf->output_format))

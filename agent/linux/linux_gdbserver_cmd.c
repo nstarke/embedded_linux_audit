@@ -2556,13 +2556,20 @@ static uint64_t elf_dynamic_addr(const char *path, uint64_t load_addr)
 
 	if (ident[EI_CLASS] == ELFCLASS64) {
 		Elf64_Ehdr ehdr;
-		int i;
+		int i, phnum;
 
 		if (read(fd, &ehdr, sizeof(ehdr)) != sizeof(ehdr))
 			goto out;
+		/* e_phoff is uint64_t; guard against overflow when cast to
+		 * signed off_t — values above INT64_MAX would wrap negative */
+		if (ehdr.e_phoff > (uint64_t)INT64_MAX)
+			goto out;
 		if (lseek(fd, (off_t)ehdr.e_phoff, SEEK_SET) < 0)
 			goto out;
-		for (i = 0; i < (int)ehdr.e_phnum; i++) {
+		phnum = ehdr.e_phnum < ELA_GDB_MAX_PHNUM
+			? (int)ehdr.e_phnum : ELA_GDB_MAX_PHNUM;
+		/* coverity[tainted_data] */
+		for (i = 0; i < phnum; i++) {
 			Elf64_Phdr phdr;
 			if (read(fd, &phdr, sizeof(phdr)) != sizeof(phdr))
 				break;
@@ -2575,13 +2582,20 @@ static uint64_t elf_dynamic_addr(const char *path, uint64_t load_addr)
 		}
 	} else if (ident[EI_CLASS] == ELFCLASS32) {
 		Elf32_Ehdr ehdr;
-		int i;
+		int i, phnum;
 
 		if (read(fd, &ehdr, sizeof(ehdr)) != sizeof(ehdr))
 			goto out;
+		/* e_phoff is uint32_t; on 32-bit targets off_t may be int32_t
+		 * — values above INT32_MAX would wrap negative on such targets */
+		if (ehdr.e_phoff > (uint32_t)INT32_MAX)
+			goto out;
 		if (lseek(fd, (off_t)ehdr.e_phoff, SEEK_SET) < 0)
 			goto out;
-		for (i = 0; i < (int)ehdr.e_phnum; i++) {
+		phnum = ehdr.e_phnum < ELA_GDB_MAX_PHNUM
+			? (int)ehdr.e_phnum : ELA_GDB_MAX_PHNUM;
+		/* coverity[tainted_data] */
+		for (i = 0; i < phnum; i++) {
 			Elf32_Phdr phdr;
 			if (read(fd, &phdr, sizeof(phdr)) != sizeof(phdr))
 				break;

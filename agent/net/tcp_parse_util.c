@@ -107,6 +107,11 @@ int ela_dns_extract_first_a_record(const uint8_t *resp, size_t resp_len, char *i
 
 	pos = 12;
 	for (i = 0; i < qdcount && pos < (int)resp_len; i++) {
+		/* pos is bounded by resp_len; every branch advances pos toward
+		 * resp_len or breaks — the label-length guard prevents
+		 * over-advance.  Coverity loses track of this invariant once
+		 * pos is modified by label-length data from the packet. */
+		/* coverity[tainted_data] */
 		while (pos < (int)resp_len) {
 			if (resp[pos] == 0) { pos++; break; }
 			if ((resp[pos] & 0xC0) == 0xC0) { pos += 2; break; }
@@ -124,6 +129,7 @@ int ela_dns_extract_first_a_record(const uint8_t *resp, size_t resp_len, char *i
 		if ((resp[pos] & 0xC0) == 0xC0) {
 			pos += 2;
 		} else {
+			/* coverity[tainted_data] */
 			while (pos < (int)resp_len) {
 				if (resp[pos] == 0) { pos++; break; }
 				if ((resp[pos] & 0xC0) == 0xC0) { pos += 2; break; }

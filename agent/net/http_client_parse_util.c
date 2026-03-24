@@ -135,6 +135,11 @@ int ela_http_parse_dns_a_response(const uint8_t *resp, int resp_len,
 	/* Skip question section */
 	pos = 12;
 	for (i = 0; i < qdcount && pos < resp_len; i++) {
+		/* pos is bounded by resp_len; each branch advances pos toward
+		 * resp_len or breaks — the label-length guard above prevents
+		 * over-advance.  Coverity loses track of this once pos is
+		 * touched by label-length data from the packet. */
+		/* coverity[tainted_data] */
 		while (pos < resp_len) {
 			if (resp[pos] == 0)             { pos++; break; }
 			if ((resp[pos] & 0xC0) == 0xC0) { pos += 2; break; }
@@ -153,6 +158,7 @@ int ela_http_parse_dns_a_response(const uint8_t *resp, int resp_len,
 		if ((resp[pos] & 0xC0) == 0xC0) {
 			pos += 2;
 		} else {
+			/* coverity[tainted_data] */
 			while (pos < resp_len) {
 				if (resp[pos] == 0)             { pos++; break; }
 				if ((resp[pos] & 0xC0) == 0xC0) { pos += 2; break; }
