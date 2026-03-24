@@ -59,13 +59,24 @@ _PROXY_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)),
 # ---------------------------------------------------------------------------
 # pwndbg installs internal hardware breakpoints on _dl_debug_state each time
 # a shared library is loaded.  With a WebSocket-relayed target these cannot
-# be satisfied (the stub handles only a single ptrace thread and advertises
-# zero hardware breakpoint/watchpoint slots).  GDB prints a "Cannot insert
-# hardware breakpoint -N" warning on every continue even though execution
-# is not blocked.  Silence this by replacing gdb.Breakpoint with a thin
-# wrapper that downgrades BP_HARDWARE_BREAKPOINT to BP_BREAKPOINT before
-# creation so the same library-tracking mechanism works via software
-# breakpoints instead.
+# be satisfied — hardware debug registers only apply to the single ptrace-
+# attached thread, and our stub advertises zero hardware breakpoint slots.
+# GDB aborts the 'c' command ("Command aborted") when it cannot insert them.
+#
+# Two complementary interception layers:
+#
+#   1. Replace gdb.Breakpoint with a subclass that downgrades
+#      BP_HARDWARE_BREAKPOINT to BP_BREAKPOINT at construction time.
+#      Works for pwndbg code that uses the gdb.Breakpoint name via the
+#      module attribute at call time (i.e. "gdb.Breakpoint(...)").
+#
+#   2. Register a breakpoint_created event handler that catches any
+#      hardware breakpoint that slips through layer 1 — including those
+#      created by pwndbg modules that did "from gdb import Breakpoint"
+#      before this script was sourced, and C-level GDB internal breakpoints
+#      that never go through the Python class at all.  The handler
+#      immediately deletes the hardware breakpoint and recreates it as a
+#      software breakpoint at the same location.
 # ---------------------------------------------------------------------------
 _orig_Breakpoint = gdb.Breakpoint
 
@@ -83,6 +94,37 @@ try:
     gdb.Breakpoint = _SoftwareOnlyBreakpoint
 except (AttributeError, TypeError):
     pass  # Older GDB that doesn't allow replacing the Breakpoint class
+
+
+# Layer 2: breakpoint_created event handler — belt-and-suspenders for any
+# hardware breakpoints that bypassed the class replacement above.
+_bp_fix_active = False
+
+
+def _on_bp_created(event):
+    """Immediately convert hardware breakpoints to software on creation."""
+    global _bp_fix_active
+    if _bp_fix_active:
+        return  # Prevent recursion when we create the software replacement
+    bp = event.breakpoint
+    if bp.type != gdb.BP_HARDWARE_BREAKPOINT:
+        return
+    loc = bp.location
+    if not loc:
+        return  # Cannot recreate a breakpoint with no location spec
+    is_internal = bp.number < 0
+    _bp_fix_active = True
+    try:
+        bp.delete()
+        _orig_Breakpoint(loc, gdb.BP_BREAKPOINT, internal=is_internal)
+    except Exception:
+        pass
+    finally:
+        _bp_fix_active = False
+
+
+if hasattr(gdb, 'events') and hasattr(gdb.events, 'breakpoint_created'):
+    gdb.events.breakpoint_created.connect(_on_bp_created)
 
 
 def _parse_args(arg: str):
