@@ -3724,22 +3724,26 @@ static void handle_packet(int fd, char *pkt)
 				rsp_send_str(fd, "E01");
 			else
 				rsp_send_str(fd, "OK");
-#if defined(__x86_64__)
 		} else if (ztype >= 1 && ztype <= 4) {
 			/*
-			 * Hardware watchpoints via DR0-DR3/DR7.  We only
-			 * ptrace-attach to a single thread, so debug registers
-			 * are unreliable for multi-threaded targets.  Return ""
-			 * (not supported) on any failure so GDB silently falls
-			 * back to software breakpoints instead of aborting.
+			 * Hardware breakpoints/watchpoints (Z1-Z4).  We
+			 * advertise hwbreak+ so GDB sends these here rather
+			 * than failing locally.  Best-effort: on x86-64 we
+			 * attempt to program DR0-DR3; on all other arches
+			 * (or when debug registers are exhausted) we silently
+			 * return OK without actually setting hardware.
+			 *
+			 * Returning OK here is intentional — it prevents GDB
+			 * and pwndbg from aborting 'c' with "Cannot insert
+			 * hardware breakpoint" when internal solib-tracking
+			 * breakpoints cannot be set on this target.
 			 */
-			if (wp_insert_x86(addr, ztype, (int)kind) != 0)
-				rsp_send_str(fd, "");
-			else
-				rsp_send_str(fd, "OK");
+#if defined(__x86_64__)
+			wp_insert_x86(addr, ztype, (int)kind); /* best effort */
 #endif
+			rsp_send_str(fd, "OK");
 		} else {
-			rsp_send_str(fd, ""); /* unsupported on this arch */
+			rsp_send_str(fd, ""); /* unknown Z type */
 		}
 		break;
 	}
@@ -3760,15 +3764,14 @@ static void handle_packet(int fd, char *pkt)
 				rsp_send_str(fd, "E01");
 			else
 				rsp_send_str(fd, "OK");
-#if defined(__x86_64__)
 		} else if (ztype >= 1 && ztype <= 4) {
-			if (wp_remove_x86(addr) != 0)
-				rsp_send_str(fd, "");
-			else
-				rsp_send_str(fd, "OK");
+			/* Best-effort removal; always OK (see Z handler above) */
+#if defined(__x86_64__)
+			wp_remove_x86(addr);
 #endif
+			rsp_send_str(fd, "OK");
 		} else {
-			rsp_send_str(fd, "");
+			rsp_send_str(fd, ""); /* unknown z type */
 		}
 		break;
 	}
@@ -3808,6 +3811,7 @@ static void handle_packet(int fd, char *pkt)
 				 ";QCatchSyscalls+"
 				 ";multiprocess+"
 				 ";swbreak+"
+				 ";hwbreak+"
 				 ,
 				 ELA_GDB_RSP_MAX_PACKET);
 

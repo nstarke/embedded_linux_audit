@@ -56,77 +56,6 @@ _HEX32_RE = re.compile(r'^[0-9a-f]{32}$')
 _PROXY_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                               'gdb-ws-proxy.py')
 
-# ---------------------------------------------------------------------------
-# pwndbg installs internal hardware breakpoints on _dl_debug_state each time
-# a shared library is loaded.  With a WebSocket-relayed target these cannot
-# be satisfied — hardware debug registers only apply to the single ptrace-
-# attached thread, and our stub advertises zero hardware breakpoint slots.
-# GDB aborts the 'c' command ("Command aborted") when it cannot insert them.
-#
-# Two complementary interception layers:
-#
-#   1. Replace gdb.Breakpoint with a subclass that downgrades
-#      BP_HARDWARE_BREAKPOINT to BP_BREAKPOINT at construction time.
-#      Works for pwndbg code that uses the gdb.Breakpoint name via the
-#      module attribute at call time (i.e. "gdb.Breakpoint(...)").
-#
-#   2. Register a breakpoint_created event handler that catches any
-#      hardware breakpoint that slips through layer 1 — including those
-#      created by pwndbg modules that did "from gdb import Breakpoint"
-#      before this script was sourced, and C-level GDB internal breakpoints
-#      that never go through the Python class at all.  The handler
-#      immediately deletes the hardware breakpoint and recreates it as a
-#      software breakpoint at the same location.
-# ---------------------------------------------------------------------------
-_orig_Breakpoint = gdb.Breakpoint
-
-
-class _SoftwareOnlyBreakpoint(_orig_Breakpoint):
-    """Silently converts hardware breakpoints to software breakpoints."""
-
-    def __init__(self, spec, type=gdb.BP_BREAKPOINT, **kwargs):  # noqa: A002
-        if type == gdb.BP_HARDWARE_BREAKPOINT:
-            type = gdb.BP_BREAKPOINT
-        super().__init__(spec, type, **kwargs)
-
-
-try:
-    gdb.Breakpoint = _SoftwareOnlyBreakpoint
-except (AttributeError, TypeError):
-    pass  # Older GDB that doesn't allow replacing the Breakpoint class
-
-
-# Layer 2: breakpoint_created event handler — belt-and-suspenders for any
-# hardware breakpoints that bypassed the class replacement above.
-_bp_fix_active = False
-
-
-def _on_bp_created(event):
-    """Immediately convert hardware breakpoints to software on creation."""
-    global _bp_fix_active
-    if _bp_fix_active:
-        return  # Prevent recursion when we create the software replacement
-    bp = event.breakpoint
-    if bp.type != gdb.BP_HARDWARE_BREAKPOINT:
-        return
-    loc = bp.location
-    if not loc:
-        return  # Cannot recreate a breakpoint with no location spec
-    is_internal = bp.number < 0
-    _bp_fix_active = True
-    try:
-        bp.delete()
-        _orig_Breakpoint(loc, gdb.BP_BREAKPOINT, internal=is_internal)
-    except Exception:
-        pass
-    finally:
-        _bp_fix_active = False
-
-
-if hasattr(gdb, 'events') and hasattr(gdb.events, 'breakpoint_created'):
-    gdb.events.breakpoint_created.connect(_on_bp_created)
-
-
 def _parse_args(arg: str):
     """Return (insecure: bool, url: str, token: str|None)."""
     parts = shlex.split(arg)
@@ -205,14 +134,6 @@ class WssRemote(gdb.Command):
             # WebSocket relay adds latency; extend per-packet timeout so GDB
             # doesn't give up waiting for RSP responses over the bridge.
             gdb.execute('set remotetimeout 30')
-            # Our stub only attaches to a single thread, so hardware debug
-            # registers are unreliable for multi-threaded targets.  Tell GDB
-            # the remote has no hardware breakpoint or watchpoint slots so
-            # pwndbg's internal hbreak attempts (e.g. _dl_debug_state) never
-            # reach the stub and generate "Cannot insert hardware breakpoint"
-            # warnings.
-            gdb.execute('set remote hardware-breakpoint-limit 0')
-            gdb.execute('set remote hardware-watchpoint-limit 0')
             gdb.execute(f'target remote | {pipe_cmd}')
         except gdb.error as e:
             msg = str(e)
