@@ -28,7 +28,7 @@ jobs:
       - name: Run cppcheck
         run: |
           cppcheck \
-            --enable=error,warning,security,performance \
+            --enable=warning,security,performance \
             --suppress=missingIncludeSystem \
             --suppress=missingInclude \
             --error-exitcode=1 \
