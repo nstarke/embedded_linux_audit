@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   coverity:
-    name: Coverity Scan
+    name: Coverity Scan (C/C++)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -36,3 +36,20 @@ jobs:
           build_platform: linux64
           command: make
           cov_options: --exclude-file "third_party/.*"
+
+  coverity-js:
+    name: Coverity Scan (JavaScript)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Coverity Scan
+        uses: vapier/coverity-scan-action@v1
+        with:
+          project: nstarke/embedded_linux_audit
+          token: ${{ secrets.COVERITY_SCAN_TOKEN }}
+          email: ${{ secrets.COVERITY_SCAN_EMAIL }}
+          build_language: javascript
+          build_platform: linux64
+          command: --no-command --fs-capture-search api/
