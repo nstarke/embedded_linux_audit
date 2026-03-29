@@ -19,7 +19,7 @@ jobs:
       - name: Download publishable release assets
         id: download_assets
         continue-on-error: true
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           github-token: ${{ github.token }}
           run-id: ${{ github.event.workflow_run.id }}
@@ -29,7 +29,7 @@ jobs:
       - name: Download publishable release metadata
         id: download_metadata
         continue-on-error: true
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           github-token: ${{ github.token }}
           run-id: ${{ github.event.workflow_run.id }}

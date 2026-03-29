@@ -349,7 +349,7 @@ jobs:
 
       - name: Download x86_64 release artifact from triggering workflow
         if: ${{ github.event_name == 'workflow_run' }}
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           github-token: ${{ github.token }}
           run-id: ${{ github.event.workflow_run.id }}
@@ -358,7 +358,7 @@ jobs:
 
       - name: Download locally built release binaries
         if: ${{ github.event_name != 'workflow_run' }}
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: ela-x86_64
           path: downloaded-release-binaries
@@ -396,7 +396,7 @@ jobs:
 
       - name: Download x86_64 release artifact from triggering workflow
         if: ${{ github.event_name == 'workflow_run' }}
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           github-token: ${{ github.token }}
           run-id: ${{ github.event.workflow_run.id }}
@@ -405,7 +405,7 @@ jobs:
 
       - name: Download locally built release binaries
         if: ${{ github.event_name != 'workflow_run' }}
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: ela-x86_64
           path: downloaded-release-binaries
@@ -495,7 +495,7 @@ jobs:
 
       - name: Download cross-build artifacts from triggering workflow
         if: ${{ github.event_name == 'workflow_run' }}
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           github-token: ${{ github.token }}
           run-id: ${{ github.event.workflow_run.id }}
@@ -504,13 +504,13 @@ jobs:
 
       - name: Download locally built release binaries
         if: ${{ github.event_name != 'workflow_run' }}
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: ela-${{ matrix.isa }}
           path: downloaded-release-binaries
 
       - name: Download locally built unit test binary
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: ela-unit-${{ matrix.isa }}
           path: downloaded-unit-tests
@@ -571,7 +571,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download qemu ISA logs
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: qemu-log-*
           path: qemu-logs
@@ -652,7 +652,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download cross-build artifacts from triggering workflow
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           github-token: ${{ github.token }}
           run-id: ${{ github.event.workflow_run.id }}
@@ -660,7 +660,7 @@ jobs:
           path: release-assets
 
       - name: Download release metadata from triggering workflow
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           github-token: ${{ github.token }}
           run-id: ${{ github.event.workflow_run.id }}
