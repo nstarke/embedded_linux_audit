@@ -60,7 +60,7 @@ jobs:
           make coverage-agent-c
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v6
         with:
           files: generated/coverage/agent-c.lcov.info
           flags: agent-c
@@ -95,7 +95,7 @@ jobs:
           node_modules/.bin/jest --runInBand --coverage tests/unit/api/agent tests/unit/api/lib
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v6
         with:
           files: coverage/lcov.info
           flags: agent
@@ -130,7 +130,7 @@ jobs:
           node_modules/.bin/jest --runInBand --coverage tests/unit/api/gdb
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v6
         with:
           files: coverage/lcov.info
           flags: gdb
@@ -165,7 +165,7 @@ jobs:
           node_modules/.bin/jest --runInBand --coverage tests/unit/api/terminal
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v6
         with:
           files: coverage/lcov.info
           flags: terminal
