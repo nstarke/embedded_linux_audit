@@ -41,6 +41,7 @@ jobs:
             --suppress=shadowArgument \
             --suppress=checkLevelNormal \
             --suppress=checkersReport \
+            --inline-suppr \
             --error-exitcode=1 \
             --force \
             --quiet \
