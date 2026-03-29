@@ -440,10 +440,8 @@ int ela_execute_command_run_interactive_with_ops(const char *command,
 {
 	const struct ela_execute_command_interactive_ops *effective_ops = ops ? ops : &default_interactive_ops;
 	int status = 0;
-	// cppcheck-suppress unusedVariable
-	char buf[4096];
-	// cppcheck-suppress unusedVariable
-	ssize_t n;
+	char buf[4096]; // cppcheck-suppress unusedVariable
+	ssize_t n; // cppcheck-suppress unusedVariable
 
 	if (!command)
 		return 1;

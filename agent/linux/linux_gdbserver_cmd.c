@@ -2173,8 +2173,7 @@ static int bp_insert(uint64_t addr, int bp_size)
 	int i;
 	char hex[4 * 2 + 2]; /* max 4 bytes → 8 hex chars + NUL */
 	const uint8_t *trap_bytes = NULL;
-	// cppcheck-suppress unreadVariable
-	int trap_len = 0;
+	int trap_len = 0; // cppcheck-suppress unreadVariable
 
 #if defined(__x86_64__)
 	(void)bp_size;
@@ -2744,8 +2743,7 @@ static int build_libraries_svr4_xml(pid_t pid, char *out, size_t out_sz)
 			}
 		}
 		copy_len = bufsize - (int)(start - buf);
-		// cppcheck-suppress knownConditionTrueFalse
-		if (copy_len > 0 && (size_t)copy_len + 1 <= out_sz) {
+		if (copy_len > 0 && (size_t)copy_len + 1 <= out_sz) { // cppcheck-suppress knownConditionTrueFalse
 			memcpy(out, start, (size_t)copy_len);
 			out[copy_len] = '\0';
 			xmlFree(buf);
@@ -3287,16 +3285,14 @@ static void handle_packet(int fd, char *pkt)
 		break;
 
 	case 'g': /* Read all registers */
-		// cppcheck-suppress knownConditionTrueFalse
-		if (regs_read(resp, sizeof(resp)) != 0)
+		if (regs_read(resp, sizeof(resp)) != 0) // cppcheck-suppress knownConditionTrueFalse
 			rsp_send_str(fd, "E01");
 		else
 			rsp_send_str(fd, resp);
 		break;
 
 	case 'G': /* Write all registers: Gxx...xx */
-		// cppcheck-suppress knownConditionTrueFalse
-		if (regs_write(pkt + 1, strlen(pkt + 1)) != 0)
+		if (regs_write(pkt + 1, strlen(pkt + 1)) != 0) // cppcheck-suppress knownConditionTrueFalse
 			rsp_send_str(fd, "E01");
 		else
 			rsp_send_str(fd, "OK");
@@ -3304,8 +3300,7 @@ static void handle_packet(int fd, char *pkt)
 
 	case 'p': /* Read single register */
 		regnum = (int)strtol(pkt + 1, NULL, 16);
-		// cppcheck-suppress knownConditionTrueFalse
-		if (reg_read_one(regnum, resp, sizeof(resp)) != 0) {
+		if (reg_read_one(regnum, resp, sizeof(resp)) != 0) { // cppcheck-suppress knownConditionTrueFalse
 			/*
 			 * Return register-not-available ('x' fill) rather than
 			 * E01 for unknown register numbers.  E01 triggers a
@@ -3326,8 +3321,7 @@ static void handle_packet(int fd, char *pkt)
 		if (!eq) { rsp_send_str(fd, "E01"); break; }
 		*eq = '\0';
 		rn = (int)strtol(pkt + 1, NULL, 16);
-		// cppcheck-suppress knownConditionTrueFalse
-		if (reg_write_one(rn, eq + 1) != 0)
+		if (reg_write_one(rn, eq + 1) != 0) // cppcheck-suppress knownConditionTrueFalse
 			rsp_send_str(fd, "E01");
 		else
 			rsp_send_str(fd, "OK");
