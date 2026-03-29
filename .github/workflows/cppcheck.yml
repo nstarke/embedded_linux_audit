@@ -1,0 +1,48 @@
+name: cppcheck
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cppcheck:
+    name: cppcheck
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Install cppcheck
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y cppcheck
+
+      - name: Run cppcheck
+        run: |
+          cppcheck \
+            --enable=all \
+            --suppress=missingIncludeSystem \
+            --suppress=missingInclude \
+            --suppress=variableScope \
+            --suppress=constVariablePointer \
+            --suppress=constParameterPointer \
+            --suppress=constVariable \
+            --suppress=unusedFunction \
+            --suppress=unusedStructMember \
+            --suppress=shadowVariable \
+            --suppress=shadowArgument \
+            --suppress=checkLevelNormal \
+            --suppress=checkersReport \
+            --inline-suppr \
+            --error-exitcode=1 \
+            --force \
+            --quiet \
+            agent/

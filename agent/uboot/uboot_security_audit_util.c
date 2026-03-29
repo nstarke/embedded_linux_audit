@@ -142,7 +142,7 @@ int ela_uboot_extract_public_key_pem(const char *text, size_t len, char **pem_ou
 		return -1;
 
 	memcpy(pem, begin, pem_len);
-	if (pem_len == 0 || pem[pem_len - 1] != '\n')
+	if (pem_len == 0 || pem[pem_len - 1] != '\n') // cppcheck-suppress knownConditionTrueFalse
 		pem[pem_len++] = '\n';
 	pem[pem_len] = '\0';
 	*pem_out = pem;

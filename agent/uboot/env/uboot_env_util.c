@@ -115,7 +115,7 @@ int ela_uboot_parse_fw_config_line(const char *line, struct uboot_cfg_entry *out
 	if (ela_parse_u64(off_s, &off) || ela_parse_u64(size_s, &env_size) ||
 	    ela_parse_u64(erase_s, &erase) || ela_parse_u64(sec_s, &sec))
 		return -1;
-	if (!env_size || env_size < 8)
+	if (env_size < 8)
 		return -1;
 
 	strncpy(out->dev, dev, sizeof(out->dev) - 1);

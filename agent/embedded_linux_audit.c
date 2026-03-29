@@ -109,7 +109,7 @@ void ela_usage(const char *prog)
 int embedded_linux_audit_dispatch(int argc, char **argv)
 {
 	struct ela_dispatch_env env;
-	struct ela_dispatch_opts opts;
+	struct ela_dispatch_opts opts = {0};
 	struct ela_conf ela_conf = {0};
 	char errbuf[256];
 	int ret;
@@ -316,7 +316,7 @@ int embedded_linux_audit_dispatch(int argc, char **argv)
 
 			setsid();
 			{
-				bool reconnect = true;
+				bool reconnect = true; // cppcheck-suppress unreadVariable
 				int failed_attempts = 0;
 
 				for (;;) {

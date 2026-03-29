@@ -4,6 +4,10 @@
 [![Agent Tests](https://github.com/nstarke/embedded_linux_audit/actions/workflows/agent-tests.yml/badge.svg?branch=main)](https://github.com/nstarke/embedded_linux_audit/actions/workflows/agent-tests.yml)
 [![Coverity Scan Build Status](https://scan.coverity.com/projects/32974/badge.svg)](https://scan.coverity.com/projects/32974)
 [![codecov](https://codecov.io/gh/nstarke/embedded_linux_audit/branch/main/graph/badge.svg)](https://codecov.io/gh/nstarke/embedded_linux_audit)
+[![CodeQL](https://github.com/nstarke/embedded_linux_audit/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/nstarke/embedded_linux_audit/actions/workflows/codeql.yml)
+[![cppcheck](https://github.com/nstarke/embedded_linux_audit/actions/workflows/cppcheck.yml/badge.svg?branch=main)](https://github.com/nstarke/embedded_linux_audit/actions/workflows/cppcheck.yml)
+[![npm audit](https://github.com/nstarke/embedded_linux_audit/actions/workflows/npm-audit.yml/badge.svg?branch=main)](https://github.com/nstarke/embedded_linux_audit/actions/workflows/npm-audit.yml)
+[![Dependabot enabled](https://img.shields.io/badge/dependabot-enabled-025e8c?logo=dependabot)](https://github.com/nstarke/embedded_linux_audit/blob/main/.github/dependabot.yml)
 
 ![embedded_linux_audit logo](images/logo.png)
 

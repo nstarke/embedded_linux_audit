@@ -573,7 +573,7 @@ static int simple_wolfssl_https_get_to_file(const struct parsed_http_uri *parsed
 	int sock = -1;
 	FILE *fp = NULL;
 	char *headers = NULL, *request = NULL;
-	size_t request_len = 0, request_cap = 0;
+	size_t request_len = 0;
 	int status;
 	int rc;
 
