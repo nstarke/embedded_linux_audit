@@ -50,6 +50,6 @@ jobs:
           project: nstarke/embedded_linux_audit
           token: ${{ secrets.COVERITY_SCAN_TOKEN }}
           email: ${{ secrets.COVERITY_SCAN_EMAIL }}
-          build_language: javascript
+          build_language: cxx
           build_platform: linux64
           command: --no-command --fs-capture-search api/
