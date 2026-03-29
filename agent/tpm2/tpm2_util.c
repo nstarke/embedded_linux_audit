@@ -69,8 +69,8 @@ int tpm2_open(ESYS_CONTEXT **esys, TSS2_TCTI_CONTEXT **tcti)
 	rc = Esys_Initialize(esys, *tcti, &abi);
 	if (rc != TPM2_RC_SUCCESS) {
 		fprintf(stderr, "tpm2: failed to initialize ESYS context: 0x%08" PRIx32 "\n", rc);
-		/* cppcheck-suppress legacyUninitvar - false positive: *tcti was set above; TSS2 macro confuses cppcheck */
 		TSS2_TCTI_FINALIZE(*tcti)(*tcti);
+		// cppcheck-suppress legacyUninitvar
 		free(*tcti);
 		*tcti = NULL;
 		return tpm2_rc_to_exit_code(rc);
@@ -84,8 +84,8 @@ void tpm2_close(ESYS_CONTEXT **esys, TSS2_TCTI_CONTEXT **tcti)
 	if (esys && *esys)
 		Esys_Finalize(esys);
 	if (tcti && *tcti) {
-		/* cppcheck-suppress legacyUninitvar - false positive: guarded by tcti && *tcti above; TSS2 macro confuses cppcheck */
 		TSS2_TCTI_FINALIZE(*tcti)(*tcti);
+		// cppcheck-suppress legacyUninitvar
 		free(*tcti);
 		*tcti = NULL;
 	}

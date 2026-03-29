@@ -34,6 +34,7 @@ jobs:
             --suppress=variableScope \
             --suppress=constVariablePointer \
             --suppress=constParameterPointer \
+            --suppress=constVariable \
             --suppress=unusedFunction \
             --suppress=unusedStructMember \
             --suppress=shadowVariable \

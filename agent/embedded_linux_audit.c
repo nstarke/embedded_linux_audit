@@ -316,7 +316,7 @@ int embedded_linux_audit_dispatch(int argc, char **argv)
 
 			setsid();
 			{
-				/* cppcheck-suppress unreadVariable */
+				// cppcheck-suppress unreadVariable
 				bool reconnect = true;
 				int failed_attempts = 0;
 
