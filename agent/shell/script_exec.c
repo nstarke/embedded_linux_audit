@@ -75,6 +75,7 @@ int execute_script_commands(const char *prog, const char *script_source)
 				errbuf[0] ? errbuf : "unknown error");
 			unlink(script_path);
 			rmdir(script_dir);
+			/* cppcheck-suppress unreadVariable - defensive sentinel to prevent double-rmdir */
 			script_dir[0] = '\0';
 			return 2;
 		}
@@ -121,6 +122,7 @@ int execute_script_commands(const char *prog, const char *script_source)
 				errbuf[0] ? errbuf : "not found");
 			unlink(script_path);
 			rmdir(script_dir);
+			/* cppcheck-suppress unreadVariable - defensive sentinel to prevent double-rmdir */
 			script_dir[0] = '\0';
 			free(fallback_uri);
 			return 2;

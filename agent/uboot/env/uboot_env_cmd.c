@@ -334,8 +334,10 @@ static void emit_v(FILE *stream, const char *fmt, va_list ap)
 	needed = vsnprintf(stack, sizeof(stack), fmt, aq);
 	va_end(aq);
 
-	if (needed < 0)
+	if (needed < 0) {
+		va_end(ar);
 		return;
+	}
 
 	if ((size_t)needed < sizeof(stack)) {
 		if (mirror_to_remote) {

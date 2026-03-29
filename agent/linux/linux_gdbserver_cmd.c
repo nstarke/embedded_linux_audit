@@ -2172,8 +2172,8 @@ static int bp_insert(uint64_t addr, int bp_size)
 {
 	int i;
 	char hex[4 * 2 + 2]; /* max 4 bytes → 8 hex chars + NUL */
-	const uint8_t *trap_bytes;
-	int trap_len;
+	const uint8_t *trap_bytes = NULL;
+	int trap_len = 0;
 
 #if defined(__x86_64__)
 	(void)bp_size;
@@ -2743,6 +2743,7 @@ static int build_libraries_svr4_xml(pid_t pid, char *out, size_t out_sz)
 			}
 		}
 		copy_len = bufsize - (int)(start - buf);
+		/* cppcheck-suppress knownConditionTrueFalse - defensive guard; true on this path by construction */
 		if (copy_len > 0 && (size_t)copy_len + 1 <= out_sz) {
 			memcpy(out, start, (size_t)copy_len);
 			out[copy_len] = '\0';
@@ -3285,6 +3286,7 @@ static void handle_packet(int fd, char *pkt)
 		break;
 
 	case 'g': /* Read all registers */
+		/* cppcheck-suppress knownConditionTrueFalse - return value is arch-dependent; always -1 on unsupported arches */
 		if (regs_read(resp, sizeof(resp)) != 0)
 			rsp_send_str(fd, "E01");
 		else
@@ -3292,6 +3294,7 @@ static void handle_packet(int fd, char *pkt)
 		break;
 
 	case 'G': /* Write all registers: Gxx...xx */
+		/* cppcheck-suppress knownConditionTrueFalse - return value is arch-dependent; always -1 on unsupported arches */
 		if (regs_write(pkt + 1, strlen(pkt + 1)) != 0)
 			rsp_send_str(fd, "E01");
 		else
@@ -3300,6 +3303,7 @@ static void handle_packet(int fd, char *pkt)
 
 	case 'p': /* Read single register */
 		regnum = (int)strtol(pkt + 1, NULL, 16);
+		/* cppcheck-suppress knownConditionTrueFalse - return value is arch-dependent; always -1 on unsupported arches */
 		if (reg_read_one(regnum, resp, sizeof(resp)) != 0) {
 			/*
 			 * Return register-not-available ('x' fill) rather than
@@ -3321,6 +3325,7 @@ static void handle_packet(int fd, char *pkt)
 		if (!eq) { rsp_send_str(fd, "E01"); break; }
 		*eq = '\0';
 		rn = (int)strtol(pkt + 1, NULL, 16);
+		/* cppcheck-suppress knownConditionTrueFalse - return value is arch-dependent; always -1 on unsupported arches */
 		if (reg_write_one(rn, eq + 1) != 0)
 			rsp_send_str(fd, "E01");
 		else

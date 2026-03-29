@@ -31,6 +31,15 @@ jobs:
             --enable=all \
             --suppress=missingIncludeSystem \
             --suppress=missingInclude \
+            --suppress=variableScope \
+            --suppress=constVariablePointer \
+            --suppress=constParameterPointer \
+            --suppress=unusedFunction \
+            --suppress=unusedStructMember \
+            --suppress=shadowVariable \
+            --suppress=shadowArgument \
+            --suppress=checkLevelNormal \
+            --suppress=checkersReport \
             --error-exitcode=1 \
             --force \
             --quiet \

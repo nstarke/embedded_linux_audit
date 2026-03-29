@@ -385,7 +385,7 @@ bool ela_uboot_init_path_looks_valid(const char *v)
 {
 	const unsigned char *p;
 
-	if (!v || !*v || *v != '/')
+	if (!v || *v != '/')
 		return false;
 	for (p = (const unsigned char *)v; *p; p++) {
 		if (isspace(*p) || iscntrl(*p) || *p == '"' || *p == '\'')
