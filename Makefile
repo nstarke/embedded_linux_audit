@@ -149,6 +149,12 @@ ifeq (,$(findstring powerpc64,$(CMAKE_C_COMPILER_TARGET)))
 # extension instructions that the asm uses, causing an "Illegal instruction"
 # crash at runtime.  Disable it to use the portable C implementation.
 WOLFSSL_EXTRA_CONFIGURE_FLAGS += --disable-ppc32-asm
+# wolfSSL's SP (Single Precision) math assembly for PPC32 is a separate code
+# path from ppc32-asm and is not disabled by --disable-ppc32-asm.  On embedded
+# PowerPC cores it compiles but produces invalid memory accesses at runtime,
+# causing SIGSEGV during TLS operations (wss://).  Force the portable C SP
+# implementation, mirroring the --disable-sp-asm already applied for MIPS64.
+WOLFSSL_EXTRA_CONFIGURE_FLAGS += --disable-sp-asm
 endif
 endif
 endif
