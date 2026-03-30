@@ -65,7 +65,9 @@ typedef WOLFSSL_CTX  ws_ssl_ctx_t;
 #define ws_ssl_new(c)           wolfSSL_new(c)
 #define ws_ssl_free(s)          wolfSSL_free(s)
 #define ws_ssl_set_fd(s, fd)    wolfSSL_set_fd((s), (fd))
-#define ws_ssl_set_sni(s, h)    wolfSSL_check_domain_name((s), (h))
+#define ws_ssl_set_sni(s, h) \
+	(wolfSSL_UseSNI((s), WOLFSSL_SNI_HOST_NAME, (h), (word16)strlen(h)), \
+	 wolfSSL_check_domain_name((s), (h)))
 #define ws_ssl_connect(s)       wolfSSL_connect(s)
 #define ws_ssl_read(s, b, n)    wolfSSL_read((s), (b), (int)(n))
 #define ws_ssl_write(s, b, n)   wolfSSL_write((s), (b), (int)(n))
