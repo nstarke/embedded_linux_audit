@@ -1,71 +1,64 @@
 'use strict';
 
-function loadAuthWithFileContent(readImpl) {
+const crypto = require('crypto');
+
+function hashKey(k) {
+  return crypto.createHash('sha256').update(k, 'utf8').digest('hex');
+}
+
+function loadAuth() {
   jest.resetModules();
-
-  const readFileSync = jest.fn(readImpl);
-  jest.doMock('fs', () => ({ readFileSync }));
-
-  const auth = require('../../../api/auth');
-  return { auth, readFileSync };
+  return require('../../../api/auth');
 }
 
 describe('api auth', () => {
   afterEach(() => {
     jest.resetModules();
     jest.restoreAllMocks();
-    jest.unmock('fs');
   });
 
-  test('init loads trimmed keys and accepts matching bearer tokens in enforced mode', () => {
-    const { auth, readFileSync } = loadAuthWithFileContent(() => '  alpha  \n\nbeta\n');
+  test('init loads key hashes and checkBearer returns the matched username', async () => {
+    const auth = loadAuth();
+    const loadKeys = jest.fn().mockResolvedValue([
+      { keyHash: hashKey('alpha'), username: 'alice' },
+      { keyHash: hashKey('beta'), username: 'bob' },
+    ]);
 
-    expect(auth.init('/tmp/ela.key', true)).toBe(true);
-    expect(readFileSync).toHaveBeenCalledWith('/tmp/ela.key', 'utf8');
-    expect(auth.checkBearer('Bearer alpha')).toBe(true);
-    expect(auth.checkBearer('Bearer beta')).toBe(true);
+    expect(await auth.init(true, loadKeys)).toBe(true);
+    expect(loadKeys).toHaveBeenCalledTimes(1);
+    expect(auth.checkBearer('Bearer alpha')).toBe('alice');
+    expect(auth.checkBearer('Bearer beta')).toBe('bob');
     expect(auth.checkBearer('Bearer gamma')).toBe(false);
   });
 
-  test('init returns false when enforcement is enabled and key file is missing', () => {
-    const missing = Object.assign(new Error('missing'), { code: 'ENOENT' });
-    const { auth } = loadAuthWithFileContent(() => {
-      throw missing;
-    });
+  test('init returns false when enforcement is enabled and no keys exist', async () => {
+    const auth = loadAuth();
 
-    expect(auth.init('/tmp/missing.key', true)).toBe(false);
+    expect(await auth.init(true, async () => [])).toBe(false);
   });
 
-  test('init returns false when enforcement is enabled and key file is empty', () => {
-    const { auth } = loadAuthWithFileContent(() => '\n   \n');
+  test('auth is disabled when enforcement is off — checkBearer returns true for any header', async () => {
+    const auth = loadAuth();
 
-    expect(auth.init('/tmp/empty.key', true)).toBe(false);
-  });
-
-  test('auth is disabled when enforcement is off even if key file is missing', () => {
-    const missing = Object.assign(new Error('missing'), { code: 'ENOENT' });
-    const { auth } = loadAuthWithFileContent(() => {
-      throw missing;
-    });
-
-    expect(auth.init('/tmp/missing.key', false)).toBe(true);
+    expect(await auth.init(false, async () => [])).toBe(true);
     expect(auth.checkBearer(undefined)).toBe(true);
     expect(auth.checkBearer('not even bearer')).toBe(true);
+    expect(auth.checkBearer('Bearer anything')).toBe(true);
   });
 
-  test('checkBearer rejects missing and malformed authorization headers in enforced mode', () => {
-    const { auth } = loadAuthWithFileContent(() => 'secret\n');
+  test('checkBearer rejects missing and malformed authorization headers in enforced mode', async () => {
+    const auth = loadAuth();
+    await auth.init(true, async () => [{ keyHash: hashKey('secret'), username: 'alice' }]);
 
-    expect(auth.init('/tmp/ela.key', true)).toBe(true);
     expect(auth.checkBearer(undefined)).toBe(false);
     expect(auth.checkBearer('Basic secret')).toBe(false);
     expect(auth.checkBearer('Bearer wrong')).toBe(false);
-    expect(auth.checkBearer('Bearer secret')).toBe(true);
+    expect(auth.checkBearer('Bearer secret')).toBe('alice');
   });
 
-  test('middleware returns 401 json when bearer token is invalid', () => {
-    const { auth } = loadAuthWithFileContent(() => 'secret\n');
-    auth.init('/tmp/ela.key', true);
+  test('middleware returns 401 json when bearer token is invalid', async () => {
+    const auth = loadAuth();
+    await auth.init(true, async () => [{ keyHash: hashKey('secret'), username: 'alice' }]);
 
     const req = { headers: {} };
     const res = {
@@ -81,9 +74,9 @@ describe('api auth', () => {
     expect(res.json).toHaveBeenCalledWith({ error: 'Unauthorized' });
   });
 
-  test('middleware calls next when bearer token is valid', () => {
-    const { auth } = loadAuthWithFileContent(() => 'secret\n');
-    auth.init('/tmp/ela.key', true);
+  test('middleware calls next when bearer token is valid', async () => {
+    const auth = loadAuth();
+    await auth.init(true, async () => [{ keyHash: hashKey('secret'), username: 'alice' }]);
 
     const req = { headers: { authorization: 'Bearer secret' } };
     const res = {

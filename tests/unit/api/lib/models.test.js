@@ -36,6 +36,7 @@ describe('db models', () => {
     const result = defineModels(sequelize);
 
     expect(Object.keys(result).sort()).toEqual([
+      'ApiKey',
       'ArchReport',
       'BlockedRemote',
       'CommandUpload',
@@ -50,6 +51,7 @@ describe('db models', () => {
       'UbootEnvCandidate',
       'UbootEnvVariable',
       'Upload',
+      'User',
     ]);
 
     expect(models.Device.options).toEqual(expect.objectContaining({

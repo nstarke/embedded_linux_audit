@@ -169,6 +169,7 @@ function loadTerminalServer(options = {}) {
     runMigrations,
     closeDatabase,
   }));
+  const loadApiKeyHashes = jest.fn().mockResolvedValue([]);
   jest.doMock('../../../../api/lib/db/deviceRegistry', () => ({
     recordTerminalConnection,
     touchTerminalHeartbeat,
@@ -178,6 +179,7 @@ function loadTerminalServer(options = {}) {
     deleteDeviceAliasByGroupAndName,
     addBlockedRemote,
     getBlockedRemotes,
+    loadApiKeyHashes,
   }));
   jest.doMock('../../../../api/terminal/batchOutput', () => ({
     appendBatchOutput,
@@ -266,6 +268,18 @@ describe('terminal server orchestration', () => {
     expect(done).toHaveBeenCalledWith(true);
   });
 
+  test('verifyClient stores the authenticated username on req when a key is matched', () => {
+    const { server, auth } = loadTerminalServer();
+    const verifyClient = server.wss.options.verifyClient;
+    const done = jest.fn();
+
+    auth.checkBearer.mockReturnValueOnce('alice');
+    const req = { url: '/terminal/aa:bb', headers: { authorization: 'Bearer ok' } };
+    verifyClient({ req }, done);
+    expect(done).toHaveBeenCalledWith(true);
+    expect(req.authenticatedUser).toBe('alice');
+  });
+
   test('verifyClient rejects missing auth, malformed auth, and empty terminal mac paths', () => {
     const { server, auth } = loadTerminalServer();
     const verifyClient = server.wss.options.verifyClient;
@@ -281,6 +295,20 @@ describe('terminal server orchestration', () => {
 
     verifyClient({ req: { url: '/terminal/', headers: { authorization: 'Bearer ok' } } }, done);
     expect(done).toHaveBeenCalledWith(false, 404, 'Not Found');
+  });
+
+  test('connection handler passes authenticatedUser to recordTerminalConnection', async () => {
+    const { server, recordTerminalConnection } = loadTerminalServer();
+    const onConnection = server.wss.handlers.get('connection');
+    const ws = createFakeWs();
+
+    await onConnection(ws, {
+      url: '/terminal/aa:bb',
+      socket: { remoteAddress: '10.0.0.1' },
+      authenticatedUser: 'alice',
+    });
+
+    expect(recordTerminalConnection).toHaveBeenCalledWith('aa:bb', '10.0.0.1', 'alice');
   });
 
   test('replaces an existing session when the same MAC reconnects', async () => {
@@ -905,7 +933,7 @@ describe('terminal server orchestration', () => {
 
     await expect(server.main()).rejects.toBe(exitError);
 
-    expect(process.stderr.write).toHaveBeenCalledWith('error: --validate-key is set but ela.key is missing or contains no valid tokens\n');
+    expect(process.stderr.write).toHaveBeenCalledWith('error: --validate-key is set but no API keys are configured in the database\n');
     expect(initializeDatabase).not.toHaveBeenCalled();
   });
 
@@ -916,7 +944,7 @@ describe('terminal server orchestration', () => {
 
     await server.main();
 
-    expect(auth.init).toHaveBeenCalledWith('/tmp/ela.key', false);
+    expect(auth.init).toHaveBeenCalledWith(false, expect.any(Function));
     expect(initializeDatabase).toHaveBeenCalledTimes(1);
     expect(runMigrations).toHaveBeenCalledTimes(1);
     expect(loadLegacyAliases).toHaveBeenCalledWith(server.LEGACY_ALIASES_FILE);

@@ -20,6 +20,8 @@ const migration0003 = require('../../../../api/lib/db/migrations/0003-upload-loc
 const migration0004 = require('../../../../api/lib/db/migrations/0004-device-group');
 const migration0005 = require('../../../../api/lib/db/migrations/0005-alias-group-unique');
 const migration0006 = require('../../../../api/lib/db/migrations/0006-blocked-remotes');
+const migration0007 = require('../../../../api/lib/db/migrations/0007-users');
+const migration0008 = require('../../../../api/lib/db/migrations/0008-api-keys');
 
 function createQueryInterface() {
   return {
@@ -175,5 +177,37 @@ describe('db migrations', () => {
 
     await migration0006.down({ context: queryInterface });
     expect(queryInterface.dropTable).toHaveBeenCalledWith('blocked_remotes');
+  });
+
+  test('0007 creates and drops the users table', async () => {
+    const queryInterface = createQueryInterface();
+
+    await migration0007.up({ context: queryInterface });
+    expect(queryInterface.createTable).toHaveBeenCalledWith('users', expect.objectContaining({
+      username: expect.objectContaining({ allowNull: false, unique: true }),
+      created_at: expect.any(Object),
+    }));
+
+    await migration0007.down({ context: queryInterface });
+    expect(queryInterface.dropTable).toHaveBeenCalledWith('users');
+  });
+
+  test('0008 creates the api_keys table with a user_id index and drops it', async () => {
+    const queryInterface = createQueryInterface();
+
+    await migration0008.up({ context: queryInterface });
+    expect(queryInterface.createTable).toHaveBeenCalledWith('api_keys', expect.objectContaining({
+      user_id: expect.objectContaining({
+        allowNull: false,
+        references: { model: 'users', key: 'id' },
+        onDelete: 'CASCADE',
+      }),
+      key_hash: expect.objectContaining({ allowNull: false, unique: true }),
+      label: expect.objectContaining({ allowNull: true }),
+    }));
+    expect(queryInterface.addIndex).toHaveBeenCalledWith('api_keys', ['user_id']);
+
+    await migration0008.down({ context: queryInterface });
+    expect(queryInterface.dropTable).toHaveBeenCalledWith('api_keys');
   });
 });

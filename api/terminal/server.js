@@ -16,6 +16,7 @@ const {
   deleteDeviceAliasByGroupAndName,
   addBlockedRemote,
   getBlockedRemotes,
+  loadApiKeyHashes,
 } = require('../lib/db/deviceRegistry');
 const { parseCidr, isBlocked } = require('./cidrUtil');
 const { appendBatchOutput, renderBatchOutput } = require('./batchOutput');
@@ -133,11 +134,15 @@ const wss = new WebSocketServer({
       done(false, 403, 'Forbidden');
       return;
     }
-    if (auth.checkBearer(info.req.headers.authorization)) {
-      done(true);
-    } else {
+    const authUser = auth.checkBearer(info.req.headers.authorization);
+    if (!authUser) {
       done(false, 401, 'Unauthorized');
+      return;
     }
+    // Store the resolved username so the connection handler can initialise the
+    // device group. When auth is not enforced checkBearer returns true (no user).
+    info.req.authenticatedUser = typeof authUser === 'string' ? authUser : null;
+    done(true);
   },
 });
 
@@ -157,7 +162,7 @@ wss.on('connection', async (ws, req) => {
 
   let registration;
   try {
-    registration = await recordTerminalConnection(mac, req.socket?.remoteAddress || null);
+    registration = await recordTerminalConnection(mac, req.socket?.remoteAddress || null, req.authenticatedUser || null);
   } catch (err) {
     ws.close(1011, 'database unavailable');
     process.stderr.write(`Failed to register terminal connection for ${mac}: ${err.message}\n`);
@@ -730,8 +735,8 @@ process.on('SIGTERM', () => {
 });
 
 async function main() {
-  if (!auth.init(terminalConfig.keyPath, VALIDATE_KEY)) {
-    process.stderr.write('error: --validate-key is set but ela.key is missing or contains no valid tokens\n');
+  if (!await auth.init(VALIDATE_KEY, loadApiKeyHashes)) {
+    process.stderr.write('error: --validate-key is set but no API keys are configured in the database\n');
     process.exit(1);
   }
 
