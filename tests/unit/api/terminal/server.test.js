@@ -90,6 +90,10 @@ function loadTerminalServer(options = {}) {
   const touchTerminalHeartbeat = jest.fn().mockResolvedValue(undefined);
   const closeTerminalConnection = jest.fn().mockResolvedValue(undefined);
   const setDeviceAlias = jest.fn().mockResolvedValue(undefined);
+  const setDeviceGroup = jest.fn().mockResolvedValue(undefined);
+  const deleteDeviceAliasByGroupAndName = jest.fn().mockResolvedValue(false);
+  const addBlockedRemote = jest.fn().mockResolvedValue(true);
+  const getBlockedRemotes = jest.fn().mockResolvedValue([]);
   const appendBatchOutput = jest.fn((lines, entry, text) => lines.concat(`${entry.mac}:${text}`));
   const renderBatchOutput = jest.fn((lines) => lines.join('\n'));
   const loadLegacyAliases = jest.fn(() => ({}));
@@ -125,6 +129,7 @@ function loadTerminalServer(options = {}) {
     if (options.registry.touchTerminalHeartbeat) touchTerminalHeartbeat.mockImplementation(options.registry.touchTerminalHeartbeat);
     if (options.registry.closeTerminalConnection) closeTerminalConnection.mockImplementation(options.registry.closeTerminalConnection);
     if (options.registry.setDeviceAlias) setDeviceAlias.mockImplementation(options.registry.setDeviceAlias);
+    if (options.registry.getBlockedRemotes) getBlockedRemotes.mockImplementation(options.registry.getBlockedRemotes);
   }
   if (options.formatPromptOutput) {
     formatPromptOutput.mockImplementation(options.formatPromptOutput);
@@ -164,11 +169,17 @@ function loadTerminalServer(options = {}) {
     runMigrations,
     closeDatabase,
   }));
+  const loadApiKeyHashes = jest.fn().mockResolvedValue([]);
   jest.doMock('../../../../api/lib/db/deviceRegistry', () => ({
     recordTerminalConnection,
     touchTerminalHeartbeat,
     closeTerminalConnection,
     setDeviceAlias,
+    setDeviceGroup,
+    deleteDeviceAliasByGroupAndName,
+    addBlockedRemote,
+    getBlockedRemotes,
+    loadApiKeyHashes,
   }));
   jest.doMock('../../../../api/terminal/batchOutput', () => ({
     appendBatchOutput,
@@ -257,6 +268,18 @@ describe('terminal server orchestration', () => {
     expect(done).toHaveBeenCalledWith(true);
   });
 
+  test('verifyClient stores the authenticated username on req when a key is matched', () => {
+    const { server, auth } = loadTerminalServer();
+    const verifyClient = server.wss.options.verifyClient;
+    const done = jest.fn();
+
+    auth.checkBearer.mockReturnValueOnce('alice');
+    const req = { url: '/terminal/aa:bb', headers: { authorization: 'Bearer ok' } };
+    verifyClient({ req }, done);
+    expect(done).toHaveBeenCalledWith(true);
+    expect(req.authenticatedUser).toBe('alice');
+  });
+
   test('verifyClient rejects missing auth, malformed auth, and empty terminal mac paths', () => {
     const { server, auth } = loadTerminalServer();
     const verifyClient = server.wss.options.verifyClient;
@@ -272,6 +295,20 @@ describe('terminal server orchestration', () => {
 
     verifyClient({ req: { url: '/terminal/', headers: { authorization: 'Bearer ok' } } }, done);
     expect(done).toHaveBeenCalledWith(false, 404, 'Not Found');
+  });
+
+  test('connection handler passes authenticatedUser to recordTerminalConnection', async () => {
+    const { server, recordTerminalConnection } = loadTerminalServer();
+    const onConnection = server.wss.handlers.get('connection');
+    const ws = createFakeWs();
+
+    await onConnection(ws, {
+      url: '/terminal/aa:bb',
+      socket: { remoteAddress: '10.0.0.1' },
+      authenticatedUser: 'alice',
+    });
+
+    expect(recordTerminalConnection).toHaveBeenCalledWith('aa:bb', '10.0.0.1', 'alice');
   });
 
   test('replaces an existing session when the same MAC reconnects', async () => {
@@ -896,7 +933,7 @@ describe('terminal server orchestration', () => {
 
     await expect(server.main()).rejects.toBe(exitError);
 
-    expect(process.stderr.write).toHaveBeenCalledWith('error: --validate-key is set but ela.key is missing or contains no valid tokens\n');
+    expect(process.stderr.write).toHaveBeenCalledWith('error: --validate-key is set but no API keys are configured in the database\n');
     expect(initializeDatabase).not.toHaveBeenCalled();
   });
 
@@ -907,7 +944,7 @@ describe('terminal server orchestration', () => {
 
     await server.main();
 
-    expect(auth.init).toHaveBeenCalledWith('/tmp/ela.key', false);
+    expect(auth.init).toHaveBeenCalledWith(false, expect.any(Function));
     expect(initializeDatabase).toHaveBeenCalledTimes(1);
     expect(runMigrations).toHaveBeenCalledTimes(1);
     expect(loadLegacyAliases).toHaveBeenCalledWith(server.LEGACY_ALIASES_FILE);
@@ -973,5 +1010,34 @@ describe('terminal server orchestration', () => {
     expect(process.stderr.write).toHaveBeenCalledWith(expect.stringContaining('legacy alias load failed'));
     expect(closeDatabase).toHaveBeenCalledTimes(1);
     expect(process.exit).toHaveBeenCalledWith(1);
+  });
+
+  test('verifyClient rejects connections from blocked IPs with 403', () => {
+    const { server } = loadTerminalServer();
+    const verifyClient = server.wss.options.verifyClient;
+    const done = jest.fn();
+
+    server.blockedCidrs.push({ network: (10 << 24) | 1, mask: 0xffffffff, cidr: '10.0.0.1/32' });
+
+    verifyClient({ req: { url: '/terminal/aa:bb', headers: { authorization: 'Bearer ok' }, socket: { remoteAddress: '10.0.0.1' } } }, done);
+    expect(done).toHaveBeenCalledWith(false, 403, 'Forbidden');
+
+    done.mockClear();
+    verifyClient({ req: { url: '/terminal/aa:bb', headers: { authorization: 'Bearer ok' }, socket: { remoteAddress: '10.0.0.2' } } }, done);
+    expect(done).toHaveBeenCalledWith(true);
+  });
+
+  test('main() loads the block list from the database on startup', async () => {
+    const { server } = loadTerminalServer({
+      registry: {
+        getBlockedRemotes: async () => [{ cidr: '10.0.0.0/8' }],
+      },
+    });
+    jest.spyOn(server.tui, 'render').mockImplementation(() => {});
+
+    await server.main();
+
+    expect(server.blockedCidrs.length).toBe(1);
+    expect(server.blockedCidrs[0].cidr).toBe('10.0.0.0/8');
   });
 });

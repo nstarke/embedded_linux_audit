@@ -568,10 +568,76 @@ function defineModels(sequelize) {
   Upload.hasMany(LogEvent, { foreignKey: 'uploadId' });
   Upload.hasOne(ArchReport, { foreignKey: 'uploadId' });
   Upload.hasMany(GrepMatch, { foreignKey: 'uploadId' });
+  const BlockedRemote = sequelize.define('BlockedRemote', {
+    id: {
+      type: DataTypes.BIGINT,
+      autoIncrement: true,
+      primaryKey: true,
+    },
+    cidr: {
+      type: DataTypes.STRING(50),
+      allowNull: false,
+      unique: true,
+    },
+  }, {
+    tableName: 'blocked_remotes',
+    underscored: true,
+    updatedAt: false,
+    createdAt: 'created_at',
+  });
+
+  const User = sequelize.define('User', {
+    id: {
+      type: DataTypes.BIGINT,
+      autoIncrement: true,
+      primaryKey: true,
+    },
+    username: {
+      type: DataTypes.STRING(255),
+      allowNull: false,
+      unique: true,
+    },
+  }, {
+    tableName: 'users',
+    underscored: true,
+    updatedAt: false,
+    createdAt: 'created_at',
+  });
+
+  const ApiKey = sequelize.define('ApiKey', {
+    id: {
+      type: DataTypes.BIGINT,
+      autoIncrement: true,
+      primaryKey: true,
+    },
+    userId: {
+      type: DataTypes.BIGINT,
+      allowNull: false,
+      field: 'user_id',
+    },
+    keyHash: {
+      type: DataTypes.STRING(64),
+      allowNull: false,
+      unique: true,
+      field: 'key_hash',
+    },
+    label: {
+      type: DataTypes.STRING(255),
+      allowNull: true,
+    },
+  }, {
+    tableName: 'api_keys',
+    underscored: true,
+    updatedAt: false,
+    createdAt: 'created_at',
+  });
+
   Device.hasOne(DeviceAlias, { foreignKey: 'deviceId' });
   DeviceAlias.belongsTo(Device, { foreignKey: 'deviceId' });
   Device.hasMany(TerminalConnection, { foreignKey: 'deviceId' });
   TerminalConnection.belongsTo(Device, { foreignKey: 'deviceId' });
+  User.hasMany(ApiKey, { foreignKey: 'userId' });
+  ApiKey.belongsTo(User, { foreignKey: 'userId' });
 
   return {
     Device,
@@ -587,6 +653,9 @@ function defineModels(sequelize) {
     TerminalConnection,
     ArchReport,
     GrepMatch,
+    BlockedRemote,
+    User,
+    ApiKey,
   };
 }
 

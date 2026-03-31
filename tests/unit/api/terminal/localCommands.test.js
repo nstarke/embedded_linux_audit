@@ -209,6 +209,121 @@ describe('local terminal commands', () => {
     expect(writeOutput).toHaveBeenCalledWith('\r\n[usage: /delete <group> <name>]\r\n');
   });
 
+  test('handles block with a valid IP address', async () => {
+    const addBlock = jest.fn().mockResolvedValue(true);
+    const writeOutput = jest.fn();
+
+    const handled = await executeLocalSessionCommand({
+      cmd: '/block 10.0.0.1',
+      activeMac: 'aa:bb',
+      sessionEntry: {},
+      setDeviceAlias: jest.fn(),
+      addBlock,
+      onDetach: jest.fn(),
+      writeOutput,
+      cancelRemoteInput: jest.fn(),
+    });
+
+    expect(handled).toBe(true);
+    expect(addBlock).toHaveBeenCalledWith('10.0.0.1/32');
+    expect(writeOutput).toHaveBeenCalledWith('\r\n[blocked: 10.0.0.1/32]\r\n');
+  });
+
+  test('handles block with a CIDR range', async () => {
+    const addBlock = jest.fn().mockResolvedValue(true);
+    const writeOutput = jest.fn();
+
+    const handled = await executeLocalSessionCommand({
+      cmd: '/block 192.168.0.0/16',
+      activeMac: 'aa:bb',
+      sessionEntry: {},
+      setDeviceAlias: jest.fn(),
+      addBlock,
+      onDetach: jest.fn(),
+      writeOutput,
+      cancelRemoteInput: jest.fn(),
+    });
+
+    expect(handled).toBe(true);
+    expect(addBlock).toHaveBeenCalledWith('192.168.0.0/16');
+    expect(writeOutput).toHaveBeenCalledWith('\r\n[blocked: 192.168.0.0/16]\r\n');
+  });
+
+  test('handles block when the address is already blocked', async () => {
+    const addBlock = jest.fn().mockResolvedValue(false);
+    const writeOutput = jest.fn();
+
+    const handled = await executeLocalSessionCommand({
+      cmd: '/block 10.0.0.1',
+      activeMac: 'aa:bb',
+      sessionEntry: {},
+      setDeviceAlias: jest.fn(),
+      addBlock,
+      onDetach: jest.fn(),
+      writeOutput,
+      cancelRemoteInput: jest.fn(),
+    });
+
+    expect(handled).toBe(true);
+    expect(writeOutput).toHaveBeenCalledWith('\r\n[already blocked: 10.0.0.1/32]\r\n');
+  });
+
+  test('handles block with no arguments and an empty list', async () => {
+    const writeOutput = jest.fn();
+
+    const handled = await executeLocalSessionCommand({
+      cmd: '/block',
+      activeMac: 'aa:bb',
+      sessionEntry: {},
+      setDeviceAlias: jest.fn(),
+      getBlockList: () => [],
+      onDetach: jest.fn(),
+      writeOutput,
+      cancelRemoteInput: jest.fn(),
+    });
+
+    expect(handled).toBe(true);
+    expect(writeOutput).toHaveBeenCalledWith('\r\n[no blocked ranges]\r\n');
+  });
+
+  test('handles block with no arguments and an existing list', async () => {
+    const writeOutput = jest.fn();
+
+    const handled = await executeLocalSessionCommand({
+      cmd: '/block',
+      activeMac: 'aa:bb',
+      sessionEntry: {},
+      setDeviceAlias: jest.fn(),
+      getBlockList: () => ['10.0.0.1/32', '192.168.0.0/16'],
+      onDetach: jest.fn(),
+      writeOutput,
+      cancelRemoteInput: jest.fn(),
+    });
+
+    expect(handled).toBe(true);
+    expect(writeOutput).toHaveBeenCalledWith('\r\n[blocked ranges]\r\n10.0.0.1/32\r\n192.168.0.0/16\r\n');
+  });
+
+  test('handles block with an invalid IP address', async () => {
+    const addBlock = jest.fn();
+    const writeOutput = jest.fn();
+
+    const handled = await executeLocalSessionCommand({
+      cmd: '/block not-an-ip',
+      activeMac: 'aa:bb',
+      sessionEntry: {},
+      setDeviceAlias: jest.fn(),
+      addBlock,
+      onDetach: jest.fn(),
+      writeOutput,
+      cancelRemoteInput: jest.fn(),
+    });
+
+    expect(handled).toBe(true);
+    expect(addBlock).not.toHaveBeenCalled();
+    expect(writeOutput).toHaveBeenCalledWith('\r\n[usage: /block <ip-address>[/<prefix>]]\r\n');
+  });
+
   test('handles group clear', async () => {
     const sessionEntry = { group: 'factory-floor' };
     const setDeviceGroup = jest.fn().mockResolvedValue(undefined);

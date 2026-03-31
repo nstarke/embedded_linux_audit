@@ -14,7 +14,11 @@ const {
   setDeviceAlias,
   setDeviceGroup,
   deleteDeviceAliasByGroupAndName,
+  addBlockedRemote,
+  getBlockedRemotes,
+  loadApiKeyHashes,
 } = require('../lib/db/deviceRegistry');
+const { parseCidr, isBlocked } = require('./cidrUtil');
 const { appendBatchOutput, renderBatchOutput } = require('./batchOutput');
 const { loadLegacyAliases } = require('./legacyAliases');
 const { formatPromptOutput } = require('./promptFormatter');
@@ -52,6 +56,17 @@ async function importLegacyAliases() {
 }
 
 const sessionRegistry = createSessionRegistry({ heartbeatIntervalMs: HEARTBEAT_INTERVAL_MS });
+
+const blockedCidrs = [];
+
+async function addBlock(cidr) {
+  const created = await addBlockedRemote(cidr);
+  if (created) {
+    const parsed = parseCidr(cidr);
+    if (parsed) blockedCidrs.push(parsed);
+  }
+  return created;
+}
 
 async function cleanup() {
   const closeOps = [];
@@ -115,11 +130,19 @@ const wss = new WebSocketServer({
       done(false, 404, 'Not Found');
       return;
     }
-    if (auth.checkBearer(info.req.headers.authorization)) {
-      done(true);
-    } else {
-      done(false, 401, 'Unauthorized');
+    if (isBlocked(info.req.socket?.remoteAddress || '', blockedCidrs)) {
+      done(false, 403, 'Forbidden');
+      return;
     }
+    const authUser = auth.checkBearer(info.req.headers.authorization);
+    if (!authUser) {
+      done(false, 401, 'Unauthorized');
+      return;
+    }
+    // Store the resolved username so the connection handler can initialise the
+    // device group. When auth is not enforced checkBearer returns true (no user).
+    info.req.authenticatedUser = typeof authUser === 'string' ? authUser : null;
+    done(true);
   },
 });
 
@@ -139,7 +162,7 @@ wss.on('connection', async (ws, req) => {
 
   let registration;
   try {
-    registration = await recordTerminalConnection(mac, req.socket?.remoteAddress || null);
+    registration = await recordTerminalConnection(mac, req.socket?.remoteAddress || null, req.authenticatedUser || null);
   } catch (err) {
     ws.close(1011, 'database unavailable');
     process.stderr.write(`Failed to register terminal connection for ${mac}: ${err.message}\n`);
@@ -627,6 +650,8 @@ const tui = {
           setDeviceAlias,
           setDeviceGroup,
           deleteDeviceAliasByGroupAndName,
+          addBlock,
+          getBlockList: () => blockedCidrs.map((c) => c.cidr),
           startSessionUpdate,
           onDetach: () => this.detach(),
           writeOutput: (text) => process.stdout.write(text),
@@ -710,14 +735,20 @@ process.on('SIGTERM', () => {
 });
 
 async function main() {
-  if (!auth.init(terminalConfig.keyPath, VALIDATE_KEY)) {
-    process.stderr.write('error: --validate-key is set but ela.key is missing or contains no valid tokens\n');
+  if (!await auth.init(VALIDATE_KEY, loadApiKeyHashes)) {
+    process.stderr.write('error: --validate-key is set but no API keys are configured in the database\n');
     process.exit(1);
   }
 
   await initializeDatabase();
   await runMigrations();
   await importLegacyAliases();
+
+  const existingBlocks = await getBlockedRemotes();
+  for (const record of existingBlocks) {
+    const parsed = parseCidr(record.cidr);
+    if (parsed) blockedCidrs.push(parsed);
+  }
 
   httpServer.listen(PORT, HOST, () => {
     setupInput();
@@ -755,6 +786,8 @@ module.exports = {
   tui,
   httpServer,
   wss,
+  blockedCidrs,
+  addBlock,
   importLegacyAliases,
   cleanup,
   exitGracefully,

@@ -113,6 +113,20 @@ async function setDeviceGroup(macAddress, group) {
   });
 }
 
+async function addBlockedRemote(cidr) {
+  const { BlockedRemote } = getModels();
+  const [, created] = await BlockedRemote.findOrCreate({
+    where: { cidr },
+    defaults: { cidr },
+  });
+  return created;
+}
+
+async function getBlockedRemotes() {
+  const { BlockedRemote } = getModels();
+  return BlockedRemote.findAll();
+}
+
 async function deleteDeviceAliasByGroupAndName(group, name) {
   const { DeviceAlias } = getModels();
   const record = await DeviceAlias.findOne({
@@ -124,7 +138,7 @@ async function deleteDeviceAliasByGroupAndName(group, name) {
   return true;
 }
 
-async function recordTerminalConnection(macAddress, remoteAddress) {
+async function recordTerminalConnection(macAddress, remoteAddress, authenticatedUser = null) {
   const sequelize = getSequelize();
   const { DeviceAlias, TerminalConnection } = getModels();
 
@@ -135,15 +149,18 @@ async function recordTerminalConnection(macAddress, remoteAddress) {
       transaction,
     });
 
-    // Initialize group to remoteAddress on first connection if not already set
-    if (remoteAddress && (!aliasRecord || aliasRecord.group == null)) {
+    // Initialize group on first connection. Prefer the authenticated username
+    // (derived from the API key) so that devices are grouped under their owner;
+    // fall back to the source IP when auth is not enforced.
+    const initialGroup = authenticatedUser || remoteAddress;
+    if (initialGroup && (!aliasRecord || aliasRecord.group == null)) {
       if (aliasRecord) {
-        aliasRecord.group = remoteAddress;
+        aliasRecord.group = initialGroup;
         await aliasRecord.save({ transaction });
       } else {
         aliasRecord = await DeviceAlias.create({
           deviceId: device.id,
-          group: remoteAddress,
+          group: initialGroup,
         }, { transaction });
       }
     }
@@ -180,12 +197,50 @@ async function closeTerminalConnection(connectionId, disconnectedAt = new Date()
   });
 }
 
+async function loadApiKeyHashes() {
+  const { ApiKey, User } = getModels();
+  const keys = await ApiKey.findAll({ include: [{ model: User }] });
+  return keys.map((k) => ({ keyHash: k.keyHash, username: k.User.username }));
+}
+
+async function createUser(username) {
+  const { User } = getModels();
+  const [user, created] = await User.findOrCreate({
+    where: { username },
+    defaults: { username },
+  });
+  return { user, created };
+}
+
+async function createApiKey(username, keyHash, label = null) {
+  const sequelize = getSequelize();
+  const { User, ApiKey } = getModels();
+  return sequelize.transaction(async (transaction) => {
+    const [user] = await User.findOrCreate({
+      where: { username },
+      defaults: { username },
+      transaction,
+    });
+    const [key, created] = await ApiKey.findOrCreate({
+      where: { keyHash },
+      defaults: { userId: user.id, keyHash, label },
+      transaction,
+    });
+    return { key, created };
+  });
+}
+
 module.exports = {
   ensureDevice,
   getDeviceAlias,
   setDeviceAlias,
   setDeviceGroup,
   deleteDeviceAliasByGroupAndName,
+  addBlockedRemote,
+  getBlockedRemotes,
+  loadApiKeyHashes,
+  createUser,
+  createApiKey,
   recordTerminalConnection,
   touchTerminalHeartbeat,
   closeTerminalConnection,

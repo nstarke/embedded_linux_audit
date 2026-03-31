@@ -416,6 +416,77 @@ describe('device registry', () => {
     }, { transaction: 'tx1' });
   });
 
+  test('recordTerminalConnection uses authenticatedUser as initial group in preference to remoteAddress', async () => {
+    const aliasRecord = {
+      alias: null,
+      group: null,
+      save: jest.fn().mockResolvedValue(undefined),
+    };
+    const models = {
+      Device: {
+        findOrCreate: jest.fn().mockResolvedValue([{
+          id: 12,
+          lastSeenAt: new Date('2026-01-01T00:00:00Z'),
+          save: jest.fn().mockResolvedValue(undefined),
+        }]),
+      },
+      DeviceAlias: {
+        findOne: jest.fn().mockResolvedValue(aliasRecord),
+      },
+      TerminalConnection: {
+        create: jest.fn().mockResolvedValue({ id: 55 }),
+      },
+    };
+    const sequelize = { transaction: jest.fn(async (fn) => fn('tx1')) };
+    const { registry } = loadDeviceRegistry({ models, sequelize });
+
+    await expect(registry.recordTerminalConnection('aa:bb', '10.0.0.9', 'alice')).resolves.toEqual({
+      connectionId: 55,
+      alias: null,
+      group: 'alice',
+    });
+    expect(aliasRecord.group).toBe('alice');
+    expect(aliasRecord.save).toHaveBeenCalledWith({ transaction: 'tx1' });
+  });
+
+  test('addBlockedRemote creates a new entry and returns true', async () => {
+    const models = {
+      BlockedRemote: {
+        findOrCreate: jest.fn().mockResolvedValue([{ cidr: '10.0.0.0/8' }, true]),
+      },
+    };
+    const { registry } = loadDeviceRegistry({ models });
+
+    await expect(registry.addBlockedRemote('10.0.0.0/8')).resolves.toBe(true);
+    expect(models.BlockedRemote.findOrCreate).toHaveBeenCalledWith({
+      where: { cidr: '10.0.0.0/8' },
+      defaults: { cidr: '10.0.0.0/8' },
+    });
+  });
+
+  test('addBlockedRemote returns false when the entry already exists', async () => {
+    const models = {
+      BlockedRemote: {
+        findOrCreate: jest.fn().mockResolvedValue([{ cidr: '10.0.0.0/8' }, false]),
+      },
+    };
+    const { registry } = loadDeviceRegistry({ models });
+
+    await expect(registry.addBlockedRemote('10.0.0.0/8')).resolves.toBe(false);
+  });
+
+  test('getBlockedRemotes returns all records', async () => {
+    const records = [{ cidr: '10.0.0.0/8' }, { cidr: '192.168.1.1/32' }];
+    const models = {
+      BlockedRemote: {
+        findAll: jest.fn().mockResolvedValue(records),
+      },
+    };
+    const { registry } = loadDeviceRegistry({ models });
+
+    await expect(registry.getBlockedRemotes()).resolves.toEqual(records);
+  });
+
   test('deleteDeviceAliasByGroupAndName clears the alias when found', async () => {
     const record = {
       alias: 'edge-router',
@@ -446,6 +517,117 @@ describe('device registry', () => {
     const { registry } = loadDeviceRegistry({ models });
 
     await expect(registry.deleteDeviceAliasByGroupAndName('factory-floor', 'nonexistent')).resolves.toBe(false);
+  });
+
+  test('loadApiKeyHashes returns key hashes paired with their usernames', async () => {
+    const User = { name: 'User' };
+    const models = {
+      ApiKey: {
+        findAll: jest.fn().mockResolvedValue([
+          { keyHash: 'abc123', User: { username: 'alice' } },
+          { keyHash: 'def456', User: { username: 'bob' } },
+        ]),
+      },
+      User,
+    };
+    const { registry } = loadDeviceRegistry({ models });
+
+    await expect(registry.loadApiKeyHashes()).resolves.toEqual([
+      { keyHash: 'abc123', username: 'alice' },
+      { keyHash: 'def456', username: 'bob' },
+    ]);
+    expect(models.ApiKey.findAll).toHaveBeenCalledWith({ include: [{ model: User }] });
+  });
+
+  test('loadApiKeyHashes returns an empty array when no keys exist', async () => {
+    const User = { name: 'User' };
+    const models = {
+      ApiKey: { findAll: jest.fn().mockResolvedValue([]) },
+      User,
+    };
+    const { registry } = loadDeviceRegistry({ models });
+
+    await expect(registry.loadApiKeyHashes()).resolves.toEqual([]);
+  });
+
+  test('createUser creates a new user and returns created=true', async () => {
+    const user = { id: 1, username: 'alice' };
+    const models = {
+      User: {
+        findOrCreate: jest.fn().mockResolvedValue([user, true]),
+      },
+    };
+    const { registry } = loadDeviceRegistry({ models });
+
+    const result = await registry.createUser('alice');
+
+    expect(result).toEqual({ user, created: true });
+    expect(models.User.findOrCreate).toHaveBeenCalledWith({
+      where: { username: 'alice' },
+      defaults: { username: 'alice' },
+    });
+  });
+
+  test('createUser returns created=false when user already exists', async () => {
+    const user = { id: 1, username: 'alice' };
+    const models = {
+      User: {
+        findOrCreate: jest.fn().mockResolvedValue([user, false]),
+      },
+    };
+    const { registry } = loadDeviceRegistry({ models });
+
+    const result = await registry.createUser('alice');
+
+    expect(result).toEqual({ user, created: false });
+  });
+
+  test('createApiKey upserts user and creates a new key', async () => {
+    const user = { id: 7, username: 'bob' };
+    const key = { id: 1, userId: 7, keyHash: 'deadbeef', label: 'my key' };
+    const models = {
+      User: {
+        findOrCreate: jest.fn().mockResolvedValue([user, true]),
+      },
+      ApiKey: {
+        findOrCreate: jest.fn().mockResolvedValue([key, true]),
+      },
+    };
+    const sequelize = { transaction: jest.fn(async (fn) => fn('tx1')) };
+    const { registry } = loadDeviceRegistry({ models, sequelize });
+
+    const result = await registry.createApiKey('bob', 'deadbeef', 'my key');
+
+    expect(result).toEqual({ key, created: true });
+    expect(models.User.findOrCreate).toHaveBeenCalledWith({
+      where: { username: 'bob' },
+      defaults: { username: 'bob' },
+      transaction: 'tx1',
+    });
+    expect(models.ApiKey.findOrCreate).toHaveBeenCalledWith({
+      where: { keyHash: 'deadbeef' },
+      defaults: { userId: 7, keyHash: 'deadbeef', label: 'my key' },
+      transaction: 'tx1',
+    });
+  });
+
+  test('createApiKey returns created=false when key hash already exists', async () => {
+    const user = { id: 7, username: 'bob' };
+    const key = { id: 1, userId: 7, keyHash: 'deadbeef', label: null };
+    const models = {
+      User: {
+        findOrCreate: jest.fn().mockResolvedValue([user, false]),
+      },
+      ApiKey: {
+        findOrCreate: jest.fn().mockResolvedValue([key, false]),
+      },
+    };
+    const sequelize = { transaction: jest.fn(async (fn) => fn('tx1')) };
+    const { registry } = loadDeviceRegistry({ models, sequelize });
+
+    const result = await registry.createApiKey('bob', 'deadbeef', null);
+
+    expect(result).toEqual({ key, created: false });
   });
 
   test('touchTerminalHeartbeat and closeTerminalConnection update the connection record', async () => {

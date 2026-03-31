@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: MIT - Copyright (c) 2026 Nicholas Starke
 'use strict';
 
-const fs = require('fs');
 const crypto = require('crypto');
 
-let validKeys = [];
+let validKeyHashes = []; /* array of { keyHash, username } */
 let authRequired = false;
 
 /* -------------------------------------------------------------------------
@@ -12,30 +11,23 @@ let authRequired = false;
  * ---------------------------------------------------------------------- */
 
 /**
- * Load bearer tokens from a key file and configure enforcement.
+ * Load bearer token hashes from the database and configure enforcement.
  *
- * @param {string}  [keyFile='ela.key']
- * @param {boolean} [enforced=false]  Pass true when --validate-key is set.
- *   - enforced=false: auth is not required regardless of key file contents.
+ * @param {boolean}  [enforced=false]  Pass true when --validate-key is set.
+ *   - enforced=false: auth is not required regardless of keys in the database.
  *   - enforced=true:  auth is required; returns false (caller should exit)
- *                     if no valid keys are found in the key file.
- * @returns {boolean} true on success, false when enforced but no keys found.
+ *                     if no keys are found in the database.
+ * @param {Function} loadKeys  Async function that returns an array of
+ *                             SHA-256 hex hashes of valid bearer tokens.
+ * @returns {Promise<boolean>} true on success, false when enforced but no
+ *                             keys are configured.
  */
-function init(keyFile, enforced) {
-  keyFile = keyFile || 'ela.key';
+async function init(enforced, loadKeys) {
   enforced = Boolean(enforced);
 
-  try {
-    const content = fs.readFileSync(keyFile, 'utf8');
-    validKeys = content
-      .split('\n')
-      .map((l) => l.trim())
-      .filter((l) => l.length > 0);
-  } catch (_) {
-    validKeys = [];
-  }
+  validKeyHashes = await loadKeys();
 
-  if (enforced && validKeys.length === 0) {
+  if (enforced && validKeyHashes.length === 0) {
     authRequired = false;
     return false; /* caller must warn and exit */
   }
@@ -67,23 +59,24 @@ function constantTimeEqual(a, b) {
  * ---------------------------------------------------------------------- */
 
 /**
- * Check an Authorization header value against all loaded tokens.
- * Always iterates every token (no short-circuit) to avoid timing oracles.
- * Returns true if auth is not required or the token matches any loaded key.
+ * Check an Authorization header value against all loaded token hashes.
+ * Always iterates every entry (no short-circuit) to avoid timing oracles.
  *
  * @param {string|undefined} authHeader  Value of the Authorization header.
- * @returns {boolean}
+ * @returns {string|true|false}  The authenticated username when a key matches;
+ *   true when auth is not required (no specific user); false on rejection.
  */
 function checkBearer(authHeader) {
   if (!authRequired) return true;
   if (!authHeader || !authHeader.startsWith('Bearer ')) return false;
 
   const token = authHeader.slice(7);
-  let ok = false;
-  for (const key of validKeys) {
-    if (constantTimeEqual(token, key)) ok = true; /* no break — constant time */
+  const tokenHash = crypto.createHash('sha256').update(token, 'utf8').digest('hex');
+  let matchedUser = null;
+  for (const entry of validKeyHashes) {
+    if (constantTimeEqual(tokenHash, entry.keyHash)) matchedUser = entry.username; /* no break — constant time */
   }
-  return ok;
+  return matchedUser !== null ? matchedUser : false;
 }
 
 /* -------------------------------------------------------------------------
