@@ -735,13 +735,14 @@ process.on('SIGTERM', () => {
 });
 
 async function main() {
+  await initializeDatabase();
+  await runMigrations();
+
   if (!await auth.init(VALIDATE_KEY, loadApiKeyHashes)) {
     process.stderr.write('error: --validate-key is set but no API keys are configured in the database\n');
     process.exit(1);
   }
 
-  await initializeDatabase();
-  await runMigrations();
   await importLegacyAliases();
 
   const existingBlocks = await getBlockedRemotes();

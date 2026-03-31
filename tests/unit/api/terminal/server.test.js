@@ -919,22 +919,19 @@ describe('terminal server orchestration', () => {
     expect(processOn).toHaveBeenCalledWith('SIGTERM', expect.any(Function));
   });
 
-  test('main exits immediately when validate-key auth initialization fails', async () => {
+  test('main exits when validate-key auth initialization fails', async () => {
     const { server, auth, initializeDatabase } = loadTerminalServer({
       auth: {
         init: jest.fn(() => false),
       },
     });
     auth.init.mockImplementation(() => false);
-    const exitError = new Error('exit');
-    process.exit.mockImplementationOnce(() => {
-      throw exitError;
-    });
 
-    await expect(server.main()).rejects.toBe(exitError);
+    await server.main();
 
     expect(process.stderr.write).toHaveBeenCalledWith('error: --validate-key is set but no API keys are configured in the database\n');
-    expect(initializeDatabase).not.toHaveBeenCalled();
+    expect(process.exit).toHaveBeenCalledWith(1);
+    expect(initializeDatabase).toHaveBeenCalledTimes(1);
   });
 
   test('main starts the HTTP server end-to-end and renders the TUI after listen callback', async () => {
