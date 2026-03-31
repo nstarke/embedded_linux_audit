@@ -6,6 +6,7 @@ const SESSION_COMMAND_HELP = [
   '/update                        update only the currently attached node',
   '/shell                         launch linux execute-command sh and enter passthrough mode',
   '/name [alias]                  set or clear the alias for the current node',
+  '/group [group]                 set or clear the group for the current node',
 ];
 
 async function executeLocalSessionCommand({
@@ -13,6 +14,7 @@ async function executeLocalSessionCommand({
   activeMac,
   sessionEntry,
   setDeviceAlias,
+  setDeviceGroup = () => {},
   startSessionUpdate = () => false,
   onDetach,
   writeOutput,
@@ -62,6 +64,17 @@ async function executeLocalSessionCommand({
       sessionEntry.alias = alias;
     }
     writeOutput(`\r\n[alias ${alias ? `set to "${alias}"` : 'cleared'}]\r\n`);
+    return true;
+  }
+
+  if (cmd === '/group' || cmd.startsWith('/group ')) {
+    cancelRemoteInput();
+    const group = cmd.slice(7).trim() || null;
+    await setDeviceGroup(activeMac, group);
+    if (sessionEntry) {
+      sessionEntry.group = group;
+    }
+    writeOutput(`\r\n[group ${group ? `set to "${group}"` : 'cleared'}]\r\n`);
     return true;
   }
 

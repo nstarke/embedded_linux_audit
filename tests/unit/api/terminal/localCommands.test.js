@@ -123,4 +123,48 @@ describe('local terminal commands', () => {
 
     expect(handled).toBe(false);
   });
+
+  test('handles group writes through injected persistence', async () => {
+    const sessionEntry = { group: null };
+    const setDeviceGroup = jest.fn().mockResolvedValue(undefined);
+    const writeOutput = jest.fn();
+
+    const handled = await executeLocalSessionCommand({
+      cmd: '/group factory-floor',
+      activeMac: 'aa:bb',
+      sessionEntry,
+      setDeviceAlias: jest.fn(),
+      setDeviceGroup,
+      onDetach: jest.fn(),
+      writeOutput,
+      cancelRemoteInput: jest.fn(),
+    });
+
+    expect(handled).toBe(true);
+    expect(setDeviceGroup).toHaveBeenCalledWith('aa:bb', 'factory-floor');
+    expect(sessionEntry.group).toBe('factory-floor');
+    expect(writeOutput).toHaveBeenCalledWith('\r\n[group set to "factory-floor"]\r\n');
+  });
+
+  test('handles group clear', async () => {
+    const sessionEntry = { group: 'factory-floor' };
+    const setDeviceGroup = jest.fn().mockResolvedValue(undefined);
+    const writeOutput = jest.fn();
+
+    const handled = await executeLocalSessionCommand({
+      cmd: '/group',
+      activeMac: 'aa:bb',
+      sessionEntry,
+      setDeviceAlias: jest.fn(),
+      setDeviceGroup,
+      onDetach: jest.fn(),
+      writeOutput,
+      cancelRemoteInput: jest.fn(),
+    });
+
+    expect(handled).toBe(true);
+    expect(setDeviceGroup).toHaveBeenCalledWith('aa:bb', null);
+    expect(sessionEntry.group).toBeNull();
+    expect(writeOutput).toHaveBeenCalledWith('\r\n[group cleared]\r\n');
+  });
 });

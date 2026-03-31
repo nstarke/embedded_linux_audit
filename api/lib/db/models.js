@@ -440,12 +440,16 @@ function defineModels(sequelize) {
     },
     alias: {
       type: DataTypes.STRING(255),
-      allowNull: false,
+      allowNull: true,
     },
     source: {
       type: DataTypes.STRING(64),
       allowNull: false,
       defaultValue: 'terminal_api',
+    },
+    group: {
+      type: DataTypes.STRING(255),
+      allowNull: true,
     },
   }, {
     tableName: 'device_aliases',
