@@ -151,7 +151,12 @@ describe('device registry', () => {
     }, { transaction: 'tx1' });
   });
 
-  test('recordTerminalConnection returns the connection id and alias', async () => {
+  test('recordTerminalConnection returns the connection id, alias, and group', async () => {
+    const aliasRecord = {
+      alias: 'edge-router',
+      group: '10.0.0.1',
+      save: jest.fn().mockResolvedValue(undefined),
+    };
     const models = {
       Device: {
         findOrCreate: jest.fn().mockResolvedValue([{
@@ -161,7 +166,7 @@ describe('device registry', () => {
         }]),
       },
       DeviceAlias: {
-        findOne: jest.fn().mockResolvedValue({ alias: 'edge-router' }),
+        findOne: jest.fn().mockResolvedValue(aliasRecord),
       },
       TerminalConnection: {
         create: jest.fn().mockResolvedValue({ id: 42 }),
@@ -175,12 +180,50 @@ describe('device registry', () => {
     await expect(registry.recordTerminalConnection('aa:bb', '10.0.0.2')).resolves.toEqual({
       connectionId: 42,
       alias: 'edge-router',
+      group: '10.0.0.1',
     });
+    // group already set — no save needed
+    expect(aliasRecord.save).not.toHaveBeenCalled();
     expect(models.TerminalConnection.create).toHaveBeenCalledWith(expect.objectContaining({
       deviceId: 11,
       remoteAddress: '10.0.0.2',
       connectedAt: expect.any(Date),
     }), { transaction: 'tx1' });
+  });
+
+  test('recordTerminalConnection initializes group to remoteAddress when no group is set', async () => {
+    const aliasRecord = {
+      alias: 'edge-router',
+      group: null,
+      save: jest.fn().mockResolvedValue(undefined),
+    };
+    const models = {
+      Device: {
+        findOrCreate: jest.fn().mockResolvedValue([{
+          id: 11,
+          lastSeenAt: new Date('2026-01-01T00:00:00Z'),
+          save: jest.fn().mockResolvedValue(undefined),
+        }]),
+      },
+      DeviceAlias: {
+        findOne: jest.fn().mockResolvedValue(aliasRecord),
+      },
+      TerminalConnection: {
+        create: jest.fn().mockResolvedValue({ id: 43 }),
+      },
+    };
+    const sequelize = {
+      transaction: jest.fn(async (fn) => fn('tx1')),
+    };
+    const { registry } = loadDeviceRegistry({ models, sequelize });
+
+    await expect(registry.recordTerminalConnection('aa:bb', '10.0.0.5')).resolves.toEqual({
+      connectionId: 43,
+      alias: 'edge-router',
+      group: '10.0.0.5',
+    });
+    expect(aliasRecord.group).toBe('10.0.0.5');
+    expect(aliasRecord.save).toHaveBeenCalledWith({ transaction: 'tx1' });
   });
 
   test('touchTerminalHeartbeat and closeTerminalConnection update the connection record', async () => {
