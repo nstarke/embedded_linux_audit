@@ -416,6 +416,44 @@ describe('device registry', () => {
     }, { transaction: 'tx1' });
   });
 
+  test('addBlockedRemote creates a new entry and returns true', async () => {
+    const models = {
+      BlockedRemote: {
+        findOrCreate: jest.fn().mockResolvedValue([{ cidr: '10.0.0.0/8' }, true]),
+      },
+    };
+    const { registry } = loadDeviceRegistry({ models });
+
+    await expect(registry.addBlockedRemote('10.0.0.0/8')).resolves.toBe(true);
+    expect(models.BlockedRemote.findOrCreate).toHaveBeenCalledWith({
+      where: { cidr: '10.0.0.0/8' },
+      defaults: { cidr: '10.0.0.0/8' },
+    });
+  });
+
+  test('addBlockedRemote returns false when the entry already exists', async () => {
+    const models = {
+      BlockedRemote: {
+        findOrCreate: jest.fn().mockResolvedValue([{ cidr: '10.0.0.0/8' }, false]),
+      },
+    };
+    const { registry } = loadDeviceRegistry({ models });
+
+    await expect(registry.addBlockedRemote('10.0.0.0/8')).resolves.toBe(false);
+  });
+
+  test('getBlockedRemotes returns all records', async () => {
+    const records = [{ cidr: '10.0.0.0/8' }, { cidr: '192.168.1.1/32' }];
+    const models = {
+      BlockedRemote: {
+        findAll: jest.fn().mockResolvedValue(records),
+      },
+    };
+    const { registry } = loadDeviceRegistry({ models });
+
+    await expect(registry.getBlockedRemotes()).resolves.toEqual(records);
+  });
+
   test('deleteDeviceAliasByGroupAndName clears the alias when found', async () => {
     const record = {
       alias: 'edge-router',

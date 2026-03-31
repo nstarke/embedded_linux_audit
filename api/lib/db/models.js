@@ -568,6 +568,24 @@ function defineModels(sequelize) {
   Upload.hasMany(LogEvent, { foreignKey: 'uploadId' });
   Upload.hasOne(ArchReport, { foreignKey: 'uploadId' });
   Upload.hasMany(GrepMatch, { foreignKey: 'uploadId' });
+  const BlockedRemote = sequelize.define('BlockedRemote', {
+    id: {
+      type: DataTypes.BIGINT,
+      autoIncrement: true,
+      primaryKey: true,
+    },
+    cidr: {
+      type: DataTypes.STRING(50),
+      allowNull: false,
+      unique: true,
+    },
+  }, {
+    tableName: 'blocked_remotes',
+    underscored: true,
+    updatedAt: false,
+    createdAt: 'created_at',
+  });
+
   Device.hasOne(DeviceAlias, { foreignKey: 'deviceId' });
   DeviceAlias.belongsTo(Device, { foreignKey: 'deviceId' });
   Device.hasMany(TerminalConnection, { foreignKey: 'deviceId' });
@@ -587,6 +605,7 @@ function defineModels(sequelize) {
     TerminalConnection,
     ArchReport,
     GrepMatch,
+    BlockedRemote,
   };
 }
 

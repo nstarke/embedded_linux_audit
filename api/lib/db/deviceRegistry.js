@@ -113,6 +113,20 @@ async function setDeviceGroup(macAddress, group) {
   });
 }
 
+async function addBlockedRemote(cidr) {
+  const { BlockedRemote } = getModels();
+  const [, created] = await BlockedRemote.findOrCreate({
+    where: { cidr },
+    defaults: { cidr },
+  });
+  return created;
+}
+
+async function getBlockedRemotes() {
+  const { BlockedRemote } = getModels();
+  return BlockedRemote.findAll();
+}
+
 async function deleteDeviceAliasByGroupAndName(group, name) {
   const { DeviceAlias } = getModels();
   const record = await DeviceAlias.findOne({
@@ -186,6 +200,8 @@ module.exports = {
   setDeviceAlias,
   setDeviceGroup,
   deleteDeviceAliasByGroupAndName,
+  addBlockedRemote,
+  getBlockedRemotes,
   recordTerminalConnection,
   touchTerminalHeartbeat,
   closeTerminalConnection,

@@ -90,6 +90,10 @@ function loadTerminalServer(options = {}) {
   const touchTerminalHeartbeat = jest.fn().mockResolvedValue(undefined);
   const closeTerminalConnection = jest.fn().mockResolvedValue(undefined);
   const setDeviceAlias = jest.fn().mockResolvedValue(undefined);
+  const setDeviceGroup = jest.fn().mockResolvedValue(undefined);
+  const deleteDeviceAliasByGroupAndName = jest.fn().mockResolvedValue(false);
+  const addBlockedRemote = jest.fn().mockResolvedValue(true);
+  const getBlockedRemotes = jest.fn().mockResolvedValue([]);
   const appendBatchOutput = jest.fn((lines, entry, text) => lines.concat(`${entry.mac}:${text}`));
   const renderBatchOutput = jest.fn((lines) => lines.join('\n'));
   const loadLegacyAliases = jest.fn(() => ({}));
@@ -125,6 +129,7 @@ function loadTerminalServer(options = {}) {
     if (options.registry.touchTerminalHeartbeat) touchTerminalHeartbeat.mockImplementation(options.registry.touchTerminalHeartbeat);
     if (options.registry.closeTerminalConnection) closeTerminalConnection.mockImplementation(options.registry.closeTerminalConnection);
     if (options.registry.setDeviceAlias) setDeviceAlias.mockImplementation(options.registry.setDeviceAlias);
+    if (options.registry.getBlockedRemotes) getBlockedRemotes.mockImplementation(options.registry.getBlockedRemotes);
   }
   if (options.formatPromptOutput) {
     formatPromptOutput.mockImplementation(options.formatPromptOutput);
@@ -169,6 +174,10 @@ function loadTerminalServer(options = {}) {
     touchTerminalHeartbeat,
     closeTerminalConnection,
     setDeviceAlias,
+    setDeviceGroup,
+    deleteDeviceAliasByGroupAndName,
+    addBlockedRemote,
+    getBlockedRemotes,
   }));
   jest.doMock('../../../../api/terminal/batchOutput', () => ({
     appendBatchOutput,
@@ -973,5 +982,34 @@ describe('terminal server orchestration', () => {
     expect(process.stderr.write).toHaveBeenCalledWith(expect.stringContaining('legacy alias load failed'));
     expect(closeDatabase).toHaveBeenCalledTimes(1);
     expect(process.exit).toHaveBeenCalledWith(1);
+  });
+
+  test('verifyClient rejects connections from blocked IPs with 403', () => {
+    const { server } = loadTerminalServer();
+    const verifyClient = server.wss.options.verifyClient;
+    const done = jest.fn();
+
+    server.blockedCidrs.push({ network: (10 << 24) | 1, mask: 0xffffffff, cidr: '10.0.0.1/32' });
+
+    verifyClient({ req: { url: '/terminal/aa:bb', headers: { authorization: 'Bearer ok' }, socket: { remoteAddress: '10.0.0.1' } } }, done);
+    expect(done).toHaveBeenCalledWith(false, 403, 'Forbidden');
+
+    done.mockClear();
+    verifyClient({ req: { url: '/terminal/aa:bb', headers: { authorization: 'Bearer ok' }, socket: { remoteAddress: '10.0.0.2' } } }, done);
+    expect(done).toHaveBeenCalledWith(true);
+  });
+
+  test('main() loads the block list from the database on startup', async () => {
+    const { server } = loadTerminalServer({
+      registry: {
+        getBlockedRemotes: async () => [{ cidr: '10.0.0.0/8' }],
+      },
+    });
+    jest.spyOn(server.tui, 'render').mockImplementation(() => {});
+
+    await server.main();
+
+    expect(server.blockedCidrs.length).toBe(1);
+    expect(server.blockedCidrs[0].cidr).toBe('10.0.0.0/8');
   });
 });

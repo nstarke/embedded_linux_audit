@@ -14,7 +14,10 @@ const {
   setDeviceAlias,
   setDeviceGroup,
   deleteDeviceAliasByGroupAndName,
+  addBlockedRemote,
+  getBlockedRemotes,
 } = require('../lib/db/deviceRegistry');
+const { parseCidr, isBlocked } = require('./cidrUtil');
 const { appendBatchOutput, renderBatchOutput } = require('./batchOutput');
 const { loadLegacyAliases } = require('./legacyAliases');
 const { formatPromptOutput } = require('./promptFormatter');
@@ -52,6 +55,17 @@ async function importLegacyAliases() {
 }
 
 const sessionRegistry = createSessionRegistry({ heartbeatIntervalMs: HEARTBEAT_INTERVAL_MS });
+
+const blockedCidrs = [];
+
+async function addBlock(cidr) {
+  const created = await addBlockedRemote(cidr);
+  if (created) {
+    const parsed = parseCidr(cidr);
+    if (parsed) blockedCidrs.push(parsed);
+  }
+  return created;
+}
 
 async function cleanup() {
   const closeOps = [];
@@ -113,6 +127,10 @@ const wss = new WebSocketServer({
     const url = info.req.url || '';
     if (!/^\/terminal\/[^/]+$/.test(url)) {
       done(false, 404, 'Not Found');
+      return;
+    }
+    if (isBlocked(info.req.socket?.remoteAddress || '', blockedCidrs)) {
+      done(false, 403, 'Forbidden');
       return;
     }
     if (auth.checkBearer(info.req.headers.authorization)) {
@@ -627,6 +645,8 @@ const tui = {
           setDeviceAlias,
           setDeviceGroup,
           deleteDeviceAliasByGroupAndName,
+          addBlock,
+          getBlockList: () => blockedCidrs.map((c) => c.cidr),
           startSessionUpdate,
           onDetach: () => this.detach(),
           writeOutput: (text) => process.stdout.write(text),
@@ -719,6 +739,12 @@ async function main() {
   await runMigrations();
   await importLegacyAliases();
 
+  const existingBlocks = await getBlockedRemotes();
+  for (const record of existingBlocks) {
+    const parsed = parseCidr(record.cidr);
+    if (parsed) blockedCidrs.push(parsed);
+  }
+
   httpServer.listen(PORT, HOST, () => {
     setupInput();
     process.stdout.write(`ELA terminal API listening on ws://${HOST}:${PORT}\n`);
@@ -755,6 +781,8 @@ module.exports = {
   tui,
   httpServer,
   wss,
+  blockedCidrs,
+  addBlock,
   importLegacyAliases,
   cleanup,
   exitGracefully,

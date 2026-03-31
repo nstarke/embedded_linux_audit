@@ -1,5 +1,7 @@
 'use strict';
 
+const { parseCidr } = require('./cidrUtil');
+
 const SESSION_COMMAND_HELP = [
   '/help                          show commands available for the attached session',
   '/detach                        return to the top-level session list',
@@ -8,6 +10,7 @@ const SESSION_COMMAND_HELP = [
   '/name [alias]                  set or clear the alias for the current node',
   '/group [group]                 set or clear the group for the current node',
   '/delete <group> <name>         delete an alias by group and name',
+  '/block [<ip>[/<prefix>]]        block an IP/CIDR, or list all blocked ranges',
 ];
 
 async function executeLocalSessionCommand({
@@ -18,6 +21,8 @@ async function executeLocalSessionCommand({
   setDeviceAlias,
   setDeviceGroup = () => {},
   deleteDeviceAliasByGroupAndName = () => Promise.resolve(false),
+  addBlock = () => Promise.resolve(false),
+  getBlockList = () => [],
   startSessionUpdate = () => false,
   onDetach,
   writeOutput,
@@ -106,6 +111,33 @@ async function executeLocalSessionCommand({
     } else {
       writeOutput(`\r\n[not found: "${name}" in group "${group}"]\r\n`);
     }
+    return true;
+  }
+
+  if (cmd === '/block') {
+    cancelRemoteInput();
+    const list = getBlockList();
+    if (list.length === 0) {
+      writeOutput('\r\n[no blocked ranges]\r\n');
+    } else {
+      writeOutput(`\r\n[blocked ranges]\r\n${list.join('\r\n')}\r\n`);
+    }
+    return true;
+  }
+
+  if (cmd.startsWith('/block ')) {
+    cancelRemoteInput();
+    const input = cmd.slice(7).trim();
+    const parsed = parseCidr(input);
+    if (!parsed) {
+      writeOutput('\r\n[usage: /block <ip-address>[/<prefix>]]\r\n');
+      return true;
+    }
+    const created = await addBlock(parsed.cidr);
+    writeOutput(created
+      ? `\r\n[blocked: ${parsed.cidr}]\r\n`
+      : `\r\n[already blocked: ${parsed.cidr}]\r\n`
+    );
     return true;
   }
 

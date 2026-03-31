@@ -19,6 +19,7 @@ const migration0002 = require('../../../../api/lib/db/migrations/0002-device-ali
 const migration0003 = require('../../../../api/lib/db/migrations/0003-upload-local-artifact-path');
 const migration0004 = require('../../../../api/lib/db/migrations/0004-device-group');
 const migration0005 = require('../../../../api/lib/db/migrations/0005-alias-group-unique');
+const migration0006 = require('../../../../api/lib/db/migrations/0006-blocked-remotes');
 
 function createQueryInterface() {
   return {
@@ -161,5 +162,18 @@ describe('db migrations', () => {
       type: expect.any(Object),
       allowNull: false,
     });
+  });
+
+  test('0006 creates and drops the blocked_remotes table', async () => {
+    const queryInterface = createQueryInterface();
+
+    await migration0006.up({ context: queryInterface });
+    expect(queryInterface.createTable).toHaveBeenCalledWith('blocked_remotes', expect.objectContaining({
+      cidr: expect.objectContaining({ allowNull: false, unique: true }),
+      created_at: expect.any(Object),
+    }));
+
+    await migration0006.down({ context: queryInterface });
+    expect(queryInterface.dropTable).toHaveBeenCalledWith('blocked_remotes');
   });
 });
