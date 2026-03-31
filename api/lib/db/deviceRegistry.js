@@ -49,7 +49,13 @@ async function setDeviceAlias(macAddress, alias, source = 'terminal_api') {
 
     if (!alias) {
       if (existing) {
-        await existing.destroy({ transaction });
+        if (existing.group != null) {
+          existing.alias = null;
+          existing.source = source;
+          await existing.save({ transaction });
+        } else {
+          await existing.destroy({ transaction });
+        }
       }
       return null;
     }
@@ -70,16 +76,78 @@ async function setDeviceAlias(macAddress, alias, source = 'terminal_api') {
   });
 }
 
+async function setDeviceGroup(macAddress, group) {
+  const sequelize = getSequelize();
+  const { DeviceAlias } = getModels();
+
+  return sequelize.transaction(async (transaction) => {
+    const device = await ensureDevice(macAddress, transaction, new Date());
+    const existing = await DeviceAlias.findOne({
+      where: { deviceId: device.id },
+      transaction,
+    });
+
+    if (group == null) {
+      if (existing) {
+        if (existing.alias != null) {
+          existing.group = null;
+          await existing.save({ transaction });
+        } else {
+          await existing.destroy({ transaction });
+        }
+      }
+      return null;
+    }
+
+    if (existing) {
+      existing.group = group;
+      await existing.save({ transaction });
+      return existing.group;
+    }
+
+    const created = await DeviceAlias.create({
+      deviceId: device.id,
+      group,
+    }, { transaction });
+    return created.group;
+  });
+}
+
+async function deleteDeviceAliasByGroupAndName(group, name) {
+  const { DeviceAlias } = getModels();
+  const record = await DeviceAlias.findOne({
+    where: { alias: name, group },
+  });
+  if (!record) return false;
+  record.alias = null;
+  await record.save();
+  return true;
+}
+
 async function recordTerminalConnection(macAddress, remoteAddress) {
   const sequelize = getSequelize();
   const { DeviceAlias, TerminalConnection } = getModels();
 
   return sequelize.transaction(async (transaction) => {
     const device = await ensureDevice(macAddress, transaction, new Date());
-    const alias = await DeviceAlias.findOne({
+    let aliasRecord = await DeviceAlias.findOne({
       where: { deviceId: device.id },
       transaction,
     });
+
+    // Initialize group to remoteAddress on first connection if not already set
+    if (remoteAddress && (!aliasRecord || aliasRecord.group == null)) {
+      if (aliasRecord) {
+        aliasRecord.group = remoteAddress;
+        await aliasRecord.save({ transaction });
+      } else {
+        aliasRecord = await DeviceAlias.create({
+          deviceId: device.id,
+          group: remoteAddress,
+        }, { transaction });
+      }
+    }
+
     const connection = await TerminalConnection.create({
       deviceId: device.id,
       remoteAddress: remoteAddress || null,
@@ -88,7 +156,8 @@ async function recordTerminalConnection(macAddress, remoteAddress) {
 
     return {
       connectionId: connection.id,
-      alias: alias ? alias.alias : null,
+      alias: aliasRecord ? aliasRecord.alias : null,
+      group: aliasRecord ? aliasRecord.group : null,
     };
   });
 }
@@ -115,6 +184,8 @@ module.exports = {
   ensureDevice,
   getDeviceAlias,
   setDeviceAlias,
+  setDeviceGroup,
+  deleteDeviceAliasByGroupAndName,
   recordTerminalConnection,
   touchTerminalHeartbeat,
   closeTerminalConnection,

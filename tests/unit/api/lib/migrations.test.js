@@ -17,14 +17,18 @@ jest.mock('sequelize', () => ({
 const migration0001 = require('../../../../api/lib/db/migrations/0001-initial-schema');
 const migration0002 = require('../../../../api/lib/db/migrations/0002-device-aliases-and-new-upload-types');
 const migration0003 = require('../../../../api/lib/db/migrations/0003-upload-local-artifact-path');
+const migration0004 = require('../../../../api/lib/db/migrations/0004-device-group');
+const migration0005 = require('../../../../api/lib/db/migrations/0005-alias-group-unique');
 
 function createQueryInterface() {
   return {
     createTable: jest.fn().mockResolvedValue(undefined),
     addIndex: jest.fn().mockResolvedValue(undefined),
+    removeIndex: jest.fn().mockResolvedValue(undefined),
     dropTable: jest.fn().mockResolvedValue(undefined),
     addColumn: jest.fn().mockResolvedValue(undefined),
     removeColumn: jest.fn().mockResolvedValue(undefined),
+    changeColumn: jest.fn().mockResolvedValue(undefined),
   };
 }
 
@@ -124,5 +128,38 @@ describe('db migrations', () => {
 
     await migration0003.down({ context: queryInterface });
     expect(queryInterface.removeColumn).toHaveBeenCalledWith('uploads', 'local_artifact_path');
+  });
+
+  test('0005 replaces global alias uniqueness with per-group uniqueness', async () => {
+    const queryInterface = createQueryInterface();
+
+    await migration0005.up({ context: queryInterface });
+    expect(queryInterface.removeIndex).toHaveBeenCalledWith('device_aliases', ['alias']);
+    expect(queryInterface.addIndex).toHaveBeenCalledWith('device_aliases', ['alias', 'group'], { unique: true });
+
+    await migration0005.down({ context: queryInterface });
+    expect(queryInterface.removeIndex).toHaveBeenCalledWith('device_aliases', ['alias', 'group']);
+    expect(queryInterface.addIndex).toHaveBeenCalledWith('device_aliases', ['alias'], { unique: true });
+  });
+
+  test('0004 adds group column and makes alias nullable', async () => {
+    const queryInterface = createQueryInterface();
+
+    await migration0004.up({ context: queryInterface });
+    expect(queryInterface.changeColumn).toHaveBeenCalledWith('device_aliases', 'alias', {
+      type: expect.any(Object),
+      allowNull: true,
+    });
+    expect(queryInterface.addColumn).toHaveBeenCalledWith('device_aliases', 'group', {
+      type: expect.any(Object),
+      allowNull: true,
+    });
+
+    await migration0004.down({ context: queryInterface });
+    expect(queryInterface.removeColumn).toHaveBeenCalledWith('device_aliases', 'group');
+    expect(queryInterface.changeColumn).toHaveBeenCalledWith('device_aliases', 'alias', {
+      type: expect.any(Object),
+      allowNull: false,
+    });
   });
 });

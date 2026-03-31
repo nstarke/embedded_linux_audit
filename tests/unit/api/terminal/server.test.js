@@ -844,7 +844,7 @@ describe('terminal server orchestration', () => {
     executeLocalSessionCommand.mockRejectedValueOnce(new Error('alias save failed'));
     server.tui._localCmdBuf = 'alias new-name';
     await server.tui._handleSessionKey('', 'return', false);
-    expect(process.stdout.write).toHaveBeenCalledWith('\r\n[failed to save alias: alias save failed]\r\n');
+    expect(process.stdout.write).toHaveBeenCalledWith('\r\n[failed to save: alias save failed]\r\n');
   });
 
   test('setupInput warns when stdin is not a TTY', () => {

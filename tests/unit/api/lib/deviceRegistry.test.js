@@ -50,6 +50,20 @@ describe('device registry', () => {
     expect(result).toBe(device);
   });
 
+  test('getDeviceAlias returns null when device is not found', async () => {
+    const DeviceAlias = { name: 'DeviceAlias' };
+    const models = {
+      Device,
+      DeviceAlias,
+    };
+    function Device() {}
+    Device.findOne = jest.fn().mockResolvedValue(null);
+
+    const { registry } = loadDeviceRegistry({ models });
+
+    await expect(registry.getDeviceAlias('aa:bb')).resolves.toBeNull();
+  });
+
   test('getDeviceAlias returns alias text when present', async () => {
     const DeviceAlias = { name: 'DeviceAlias' };
     const models = {
@@ -96,6 +110,38 @@ describe('device registry', () => {
     expect(existing.alias).toBe('new-name');
     expect(existing.source).toBe('terminal_api');
     expect(existing.save).toHaveBeenCalledWith({ transaction: 'tx1' });
+  });
+
+  test('setDeviceAlias clears alias but keeps row when group is set', async () => {
+    const existing = {
+      alias: 'old',
+      group: '10.0.0.1',
+      source: 'terminal_api',
+      save: jest.fn().mockResolvedValue(undefined),
+      destroy: jest.fn(),
+    };
+    const models = {
+      Device: {
+        findOrCreate: jest.fn().mockResolvedValue([{
+          id: 7,
+          lastSeenAt: new Date('2026-01-01T00:00:00Z'),
+          save: jest.fn().mockResolvedValue(undefined),
+        }]),
+      },
+      DeviceAlias: {
+        findOne: jest.fn().mockResolvedValue(existing),
+        create: jest.fn(),
+      },
+    };
+    const sequelize = {
+      transaction: jest.fn(async (fn) => fn('tx1')),
+    };
+    const { registry } = loadDeviceRegistry({ models, sequelize });
+
+    await expect(registry.setDeviceAlias('aa:bb', '')).resolves.toBeNull();
+    expect(existing.alias).toBeNull();
+    expect(existing.save).toHaveBeenCalledWith({ transaction: 'tx1' });
+    expect(existing.destroy).not.toHaveBeenCalled();
   });
 
   test('setDeviceAlias removes an existing alias when alias is empty', async () => {
@@ -151,7 +197,123 @@ describe('device registry', () => {
     }, { transaction: 'tx1' });
   });
 
-  test('recordTerminalConnection returns the connection id and alias', async () => {
+  test('setDeviceGroup updates an existing record', async () => {
+    const existing = {
+      alias: 'router',
+      group: null,
+      save: jest.fn().mockResolvedValue(undefined),
+    };
+    const models = {
+      Device: {
+        findOrCreate: jest.fn().mockResolvedValue([{
+          id: 7,
+          lastSeenAt: new Date('2026-01-01T00:00:00Z'),
+          save: jest.fn().mockResolvedValue(undefined),
+        }]),
+      },
+      DeviceAlias: {
+        findOne: jest.fn().mockResolvedValue(existing),
+      },
+    };
+    const sequelize = {
+      transaction: jest.fn(async (fn) => fn('tx1')),
+    };
+    const { registry } = loadDeviceRegistry({ models, sequelize });
+
+    await expect(registry.setDeviceGroup('aa:bb', 'factory-floor')).resolves.toBe('factory-floor');
+    expect(existing.group).toBe('factory-floor');
+    expect(existing.save).toHaveBeenCalledWith({ transaction: 'tx1' });
+  });
+
+  test('setDeviceGroup creates a new record when none exists', async () => {
+    const models = {
+      Device: {
+        findOrCreate: jest.fn().mockResolvedValue([{
+          id: 9,
+          lastSeenAt: new Date('2026-01-01T00:00:00Z'),
+          save: jest.fn().mockResolvedValue(undefined),
+        }]),
+      },
+      DeviceAlias: {
+        findOne: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockResolvedValue({ group: 'lab-bench' }),
+      },
+    };
+    const sequelize = {
+      transaction: jest.fn(async (fn) => fn('tx1')),
+    };
+    const { registry } = loadDeviceRegistry({ models, sequelize });
+
+    await expect(registry.setDeviceGroup('aa:bb', 'lab-bench')).resolves.toBe('lab-bench');
+    expect(models.DeviceAlias.create).toHaveBeenCalledWith({
+      deviceId: 9,
+      group: 'lab-bench',
+    }, { transaction: 'tx1' });
+  });
+
+  test('setDeviceGroup clears group but keeps row when alias is set', async () => {
+    const existing = {
+      alias: 'router',
+      group: 'factory-floor',
+      save: jest.fn().mockResolvedValue(undefined),
+      destroy: jest.fn(),
+    };
+    const models = {
+      Device: {
+        findOrCreate: jest.fn().mockResolvedValue([{
+          id: 7,
+          lastSeenAt: new Date('2026-01-01T00:00:00Z'),
+          save: jest.fn().mockResolvedValue(undefined),
+        }]),
+      },
+      DeviceAlias: {
+        findOne: jest.fn().mockResolvedValue(existing),
+      },
+    };
+    const sequelize = {
+      transaction: jest.fn(async (fn) => fn('tx1')),
+    };
+    const { registry } = loadDeviceRegistry({ models, sequelize });
+
+    await expect(registry.setDeviceGroup('aa:bb', null)).resolves.toBeNull();
+    expect(existing.group).toBeNull();
+    expect(existing.save).toHaveBeenCalledWith({ transaction: 'tx1' });
+    expect(existing.destroy).not.toHaveBeenCalled();
+  });
+
+  test('setDeviceGroup removes row when clearing group with no alias', async () => {
+    const existing = {
+      alias: null,
+      group: 'factory-floor',
+      destroy: jest.fn().mockResolvedValue(undefined),
+    };
+    const models = {
+      Device: {
+        findOrCreate: jest.fn().mockResolvedValue([{
+          id: 7,
+          lastSeenAt: new Date('2026-01-01T00:00:00Z'),
+          save: jest.fn().mockResolvedValue(undefined),
+        }]),
+      },
+      DeviceAlias: {
+        findOne: jest.fn().mockResolvedValue(existing),
+      },
+    };
+    const sequelize = {
+      transaction: jest.fn(async (fn) => fn('tx1')),
+    };
+    const { registry } = loadDeviceRegistry({ models, sequelize });
+
+    await expect(registry.setDeviceGroup('aa:bb', null)).resolves.toBeNull();
+    expect(existing.destroy).toHaveBeenCalledWith({ transaction: 'tx1' });
+  });
+
+  test('recordTerminalConnection returns the connection id, alias, and group', async () => {
+    const aliasRecord = {
+      alias: 'edge-router',
+      group: '10.0.0.1',
+      save: jest.fn().mockResolvedValue(undefined),
+    };
     const models = {
       Device: {
         findOrCreate: jest.fn().mockResolvedValue([{
@@ -161,7 +323,7 @@ describe('device registry', () => {
         }]),
       },
       DeviceAlias: {
-        findOne: jest.fn().mockResolvedValue({ alias: 'edge-router' }),
+        findOne: jest.fn().mockResolvedValue(aliasRecord),
       },
       TerminalConnection: {
         create: jest.fn().mockResolvedValue({ id: 42 }),
@@ -175,12 +337,115 @@ describe('device registry', () => {
     await expect(registry.recordTerminalConnection('aa:bb', '10.0.0.2')).resolves.toEqual({
       connectionId: 42,
       alias: 'edge-router',
+      group: '10.0.0.1',
     });
+    // group already set — no save needed
+    expect(aliasRecord.save).not.toHaveBeenCalled();
     expect(models.TerminalConnection.create).toHaveBeenCalledWith(expect.objectContaining({
       deviceId: 11,
       remoteAddress: '10.0.0.2',
       connectedAt: expect.any(Date),
     }), { transaction: 'tx1' });
+  });
+
+  test('recordTerminalConnection initializes group to remoteAddress when no group is set', async () => {
+    const aliasRecord = {
+      alias: 'edge-router',
+      group: null,
+      save: jest.fn().mockResolvedValue(undefined),
+    };
+    const models = {
+      Device: {
+        findOrCreate: jest.fn().mockResolvedValue([{
+          id: 11,
+          lastSeenAt: new Date('2026-01-01T00:00:00Z'),
+          save: jest.fn().mockResolvedValue(undefined),
+        }]),
+      },
+      DeviceAlias: {
+        findOne: jest.fn().mockResolvedValue(aliasRecord),
+      },
+      TerminalConnection: {
+        create: jest.fn().mockResolvedValue({ id: 43 }),
+      },
+    };
+    const sequelize = {
+      transaction: jest.fn(async (fn) => fn('tx1')),
+    };
+    const { registry } = loadDeviceRegistry({ models, sequelize });
+
+    await expect(registry.recordTerminalConnection('aa:bb', '10.0.0.5')).resolves.toEqual({
+      connectionId: 43,
+      alias: 'edge-router',
+      group: '10.0.0.5',
+    });
+    expect(aliasRecord.group).toBe('10.0.0.5');
+    expect(aliasRecord.save).toHaveBeenCalledWith({ transaction: 'tx1' });
+  });
+
+  test('recordTerminalConnection creates a new alias record to store group when none exists', async () => {
+    const models = {
+      Device: {
+        findOrCreate: jest.fn().mockResolvedValue([{
+          id: 11,
+          lastSeenAt: new Date('2026-01-01T00:00:00Z'),
+          save: jest.fn().mockResolvedValue(undefined),
+        }]),
+      },
+      DeviceAlias: {
+        findOne: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockResolvedValue({ alias: null, group: '10.0.0.3' }),
+      },
+      TerminalConnection: {
+        create: jest.fn().mockResolvedValue({ id: 44 }),
+      },
+    };
+    const sequelize = {
+      transaction: jest.fn(async (fn) => fn('tx1')),
+    };
+    const { registry } = loadDeviceRegistry({ models, sequelize });
+
+    await expect(registry.recordTerminalConnection('aa:bb', '10.0.0.3')).resolves.toEqual({
+      connectionId: 44,
+      alias: null,
+      group: '10.0.0.3',
+    });
+    expect(models.DeviceAlias.create).toHaveBeenCalledWith({
+      deviceId: 11,
+      group: '10.0.0.3',
+    }, { transaction: 'tx1' });
+  });
+
+  test('deleteDeviceAliasByGroupAndName clears the alias when found', async () => {
+    const record = {
+      alias: 'edge-router',
+      group: 'factory-floor',
+      save: jest.fn().mockResolvedValue(undefined),
+    };
+    const models = {
+      DeviceAlias: {
+        findOne: jest.fn().mockResolvedValue(record),
+      },
+    };
+    const { registry } = loadDeviceRegistry({ models });
+
+    await expect(registry.deleteDeviceAliasByGroupAndName('factory-floor', 'edge-router')).resolves.toBe(true);
+    expect(models.DeviceAlias.findOne).toHaveBeenCalledWith({
+      where: { alias: 'edge-router', group: 'factory-floor' },
+    });
+    expect(record.alias).toBeNull();
+    expect(record.save).toHaveBeenCalled();
+  });
+
+  test('deleteDeviceAliasByGroupAndName returns false when not found', async () => {
+    const models = {
+      DeviceAlias: {
+        findOne: jest.fn().mockResolvedValue(null),
+      },
+    };
+    const { registry } = loadDeviceRegistry({ models });
+
+    await expect(registry.deleteDeviceAliasByGroupAndName('factory-floor', 'nonexistent')).resolves.toBe(false);
   });
 
   test('touchTerminalHeartbeat and closeTerminalConnection update the connection record', async () => {

@@ -12,6 +12,8 @@ const {
   touchTerminalHeartbeat,
   closeTerminalConnection,
   setDeviceAlias,
+  setDeviceGroup,
+  deleteDeviceAliasByGroupAndName,
 } = require('../lib/db/deviceRegistry');
 const { appendBatchOutput, renderBatchOutput } = require('./batchOutput');
 const { loadLegacyAliases } = require('./legacyAliases');
@@ -147,6 +149,7 @@ wss.on('connection', async (ws, req) => {
   const entry = sessionRegistry.addSession(mac, ws, {
     alias: registration.alias,
     connectionId: registration.connectionId,
+    group: registration.group,
   });
   entry.updateCtx = null;
   entry.updateStatus = null;
@@ -253,7 +256,8 @@ const tui = {
         const mac = macs[i];
         const entry = sessionRegistry.getSession(mac);
         const hb = entry.lastHeartbeat ? `  last heartbeat: ${entry.lastHeartbeat}` : '';
-        const label = entry.alias ? `${entry.alias} (${mac})` : mac;
+        const nameParts = [entry.alias, entry.group].filter(Boolean);
+        const label = nameParts.length ? `${nameParts.join(' / ')} (${mac})` : mac;
         const statusTag = entry.updateStatus
           ? `  [${entry.updateError ? `${entry.updateStatus}: ${entry.updateError}` : entry.updateStatus}]`
           : '';
@@ -292,7 +296,8 @@ const tui = {
     this.activeMac = mac;
     this._localCmdBuf = '';
 
-    const label = entry.alias ? `${entry.alias} (${mac})` : mac;
+    const attachNameParts = [entry.alias, entry.group].filter(Boolean);
+    const label = attachNameParts.length ? `${attachNameParts.join(' / ')} (${mac})` : mac;
     process.stdout.write(ANSI.clear);
     process.stdout.write(
       `${ANSI.bold}Attached to ${label}${ANSI.reset}  (type '/detach' + Enter to return)\r\n` +
@@ -620,6 +625,8 @@ const tui = {
           sessionEntry: entry,
           sessions: sessionRegistry.entries().map(([, sessionEntry]) => sessionEntry),
           setDeviceAlias,
+          setDeviceGroup,
+          deleteDeviceAliasByGroupAndName,
           startSessionUpdate,
           onDetach: () => this.detach(),
           writeOutput: (text) => process.stdout.write(text),
@@ -633,7 +640,7 @@ const tui = {
           return;
         }
       } catch (err) {
-        process.stdout.write(`\r\n[failed to save alias: ${err.message}]\r\n`);
+        process.stdout.write(`\r\n[failed to save: ${err.message}]\r\n`);
         return;
       }
 

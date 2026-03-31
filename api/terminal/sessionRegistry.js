@@ -7,12 +7,13 @@ function createSessionRegistry({
 } = {}) {
   const sessions = new Map();
 
-  function addSession(mac, ws, { alias = null, connectionId = null } = {}) {
+  function addSession(mac, ws, { alias = null, connectionId = null, group = null } = {}) {
     const entry = {
       ws,
       mac,
       alias,
       connectionId,
+      group,
       inputMode: 'line',
       lastHeartbeat: null,
       heartbeatTimer: null,
