@@ -416,6 +416,38 @@ describe('device registry', () => {
     }, { transaction: 'tx1' });
   });
 
+  test('deleteDeviceAliasByGroupAndName clears the alias when found', async () => {
+    const record = {
+      alias: 'edge-router',
+      group: 'factory-floor',
+      save: jest.fn().mockResolvedValue(undefined),
+    };
+    const models = {
+      DeviceAlias: {
+        findOne: jest.fn().mockResolvedValue(record),
+      },
+    };
+    const { registry } = loadDeviceRegistry({ models });
+
+    await expect(registry.deleteDeviceAliasByGroupAndName('factory-floor', 'edge-router')).resolves.toBe(true);
+    expect(models.DeviceAlias.findOne).toHaveBeenCalledWith({
+      where: { alias: 'edge-router', group: 'factory-floor' },
+    });
+    expect(record.alias).toBeNull();
+    expect(record.save).toHaveBeenCalled();
+  });
+
+  test('deleteDeviceAliasByGroupAndName returns false when not found', async () => {
+    const models = {
+      DeviceAlias: {
+        findOne: jest.fn().mockResolvedValue(null),
+      },
+    };
+    const { registry } = loadDeviceRegistry({ models });
+
+    await expect(registry.deleteDeviceAliasByGroupAndName('factory-floor', 'nonexistent')).resolves.toBe(false);
+  });
+
   test('touchTerminalHeartbeat and closeTerminalConnection update the connection record', async () => {
     const models = {
       TerminalConnection: {

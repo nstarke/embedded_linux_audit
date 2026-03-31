@@ -178,8 +178,8 @@ When no session is attached the server displays a list of connected devices:
 ```
 ela-terminal  —  2 session(s)
 ────────────────────────────────────────────────────────────
-  aa-bb-cc-dd-ee-ff  last heartbeat: Mon Mar 10 14:32:01 UTC 2026
-  router1 (11-22-33-44-55-66)  last heartbeat: Mon Mar 10 14:32:05 UTC 2026
+  10.0.0.5 (aa-bb-cc-dd-ee-ff)  last heartbeat: Mon Mar 10 14:32:01 UTC 2026
+  router1 / factory-floor (11-22-33-44-55-66)  last heartbeat: Mon Mar 10 14:32:05 UTC 2026
 
 ↑/↓ navigate   Enter attach   q quit
 ```
@@ -192,8 +192,11 @@ ela-terminal  —  2 session(s)
 | `q` | Quit the server |
 | `Ctrl+C` | Quit the server |
 
-Device labels show the alias if one has been set, followed by the MAC address
-in parentheses, e.g. `router1 (11-22-33-44-55-66)`.
+Device labels show the alias and group separated by ` / `, followed by the MAC
+address in parentheses.  When only one of alias or group is set, only that
+value appears before the MAC, e.g. `router1 (11-22-33-44-55-66)` or
+`factory-floor (aa-bb-cc-dd-ee-ff)`.  The group is automatically initialised
+to the connecting device's source IP address on first connection.
 
 ## TUI — active session
 
@@ -201,11 +204,11 @@ After attaching, the operator sees a prompt and can type commands that are
 sent to the agent's interactive loop:
 
 ```
-Attached to router1 (11-22-33-44-55-66)  (type '/detach' + Enter to return)
+Attached to router1 / factory-floor (11-22-33-44-55-66)  (type '/detach' + Enter to return)
 ────────────────────────────────────────────────────────────
-router1 (11-22-33-44-55-66)> linux dmesg
+router1 / factory-floor (11-22-33-44-55-66)> linux dmesg
 ...
-router1 (11-22-33-44-55-66)>
+router1 / factory-floor (11-22-33-44-55-66)>
 ```
 
 The prompt is `alias (mac)>` when an alias is set, or `(mac)>` otherwise.
@@ -220,27 +223,69 @@ verbatim to the agent's interactive loop (e.g. `linux dmesg`,
 | Command | Description |
 |---------|-------------|
 | `/help` | Show available session commands |
-| `/name <alias>` | Assign a human-readable alias to the device |
+| `/name [alias]` | Set or clear the alias for the current device |
+| `/group [group]` | Set or clear the group for the current device |
+| `/delete <group> <name>` | Delete an alias identified by its group and name |
 | `/detach` | Return to the session list without closing the agent connection |
 
 ### Naming a device
 
 ```
 (aa-bb-cc-dd-ee-ff)> /name production-router
-[device named: production-router]
-production-router (aa-bb-cc-dd-ee-ff)>
+[alias set to "production-router"]
+production-router / 10.0.0.1 (aa-bb-cc-dd-ee-ff)>
 ```
 
 Aliases are persisted to PostgreSQL and reloaded automatically on server
-startup, so they survive server restarts. Existing
+startup, so they survive server restarts.  Existing
 `api/terminal/ela-aliases.json` entries are imported on startup for migration
-compatibility. To clear an
-alias, run `/name` with no argument:
+compatibility.  To clear an alias, run `/name` with no argument:
 
 ```
-production-router (aa-bb-cc-dd-ee-ff)> /name
+production-router / factory-floor (aa-bb-cc-dd-ee-ff)> /name
 [alias cleared]
-(aa-bb-cc-dd-ee-ff)>
+factory-floor (aa-bb-cc-dd-ee-ff)>
+```
+
+Alias uniqueness is scoped to the group — the same alias may be used in
+different groups, but two devices in the same group cannot share an alias.
+
+### Grouping devices
+
+Every session is automatically assigned a group on first connection, using the
+source IP address of the connecting agent as the initial value:
+
+```
+(aa-bb-cc-dd-ee-ff)> /group factory-floor
+[group set to "factory-floor"]
+production-router / factory-floor (aa-bb-cc-dd-ee-ff)>
+```
+
+Groups are persisted to PostgreSQL alongside aliases.  To clear a group, run
+`/group` with no argument:
+
+```
+production-router / factory-floor (aa-bb-cc-dd-ee-ff)> /group
+[group cleared]
+production-router (aa-bb-cc-dd-ee-ff)>
+```
+
+### Deleting an alias
+
+To remove an alias without being attached to the affected session, use
+`/delete` with the group and name as arguments:
+
+```
+(aa-bb-cc-dd-ee-ff)> /delete factory-floor production-router
+[alias "production-router" in group "factory-floor" deleted]
+```
+
+If no alias matching the group and name combination exists, the command reports
+it was not found:
+
+```
+(aa-bb-cc-dd-ee-ff)> /delete factory-floor unknown-device
+[not found: "unknown-device" in group "factory-floor"]
 ```
 
 ### Detaching

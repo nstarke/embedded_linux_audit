@@ -7,14 +7,17 @@ const SESSION_COMMAND_HELP = [
   '/shell                         launch linux execute-command sh and enter passthrough mode',
   '/name [alias]                  set or clear the alias for the current node',
   '/group [group]                 set or clear the group for the current node',
+  '/delete <group> <name>         delete an alias by group and name',
 ];
 
 async function executeLocalSessionCommand({
   cmd,
   activeMac,
   sessionEntry,
+  sessions = [],
   setDeviceAlias,
   setDeviceGroup = () => {},
+  deleteDeviceAliasByGroupAndName = () => Promise.resolve(false),
   startSessionUpdate = () => false,
   onDetach,
   writeOutput,
@@ -75,6 +78,34 @@ async function executeLocalSessionCommand({
       sessionEntry.group = group;
     }
     writeOutput(`\r\n[group ${group ? `set to "${group}"` : 'cleared'}]\r\n`);
+    return true;
+  }
+
+  if (cmd.startsWith('/delete ')) {
+    cancelRemoteInput();
+    const trimmed = cmd.slice(8).trim();
+    const spaceIdx = trimmed.indexOf(' ');
+    if (spaceIdx === -1) {
+      writeOutput('\r\n[usage: /delete <group> <name>]\r\n');
+      return true;
+    }
+    const group = trimmed.slice(0, spaceIdx);
+    const name = trimmed.slice(spaceIdx + 1).trim();
+    if (!name) {
+      writeOutput('\r\n[usage: /delete <group> <name>]\r\n');
+      return true;
+    }
+    const deleted = await deleteDeviceAliasByGroupAndName(group, name);
+    if (deleted) {
+      for (const s of sessions) {
+        if (s.alias === name && s.group === group) {
+          s.alias = null;
+        }
+      }
+      writeOutput(`\r\n[alias "${name}" in group "${group}" deleted]\r\n`);
+    } else {
+      writeOutput(`\r\n[not found: "${name}" in group "${group}"]\r\n`);
+    }
     return true;
   }
 

@@ -146,6 +146,69 @@ describe('local terminal commands', () => {
     expect(writeOutput).toHaveBeenCalledWith('\r\n[group set to "factory-floor"]\r\n');
   });
 
+  test('handles delete command when alias is found', async () => {
+    const matchingSession = { alias: 'edge-router', group: 'factory-floor' };
+    const otherSession = { alias: 'switch', group: 'factory-floor' };
+    const deleteDeviceAliasByGroupAndName = jest.fn().mockResolvedValue(true);
+    const writeOutput = jest.fn();
+
+    const handled = await executeLocalSessionCommand({
+      cmd: '/delete factory-floor edge-router',
+      activeMac: 'aa:bb',
+      sessionEntry: {},
+      sessions: [matchingSession, otherSession],
+      setDeviceAlias: jest.fn(),
+      deleteDeviceAliasByGroupAndName,
+      onDetach: jest.fn(),
+      writeOutput,
+      cancelRemoteInput: jest.fn(),
+    });
+
+    expect(handled).toBe(true);
+    expect(deleteDeviceAliasByGroupAndName).toHaveBeenCalledWith('factory-floor', 'edge-router');
+    expect(matchingSession.alias).toBeNull();
+    expect(otherSession.alias).toBe('switch');
+    expect(writeOutput).toHaveBeenCalledWith('\r\n[alias "edge-router" in group "factory-floor" deleted]\r\n');
+  });
+
+  test('handles delete command when alias is not found', async () => {
+    const deleteDeviceAliasByGroupAndName = jest.fn().mockResolvedValue(false);
+    const writeOutput = jest.fn();
+
+    const handled = await executeLocalSessionCommand({
+      cmd: '/delete factory-floor nonexistent',
+      activeMac: 'aa:bb',
+      sessionEntry: {},
+      sessions: [],
+      setDeviceAlias: jest.fn(),
+      deleteDeviceAliasByGroupAndName,
+      onDetach: jest.fn(),
+      writeOutput,
+      cancelRemoteInput: jest.fn(),
+    });
+
+    expect(handled).toBe(true);
+    expect(writeOutput).toHaveBeenCalledWith('\r\n[not found: "nonexistent" in group "factory-floor"]\r\n');
+  });
+
+  test('handles delete command with missing name argument', async () => {
+    const writeOutput = jest.fn();
+
+    const handled = await executeLocalSessionCommand({
+      cmd: '/delete factory-floor',
+      activeMac: 'aa:bb',
+      sessionEntry: {},
+      sessions: [],
+      setDeviceAlias: jest.fn(),
+      onDetach: jest.fn(),
+      writeOutput,
+      cancelRemoteInput: jest.fn(),
+    });
+
+    expect(handled).toBe(true);
+    expect(writeOutput).toHaveBeenCalledWith('\r\n[usage: /delete <group> <name>]\r\n');
+  });
+
   test('handles group clear', async () => {
     const sessionEntry = { group: 'factory-floor' };
     const setDeviceGroup = jest.fn().mockResolvedValue(undefined);

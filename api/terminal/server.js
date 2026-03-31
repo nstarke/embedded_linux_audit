@@ -13,6 +13,7 @@ const {
   closeTerminalConnection,
   setDeviceAlias,
   setDeviceGroup,
+  deleteDeviceAliasByGroupAndName,
 } = require('../lib/db/deviceRegistry');
 const { appendBatchOutput, renderBatchOutput } = require('./batchOutput');
 const { loadLegacyAliases } = require('./legacyAliases');
@@ -625,6 +626,7 @@ const tui = {
           sessions: sessionRegistry.entries().map(([, sessionEntry]) => sessionEntry),
           setDeviceAlias,
           setDeviceGroup,
+          deleteDeviceAliasByGroupAndName,
           startSessionUpdate,
           onDetach: () => this.detach(),
           writeOutput: (text) => process.stdout.write(text),

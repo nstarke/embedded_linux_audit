@@ -113,6 +113,17 @@ async function setDeviceGroup(macAddress, group) {
   });
 }
 
+async function deleteDeviceAliasByGroupAndName(group, name) {
+  const { DeviceAlias } = getModels();
+  const record = await DeviceAlias.findOne({
+    where: { alias: name, group },
+  });
+  if (!record) return false;
+  record.alias = null;
+  await record.save();
+  return true;
+}
+
 async function recordTerminalConnection(macAddress, remoteAddress) {
   const sequelize = getSequelize();
   const { DeviceAlias, TerminalConnection } = getModels();
@@ -174,6 +185,7 @@ module.exports = {
   getDeviceAlias,
   setDeviceAlias,
   setDeviceGroup,
+  deleteDeviceAliasByGroupAndName,
   recordTerminalConnection,
   touchTerminalHeartbeat,
   closeTerminalConnection,
