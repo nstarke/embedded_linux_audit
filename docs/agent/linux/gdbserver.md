@@ -134,3 +134,90 @@ export ELA_API_KEY=<your-api-key>
 gdb-multiarch ./firmware.elf
 (gdb) wss-remote --insecure wss://ela.example.com/gdb/out/aabbccddeeff00112233445566778899
 ```
+
+---
+
+# Ghidra Bridge (`tools/ghidra_bridge.py`)
+
+Opens a TCP server on localhost that relays raw GDB RSP bytes to and from the WebSocket tunnel. Ghidra's built-in GDB debugger (or any tool that speaks GDB remote over TCP) can connect to `localhost:<port>` without needing WebSocket support.
+
+## How it works
+
+```
+Ghidra ──TCP──▶ ghidra_bridge.py ──WebSocket──▶ ELA bridge ──WebSocket──▶ agent gdbserver
+```
+
+Each incoming TCP connection opens a fresh WebSocket session to the `/gdb/out/<key>` endpoint. When either side closes, both the TCP and WebSocket connections are torn down. The bridge accepts one client at a time; reconnecting in Ghidra establishes a new session.
+
+## Arguments
+
+| Flag | Required | Default | Description |
+|---|---|---|---|
+| `--url URL` | yes | — | `wss://` or `ws://` URL of the `/gdb/out/<32-hex-key>` endpoint |
+| `--port PORT` | no | `9999` | Local TCP port to listen on |
+| `--insecure` | no | off | Disable TLS certificate verification |
+| `--token TOKEN` | no | — | Bearer token for the `Authorization` header (falls back to `ELA_API_KEY` env var) |
+
+## Dependencies
+
+```
+pip install websockets
+```
+
+The same `websockets` package used by `gdb-ws-proxy.py`.
+
+## Example workflow
+
+```bash
+# --- On the target device ---
+./embedded_linux_audit linux gdbserver tunnel --insecure 1234 wss://ela.example.com
+
+# Agent prints:
+#   GDB tunnel ready:
+#     out: wss://ela.example.com/gdb/out/aabbccddeeff00112233445566778899
+
+# --- On the analyst workstation ---
+export ELA_API_KEY=<your-api-key>
+
+# Start the bridge
+python3 tools/ghidra_bridge.py \
+    --url wss://ela.example.com/gdb/out/aabbccddeeff00112233445566778899 \
+    --insecure
+
+# Bridge output:
+#   [ghidra_bridge] listening on 127.0.0.1:9999
+#   [ghidra_bridge] websocket target: wss://ela.example.com/gdb/out/aabbcc...
+#   [ghidra_bridge] waiting for Ghidra to connect ...
+```
+
+## Connecting from Ghidra
+
+1. Open the **Debugger** tool (Window → Debugger).
+2. Click **Connect** and choose the **gdb** connector.
+3. In the GDB console that appears, run:
+
+```
+(gdb) set remotetimeout 30
+(gdb) target remote localhost:9999
+```
+
+Ghidra will attach to the remote process through the bridge. All standard GDB remote features (register reads, memory reads, breakpoints, stepping) work normally.
+
+## Using a custom port
+
+If port 9999 is already in use, pick another port and adjust the `target remote` command accordingly:
+
+```bash
+python3 tools/ghidra_bridge.py \
+    --url wss://ela.example.com/gdb/out/<key> \
+    --port 12345
+
+# In Ghidra's GDB console:
+# (gdb) target remote localhost:12345
+```
+
+## Notes
+
+- The bridge binds to `127.0.0.1` only; it is not accessible from other machines.
+- Set `remotetimeout 30` in GDB/Ghidra to account for WebSocket relay latency, matching the recommendation for `wss-remote`.
+- The bridge can also be used with standalone `gdb-multiarch` as an alternative to the pipe-based `gdb-ws-proxy.py` or `wss-remote` commands.
