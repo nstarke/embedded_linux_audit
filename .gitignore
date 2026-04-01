@@ -22,3 +22,4 @@ ela-aliases.json
 *.gcda
 *.gcov
 .gdb_history
+.claude
