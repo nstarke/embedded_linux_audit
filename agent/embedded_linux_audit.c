@@ -626,6 +626,10 @@ int main(int argc, char **argv)
 	    strncmp(boot_conf.output_http, "http://",  7) != 0 && /* LCOV_EXCL_LINE */
 	    strncmp(boot_conf.output_http, "https://", 8) != 0) /* LCOV_EXCL_LINE */
 		boot_conf.output_http[0] = '\0'; /* LCOV_EXCL_LINE */
+	/* coverity[tainted_string : FALSE] boot_conf fields are whitelist-
+	 * validated above: output_format via ela_output_format_is_valid(),
+	 * output_http via http[s]:// prefix check.  ela_conf_export_to_env()
+	 * re-validates both before calling setenv(). */
 	ela_conf_export_to_env(&boot_conf);
 
 	if (argc < 2 && !(getenv("ELA_SCRIPT") && *getenv("ELA_SCRIPT")))

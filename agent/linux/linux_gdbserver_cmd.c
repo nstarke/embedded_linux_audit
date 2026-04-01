@@ -2612,6 +2612,11 @@ out:
 	close(fd);
 	if (!dyn_vaddr)
 		return 0;
+	/* coverity[overflow_before_widen : FALSE] All operands are uint64_t.
+	 * The subtraction computes the ELF load bias (load_addr - p_vaddr of
+	 * first PT_LOAD); unsigned wrap is intentional and correct — the
+	 * subsequent addition of dyn_vaddr produces the right runtime address.
+	 * This is the standard formula used by the kernel and GDB. */
 	return (load_addr - first_load_vaddr) + dyn_vaddr;
 }
 
