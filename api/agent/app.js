@@ -1,6 +1,7 @@
 'use strict';
 
 const express = require('express');
+const rateLimit = require('express-rate-limit');
 const path = require('path');
 const fsp = require('fs/promises');
 const mime = require('mime-types');
@@ -36,6 +37,12 @@ function createApp({
   persistUpload,
 }) {
   const app = express();
+  app.use(rateLimit({
+    windowMs: 60 * 1000,
+    max: 200,
+    standardHeaders: true,
+    legacyHeaders: false,
+  }));
   app.use(express.raw({ type: '*/*', limit: '100mb' }));
   app.use(auth.middleware);
   const envDir = path.join(dataDir, 'env');

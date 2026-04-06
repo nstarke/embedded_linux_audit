@@ -28,6 +28,8 @@ function loadCreateApp() {
   const isWithinRoot = jest.fn();
   const getClientIp = jest.fn(() => '127.0.0.1');
 
+  const rateLimiter = jest.fn();
+  jest.doMock('express-rate-limit', () => jest.fn(() => rateLimiter), { virtual: true });
   jest.doMock('express', () => expressFactory, { virtual: true });
   jest.doMock('../../../../api/auth', () => ({ middleware: authMiddleware }));
   jest.doMock('../../../../api/agent/routes/root', () => registerRootRoute);
@@ -55,6 +57,7 @@ function loadCreateApp() {
     createApp,
     expressFactory,
     authMiddleware,
+    rateLimiter,
     registerRootRoute,
     registerScriptsRoute,
     registerTestsRoute,
@@ -79,6 +82,7 @@ describe('agent app bootstrap', () => {
       createApp,
       expressFactory,
       authMiddleware,
+      rateLimiter,
       registerRootRoute,
       registerScriptsRoute,
       registerTestsRoute,
@@ -106,6 +110,7 @@ describe('agent app bootstrap', () => {
     expect(expressFactory).toHaveBeenCalledTimes(1);
     expect(expressFactory.raw).toHaveBeenCalledWith({ type: '*/*', limit: '100mb' });
     expect(app.use.mock.calls).toEqual([
+      [rateLimiter],
       ['raw-middleware'],
       [authMiddleware],
     ]);
@@ -157,8 +162,8 @@ describe('agent app bootstrap', () => {
       persistUpload: jest.fn(),
     });
 
-    expect(app.use).toHaveBeenCalledTimes(3);
-    const verboseMiddleware = app.use.mock.calls[2][0];
+    expect(app.use).toHaveBeenCalledTimes(4);
+    const verboseMiddleware = app.use.mock.calls[3][0];
 
     let finishHandler = null;
     const req = {

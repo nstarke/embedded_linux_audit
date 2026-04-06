@@ -919,7 +919,7 @@ describe('terminal server orchestration', () => {
     expect(processOn).toHaveBeenCalledWith('SIGTERM', expect.any(Function));
   });
 
-  test('main exits when validate-key auth initialization fails', async () => {
+  test('main exits when no API keys are configured in the database', async () => {
     const { server, auth, initializeDatabase } = loadTerminalServer({
       auth: {
         init: jest.fn(() => false),
@@ -929,7 +929,7 @@ describe('terminal server orchestration', () => {
 
     await server.main();
 
-    expect(process.stderr.write).toHaveBeenCalledWith('error: --validate-key is set but no API keys are configured in the database\n');
+    expect(process.stderr.write).toHaveBeenCalledWith('error: no API keys are configured in the database\n');
     expect(process.exit).toHaveBeenCalledWith(1);
     expect(initializeDatabase).toHaveBeenCalledTimes(1);
   });
@@ -941,7 +941,7 @@ describe('terminal server orchestration', () => {
 
     await server.main();
 
-    expect(auth.init).toHaveBeenCalledWith(false, expect.any(Function));
+    expect(auth.init).toHaveBeenCalledWith(true, expect.any(Function));
     expect(initializeDatabase).toHaveBeenCalledTimes(1);
     expect(runMigrations).toHaveBeenCalledTimes(1);
     expect(loadLegacyAliases).toHaveBeenCalledWith(server.LEGACY_ALIASES_FILE);

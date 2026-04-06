@@ -6,6 +6,8 @@ const { WebSocketServer } = require('ws');
 const auth = require('../auth');
 const { parseGdbUrl } = require('./urlParser');
 const { createSessionManager } = require('./sessionManager');
+const { initializeDatabase, runMigrations, closeDatabase } = require('../lib/db');
+const { loadApiKeyHashes } = require('../lib/db/deviceRegistry');
 
 const PORT = parseInt(process.env.ELA_GDB_PORT || '9000', 10);
 const HOST = process.env.ELA_GDB_HOST || '0.0.0.0';
@@ -82,10 +84,6 @@ wss.on('connection', (ws, req) => {
   });
 });
 
-httpServer.listen(PORT, HOST, () => {
-  process.stderr.write(`ELA GDB bridge API listening on ws://${HOST}:${PORT}\n`);
-});
-
 process.on('SIGTERM', () => {
   for (const key of sm.keys()) {
     sm.purge(key);
@@ -95,4 +93,41 @@ process.on('SIGTERM', () => {
 
 process.on('SIGINT', () => process.exit(0));
 
-module.exports = { httpServer, wss, sessions };
+async function main() {
+  try {
+    await initializeDatabase();
+    await runMigrations();
+  } catch (err) {
+    process.stderr.write(`Failed to initialize database: ${err.message}\n`);
+    process.exit(1);
+    return;
+  }
+
+  if (!await auth.init(true, loadApiKeyHashes)) {
+    process.stderr.write('error: no API keys are configured in the database\n');
+    process.exit(1);
+    return;
+  }
+
+  httpServer.listen(PORT, HOST, () => {
+    process.stderr.write(`ELA GDB bridge API listening on ws://${HOST}:${PORT}\n`);
+  });
+}
+
+function start() {
+  return main().catch(async (err) => {
+    process.stderr.write(`${err.stack || err.message}\n`);
+    try {
+      await closeDatabase();
+    } catch {
+      // ignore shutdown errors
+    }
+    process.exit(1);
+  });
+}
+
+if (require.main === module) {
+  start();
+}
+
+module.exports = { httpServer, wss, sessions, main };
