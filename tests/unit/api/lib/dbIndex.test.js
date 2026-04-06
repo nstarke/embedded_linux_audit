@@ -52,6 +52,7 @@ describe('db index', () => {
       config: {
         url: 'postgres://ela:pw@db/ela',
         ssl: true,
+        sslRejectUnauthorized: false,
         logging: true,
       },
     });

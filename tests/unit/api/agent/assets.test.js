@@ -21,8 +21,9 @@ function createRes() {
       this.body = value;
       return this;
     },
-    sendFile(value) {
+    sendFile(value, options) {
       this.sentFile = value;
+      this.sendFileOptions = options;
       return this;
     },
   };
@@ -62,7 +63,8 @@ describe('assets route', () => {
 
     expect(mime.lookup).toHaveBeenCalledWith(path.resolve('/assets', 'ela-x86_64'));
     expect(res.headers['content-type']).toBe('application/x-elf');
-    expect(res.sentFile).toBe(path.resolve('/assets', 'ela-x86_64'));
+    expect(res.sentFile).toBe('ela-x86_64');
+    expect(res.sendFileOptions).toEqual({ root: '/assets' });
   });
 
   test('returns not found when the asset resolves outside the assets directory', async () => {
