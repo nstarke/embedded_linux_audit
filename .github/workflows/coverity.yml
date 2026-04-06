@@ -76,7 +76,7 @@ jobs:
         run: |
           export PATH="${PWD}/cov-analysis/bin:${PATH}"
           cov-configure --javascript
-          cov-build --no-command --dir cov-int --fs-capture-search api/
+          cov-build --dir cov-int --fs-capture-search api/ sh -c 'true'
 
       - name: Submit results to Coverity Scan
         run: |
