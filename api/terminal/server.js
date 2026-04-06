@@ -18,7 +18,7 @@ const {
   getBlockedRemotes,
   loadApiKeyHashes,
 } = require('../lib/db/deviceRegistry');
-const { parseCidr, isBlocked } = require('./cidrUtil');
+const { parseCidr, isBlocked, resolveProxiedAddress } = require('./cidrUtil');
 const { appendBatchOutput, renderBatchOutput } = require('./batchOutput');
 const { loadLegacyAliases } = require('./legacyAliases');
 const { formatPromptOutput } = require('./promptFormatter');
@@ -162,7 +162,8 @@ wss.on('connection', async (ws, req) => {
 
   let registration;
   try {
-    registration = await recordTerminalConnection(mac, req.socket?.remoteAddress || null, req.authenticatedUser || null);
+    const remoteAddress = resolveProxiedAddress(req.socket?.remoteAddress || null, req.headers);
+    registration = await recordTerminalConnection(mac, remoteAddress, req.authenticatedUser || null);
   } catch (err) {
     ws.close(1011, 'database unavailable');
     process.stderr.write(`Failed to register terminal connection for ${mac}: ${err.message}\n`);
