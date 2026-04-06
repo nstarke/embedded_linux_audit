@@ -39,7 +39,6 @@ const HOST = terminalConfig.host;
 const PORT = terminalConfig.port;
 const HEARTBEAT_INTERVAL_MS = 30000;
 const LEGACY_ALIASES_FILE = `${__dirname}/ela-aliases.json`;
-const VALIDATE_KEY = process.argv.includes('--validate-key');
 
 async function importLegacyAliases() {
   const aliases = loadLegacyAliases(LEGACY_ALIASES_FILE);
@@ -739,8 +738,8 @@ async function main() {
   await initializeDatabase();
   await runMigrations();
 
-  if (!await auth.init(VALIDATE_KEY, loadApiKeyHashes)) {
-    process.stderr.write('error: --validate-key is set but no API keys are configured in the database\n');
+  if (!await auth.init(true, loadApiKeyHashes)) {
+    process.stderr.write('error: no API keys are configured in the database\n');
     process.exit(1);
   }
 
@@ -781,7 +780,6 @@ module.exports = {
   PORT,
   HEARTBEAT_INTERVAL_MS,
   LEGACY_ALIASES_FILE,
-  VALIDATE_KEY,
   TUI_STATE,
   ANSI,
   sessionRegistry,

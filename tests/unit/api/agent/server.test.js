@@ -75,8 +75,9 @@ function loadAgentServer(options = {}) {
     close: jest.fn((cb) => cb && cb()),
   };
   const auth = {
-    init: jest.fn(() => true),
+    init: jest.fn().mockResolvedValue(true),
   };
+  const loadApiKeyHashes = jest.fn().mockResolvedValue([]);
   const initializeDatabase = jest.fn().mockResolvedValue(undefined);
   const runMigrations = jest.fn().mockResolvedValue([]);
   const closeDatabase = jest.fn().mockResolvedValue(undefined);
@@ -105,7 +106,9 @@ function loadAgentServer(options = {}) {
 
   if (options.fs) Object.assign(fsMock, options.fs);
   if (options.fsp) Object.assign(fspMock, options.fsp);
-  if (options.auth) Object.assign(auth, options.auth);
+  if (options.auth) {
+    if (options.auth.init) auth.init = options.auth.init;
+  }
   if (options.db) {
     if (options.db.initializeDatabase) initializeDatabase.mockImplementation(options.db.initializeDatabase);
     if (options.db.runMigrations) runMigrations.mockImplementation(options.db.runMigrations);
@@ -144,6 +147,9 @@ function loadAgentServer(options = {}) {
   jest.doMock('../../../../api/lib/db/persistUpload', () => ({
     persistUpload,
   }));
+  jest.doMock('../../../../api/lib/db/deviceRegistry', () => ({
+    loadApiKeyHashes,
+  }));
   jest.doMock('../../../../api/agent/app', () => ({
     createApp,
   }));
@@ -177,6 +183,7 @@ function loadAgentServer(options = {}) {
     closeDatabase,
     createApp,
     persistUpload,
+    loadApiKeyHashes,
     selectStartupDataDir,
     resolveProjectPath,
     getAgentServiceConfig,
@@ -318,10 +325,10 @@ describe('agent server', () => {
     await expect(loaded.server.main()).resolves.toBe(1);
     expect(loaded.consoleError).toHaveBeenCalledWith('Unknown argument: --bad-flag');
 
-    loaded = loadAgentServer({ auth: { init: jest.fn(() => false) } });
-    process.argv = ['node', 'server.js', '--validate-key'];
+    loaded = loadAgentServer({ auth: { init: jest.fn().mockResolvedValue(false) } });
+    process.argv = ['node', 'server.js'];
     await expect(loaded.server.main()).resolves.toBe(1);
-    expect(loaded.consoleError).toHaveBeenCalledWith('error: --validate-key is set but ela.key is missing or contains no valid tokens');
+    expect(loaded.consoleError).toHaveBeenCalledWith('error: no API keys are configured in the database');
 
     loaded = loadAgentServer({
       db: {
@@ -603,7 +610,6 @@ describe('agent server', () => {
       '--verbose',
       '--cert', 'cert.pem',
       '--key', 'key.pem',
-      '--validate-key',
       '--skip-asset-sync',
       '--reuse-last-data-dir',
     ]);
@@ -622,7 +628,6 @@ describe('agent server', () => {
       verbose: true,
       cert: 'cert.pem',
       key: 'key.pem',
-      validateKey: true,
       skipAssetSync: true,
       reuseLastDataDir: true,
     });

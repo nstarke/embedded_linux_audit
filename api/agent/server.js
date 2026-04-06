@@ -14,6 +14,7 @@ const auth = require('../auth');
 const { getAgentServiceConfig } = require('../lib/config');
 const { initializeDatabase, runMigrations, closeDatabase } = require('../lib/db');
 const { persistUpload } = require('../lib/db/persistUpload');
+const { loadApiKeyHashes } = require('../lib/db/deviceRegistry');
 const { createApp } = require('./app');
 const {
   findProjectRoot,
@@ -281,7 +282,6 @@ function parseArgs(argv) {
     verbose: defaultVerbose,
     cert: 'tools/certs/localhost.crt',
     key: 'tools/certs/localhost.key',
-    validateKey: false,
     skipAssetSync: String(process.env.ELA_AGENT_SKIP_ASSET_SYNC || '').toLowerCase() === 'true',
   };
 
@@ -303,7 +303,6 @@ function parseArgs(argv) {
       case '--verbose': args.verbose = true; break;
       case '--cert': args.cert = argv[++i]; break;
       case '--key': args.key = argv[++i]; break;
-      case '--validate-key': args.validateKey = true; break;
       case '--skip-asset-sync': args.skipAssetSync = true; break;
       case '--reuse-last-data-dir': args.reuseLastDataDir = true; break;
       case '--help':
@@ -323,7 +322,7 @@ function parseArgs(argv) {
 }
 
 function printHelp() {
-  console.log(`Usage: node server.js [options]\n\nOptions:\n  --host HOST\n  --port PORT\n  --log-prefix PREFIX\n  --data-dir DIR\n  --repo OWNER/NAME\n  --assets-dir DIR\n  --tests-dir DIR\n  --github-token TOKEN\n  --force-download\n  --clean\n  --https\n  --verbose\n  --cert PATH\n  --key PATH\n  --validate-key   Require Authorization: Bearer token (reads from ela.key)\n  --skip-asset-sync  Skip GitHub release asset refresh during startup\n  --reuse-last-data-dir  Reuse the latest timestamped data directory instead of creating a new one\n  --help`);
+  console.log(`Usage: node server.js [options]\n\nOptions:\n  --host HOST\n  --port PORT\n  --log-prefix PREFIX\n  --data-dir DIR\n  --repo OWNER/NAME\n  --assets-dir DIR\n  --tests-dir DIR\n  --github-token TOKEN\n  --force-download\n  --clean\n  --https\n  --verbose\n  --cert PATH\n  --key PATH\n  --skip-asset-sync  Skip GitHub release asset refresh during startup\n  --reuse-last-data-dir  Reuse the latest timestamped data directory instead of creating a new one\n  --help`);
 }
   
 async function main() {
@@ -336,16 +335,16 @@ async function main() {
     return 1;
   }
 
-  if (!auth.init('ela.key', args.validateKey)) {
-    console.error('error: --validate-key is set but ela.key is missing or contains no valid tokens');
-    return 1;
-  }
-
   try {
     await initializeDatabase();
     await runMigrations();
   } catch (err) {
     console.error(`Failed to initialize database: ${err.message}`);
+    return 1;
+  }
+
+  if (!await auth.init(true, loadApiKeyHashes)) {
+    console.error('error: no API keys are configured in the database');
     return 1;
   }
 

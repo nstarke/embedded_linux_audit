@@ -21,8 +21,9 @@ function createRes() {
       this.body = value;
       return this;
     },
-    sendFile(value) {
+    sendFile(value, options) {
       this.sentFile = value;
+      this.sendFileOptions = options;
       return this;
     },
   };
@@ -93,6 +94,7 @@ describe('scripts route', () => {
     await handler({ params: { name: 'run.ela' } }, res);
 
     expect(res.headers['content-type']).toBe('text/plain');
-    expect(res.sentFile).toBe(path.resolve('/scripts', 'run.ela'));
+    expect(res.sentFile).toBe('run.ela');
+    expect(res.sendFileOptions).toEqual({ root: '/scripts' });
   });
 });

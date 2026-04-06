@@ -21,8 +21,9 @@ function createRes() {
       this.body = value;
       return this;
     },
-    sendFile(value) {
+    sendFile(value, options) {
       this.sentFile = value;
+      this.sendFileOptions = options;
       return this;
     },
   };
@@ -55,7 +56,8 @@ describe('uboot env route', () => {
 
     await handler({ params: { env_filename: 'prod.env' } }, res);
 
-    expect(res.sentFile).toBe(path.resolve('/env', 'prod.env'));
+    expect(res.sentFile).toBe('prod.env');
+    expect(res.sendFileOptions).toEqual({ root: '/env' });
   });
 
   test('rejects resolved paths outside the env directory', async () => {

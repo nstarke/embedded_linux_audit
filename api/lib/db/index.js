@@ -16,7 +16,7 @@ function createSequelize(config = getDatabaseConfig()) {
     dialectOptions: config.ssl ? {
       ssl: {
         require: true,
-        rejectUnauthorized: false,
+        rejectUnauthorized: config.sslRejectUnauthorized !== false,
       },
     } : {},
   };
