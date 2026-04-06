@@ -75,6 +75,7 @@ jobs:
       - name: Build with cov-build
         run: |
           export PATH="${PWD}/cov-analysis/bin:${PATH}"
+          cov-configure --javascript
           cov-build --no-command --dir cov-int --fs-capture-search api/
 
       - name: Submit results to Coverity Scan
