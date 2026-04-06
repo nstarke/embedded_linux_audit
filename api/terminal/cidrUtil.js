@@ -49,4 +49,49 @@ function isBlocked(remoteAddress, parsedCidrs) {
   return parsedCidrs.some(({ network, mask }) => (ipInt & mask) >>> 0 === network);
 }
 
-module.exports = { parseCidr, isBlocked };
+const PRIVATE_IPV4_CIDRS = [
+  { network: 0x7f000000, mask: 0xff000000 }, // 127.0.0.0/8
+  { network: 0x0a000000, mask: 0xff000000 }, // 10.0.0.0/8
+  { network: 0xac100000, mask: 0xfff00000 }, // 172.16.0.0/12
+  { network: 0xc0a80000, mask: 0xffff0000 }, // 192.168.0.0/16
+];
+
+/**
+ * Returns true if the given IP address is a private/loopback address.
+ * Handles IPv4, IPv6-mapped IPv4 (::ffff:x.x.x.x), IPv6 loopback (::1),
+ * and IPv6 unique-local (fc00::/7).
+ */
+function isPrivateIp(ip) {
+  if (!ip || typeof ip !== 'string') return false;
+  const raw = ip.trim().replace(/^::ffff:/i, '');
+  if (raw === '::1') return true;
+  if (/^f[cd][0-9a-f]{0,2}:/i.test(raw)) return true; // fc00::/7
+  const ipInt = ipv4ToInt(raw);
+  if (ipInt === null) return false;
+  return PRIVATE_IPV4_CIDRS.some(({ network, mask }) => (ipInt & mask) >>> 0 === network);
+}
+
+/**
+ * If remoteAddress is a private IP, returns the first non-empty value from
+ * X-Forwarded-For or X-Real-IP headers; otherwise returns remoteAddress.
+ *
+ * @param {string|null} remoteAddress  The raw socket remote address.
+ * @param {object} headers             The HTTP request headers object.
+ * @returns {string|null}
+ */
+function resolveProxiedAddress(remoteAddress, headers) {
+  if (!isPrivateIp(remoteAddress)) return remoteAddress;
+  const forwarded = headers && headers['x-forwarded-for'];
+  if (forwarded) {
+    const first = String(forwarded).split(',')[0].trim();
+    if (first) return first;
+  }
+  const realIp = headers && headers['x-real-ip'];
+  if (realIp) {
+    const trimmed = String(realIp).trim();
+    if (trimmed) return trimmed;
+  }
+  return remoteAddress;
+}
+
+module.exports = { parseCidr, isBlocked, isPrivateIp, resolveProxiedAddress };
