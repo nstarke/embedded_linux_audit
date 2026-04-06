@@ -15,7 +15,7 @@ module.exports = function registerAssetRoute(app, deps) {
         throw new Error('not a file');
       }
       res.type(mime.lookup(candidate) || 'application/octet-stream');
-      res.sendFile(candidate);
+      res.sendFile(deps.path.relative(assetsDir, candidate), { root: assetsDir });
     } catch {
       res.status(404).type('text').send('not found\n');
       verboseResponseLog(req, 404, 10);

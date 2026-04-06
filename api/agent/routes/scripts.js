@@ -24,7 +24,7 @@ module.exports = function registerScriptsRoute(app, deps) {
       if (!stat.isFile()) {
         throw new Error('not a file');
       }
-      res.type('text/plain').sendFile(candidate);
+      res.type('text/plain').sendFile(deps.path.relative(scriptsDir, candidate), { root: scriptsDir });
     } catch {
       res.status(404).type('text').send('not found\n');
       verboseResponseLog(req, 404, 10);

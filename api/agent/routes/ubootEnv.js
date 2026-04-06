@@ -14,7 +14,7 @@ module.exports = function registerUbootEnvRoute(app, deps) {
       if (!stat.isFile()) {
         throw new Error('not a file');
       }
-      res.sendFile(candidate);
+      res.sendFile(deps.path.relative(envDir, candidate), { root: envDir });
     } catch {
       res.status(404).type('text').send('not found\n');
       verboseResponseLog(req, 404, 10);

@@ -69,6 +69,7 @@ function getDatabaseConfig() {
   const env = currentEnvironment();
   const defaults = DEFAULT_DB_CONFIG[env];
   const sslValue = firstDefined(['ELA_DB_SSL', envKey('DB_SSL')]);
+  const sslRejectUnauthorizedValue = firstDefined(['ELA_DB_SSL_REJECT_UNAUTHORIZED', envKey('DB_SSL_REJECT_UNAUTHORIZED')]);
   const loggingValue = firstDefined(['ELA_DB_LOGGING', envKey('DB_LOGGING')]);
   const databaseUrl = firstDefined(['ELA_DATABASE_URL', envKey('DATABASE_URL')]);
 
@@ -83,6 +84,7 @@ function getDatabaseConfig() {
     password: firstDefined(['ELA_DB_PASSWORD', envKey('DB_PASSWORD')]) || defaults.password,
     schema: firstDefined(['ELA_DB_SCHEMA', envKey('DB_SCHEMA')]) || defaults.schema,
     ssl: parseBoolean(sslValue, defaults.ssl),
+    sslRejectUnauthorized: parseBoolean(sslRejectUnauthorizedValue, true),
     logging: parseBoolean(loggingValue, defaults.logging),
   };
 }
