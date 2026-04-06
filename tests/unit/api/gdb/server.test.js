@@ -3,7 +3,6 @@
 function loadGdbServer(options = {}) {
   jest.resetModules();
 
-  const handlers = new Map();
   const httpServer = {
     listen: jest.fn((_port, _host, cb) => cb && cb()),
     close: jest.fn((cb) => cb && cb()),
