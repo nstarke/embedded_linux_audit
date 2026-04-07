@@ -166,7 +166,8 @@ static volatile int    g_stop;
 static int             g_noack;        /* set by QStartNoAckMode */
 static uint64_t        g_pass_signals; /* bitmask of signals to pass to inferior */
 static pid_t           g_current_tid;  /* most-recently-set thread (H packet) */
-static int             g_last_wstatus; /* wstatus from last waitpid — for '?' */
+static int             g_last_wstatus;       /* wstatus from last waitpid — for '?' */
+static int             g_initial_attach_stop; /* 1 after attach, cleared on first stop reply */
 static int             g_swbreak_feature;  /* GDB negotiated swbreak+ */
 static int             g_multiprocess;     /* GDB negotiated multiprocess+ */
 static int             g_catch_syscalls;   /* QCatchSyscalls enabled */
@@ -332,6 +333,50 @@ static int rsp_recv_packet(int fd, char *payload, size_t payload_sz)
 }
 
 /* -----------------------------------------------------------------------
+ * GDB signal number conversion
+ *
+ * GDB RSP uses GDB's internal signal enumeration (inherited from SVR4),
+ * which differs from Linux signal numbers above signal 15.  All T/S/C/W
+ * stop replies must use GDB signal numbers, and all C/S/vCont;C/vCont;S
+ * signal fields from GDB must be converted back to Linux before passing
+ * to ptrace.
+ *
+ * The relevant Linux ↔ GDB differences (signals 1-15 are identical):
+ *   Linux 16 (SIGSTKFLT) → GDB 16 (SIGURG is gdb 16; SIGSTKFLT → unmapped → pass as-is)
+ *   Linux 17 (SIGCHLD)   → GDB 20
+ *   Linux 18 (SIGCONT)   → GDB 19
+ *   Linux 19 (SIGSTOP)   → GDB 17
+ *   Linux 20 (SIGTSTP)   → GDB 18
+ *   Linux 21 (SIGTTIN)   → GDB 21  (same)
+ *   Linux 22 (SIGTTOU)   → GDB 22  (same)
+ *   Linux 23 (SIGURG)    → GDB 16
+ * ---------------------------------------------------------------------- */
+
+static int linux_sig_to_gdb(int linux_sig)
+{
+	switch (linux_sig) {
+	case 17: return 20; /* SIGCHLD */
+	case 18: return 19; /* SIGCONT */
+	case 19: return 17; /* SIGSTOP */
+	case 20: return 18; /* SIGTSTP */
+	case 23: return 16; /* SIGURG  */
+	default: return linux_sig;
+	}
+}
+
+static int gdb_sig_to_linux(int gdb_sig)
+{
+	switch (gdb_sig) {
+	case 16: return 23; /* SIGURG  */
+	case 17: return 19; /* SIGSTOP */
+	case 18: return 20; /* SIGTSTP */
+	case 19: return 18; /* SIGCONT */
+	case 20: return 17; /* SIGCHLD */
+	default: return gdb_sig;
+	}
+}
+
+/* -----------------------------------------------------------------------
  * Stop reply
  * ---------------------------------------------------------------------- */
 
@@ -349,57 +394,83 @@ static void send_stop_reply(int fd, int wstatus)
 		 * CPU to advance the instruction pointer past the 0xCC byte
 		 * before delivering SIGTRAP.  GDB expects the reported PC to
 		 * point *at* the breakpoint instruction, so we must back RIP
-		 * up by 1.  We distinguish software breakpoints from single-
-		 * step traps using PTRACE_GETSIGINFO: TRAP_BRKPT means the
-		 * process hit an INT3 (or a Z0 breakpoint we inserted),
-		 * whereas TRAP_TRACE is a single-step event.
+		 * up by 1.
 		 *
-		 * TRAP_BRKPT (1) is defined in <signal.h> on Linux; provide
-		 * a fallback in case the build environment omits it.
+		 * We detect software breakpoints by checking our own breakpoint
+		 * table: if RIP-1 matches a registered breakpoint address, the
+		 * process hit one of our INT3 instructions.  This is more
+		 * reliable than relying on si_code == TRAP_BRKPT, whose value
+		 * can vary across kernel versions and ptrace scenarios.
 		 */
-#  ifndef TRAP_BRKPT
-#    define TRAP_BRKPT 1
-#  endif
 		if (sig == SIGTRAP) {
-			siginfo_t si;
-			if (ptrace(PTRACE_GETSIGINFO, g_pid, NULL, &si) == 0 &&
-			    si.si_code == TRAP_BRKPT) {
-				struct user_regs_struct r;
-				if (ptrace(PTRACE_GETREGS, g_pid, NULL, &r) == 0) {
-					r.rip -= 1;
-					ptrace(PTRACE_SETREGS, g_pid, NULL, &r);
+			struct user_regs_struct r;
+			if (ptrace(PTRACE_GETREGS, g_pid, NULL, &r) == 0) {
+				uint64_t pc_before = r.rip - 1; /* candidate bp addr */
+				int i;
+				for (i = 0; i < ELA_GDB_MAX_BREAKPOINTS; i++) {
+					if (g_bps[i].in_use &&
+					    g_bps[i].addr == pc_before) {
+						r.rip = pc_before;
+						ptrace(PTRACE_SETREGS, g_pid, NULL, &r);
+						is_swbreak = true;
+						break;
+					}
 				}
-				is_swbreak = true;
 			}
 		}
 #endif
 
-		/* T packet includes thread TID, eliminating a qC round-trip */
-		if (is_swbreak && g_swbreak_feature) {
-			if (g_multiprocess)
-				snprintf(buf, sizeof(buf),
-					 "T%02xthread:p%x.%x;swbreak:;",
-					 sig, (unsigned)g_pid,
-					 (unsigned)g_current_tid);
-			else
-				snprintf(buf, sizeof(buf),
-					 "T%02xthread:%x;swbreak:;",
-					 sig, (unsigned)g_current_tid);
-		} else {
-			if (g_multiprocess)
-				snprintf(buf, sizeof(buf),
-					 "T%02xthread:p%x.%x;",
-					 sig, (unsigned)g_pid,
-					 (unsigned)g_current_tid);
-			else
-				snprintf(buf, sizeof(buf),
-					 "T%02xthread:%x;",
-					 sig, (unsigned)g_current_tid);
+		/*
+		 * The initial ptrace-attach stop arrives as SIGSTOP.  If we
+		 * report T11 (GDB SIGSTOP) to GDB, it auto-resumes the process
+		 * (GDB's default "handle SIGSTOP nostop" behaviour) by sending
+		 * vCont;C11, causing the process to run indefinitely and making
+		 * further commands fail with "target is running".
+		 *
+		 * Real gdbservers report the attach-stop as T05 (SIGTRAP) to
+		 * signal "I'm stopped and ready for debugging" without triggering
+		 * GDB's SIGSTOP auto-resume.  We do the same: on the very first
+		 * stop reply after attach, substitute SIGSTOP → SIGTRAP.
+		 */
+		if (sig == SIGSTOP && g_initial_attach_stop) {
+			sig = SIGTRAP;
+			g_initial_attach_stop = 0;
+		}
+
+		/* Convert Linux signal number to GDB signal number for RSP */
+		{
+			int gdb_sig = linux_sig_to_gdb(sig);
+
+			/* T packet includes thread TID, eliminating a qC round-trip */
+			if (is_swbreak && g_swbreak_feature) {
+				if (g_multiprocess)
+					snprintf(buf, sizeof(buf),
+						 "T%02xthread:p%x.%x;swbreak:;",
+						 gdb_sig, (unsigned)g_pid,
+						 (unsigned)g_current_tid);
+				else
+					snprintf(buf, sizeof(buf),
+						 "T%02xthread:%x;swbreak:;",
+						 gdb_sig,
+						 (unsigned)g_current_tid);
+			} else {
+				if (g_multiprocess)
+					snprintf(buf, sizeof(buf),
+						 "T%02xthread:p%x.%x;",
+						 gdb_sig, (unsigned)g_pid,
+						 (unsigned)g_current_tid);
+				else
+					snprintf(buf, sizeof(buf),
+						 "T%02xthread:%x;",
+						 gdb_sig,
+						 (unsigned)g_current_tid);
+			}
 		}
 	} else if (WIFEXITED(wstatus)) {
 		snprintf(buf, sizeof(buf), "W%02x", WEXITSTATUS(wstatus));
 	} else if (WIFSIGNALED(wstatus)) {
-		snprintf(buf, sizeof(buf), "X%02x", WTERMSIG(wstatus));
+		snprintf(buf, sizeof(buf), "X%02x",
+			 linux_sig_to_gdb(WTERMSIG(wstatus)));
 	} else {
 		return;
 	}
@@ -2652,7 +2723,16 @@ static int build_memmap_xml(pid_t pid, char *out, size_t out_sz)
 			if (length == 0)
 				continue;
 
-			type = (perms[1] == 'w') ? "ram" : "rom";
+			/*
+			 * Always report "ram": ptrace(PTRACE_POKEDATA) can
+			 * write to any page in the traced process regardless
+			 * of the MMU protection bits, so all regions are
+			 * effectively writable for breakpoint insertion.
+			 * Reporting "rom" here causes GDB to refuse Z0
+			 * (software breakpoints) in text segments.
+			 */
+			type = "ram";
+			(void)perms;
 			mem = xmlNewChild(root, NULL, BAD_CAST "memory", NULL);
 			xmlNewProp(mem, BAD_CAST "type", BAD_CAST type);
 			snprintf(start_buf, sizeof(start_buf),
@@ -3407,6 +3487,19 @@ static void do_continue(int fd, int initial_sig)
 				continue; /* filtered — keep running */
 			}
 
+			/*
+			 * SIGCONT is always forwarded unconditionally: it is a
+			 * kernel job-control artifact that appears when ptrace
+			 * resumes a process that was stopped by SIGSTOP
+			 * (e.g. after a vCont;S13 step-with-SIGSTOP sequence).
+			 * Stopping on SIGCONT would confuse GDB and block
+			 * breakpoint delivery.
+			 */
+			if (sig == SIGCONT) {
+				fwd_sig = sig;
+				continue;
+			}
+
 			/* Regular signal pass-through */
 			if (sig > 0 && sig < 64 &&
 			    (g_pass_signals & (1ULL << sig))) {
@@ -3561,18 +3654,50 @@ static void handle_packet(int fd, char *pkt)
 		break;
 
 	case 'C': /* Continue with signal: C<sig>[;<addr>] */
-		do_continue(fd, (int)strtol(pkt + 1, NULL, 16));
+	{
+		int sig = gdb_sig_to_linux((int)strtol(pkt + 1, NULL, 16));
+		/*
+		 * When GDB sends C11 (GDB signal 17 = Linux SIGSTOP) it is
+		 * acknowledging the synthetic ptrace-attach stop and asking us
+		 * to resume.  Injecting SIGSTOP via PTRACE_CONT would
+		 * immediately stop the process again without executing any
+		 * instructions, preventing breakpoints from being hit.
+		 * Suppress the SIGSTOP and continue with no signal instead.
+		 */
+		if (sig == SIGSTOP)
+			sig = 0;
+		do_continue(fd, sig);
 		break;
+	}
 
 	case 'S': /* Step with signal: S<sig>[;<addr>] */
 	{
-		int sig = (int)strtol(pkt + 1, NULL, 16);
+		int sig = gdb_sig_to_linux((int)strtol(pkt + 1, NULL, 16));
+		/*
+		 * When GDB sends S11 (GDB signal 17 = Linux SIGSTOP) it wants
+		 * a single-step but without injecting SIGSTOP (which would
+		 * immediately re-stop the process).  Suppress SIGSTOP but keep
+		 * the step semantics.
+		 */
+		if (sig == SIGSTOP)
+			sig = 0;
 		if (ptrace(PTRACE_SINGLESTEP, g_pid, NULL,
 			   (void *)(uintptr_t)sig) != 0) {
 			rsp_send_str(fd, "E01");
 			break;
 		}
 		waitpid(g_pid, &wstatus, 0);
+		/*
+		 * SIGSTOP injection can cause a kernel job-control group-stop,
+		 * which generates a SIGCONT that ptrace intercepts.  Forward
+		 * SIGCONT transparently and wait for the real stop.
+		 */
+		while (WIFSTOPPED(wstatus) &&
+		       WSTOPSIG(wstatus) == SIGCONT) {
+			ptrace(PTRACE_CONT, g_pid, NULL,
+			       (void *)(uintptr_t)SIGCONT);
+			waitpid(g_pid, &wstatus, 0);
+		}
 		g_last_wstatus = wstatus;
 		send_stop_reply(fd, wstatus);
 		break;
@@ -3585,7 +3710,17 @@ static void handle_packet(int fd, char *pkt)
 			do_continue(fd, 0);
 		} else if (strncmp(pkt, "vCont;C", 7) == 0) {
 			/* Continue with signal: vCont;C<sig>[:tid] */
-			do_continue(fd, (int)strtol(pkt + 7, NULL, 16));
+			int sig = gdb_sig_to_linux(
+				(int)strtol(pkt + 7, NULL, 16));
+			/*
+			 * Suppress SIGSTOP: GDB sends vCont;C11 to acknowledge
+			 * the ptrace-attach synthetic SIGSTOP stop.  Injecting
+			 * SIGSTOP would immediately re-stop the process without
+			 * advancing to the breakpoint.  Suppress it.
+			 */
+			if (sig == SIGSTOP)
+				sig = 0;
+			do_continue(fd, sig);
 		} else if (strncmp(pkt, "vCont;s", 7) == 0) {
 			if (ptrace(PTRACE_SINGLESTEP, g_pid, NULL, NULL) != 0) {
 				rsp_send_str(fd, "E01");
@@ -3596,13 +3731,33 @@ static void handle_packet(int fd, char *pkt)
 			send_stop_reply(fd, wstatus);
 		} else if (strncmp(pkt, "vCont;S", 7) == 0) {
 			/* Step with signal: vCont;S<sig>[:tid] */
-			int sig = (int)strtol(pkt + 7, NULL, 16);
+			int sig = gdb_sig_to_linux(
+				(int)strtol(pkt + 7, NULL, 16));
+			/*
+			 * Suppress SIGSTOP: step-with-SIGSTOP would immediately
+			 * re-stop the process without advancing the PC.  Keep the
+			 * step semantics but suppress the signal.
+			 */
+			if (sig == SIGSTOP)
+				sig = 0;
 			if (ptrace(PTRACE_SINGLESTEP, g_pid, NULL,
 				   (void *)(uintptr_t)sig) != 0) {
 				rsp_send_str(fd, "E01");
 				break;
 			}
 			waitpid(g_pid, &wstatus, 0);
+			/*
+			 * SIGSTOP injection can cause a kernel job-control
+			 * group-stop, which generates a SIGCONT that ptrace
+			 * intercepts.  Forward SIGCONT and wait for the real
+			 * stop (e.g., a breakpoint SIGTRAP).
+			 */
+			while (WIFSTOPPED(wstatus) &&
+			       WSTOPSIG(wstatus) == SIGCONT) {
+				ptrace(PTRACE_CONT, g_pid, NULL,
+				       (void *)(uintptr_t)SIGCONT);
+				waitpid(g_pid, &wstatus, 0);
+			}
 			g_last_wstatus = wstatus;
 			send_stop_reply(fd, wstatus);
 		} else if (strncmp(pkt, "vFile:open:", 11) == 0) {
@@ -3978,7 +4133,11 @@ static void handle_packet(int fd, char *pkt)
 				 ";QCatchSyscalls+"
 				 ";multiprocess+"
 				 ";swbreak+"
-				 ";hwbreak+"
+				 /* hwbreak+ intentionally omitted: our Z1 is best-effort
+				  * only and returns OK even when hardware debug registers
+				  * are unavailable, causing GDB breakpoints to silently
+				  * fail.  Without hwbreak+, GDB uses Z0 (software INT3)
+				  * which we implement correctly via PTRACE_POKEDATA. */
 				 ,
 				 ELA_GDB_RSP_MAX_PACKET);
 
@@ -4682,9 +4841,13 @@ static void handle_packet(int fd, char *pkt)
 			uint64_t mask = 0;
 			while (*p) {
 				char *end;
-				unsigned long sig = strtoul(p, &end, 16);
+				unsigned long gdb_sig = strtoul(p, &end, 16);
+				unsigned long sig;
 				if (end == p)
 					break;
+				/* Convert GDB signal number to Linux signal */
+				sig = (unsigned long)gdb_sig_to_linux(
+					(int)gdb_sig);
 				if (sig > 0 && sig < 64)
 					mask |= (1ULL << sig);
 				p = (*end == ';') ? end + 1 : end;
@@ -4735,7 +4898,8 @@ static int run_session(int conn_fd, pid_t pid, int attach_wstatus)
 	g_noack            = 0;
 	g_pass_signals     = 0;
 	g_current_tid      = pid;
-	g_last_wstatus     = attach_wstatus;
+	g_last_wstatus        = attach_wstatus;
+	g_initial_attach_stop = 1; /* cleared after first stop reply for initial SIGSTOP */
 	g_catch_syscalls   = 0;
 	g_catch_sysno_cnt  = 0;
 	g_in_syscall       = 0;
