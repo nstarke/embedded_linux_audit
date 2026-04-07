@@ -343,7 +343,7 @@ async function main() {
     return 1;
   }
 
-  if (!await auth.init(true, loadApiKeyHashes)) {
+  if (!await auth.init(false, loadApiKeyHashes)) {
     console.error('error: no API keys are configured in the database');
     return 1;
   }
