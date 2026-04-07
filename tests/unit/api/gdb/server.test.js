@@ -122,7 +122,7 @@ describe('gdb server', () => {
 
     expect(initializeDatabase).toHaveBeenCalledTimes(1);
     expect(runMigrations).toHaveBeenCalledTimes(1);
-    expect(auth.init).toHaveBeenCalledWith(true, expect.any(Function));
+    expect(auth.init).toHaveBeenCalledWith(false, expect.any(Function));
     expect(httpServer.listen).toHaveBeenCalledTimes(1);
   });
 
