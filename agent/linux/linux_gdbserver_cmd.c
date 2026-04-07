@@ -449,6 +449,40 @@ static int regs_read(char *out, size_t out_sz)
 	EMIT32(r.cs); EMIT32(r.ss);
 	EMIT32(r.ds); EMIT32(r.es); EMIT32(r.fs); EMIT32(r.gs);
 
+	/* x87 FPU registers (st0-st7, then fctrl-fop) */
+	{
+		struct user_fpregs_struct fp;
+		int j;
+		char fptmp[21]; /* 10 bytes × 2 hex + NUL */
+
+		if (ptrace(PTRACE_GETFPREGS, g_pid, NULL, &fp) != 0)
+			memset(&fp, 0, sizeof(fp));
+
+		for (j = 0; j < 8; j++) {
+			/* Each st register occupies 16 bytes in st_space;
+			 * only the first 10 bytes are the 80-bit value. */
+			uint8_t *st = (uint8_t *)&fp.st_space[j * 4];
+			if (ela_gdb_hex_encode(st, 10, fptmp, sizeof(fptmp)) != 0)
+				return -1;
+			if (pos + 20 + 1 > out_sz) return -1;
+			memcpy(out + pos, fptmp, 20); pos += 20;
+		}
+		/* fctrl, fstat, ftag */
+		EMIT32((uint32_t)fp.cwd);
+		EMIT32((uint32_t)fp.swd);
+		EMIT32((uint32_t)fp.ftw);
+		/* fiseg (high 32 bits of FPU IP; 0 in 64-bit mode),
+		 * fioff (low 32 bits of FPU IP) */
+		EMIT32((uint32_t)(fp.rip >> 32));
+		EMIT32((uint32_t)fp.rip);
+		/* foseg (high 32 bits of FPU DP; 0 in 64-bit mode),
+		 * fooff (low 32 bits of FPU DP) */
+		EMIT32((uint32_t)(fp.rdp >> 32));
+		EMIT32((uint32_t)fp.rdp);
+		/* fop */
+		EMIT32((uint32_t)fp.fop);
+	}
+
 #undef EMIT64
 #undef EMIT32
 
@@ -488,7 +522,28 @@ static int reg_read_one(int regnum, char *out, size_t out_sz)
 	case 21: return ela_gdb_encode_le32((uint32_t)r.es,     out, out_sz);
 	case 22: return ela_gdb_encode_le32((uint32_t)r.fs,     out, out_sz);
 	case 23: return ela_gdb_encode_le32((uint32_t)r.gs,     out, out_sz);
-	default: return -1;
+	default: {
+		/* x87 FPU registers: st0-st7 (24-31), fctrl-fop (32-39) */
+		struct user_fpregs_struct fp;
+		if (ptrace(PTRACE_GETFPREGS, g_pid, NULL, &fp) != 0)
+			return -1;
+		if (regnum >= 24 && regnum <= 31) {
+			/* 80-bit st register: emit 10 bytes as 20 hex chars */
+			uint8_t *st = (uint8_t *)&fp.st_space[(regnum - 24) * 4];
+			return ela_gdb_hex_encode(st, 10, out, out_sz);
+		}
+		switch (regnum) {
+		case 32: return ela_gdb_encode_le32((uint32_t)fp.cwd,            out, out_sz);
+		case 33: return ela_gdb_encode_le32((uint32_t)fp.swd,            out, out_sz);
+		case 34: return ela_gdb_encode_le32((uint32_t)fp.ftw,            out, out_sz);
+		case 35: return ela_gdb_encode_le32((uint32_t)(fp.rip >> 32),    out, out_sz);
+		case 36: return ela_gdb_encode_le32((uint32_t)fp.rip,            out, out_sz);
+		case 37: return ela_gdb_encode_le32((uint32_t)(fp.rdp >> 32),    out, out_sz);
+		case 38: return ela_gdb_encode_le32((uint32_t)fp.rdp,            out, out_sz);
+		case 39: return ela_gdb_encode_le32((uint32_t)fp.fop,            out, out_sz);
+		default: return -1;
+		}
+	}
 	}
 }
 
@@ -526,6 +581,47 @@ static int reg_write_one(int regnum, const char *hex_val)
 	case 21: if (ela_gdb_decode_le32(hex_val, &v32)) return -1; r.es      = v32; break;
 	case 22: if (ela_gdb_decode_le32(hex_val, &v32)) return -1; r.fs      = v32; break;
 	case 23: if (ela_gdb_decode_le32(hex_val, &v32)) return -1; r.gs      = v32; break;
+	case 24: case 25: case 26: case 27:
+	case 28: case 29: case 30: case 31:
+	case 32: case 33: case 34: case 35:
+	case 36: case 37: case 38: case 39: {
+		/* x87 FPU registers via PTRACE_GETFPREGS / PTRACE_SETFPREGS */
+		struct user_fpregs_struct fp;
+		if (ptrace(PTRACE_GETFPREGS, g_pid, NULL, &fp) != 0)
+			return -1;
+		if (regnum >= 24 && regnum <= 31) {
+			/* 80-bit st register: decode 20 hex chars → 10 bytes */
+			uint8_t *st = (uint8_t *)&fp.st_space[(regnum - 24) * 4];
+			if (ela_gdb_hex_decode(hex_val, st, 10) != 10)
+				return -1;
+		} else {
+			if (ela_gdb_decode_le32(hex_val, &v32)) return -1;
+			switch (regnum) {
+			case 32: fp.cwd = (unsigned short)v32; break;
+			case 33: fp.swd = (unsigned short)v32; break;
+			case 34: fp.ftw = (unsigned short)v32; break;
+			case 35: /* fiseg: high 32 bits of rip */
+				fp.rip = ((uint64_t)v32 << 32) |
+					 ((uint32_t)fp.rip);
+				break;
+			case 36: /* fioff: low 32 bits of rip */
+				fp.rip = ((uint64_t)(uint32_t)(fp.rip >> 32) << 32) |
+					 (uint64_t)v32;
+				break;
+			case 37: /* foseg: high 32 bits of rdp */
+				fp.rdp = ((uint64_t)v32 << 32) |
+					 ((uint32_t)fp.rdp);
+				break;
+			case 38: /* fooff: low 32 bits of rdp */
+				fp.rdp = ((uint64_t)(uint32_t)(fp.rdp >> 32) << 32) |
+					 (uint64_t)v32;
+				break;
+			case 39: fp.fop = (unsigned short)v32; break;
+			default: return -1;
+			}
+		}
+		return ptrace(PTRACE_SETFPREGS, g_pid, NULL, &fp) != 0 ? -1 : 0;
+	}
 	default: return -1;
 	}
 	return ptrace(PTRACE_SETREGS, g_pid, NULL, &r) != 0 ? -1 : 0;
@@ -539,7 +635,9 @@ static int regs_write(const char *hex, size_t hex_len)
 	uint32_t v32;
 	size_t pos = 0;
 
-	if (hex_len < 328) /* 17×16 + 7×8 */
+	/* Minimum: 17×16 + 7×8 = 328 (integer regs only).
+	 * With FPU: + 8×20 (st0-st7) + 8×8 (fctrl-fop) = 552 total. */
+	if (hex_len < 328)
 		return -1;
 	if (ptrace(PTRACE_GETREGS, g_pid, NULL, &r) != 0)
 		return -1;
@@ -564,7 +662,49 @@ static int regs_write(const char *hex, size_t hex_len)
 #undef LOAD64
 #undef LOAD32
 
-	return ptrace(PTRACE_SETREGS, g_pid, NULL, &r) != 0 ? -1 : 0;
+	if (ptrace(PTRACE_SETREGS, g_pid, NULL, &r) != 0)
+		return -1;
+
+	/* Apply FPU portion if provided (st0-st7 + fctrl-fop = 224 hex chars) */
+	if (hex_len >= 552) {
+		struct user_fpregs_struct fp;
+		int j;
+
+		if (ptrace(PTRACE_GETFPREGS, g_pid, NULL, &fp) != 0)
+			return -1;
+
+		for (j = 0; j < 8; j++) {
+			uint8_t *st = (uint8_t *)&fp.st_space[j * 4];
+			if (ela_gdb_hex_decode(hex + pos, st, 10) != 10)
+				return -1;
+			pos += 20;
+		}
+		if (ela_gdb_decode_le32(hex + pos, &v32)) return -1;
+		fp.cwd = (unsigned short)v32; pos += 8;
+		if (ela_gdb_decode_le32(hex + pos, &v32)) return -1;
+		fp.swd = (unsigned short)v32; pos += 8;
+		if (ela_gdb_decode_le32(hex + pos, &v32)) return -1;
+		fp.ftw = (unsigned short)v32; pos += 8;
+		/* fiseg: high 32 bits of rip */
+		if (ela_gdb_decode_le32(hex + pos, &v32)) return -1;
+		fp.rip = ((uint64_t)v32 << 32) | (uint32_t)fp.rip; pos += 8;
+		/* fioff: low 32 bits of rip */
+		if (ela_gdb_decode_le32(hex + pos, &v32)) return -1;
+		fp.rip = (fp.rip & ~(uint64_t)0xffffffffu) | (uint64_t)v32; pos += 8;
+		/* foseg: high 32 bits of rdp */
+		if (ela_gdb_decode_le32(hex + pos, &v32)) return -1;
+		fp.rdp = ((uint64_t)v32 << 32) | (uint32_t)fp.rdp; pos += 8;
+		/* fooff: low 32 bits of rdp */
+		if (ela_gdb_decode_le32(hex + pos, &v32)) return -1;
+		fp.rdp = (fp.rdp & ~(uint64_t)0xffffffffu) | (uint64_t)v32; pos += 8;
+		if (ela_gdb_decode_le32(hex + pos, &v32)) return -1;
+		fp.fop = (unsigned short)v32;
+
+		if (ptrace(PTRACE_SETFPREGS, g_pid, NULL, &fp) != 0)
+			return -1;
+	}
+
+	return 0;
 }
 
 #elif defined(__aarch64__)
@@ -2333,6 +2473,16 @@ static int build_target_xml(char *out, size_t out_sz)
 			{"cs","32","int32"}, {"ss","32","int32"},
 			{"ds","32","int32"}, {"es","32","int32"},
 			{"fs","32","int32"}, {"gs","32","int32"},
+			/* x87 FPU data registers (80-bit each) */
+			{"st0","80","i387_ext"}, {"st1","80","i387_ext"},
+			{"st2","80","i387_ext"}, {"st3","80","i387_ext"},
+			{"st4","80","i387_ext"}, {"st5","80","i387_ext"},
+			{"st6","80","i387_ext"}, {"st7","80","i387_ext"},
+			/* x87 FPU control registers */
+			{"fctrl","32","int32"}, {"fstat","32","int32"},
+			{"ftag","32","int32"},  {"fiseg","32","int32"},
+			{"fioff","32","int32"}, {"foseg","32","int32"},
+			{"fooff","32","int32"}, {"fop","32","int32"},
 			{NULL, NULL, NULL}
 		};
 		int i;
@@ -2678,9 +2828,7 @@ static int build_libraries_svr4_xml(pid_t pid, char *out, size_t out_sz)
 			nl = strchr(path, '\r');
 			if (nl) *nl = '\0';
 
-			if (path[0] == '[')
-				continue;
-			if (strstr(path, ".so") == NULL)
+			if (ela_gdb_svr4_path_skip(path))
 				continue;
 
 			/* Deduplicate via xmlGetProp instead of strstr */
