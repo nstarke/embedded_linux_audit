@@ -956,7 +956,6 @@ static int regs_write(const char *hex, size_t hex_len)
 
 	/* orig_rax: written separately via SETREGS (uses same user_regs_struct) */
 	if (hex_len >= 1088) {
-		uint64_t v64;
 		struct user_regs_struct r2;
 		size_t orig_pos = 552 + 512 + 8; /* after core+fpu+sse+mxcsr */
 		if (ptrace(PTRACE_GETREGS, g_pid, NULL, &r2) != 0) return -1;
