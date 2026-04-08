@@ -649,6 +649,7 @@ static int reg_read_one(int regnum, char *out, size_t out_sz)
 		case 37: return ela_gdb_encode_le32((uint32_t)(fp.rdp >> 32),    out, out_sz);
 		case 38: return ela_gdb_encode_le32((uint32_t)fp.rdp,            out, out_sz);
 		case 39: return ela_gdb_encode_le32((uint32_t)fp.fop,            out, out_sz);
+		case 57: return ela_gdb_encode_le64(r.orig_rax, out, out_sz);
 		default: return -1;
 		}
 	}
@@ -730,6 +731,10 @@ static int reg_write_one(int regnum, const char *hex_val)
 		}
 		return ptrace(PTRACE_SETFPREGS, g_pid, NULL, &fp) != 0 ? -1 : 0;
 	}
+	case 57: /* orig_rax (org.gnu.gdb.i386.linux feature, regnum 57) */
+		if (ela_gdb_decode_le64(hex_val, &v64)) return -1;
+		r.orig_rax = v64;
+		break;
 	default: return -1;
 	}
 	return ptrace(PTRACE_SETREGS, g_pid, NULL, &r) != 0 ? -1 : 0;
@@ -2598,6 +2603,8 @@ static int build_target_xml(char *out, size_t out_sz)
 
 		xmlNewChild(root, NULL, BAD_CAST "architecture",
 			    BAD_CAST "i386:x86-64");
+		xmlNewChild(root, NULL, BAD_CAST "osabi",
+			    BAD_CAST "GNU/Linux");
 		feat = xmlNewChild(root, NULL, BAD_CAST "feature", NULL);
 		xmlNewProp(feat, BAD_CAST "name",
 			   BAD_CAST "org.gnu.gdb.i386.core");
@@ -2611,30 +2618,61 @@ static int build_target_xml(char *out, size_t out_sz)
 			xmlNewProp(reg, BAD_CAST "type",
 				   BAD_CAST regs[i].type);
 		}
+
+		/*
+		 * Add the Linux-specific feature.  GDB uses the presence of
+		 * "org.gnu.gdb.i386.linux" to enable catch-syscall support
+		 * (it triggers i386_linux_init_abi which sets get_syscall_number).
+		 * The feature contains orig_rax at regnum 57 — the slot GDB
+		 * expects based on the full x86-64 register layout
+		 * (core 0-39 + sse 40-56 + linux 57).
+		 */
+		{
+			xmlNodePtr lfeat = xmlNewChild(root, NULL,
+						       BAD_CAST "feature", NULL);
+			xmlNodePtr lreg;
+			xmlNewProp(lfeat, BAD_CAST "name",
+				   BAD_CAST "org.gnu.gdb.i386.linux");
+			lreg = xmlNewChild(lfeat, NULL, BAD_CAST "reg", NULL);
+			xmlNewProp(lreg, BAD_CAST "name",
+				   BAD_CAST "orig_rax");
+			xmlNewProp(lreg, BAD_CAST "bitsize", BAD_CAST "64");
+			xmlNewProp(lreg, BAD_CAST "type",    BAD_CAST "int");
+			xmlNewProp(lreg, BAD_CAST "regnum",  BAD_CAST "57");
+		}
 	}
 #elif defined(__aarch64__)
 	xmlNewChild(root, NULL, BAD_CAST "architecture", BAD_CAST "aarch64");
+	xmlNewChild(root, NULL, BAD_CAST "osabi", BAD_CAST "GNU/Linux");
 #elif defined(__arm__)
 	xmlNewChild(root, NULL, BAD_CAST "architecture", BAD_CAST "arm");
+	xmlNewChild(root, NULL, BAD_CAST "osabi", BAD_CAST "GNU/Linux");
 #elif defined(__mips__) && defined(__mips64)
 	xmlNewChild(root, NULL, BAD_CAST "architecture",
 		    BAD_CAST "mips:isa64");
+	xmlNewChild(root, NULL, BAD_CAST "osabi", BAD_CAST "GNU/Linux");
 #elif defined(__mips__) && defined(__MIPSEL__)
 	xmlNewChild(root, NULL, BAD_CAST "architecture", BAD_CAST "mipsel");
+	xmlNewChild(root, NULL, BAD_CAST "osabi", BAD_CAST "GNU/Linux");
 #elif defined(__mips__)
 	xmlNewChild(root, NULL, BAD_CAST "architecture", BAD_CAST "mips");
+	xmlNewChild(root, NULL, BAD_CAST "osabi", BAD_CAST "GNU/Linux");
 #elif defined(__powerpc64__)
 	xmlNewChild(root, NULL, BAD_CAST "architecture",
 		    BAD_CAST "powerpc:common64");
+	xmlNewChild(root, NULL, BAD_CAST "osabi", BAD_CAST "GNU/Linux");
 #elif defined(__powerpc__)
 	xmlNewChild(root, NULL, BAD_CAST "architecture",
 		    BAD_CAST "powerpc:common");
+	xmlNewChild(root, NULL, BAD_CAST "osabi", BAD_CAST "GNU/Linux");
 #elif defined(__riscv) && (__riscv_xlen == 64)
 	xmlNewChild(root, NULL, BAD_CAST "architecture",
 		    BAD_CAST "riscv:rv64");
+	xmlNewChild(root, NULL, BAD_CAST "osabi", BAD_CAST "GNU/Linux");
 #elif defined(__riscv) && (__riscv_xlen == 32)
 	xmlNewChild(root, NULL, BAD_CAST "architecture",
 		    BAD_CAST "riscv:rv32");
+	xmlNewChild(root, NULL, BAD_CAST "osabi", BAD_CAST "GNU/Linux");
 #endif
 
 	xmlDocDumpMemory(doc, &buf, &bufsize);
@@ -4304,9 +4342,19 @@ static void handle_packet(int fd, char *pkt)
 			    ela_gdb_parse_hex_u64(semi1 + 1, &s_len) != 0) {
 				rsp_send_str(fd, "E01"); break;
 			}
-			plen = ela_gdb_hex_decode(semi2 + 1, pattern,
-						  sizeof(pattern));
-			if (plen <= 0) { rsp_send_str(fd, "E01"); break; }
+
+			/*
+			 * GDB sends the search pattern as raw binary bytes
+			 * (not hex-encoded), so use strlen + memcpy.
+			 * Note: patterns containing \x00 bytes are unsupported
+			 * because the payload is null-terminated and we lack the
+			 * data length here.  This covers all practical cases.
+			 */
+			plen = (int)strlen(semi2 + 1);
+			if (plen <= 0 || plen > (int)sizeof(pattern)) {
+				rsp_send_str(fd, "E01"); break;
+			}
+			memcpy(pattern, semi2 + 1, (size_t)plen);
 
 			ret = mem_search(s_addr, s_len,
 					 pattern, (size_t)plen,
@@ -5506,6 +5554,7 @@ int linux_gdbserver_main(int argc, char **argv)
 
 	/* Child: become session leader and run the gdbserver */
 	close(pipefd[0]);
+	gdb_debug_open(); /* enable ELA_DEBUG=1 logging for this child */
 	setsid();
 	signal(SIGINT,  handle_signal);
 	signal(SIGTERM, handle_signal);

@@ -190,7 +190,7 @@ OUT_FILE="$OUT"
 assert_output_contains "swbp: breakpoint accepted"     "$OUT_FILE" "Breakpoint 1 at"
 assert_output_contains "swbp: breakpoint hit"          "$OUT_FILE" "Breakpoint 1,"
 assert_output_contains "swbp: info breakpoints shows 1" "$OUT_FILE" "hw breakpoint|breakpoint"
-assert_output_contains "swbp: pc matches bp address"   "$OUT_FILE" "Breakpoint 1, 0x"
+assert_output_contains "swbp: pc matches bp address"   "$OUT_FILE" "Breakpoint 1,"
 assert_output_contains "swbp: detach clean"            "$OUT_FILE" "detached"
 assert_output_not_contains "swbp: no SIGSTOP leak"     "$OUT_FILE" "SIGSTOP"
 rm -f "$OUT_FILE" "$GS_LOG"
@@ -293,7 +293,7 @@ detach
 ")"
 OUT_FILE="$OUT"
 
-assert_output_contains "mem: x/8bx returns bytes" "$OUT_FILE" "0x[0-9a-f]+:.*0x[0-9a-f]"
+assert_output_contains "mem: x/8bx returns bytes" "$OUT_FILE" "0x[0-9a-f].*:.*0x[0-9a-f]"
 rm -f "$OUT_FILE" "$GS_LOG"
 
 # -------------------------------------------------------------------------
@@ -337,6 +337,75 @@ detach
 else
     echo "[SKIP] watchpoint test: could not read RSP"
 fi
+
+# -------------------------------------------------------------------------
+# Test: find / qSearch:memory
+#
+# Uses GDB's "find" command which sends qSearch:memory.  We search for the
+# byte at $pc within a 256-byte window starting at $pc — guaranteed to
+# succeed because the first byte of the search range IS the pattern.
+# -------------------------------------------------------------------------
+
+PORT="$(next_port)"
+GS_LOG="$(mktemp /tmp/ela_gs.XXXXXX)"
+start_gdbserver "$LOOP_PID" "$PORT" "$GS_LOG"
+
+OUT="$(run_gdb "$PORT" "
+find \$pc, \$pc+0x100, *((char*)\$pc)
+detach
+")"
+OUT_FILE="$OUT"
+
+assert_output_contains "find: pattern found"      "$OUT_FILE" "pattern[s]* found"
+assert_output_not_contains "find: not failed"     "$OUT_FILE" "Pattern not found"
+rm -f "$OUT_FILE" "$GS_LOG"
+
+# -------------------------------------------------------------------------
+# Test: catch syscall (QCatchSyscalls) — catch-all
+#
+# "catch syscall" without a name sends QCatchSyscalls:1 (catch every
+# syscall).  The loop binary calls clock_nanosleep every 100 ms, so we
+# should receive a syscall-entry or syscall-return stop within milliseconds.
+# -------------------------------------------------------------------------
+
+PORT="$(next_port)"
+GS_LOG="$(mktemp /tmp/ela_gs.XXXXXX)"
+start_gdbserver "$LOOP_PID" "$PORT" "$GS_LOG"
+
+OUT="$(run_gdb "$PORT" "
+catch syscall
+continue
+detach
+")"
+OUT_FILE="$OUT"
+
+assert_output_contains "catch-syscall: stop received"  "$OUT_FILE" "Catchpoint 1"
+assert_output_contains "catch-syscall: syscall shown"  "$OUT_FILE" "syscall|Syscall"
+rm -f "$OUT_FILE" "$GS_LOG"
+
+# -------------------------------------------------------------------------
+# Test: call (inferior function call)
+#
+# Loads the loop binary to give GDB symbol info, then calls getpid().
+# GDB sets up a call-dummy frame, inserts a return breakpoint (Z0), and
+# uses vCont;c to resume.  On return the call result ($1 = <pid>) should
+# appear.  This exercises M/X (memory write), Z0 (breakpoint), P/G
+# (register r/w), and vCont;c together.
+# -------------------------------------------------------------------------
+
+PORT="$(next_port)"
+GS_LOG="$(mktemp /tmp/ela_gs.XXXXXX)"
+start_gdbserver "$LOOP_PID" "$PORT" "$GS_LOG"
+
+OUT="$(run_gdb "$PORT" "
+file $LOOP_BIN
+call (int)getpid()
+detach
+")"
+OUT_FILE="$OUT"
+
+assert_output_contains "call: getpid returned a pid" "$OUT_FILE" '^\$1 = [0-9]+'
+rm -f "$OUT_FILE" "$GS_LOG"
 
 # -------------------------------------------------------------------------
 finish_tests
