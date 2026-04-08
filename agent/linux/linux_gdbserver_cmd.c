@@ -947,7 +947,7 @@ static int regs_write(const char *hex, size_t hex_len)
 			}
 			/* mxcsr */
 			if (ela_gdb_decode_le32(hex + pos, &v32)) return -1;
-			fp.mxcsr = v32; pos += 8;
+			fp.mxcsr = v32;
 		}
 
 		if (ptrace(PTRACE_SETFPREGS, g_pid, NULL, &fp) != 0)
