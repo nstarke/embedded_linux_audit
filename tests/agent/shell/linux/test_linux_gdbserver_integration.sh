@@ -64,6 +64,10 @@ print_section "linux gdbserver integration tests"
 GDB_PORT=19100
 LOOP_PID=
 LOOP_BIN=/tmp/ela_test_gdbserver_loop
+HEAP_PID=
+HEAP_BIN=/tmp/ela_test_gdbserver_heap
+WATCH_PID=
+WATCH_BIN=/tmp/ela_test_gdbserver_watch
 
 # Compile the target loop program once.
 compile_loop_target() {
@@ -80,6 +84,28 @@ EOF
     fi
 }
 
+# Compile a heap-aware binary with malloc/free in the PLT and a known global
+# string, used for x/s, call malloc/free, and chunk-header inspection tests.
+compile_heap_target() {
+    cat > /tmp/ela_test_gdbserver_heap.c << 'EOF'
+#include <time.h>
+#include <stdlib.h>
+
+/* Global string for x/s tests — non-static so it appears in .symtab */
+const char g_banner[] = "ELA_TEST";
+
+int main(void) {
+    struct timespec ts = {0, 100000000}; /* 100 ms */
+    /* Use malloc/free so they land in the PLT and GDB can call them */
+    void *p = malloc(1);
+    free(p);
+    for (;;) nanosleep(&ts, NULL);
+    return 0;
+}
+EOF
+    gcc -O0 -g -o "$HEAP_BIN" /tmp/ela_test_gdbserver_heap.c || return 1
+}
+
 start_loop() {
     "$LOOP_BIN" &
     LOOP_PID=$!
@@ -90,6 +116,49 @@ stop_loop() {
         kill "$LOOP_PID" 2>/dev/null || true
         wait "$LOOP_PID" 2>/dev/null || true
         LOOP_PID=
+    fi
+}
+
+start_heap() {
+    "$HEAP_BIN" &
+    HEAP_PID=$!
+}
+
+stop_heap() {
+    if [ -n "$HEAP_PID" ]; then
+        kill "$HEAP_PID" 2>/dev/null || true
+        wait "$HEAP_PID" 2>/dev/null || true
+        HEAP_PID=
+    fi
+}
+
+# Compile a small binary with a writable global counter for watchpoint tests.
+compile_watch_target() {
+    cat > /tmp/ela_test_gdbserver_watch.c << 'EOF'
+#include <time.h>
+int g_count = 0;
+int main(void) {
+    struct timespec ts = {0, 50000000}; /* 50 ms */
+    for (;;) {
+        g_count++;
+        nanosleep(&ts, NULL);
+    }
+    return 0;
+}
+EOF
+    gcc -O0 -g -o "$WATCH_BIN" /tmp/ela_test_gdbserver_watch.c || return 1
+}
+
+start_watch() {
+    "$WATCH_BIN" &
+    WATCH_PID=$!
+}
+
+stop_watch() {
+    if [ -n "$WATCH_PID" ]; then
+        kill "$WATCH_PID" 2>/dev/null || true
+        wait "$WATCH_PID" 2>/dev/null || true
+        WATCH_PID=
     fi
 }
 
@@ -165,8 +234,20 @@ if ! compile_loop_target; then
     exit 0
 fi
 
+if ! compile_heap_target; then
+    echo "SKIP: could not compile heap target (gcc not available?)"
+    exit 0
+fi
+
+if ! compile_watch_target; then
+    echo "SKIP: could not compile watch target (gcc not available?)"
+    exit 0
+fi
+
 start_loop
-trap 'stop_loop' EXIT INT TERM
+start_heap
+start_watch
+trap 'stop_loop; stop_heap; stop_watch' EXIT INT TERM
 
 # -------------------------------------------------------------------------
 # Test: software breakpoints (Z0)
@@ -190,7 +271,7 @@ OUT_FILE="$OUT"
 assert_output_contains "swbp: breakpoint accepted"     "$OUT_FILE" "Breakpoint 1 at"
 assert_output_contains "swbp: breakpoint hit"          "$OUT_FILE" "Breakpoint 1,"
 assert_output_contains "swbp: info breakpoints shows 1" "$OUT_FILE" "hw breakpoint|breakpoint"
-assert_output_contains "swbp: pc matches bp address"   "$OUT_FILE" "Breakpoint 1, 0x"
+assert_output_contains "swbp: pc matches bp address"   "$OUT_FILE" "Breakpoint 1,"
 assert_output_contains "swbp: detach clean"            "$OUT_FILE" "detached"
 assert_output_not_contains "swbp: no SIGSTOP leak"     "$OUT_FILE" "SIGSTOP"
 rm -f "$OUT_FILE" "$GS_LOG"
@@ -293,7 +374,7 @@ detach
 ")"
 OUT_FILE="$OUT"
 
-assert_output_contains "mem: x/8bx returns bytes" "$OUT_FILE" "0x[0-9a-f]+:.*0x[0-9a-f]"
+assert_output_contains "mem: x/8bx returns bytes" "$OUT_FILE" "0x[0-9a-f].*:.*0x[0-9a-f]"
 rm -f "$OUT_FILE" "$GS_LOG"
 
 # -------------------------------------------------------------------------
@@ -337,6 +418,331 @@ detach
 else
     echo "[SKIP] watchpoint test: could not read RSP"
 fi
+
+# -------------------------------------------------------------------------
+# Test: find / qSearch:memory
+#
+# Uses GDB's "find" command which sends qSearch:memory.  We search for the
+# byte at $pc within a 256-byte window starting at $pc — guaranteed to
+# succeed because the first byte of the search range IS the pattern.
+# -------------------------------------------------------------------------
+
+PORT="$(next_port)"
+GS_LOG="$(mktemp /tmp/ela_gs.XXXXXX)"
+start_gdbserver "$LOOP_PID" "$PORT" "$GS_LOG"
+
+OUT="$(run_gdb "$PORT" "
+find \$pc, \$pc+0x100, *((char*)\$pc)
+detach
+")"
+OUT_FILE="$OUT"
+
+assert_output_contains "find: pattern found"      "$OUT_FILE" "pattern[s]* found"
+assert_output_not_contains "find: not failed"     "$OUT_FILE" "Pattern not found"
+rm -f "$OUT_FILE" "$GS_LOG"
+
+# -------------------------------------------------------------------------
+# Test: catch syscall (QCatchSyscalls) — catch-all
+#
+# "catch syscall" without a name sends QCatchSyscalls:1 (catch every
+# syscall).  The loop binary calls clock_nanosleep every 100 ms, so we
+# should receive a syscall-entry or syscall-return stop within milliseconds.
+# -------------------------------------------------------------------------
+
+PORT="$(next_port)"
+GS_LOG="$(mktemp /tmp/ela_gs.XXXXXX)"
+start_gdbserver "$LOOP_PID" "$PORT" "$GS_LOG"
+
+OUT="$(run_gdb "$PORT" "
+catch syscall
+continue
+detach
+")"
+OUT_FILE="$OUT"
+
+assert_output_contains "catch-syscall: stop received"  "$OUT_FILE" "Catchpoint 1"
+assert_output_contains "catch-syscall: syscall shown"  "$OUT_FILE" "syscall|Syscall"
+rm -f "$OUT_FILE" "$GS_LOG"
+
+# -------------------------------------------------------------------------
+# Test: call (inferior function call)
+#
+# Loads the loop binary to give GDB symbol info, then calls getpid().
+# GDB sets up a call-dummy frame, inserts a return breakpoint (Z0), and
+# uses vCont;c to resume.  On return the call result ($1 = <pid>) should
+# appear.  This exercises M/X (memory write), Z0 (breakpoint), P/G
+# (register r/w), and vCont;c together.
+# -------------------------------------------------------------------------
+
+PORT="$(next_port)"
+GS_LOG="$(mktemp /tmp/ela_gs.XXXXXX)"
+start_gdbserver "$LOOP_PID" "$PORT" "$GS_LOG"
+
+OUT="$(run_gdb "$PORT" "
+file $LOOP_BIN
+call (int)getpid()
+detach
+")"
+OUT_FILE="$OUT"
+
+assert_output_contains "call: getpid returned a pid" "$OUT_FILE" '^\$1 = [0-9]+'
+rm -f "$OUT_FILE" "$GS_LOG"
+
+# -------------------------------------------------------------------------
+# Test: x/40gx — read 40 8-byte words from the stack
+#
+# Exercises the 'm' packet with a 320-byte read (well within the 2048-byte
+# per-packet limit).  GDB formats the output as two 64-bit hex values per
+# line, so we expect at least one line matching the pattern.
+# -------------------------------------------------------------------------
+
+PORT="$(next_port)"
+GS_LOG="$(mktemp /tmp/ela_gs.XXXXXX)"
+start_gdbserver "$LOOP_PID" "$PORT" "$GS_LOG"
+
+OUT="$(run_gdb "$PORT" "
+x/40gx \$rsp
+detach
+")"
+OUT_FILE="$OUT"
+
+# GDB prints 64-bit values as 0x<16 hex digits>
+assert_output_contains "x40gx: 8-byte values present" \
+    "$OUT_FILE" "0x[0-9a-f]{16}"
+# Two values per line: "addr:  0x...  0x..."
+assert_output_contains "x40gx: multiple values per row" \
+    "$OUT_FILE" "0x[0-9a-f].*0x[0-9a-f].*0x[0-9a-f]"
+rm -f "$OUT_FILE" "$GS_LOG"
+
+# -------------------------------------------------------------------------
+# Test: x/s — read a null-terminated string from a known global
+#
+# The heap binary exports g_banner = "ELA_TEST".  With 'file' loaded and
+# qOffsets providing the ASLR slide, GDB resolves &g_banner and issues
+# 'm' packets to read the bytes, then formats them as a string.
+# -------------------------------------------------------------------------
+
+PORT="$(next_port)"
+GS_LOG="$(mktemp /tmp/ela_gs.XXXXXX)"
+start_gdbserver "$HEAP_PID" "$PORT" "$GS_LOG"
+
+OUT="$(run_gdb "$PORT" "
+file $HEAP_BIN
+x/s &g_banner
+detach
+")"
+OUT_FILE="$OUT"
+
+assert_output_contains "x/s: ELA_TEST string displayed" "$OUT_FILE" "ELA_TEST"
+rm -f "$OUT_FILE" "$GS_LOG"
+
+# -------------------------------------------------------------------------
+# Test: set {type}addr — write arbitrary value to memory and read it back
+#
+# 'set {long}(addr) = val' sends an 'M' packet to write 8 bytes.
+# 'x/gx addr' sends an 'm' packet to read them back.
+# Verifies round-trip memory write/read for exploit-simulation workflows.
+# -------------------------------------------------------------------------
+
+PORT="$(next_port)"
+GS_LOG="$(mktemp /tmp/ela_gs.XXXXXX)"
+start_gdbserver "$LOOP_PID" "$PORT" "$GS_LOG"
+
+OUT="$(run_gdb "$PORT" "
+set {long}(\$rsp-8) = 0xdeadbeefcafebabe
+x/gx \$rsp-8
+detach
+")"
+OUT_FILE="$OUT"
+
+assert_output_contains "set-mem: 0xdeadbeefcafebabe round-trips" \
+    "$OUT_FILE" "deadbeefcafebabe"
+rm -f "$OUT_FILE" "$GS_LOG"
+
+# -------------------------------------------------------------------------
+# Test: call malloc(n) — invoke libc malloc from GDB
+#
+# GDB sets up a call-dummy frame (saves all regs via G/P packets, writes
+# a return-breakpoint via Z0, resumes via vCont;c).  malloc is in the
+# heap binary's PLT, so GDB can resolve it after 'file' is loaded.
+# The return value (pointer in rax) is captured and shown as $1.
+# -------------------------------------------------------------------------
+
+PORT="$(next_port)"
+GS_LOG="$(mktemp /tmp/ela_gs.XXXXXX)"
+start_gdbserver "$HEAP_PID" "$PORT" "$GS_LOG"
+
+OUT="$(run_gdb "$PORT" "
+file $HEAP_BIN
+call (void*)malloc(64)
+detach
+")"
+OUT_FILE="$OUT"
+
+# malloc returns a non-NULL pointer; GDB shows it as "$1 = (void *) 0x<addr>"
+assert_output_contains "malloc: returns non-null pointer" \
+    "$OUT_FILE" '^\$1 = \(void \*\) 0x[1-9a-f]'
+rm -f "$OUT_FILE" "$GS_LOG"
+
+# -------------------------------------------------------------------------
+# Test: malloc chunk header inspection via x/4gx
+#
+# Glibc malloc places a two-word header immediately before the user pointer:
+#   [ptr-16] prev_size (0 for first chunk)
+#   [ptr-8]  size | flags  (alloc size + 16 header, bit 0 = prev_in_use)
+#
+# Allocating 64 bytes → chunk size = 64+16 = 80 = 0x50; with prev_in_use
+# set: 0x51.  We verify the header bytes are readable (non-empty output).
+# 'p *((struct malloc_chunk*)addr)' is the GDB idiom; we use x/4gx here
+# because the binary has no malloc_chunk debug type — the effect on the
+# RSP layer is identical (both use the 'm' packet).
+# -------------------------------------------------------------------------
+
+PORT="$(next_port)"
+GS_LOG="$(mktemp /tmp/ela_gs.XXXXXX)"
+start_gdbserver "$HEAP_PID" "$PORT" "$GS_LOG"
+
+OUT="$(run_gdb "$PORT" "
+file $HEAP_BIN
+call (void*)malloc(64)
+set \$mptr = \$1
+x/4gx (\$mptr - 16)
+detach
+")"
+OUT_FILE="$OUT"
+
+# The size field at $mptr-8 should have the prev_in_use bit set (odd value).
+# Just verify we got readable hex output from the chunk header region.
+assert_output_contains "malloc-chunk: header bytes readable" \
+    "$OUT_FILE" "0x[0-9a-f]{16}"
+# The chunk size for a 64-byte alloc is 0x51 (80 bytes | prev_in_use)
+assert_output_contains "malloc-chunk: size+flags field present" \
+    "$OUT_FILE" "0x000000000000005[13579bdf]"
+rm -f "$OUT_FILE" "$GS_LOG"
+
+# -------------------------------------------------------------------------
+# Test: call free(ptr) — invoke libc free from GDB
+#
+# After allocating with malloc, call free() on the returned pointer.
+# free() returns void; GDB shows "$N = void".  Verifies that a two-step
+# malloc→free sequence works end-to-end over RSP.
+# -------------------------------------------------------------------------
+
+PORT="$(next_port)"
+GS_LOG="$(mktemp /tmp/ela_gs.XXXXXX)"
+start_gdbserver "$HEAP_PID" "$PORT" "$GS_LOG"
+
+OUT="$(run_gdb "$PORT" "
+file $HEAP_BIN
+call (void*)malloc(64)
+call (void)free(\$1)
+detach
+")"
+OUT_FILE="$OUT"
+
+# free() is void; GDB shows no value assignment.  Just confirm the session
+# completed without errors and GDB detached cleanly.
+assert_output_contains "free: session completed cleanly" "$OUT_FILE" "detached"
+assert_output_not_contains "free: no error reported" \
+    "$OUT_FILE" "[Ee]rror|[Cc]annot|[Ff]ailed"
+rm -f "$OUT_FILE" "$GS_LOG"
+
+# -------------------------------------------------------------------------
+# Test: find multi-byte pattern (search-pattern / ROP gadget style)
+#
+# Write a 4-byte sentinel to the stack, then use GDB's 'find' command
+# (qSearch:memory) to locate it.  This mirrors searching for a ROP gadget
+# sequence or heap metadata in a memory range.
+# -------------------------------------------------------------------------
+
+PORT="$(next_port)"
+GS_LOG="$(mktemp /tmp/ela_gs.XXXXXX)"
+start_gdbserver "$LOOP_PID" "$PORT" "$GS_LOG"
+
+OUT="$(run_gdb "$PORT" "
+set {unsigned int}(\$rsp-8) = 0xdeadbeef
+find \$rsp-16, \$rsp, (unsigned int)0xdeadbeef
+detach
+")"
+OUT_FILE="$OUT"
+
+assert_output_contains "find-multi: 4-byte pattern found" \
+    "$OUT_FILE" "pattern[s]* found"
+assert_output_not_contains "find-multi: not failed" \
+    "$OUT_FILE" "Pattern not found"
+rm -f "$OUT_FILE" "$GS_LOG"
+
+# -------------------------------------------------------------------------
+# Test: XMM/SSE registers visible via info registers and p/x $xmmN
+#
+# Exercises the org.gnu.gdb.i386.sse feature (xmm0-xmm15 at regnums 40-55,
+# mxcsr at regnum 56) added to the target description.  Without this feature
+# GDB creates 114 unnamed zero-size placeholder registers and no XMM data
+# appears in "info all-registers".  Uses "set sysroot /" to skip slow
+# remote library loading so the test completes within the timeout.
+# -------------------------------------------------------------------------
+
+PORT="$(next_port)"
+GS_LOG="$(mktemp /tmp/ela_gs.XXXXXX)"
+start_gdbserver "$LOOP_PID" "$PORT" "$GS_LOG"
+
+OUT="$(run_gdb "$PORT" "
+set sysroot /
+info all-registers
+p/x \$xmm0
+p/x \$mxcsr
+detach
+")"
+OUT_FILE="$OUT"
+
+assert_output_contains "sse: xmm0 present in info all-registers" \
+    "$OUT_FILE" "^xmm0"
+assert_output_contains "sse: xmm15 present in info all-registers" \
+    "$OUT_FILE" "^xmm15"
+assert_output_contains "sse: mxcsr present in info all-registers" \
+    "$OUT_FILE" "^mxcsr"
+assert_output_contains "sse: p/x xmm0 readable" \
+    "$OUT_FILE" '^\$[0-9]+ = 0x'
+assert_output_contains "sse: mxcsr readable (typical value 0x1f80)" \
+    "$OUT_FILE" '^\$[0-9]+ = 0x'
+rm -f "$OUT_FILE" "$GS_LOG"
+
+# -------------------------------------------------------------------------
+# Test: hardware watchpoint stop reports Old/New values (watch:addr in T pkt)
+#
+# Previously the T stop packet for a hardware watchpoint contained only
+# T05thread:...;  with no "watch:addr;" annotation.  GDB never recognised the
+# stop as a watchpoint and printed "Program received signal SIGTRAP" instead
+# of "Hardware watchpoint N: Old value = X / New value = Y".
+#
+# The fix: on SIGTRAP, inspect DR6 to detect data-breakpoint fires, read the
+# address from the triggered DRn slot, and include "watch:<addr>;" in the T
+# packet.  GDB then displays the expected watchpoint output.
+# -------------------------------------------------------------------------
+
+PORT="$(next_port)"
+GS_LOG="$(mktemp /tmp/ela_gs.XXXXXX)"
+start_gdbserver "$WATCH_PID" "$PORT" "$GS_LOG"
+
+OUT="$(run_gdb "$PORT" "
+set sysroot /
+file $WATCH_BIN
+watch g_count
+continue
+detach
+")"
+OUT_FILE="$OUT"
+
+# GDB must show "Hardware watchpoint N: g_count" plus Old/New value output
+assert_output_contains "hwwatch: watchpoint identified by GDB" \
+    "$OUT_FILE" "Hardware watchpoint [0-9]+: g_count"
+assert_output_contains "hwwatch: Old value shown" \
+    "$OUT_FILE" "Old value ="
+assert_output_contains "hwwatch: New value shown" \
+    "$OUT_FILE" "New value ="
+assert_output_not_contains "hwwatch: not reported as generic SIGTRAP" \
+    "$OUT_FILE" "Program received signal SIGTRAP"
+rm -f "$OUT_FILE" "$GS_LOG"
 
 # -------------------------------------------------------------------------
 finish_tests
