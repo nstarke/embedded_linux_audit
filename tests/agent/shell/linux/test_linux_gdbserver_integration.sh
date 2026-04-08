@@ -68,6 +68,8 @@ HEAP_PID=
 HEAP_BIN=/tmp/ela_test_gdbserver_heap
 WATCH_PID=
 WATCH_BIN=/tmp/ela_test_gdbserver_watch
+EXIT_PID=
+EXIT_BIN=/tmp/ela_test_gdbserver_exit
 
 # Compile the target loop program once.
 compile_loop_target() {
@@ -162,6 +164,37 @@ stop_watch() {
     fi
 }
 
+# Compile a target that loops until SIGUSR1, then exits with code 42.
+# Used to test signal-stop (T packet with SIGUSR1) and process-exit (W packet).
+compile_exit_target() {
+    cat > /tmp/ela_test_gdbserver_exit.c << 'EOF'
+#include <signal.h>
+#include <time.h>
+static volatile int g_done = 0;
+static void handle_exit_sig(int s) { (void)s; g_done = 1; }
+int main(void) {
+    signal(SIGUSR1, handle_exit_sig);
+    struct timespec ts = {0, 50000000}; /* 50 ms */
+    while (!g_done) nanosleep(&ts, NULL);
+    return 42;
+}
+EOF
+    gcc -O0 -o "$EXIT_BIN" /tmp/ela_test_gdbserver_exit.c || return 1
+}
+
+start_exit_target() {
+    "$EXIT_BIN" &
+    EXIT_PID=$!
+}
+
+stop_exit_target() {
+    if [ -n "$EXIT_PID" ]; then
+        kill "$EXIT_PID" 2>/dev/null || true
+        wait "$EXIT_PID" 2>/dev/null || true
+        EXIT_PID=
+    fi
+}
+
 next_port() {
     GDB_PORT="$(expr "$GDB_PORT" + 1)"
     echo "$GDB_PORT"
@@ -244,10 +277,15 @@ if ! compile_watch_target; then
     exit 0
 fi
 
+if ! compile_exit_target; then
+    echo "SKIP: could not compile exit target (gcc not available?)"
+    exit 0
+fi
+
 start_loop
 start_heap
 start_watch
-trap 'stop_loop; stop_heap; stop_watch' EXIT INT TERM
+trap 'stop_loop; stop_heap; stop_watch; stop_exit_target' EXIT INT TERM
 
 # -------------------------------------------------------------------------
 # Test: software breakpoints (Z0)
@@ -743,6 +781,78 @@ assert_output_contains "hwwatch: New value shown" \
 assert_output_not_contains "hwwatch: not reported as generic SIGTRAP" \
     "$OUT_FILE" "Program received signal SIGTRAP"
 rm -f "$OUT_FILE" "$GS_LOG"
+
+# -------------------------------------------------------------------------
+# Test: signal delivery stops process during continue (T packet with signal)
+#
+# Sends SIGUSR1 to the exit target while GDB is running it via 'continue'.
+# The exit target has a SIGUSR1 handler (does not die on the signal), so
+# ptrace intercepts the signal and stops the process before delivery.
+# gdbserver sees a non-pass-through signal (SIGUSR1 is not in g_pass_signals)
+# and breaks out of do_continue, sending a T stop reply with signal 10.
+# GDB detaches after the stop (PTRACE_DETACH with no signal, so the pending
+# SIGUSR1 is dropped and the process keeps looping).
+# -------------------------------------------------------------------------
+
+start_exit_target
+PORT="$(next_port)"
+GS_LOG="$(mktemp /tmp/ela_gs.XXXXXX)"
+start_gdbserver "$EXIT_PID" "$PORT" "$GS_LOG"
+
+# Deliver SIGUSR1 after GDB has resumed the process via 'continue'
+( sleep 0.5 && kill -USR1 "$EXIT_PID" 2>/dev/null ) &
+
+OUT="$(run_gdb "$PORT" "
+continue
+detach
+")"
+OUT_FILE="$OUT"
+
+assert_output_contains "signal-stop: SIGUSR1 intercepted by ptrace" \
+    "$OUT_FILE" "SIGUSR1|User defined signal"
+assert_output_not_contains "signal-stop: no unexpected SIGTRAP" \
+    "$OUT_FILE" "SIGTRAP"
+assert_output_contains "signal-stop: GDB detached cleanly" \
+    "$OUT_FILE" "detached"
+# After PTRACE_DETACH (with no signal forwarded) the exit target keeps looping.
+# Stop it explicitly so it does not interfere with the next test.
+stop_exit_target
+rm -f "$OUT_FILE" "$GS_LOG"
+
+# -------------------------------------------------------------------------
+# Test: continue with forwarded signal produces process exit (W packet)
+#
+# Uses the same exit target (with SIGUSR1 handler that sets g_done=1 and
+# returns 42).  Sequence:
+#   1. External SIGUSR1 stops the process during 'continue' → T stop
+#   2. GDB 'signal SIGUSR1' resumes with the signal → vCont;C or C packet
+#   3. Handler fires, process exits with code 42
+#   4. gdbserver sends W2a; GDB prints "exited with code 042"
+#
+# This exercises the 'C'/'vCont;C' (continue-with-signal) path and the
+# W (process-exited) reply from send_stop_reply().
+# -------------------------------------------------------------------------
+
+start_exit_target
+PORT="$(next_port)"
+GS_LOG="$(mktemp /tmp/ela_gs.XXXXXX)"
+start_gdbserver "$EXIT_PID" "$PORT" "$GS_LOG"
+
+( sleep 0.5 && kill -USR1 "$EXIT_PID" 2>/dev/null ) &
+
+OUT="$(run_gdb "$PORT" "
+continue
+signal SIGUSR1
+")"
+OUT_FILE="$OUT"
+
+assert_output_contains "continue-with-signal: SIGUSR1 stop received" \
+    "$OUT_FILE" "SIGUSR1|User defined signal"
+assert_output_contains "continue-with-signal: process exited (W packet)" \
+    "$OUT_FILE" "exited with code|Inferior.*exited"
+rm -f "$OUT_FILE" "$GS_LOG"
+# EXIT_PID has exited naturally; stop_exit_target will clean up safely.
+stop_exit_target
 
 # -------------------------------------------------------------------------
 finish_tests

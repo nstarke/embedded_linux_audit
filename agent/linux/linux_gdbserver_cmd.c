@@ -3704,12 +3704,27 @@ static void rcmd_output(int fd, const char *msg)
 static void do_continue(int fd, int initial_sig)
 {
 	int fwd_sig = initial_sig;
-	int wstatus;
+	int wstatus = 0;
 
 	for (;;) {
 		int req = g_catch_syscalls ? PTRACE_SYSCALL : PTRACE_CONT;
-		ptrace(req, g_pid, NULL, (void *)(uintptr_t)fwd_sig);
-		waitpid(g_pid, &wstatus, 0);
+		if (ptrace(req, g_pid, NULL, (void *)(uintptr_t)fwd_sig) != 0) {
+			/*
+			 * ptrace failed — the process likely died (e.g. SIGKILL)
+			 * in the window between the previous waitpid stop and this
+			 * resume request.  Try a non-blocking waitpid to collect
+			 * any terminal status; if that fails too, report an error.
+			 */
+			if (waitpid(g_pid, &wstatus, WNOHANG) > 0 &&
+			    !WIFSTOPPED(wstatus))
+				break;	/* terminal status — send W/X reply below */
+			rsp_send_str(fd, "E01");
+			return;
+		}
+		if (waitpid(g_pid, &wstatus, 0) < 0) {
+			rsp_send_str(fd, "E01");
+			return;
+		}
 		fwd_sig = 0;
 
 		if (!WIFSTOPPED(wstatus))
@@ -3980,9 +3995,10 @@ static void handle_packet(int fd, char *pkt)
 		 */
 		while (WIFSTOPPED(wstatus) &&
 		       WSTOPSIG(wstatus) == SIGCONT) {
-			ptrace(PTRACE_CONT, g_pid, NULL,
-			       (void *)(uintptr_t)SIGCONT);
-			waitpid(g_pid, &wstatus, 0);
+			if (ptrace(PTRACE_CONT, g_pid, NULL,
+				   (void *)(uintptr_t)SIGCONT) != 0 ||
+			    waitpid(g_pid, &wstatus, 0) < 0)
+				break;
 		}
 		g_last_wstatus = wstatus;
 		send_stop_reply(fd, wstatus);
@@ -4037,9 +4053,10 @@ static void handle_packet(int fd, char *pkt)
 			 */
 			while (WIFSTOPPED(wstatus) &&
 			       WSTOPSIG(wstatus) == SIGCONT) {
-				ptrace(PTRACE_CONT, g_pid, NULL,
-				       (void *)(uintptr_t)SIGCONT);
-				waitpid(g_pid, &wstatus, 0);
+				if (ptrace(PTRACE_CONT, g_pid, NULL,
+					   (void *)(uintptr_t)SIGCONT) != 0 ||
+				    waitpid(g_pid, &wstatus, 0) < 0)
+					break;
 			}
 			g_last_wstatus = wstatus;
 			send_stop_reply(fd, wstatus);
