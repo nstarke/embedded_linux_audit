@@ -20,7 +20,7 @@ jobs:
       image: semgrep/semgrep
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Run Semgrep
         run: semgrep scan --config p/javascript --config p/nodejs --config p/secrets --error api/
