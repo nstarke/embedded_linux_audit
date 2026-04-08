@@ -39,4 +39,19 @@ void ela_gdb_vfile_encode_stat(uint8_t *buf, const struct stat *st);
  */
 int ela_gdb_vfile_flags_to_linux(int gflags);
 
+/*
+ * Convert between Linux signal numbers and GDB RSP signal numbers.
+ *
+ * GDB uses SVR4-derived signal numbering which matches Linux for signals 1-15
+ * but diverges above 15.  Key mappings (Linux → GDB):
+ *   Linux 17 (SIGCHLD) → GDB 20
+ *   Linux 18 (SIGCONT) → GDB 19
+ *   Linux 19 (SIGSTOP) → GDB 17
+ *   Linux 20 (SIGTSTP) → GDB 18
+ *   Linux 23 (SIGURG)  → GDB 16
+ * All other signals pass through unchanged.
+ */
+int ela_gdb_linux_sig_to_gdb(int linux_sig);
+int ela_gdb_gdb_sig_to_linux(int gdb_sig);
+
 #endif /* LINUX_GDBSERVER_PKT_UTIL_H */

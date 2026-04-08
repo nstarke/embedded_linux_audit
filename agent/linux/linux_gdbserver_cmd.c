@@ -168,6 +168,7 @@ static uint64_t        g_pass_signals; /* bitmask of signals to pass to inferior
 static pid_t           g_current_tid;  /* most-recently-set thread (H packet) */
 static int             g_last_wstatus;       /* wstatus from last waitpid — for '?' */
 static int             g_initial_attach_stop; /* 1 after attach, cleared on first stop reply */
+static int             g_attach_sigstop_pending; /* 1 until first PTRACE_CONT returns SIGSTOP */
 static int             g_swbreak_feature;  /* GDB negotiated swbreak+ */
 static int             g_multiprocess;     /* GDB negotiated multiprocess+ */
 static int             g_catch_syscalls;   /* QCatchSyscalls enabled */
@@ -352,28 +353,64 @@ static int rsp_recv_packet(int fd, char *payload, size_t payload_sz)
  *   Linux 23 (SIGURG)    → GDB 16
  * ---------------------------------------------------------------------- */
 
-static int linux_sig_to_gdb(int linux_sig)
-{
-	switch (linux_sig) {
-	case 17: return 20; /* SIGCHLD */
-	case 18: return 19; /* SIGCONT */
-	case 19: return 17; /* SIGSTOP */
-	case 20: return 18; /* SIGTSTP */
-	case 23: return 16; /* SIGURG  */
-	default: return linux_sig;
-	}
-}
+/* Signal conversion is in linux_gdbserver_pkt_util.c — use short aliases */
+#define linux_sig_to_gdb ela_gdb_linux_sig_to_gdb
+#define gdb_sig_to_linux ela_gdb_gdb_sig_to_linux
 
-static int gdb_sig_to_linux(int gdb_sig)
+/* -----------------------------------------------------------------------
+ * Single-step helper
+ * ---------------------------------------------------------------------- */
+
+/*
+ * Execute a single-step (PTRACE_SINGLESTEP with the given signal) and wait
+ * for the tracee to stop.  Returns 0 on success with *out_wstatus set, or
+ * -1 if ptrace fails.
+ *
+ * After PTRACE_ATTACH the kernel's first PTRACE_SINGLESTEP never advances
+ * the PC.  It may return SIGSTOP (when the process was blocked inside a
+ * syscall) or SIGTRAP with the PC unchanged (when the process was already
+ * in user-space).  Either way we detect it by comparing the PC before and
+ * after the step: if the PC did not move we retry once.  g_attach_sigstop_pending
+ * is cleared after the retry so subsequent steps are unaffected.
+ */
+static int do_singlestep(pid_t pid, int sig, int *out_wstatus)
 {
-	switch (gdb_sig) {
-	case 16: return 23; /* SIGURG  */
-	case 17: return 19; /* SIGSTOP */
-	case 18: return 20; /* SIGTSTP */
-	case 19: return 18; /* SIGCONT */
-	case 20: return 17; /* SIGCHLD */
-	default: return gdb_sig;
+	int wstatus;
+#if defined(__x86_64__)
+	struct user_regs_struct regs_before;
+	uint64_t pc_before = 0;
+	if (g_attach_sigstop_pending &&
+	    ptrace(PTRACE_GETREGS, pid, NULL, &regs_before) == 0)
+		pc_before = regs_before.rip;
+#endif
+
+	for (;;) {
+		if (ptrace(PTRACE_SINGLESTEP, pid, NULL,
+			   (void *)(uintptr_t)sig) != 0)
+			return -1;
+		waitpid(pid, &wstatus, 0);
+		sig = 0; /* re-issue without signal on retries */
+
+		if (g_attach_sigstop_pending && WIFSTOPPED(wstatus)) {
+			int skip = (WSTOPSIG(wstatus) == SIGSTOP);
+#if defined(__x86_64__)
+			if (!skip) {
+				struct user_regs_struct r;
+				if (ptrace(PTRACE_GETREGS, pid, NULL, &r) == 0 &&
+				    r.rip == pc_before)
+					skip = 1; /* SIGTRAP but PC did not advance */
+			}
+#endif
+			if (skip) {
+				g_attach_sigstop_pending = 0;
+				continue;
+			}
+		}
+		break;
 	}
+
+	*out_wstatus = wstatus;
+	return 0;
 }
 
 /* -----------------------------------------------------------------------
@@ -3500,6 +3537,18 @@ static void do_continue(int fd, int initial_sig)
 				continue;
 			}
 
+			/*
+			 * The first PTRACE_CONT after ptrace-attach produces a
+			 * spurious SIGSTOP (the kernel delivering the attach-stop
+			 * signal on the first resume).  We already reported the
+			 * attach stop as T05 (SIGTRAP), so skip this one SIGSTOP
+			 * and keep running.
+			 */
+			if (sig == SIGSTOP && g_attach_sigstop_pending) {
+				g_attach_sigstop_pending = 0;
+				continue;
+			}
+
 			/* Regular signal pass-through */
 			if (sig > 0 && sig < 64 &&
 			    (g_pass_signals & (1ULL << sig))) {
@@ -3644,11 +3693,10 @@ static void handle_packet(int fd, char *pkt)
 		break;
 
 	case 's': /* Single step */
-		if (ptrace(PTRACE_SINGLESTEP, g_pid, NULL, NULL) != 0) {
+		if (do_singlestep(g_pid, 0, &wstatus) != 0) {
 			rsp_send_str(fd, "E01");
 			break;
 		}
-		waitpid(g_pid, &wstatus, 0);
 		g_last_wstatus = wstatus;
 		send_stop_reply(fd, wstatus);
 		break;
@@ -3681,12 +3729,10 @@ static void handle_packet(int fd, char *pkt)
 		 */
 		if (sig == SIGSTOP)
 			sig = 0;
-		if (ptrace(PTRACE_SINGLESTEP, g_pid, NULL,
-			   (void *)(uintptr_t)sig) != 0) {
+		if (do_singlestep(g_pid, sig, &wstatus) != 0) {
 			rsp_send_str(fd, "E01");
 			break;
 		}
-		waitpid(g_pid, &wstatus, 0);
 		/*
 		 * SIGSTOP injection can cause a kernel job-control group-stop,
 		 * which generates a SIGCONT that ptrace intercepts.  Forward
@@ -3722,11 +3768,10 @@ static void handle_packet(int fd, char *pkt)
 				sig = 0;
 			do_continue(fd, sig);
 		} else if (strncmp(pkt, "vCont;s", 7) == 0) {
-			if (ptrace(PTRACE_SINGLESTEP, g_pid, NULL, NULL) != 0) {
+			if (do_singlestep(g_pid, 0, &wstatus) != 0) {
 				rsp_send_str(fd, "E01");
 				break;
 			}
-			waitpid(g_pid, &wstatus, 0);
 			g_last_wstatus = wstatus;
 			send_stop_reply(fd, wstatus);
 		} else if (strncmp(pkt, "vCont;S", 7) == 0) {
@@ -3740,12 +3785,10 @@ static void handle_packet(int fd, char *pkt)
 			 */
 			if (sig == SIGSTOP)
 				sig = 0;
-			if (ptrace(PTRACE_SINGLESTEP, g_pid, NULL,
-				   (void *)(uintptr_t)sig) != 0) {
+			if (do_singlestep(g_pid, sig, &wstatus) != 0) {
 				rsp_send_str(fd, "E01");
 				break;
 			}
-			waitpid(g_pid, &wstatus, 0);
 			/*
 			 * SIGSTOP injection can cause a kernel job-control
 			 * group-stop, which generates a SIGCONT that ptrace
@@ -4899,7 +4942,8 @@ static int run_session(int conn_fd, pid_t pid, int attach_wstatus)
 	g_pass_signals     = 0;
 	g_current_tid      = pid;
 	g_last_wstatus        = attach_wstatus;
-	g_initial_attach_stop = 1; /* cleared after first stop reply for initial SIGSTOP */
+	g_initial_attach_stop = 1;    /* cleared after first stop reply for initial SIGSTOP */
+	g_attach_sigstop_pending = 1; /* cleared after first PTRACE_CONT/SINGLESTEP returns SIGSTOP */
 	g_catch_syscalls   = 0;
 	g_catch_sysno_cnt  = 0;
 	g_in_syscall       = 0;

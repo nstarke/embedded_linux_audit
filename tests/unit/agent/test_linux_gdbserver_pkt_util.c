@@ -318,6 +318,163 @@ static void test_vfile_flags_combined(void)
 }
 
 /* =========================================================================
+ * ela_gdb_linux_sig_to_gdb / ela_gdb_gdb_sig_to_linux
+ *
+ * GDB RSP uses SVR4-derived signal numbering.  Signals 1-15 match Linux,
+ * but above 15 they diverge.  These tests verify every non-trivial mapping
+ * and round-trip to catch any future table errors.
+ * ====================================================================== */
+
+/* --- linux_sig_to_gdb --- */
+
+static void test_sig_l2g_sigtrap(void)
+{
+	/* SIGTRAP=5 passes through on both sides */
+	ELA_ASSERT_INT_EQ(5, ela_gdb_linux_sig_to_gdb(5));
+}
+
+static void test_sig_l2g_sigkill(void)
+{
+	/* SIGKILL=9 passes through */
+	ELA_ASSERT_INT_EQ(9, ela_gdb_linux_sig_to_gdb(9));
+}
+
+static void test_sig_l2g_boundary15(void)
+{
+	/* Signal 15 (SIGTERM) is the last one that matches */
+	ELA_ASSERT_INT_EQ(15, ela_gdb_linux_sig_to_gdb(15));
+}
+
+static void test_sig_l2g_sigchld(void)
+{
+	/* Linux 17 (SIGCHLD) → GDB 20 */
+	ELA_ASSERT_INT_EQ(20, ela_gdb_linux_sig_to_gdb(17));
+}
+
+static void test_sig_l2g_sigcont(void)
+{
+	/* Linux 18 (SIGCONT) → GDB 19 */
+	ELA_ASSERT_INT_EQ(19, ela_gdb_linux_sig_to_gdb(18));
+}
+
+static void test_sig_l2g_sigstop(void)
+{
+	/* Linux 19 (SIGSTOP) → GDB 17 */
+	ELA_ASSERT_INT_EQ(17, ela_gdb_linux_sig_to_gdb(19));
+}
+
+static void test_sig_l2g_sigtstp(void)
+{
+	/* Linux 20 (SIGTSTP) → GDB 18 */
+	ELA_ASSERT_INT_EQ(18, ela_gdb_linux_sig_to_gdb(20));
+}
+
+static void test_sig_l2g_sigurg(void)
+{
+	/* Linux 23 (SIGURG) → GDB 16 */
+	ELA_ASSERT_INT_EQ(16, ela_gdb_linux_sig_to_gdb(23));
+}
+
+static void test_sig_l2g_pass_through_high(void)
+{
+	/* High signals with no mapping pass through unchanged */
+	ELA_ASSERT_INT_EQ(31, ela_gdb_linux_sig_to_gdb(31));
+	ELA_ASSERT_INT_EQ(64, ela_gdb_linux_sig_to_gdb(64));
+}
+
+/* --- gdb_sig_to_linux --- */
+
+static void test_sig_g2l_sigtrap(void)
+{
+	/* GDB 5 (SIGTRAP) passes through */
+	ELA_ASSERT_INT_EQ(5, ela_gdb_gdb_sig_to_linux(5));
+}
+
+static void test_sig_g2l_boundary15(void)
+{
+	/* GDB 15 passes through */
+	ELA_ASSERT_INT_EQ(15, ela_gdb_gdb_sig_to_linux(15));
+}
+
+static void test_sig_g2l_sigurg(void)
+{
+	/* GDB 16 (SIGURG) → Linux 23 */
+	ELA_ASSERT_INT_EQ(23, ela_gdb_gdb_sig_to_linux(16));
+}
+
+static void test_sig_g2l_sigstop(void)
+{
+	/* GDB 17 (SIGSTOP) → Linux 19 */
+	ELA_ASSERT_INT_EQ(19, ela_gdb_gdb_sig_to_linux(17));
+}
+
+static void test_sig_g2l_sigtstp(void)
+{
+	/* GDB 18 (SIGTSTP) → Linux 20 */
+	ELA_ASSERT_INT_EQ(20, ela_gdb_gdb_sig_to_linux(18));
+}
+
+static void test_sig_g2l_sigcont(void)
+{
+	/* GDB 19 (SIGCONT) → Linux 18 */
+	ELA_ASSERT_INT_EQ(18, ela_gdb_gdb_sig_to_linux(19));
+}
+
+static void test_sig_g2l_sigchld(void)
+{
+	/* GDB 20 (SIGCHLD) → Linux 17 */
+	ELA_ASSERT_INT_EQ(17, ela_gdb_gdb_sig_to_linux(20));
+}
+
+static void test_sig_g2l_pass_through_high(void)
+{
+	/* High GDB signals with no mapping pass through */
+	ELA_ASSERT_INT_EQ(21, ela_gdb_gdb_sig_to_linux(21));
+	ELA_ASSERT_INT_EQ(31, ela_gdb_gdb_sig_to_linux(31));
+}
+
+/* --- Round-trips --- */
+
+static void test_sig_roundtrip_sigstop(void)
+{
+	/* Linux SIGSTOP (19) → GDB 17 → Linux 19 */
+	ELA_ASSERT_INT_EQ(19,
+		ela_gdb_gdb_sig_to_linux(ela_gdb_linux_sig_to_gdb(19)));
+}
+
+static void test_sig_roundtrip_sigchld(void)
+{
+	/* Linux SIGCHLD (17) → GDB 20 → Linux 17 */
+	ELA_ASSERT_INT_EQ(17,
+		ela_gdb_gdb_sig_to_linux(ela_gdb_linux_sig_to_gdb(17)));
+}
+
+static void test_sig_roundtrip_sigcont(void)
+{
+	ELA_ASSERT_INT_EQ(18,
+		ela_gdb_gdb_sig_to_linux(ela_gdb_linux_sig_to_gdb(18)));
+}
+
+static void test_sig_roundtrip_sigtstp(void)
+{
+	ELA_ASSERT_INT_EQ(20,
+		ela_gdb_gdb_sig_to_linux(ela_gdb_linux_sig_to_gdb(20)));
+}
+
+static void test_sig_roundtrip_sigurg(void)
+{
+	ELA_ASSERT_INT_EQ(23,
+		ela_gdb_gdb_sig_to_linux(ela_gdb_linux_sig_to_gdb(23)));
+}
+
+static void test_sig_roundtrip_sigtrap(void)
+{
+	/* Signals below 16 are identity on both sides */
+	ELA_ASSERT_INT_EQ(5,
+		ela_gdb_gdb_sig_to_linux(ela_gdb_linux_sig_to_gdb(5)));
+}
+
+/* =========================================================================
  * Test suite registration
  * ====================================================================== */
 
@@ -352,6 +509,30 @@ int run_linux_gdbserver_pkt_util_tests(void)
 		{ "vfile_flags_to_linux/trunc",        test_vfile_flags_trunc },
 		{ "vfile_flags_to_linux/excl",         test_vfile_flags_excl },
 		{ "vfile_flags_to_linux/combined",     test_vfile_flags_combined },
+		/* Signal number conversion: Linux ↔ GDB RSP (SVR4 numbering) */
+		{ "sig_linux_to_gdb/sigtrap",          test_sig_l2g_sigtrap },
+		{ "sig_linux_to_gdb/sigkill",          test_sig_l2g_sigkill },
+		{ "sig_linux_to_gdb/boundary15",       test_sig_l2g_boundary15 },
+		{ "sig_linux_to_gdb/sigchld",          test_sig_l2g_sigchld },
+		{ "sig_linux_to_gdb/sigcont",          test_sig_l2g_sigcont },
+		{ "sig_linux_to_gdb/sigstop",          test_sig_l2g_sigstop },
+		{ "sig_linux_to_gdb/sigtstp",          test_sig_l2g_sigtstp },
+		{ "sig_linux_to_gdb/sigurg",           test_sig_l2g_sigurg },
+		{ "sig_linux_to_gdb/pass_through_high",test_sig_l2g_pass_through_high },
+		{ "sig_gdb_to_linux/sigtrap",          test_sig_g2l_sigtrap },
+		{ "sig_gdb_to_linux/boundary15",       test_sig_g2l_boundary15 },
+		{ "sig_gdb_to_linux/sigurg",           test_sig_g2l_sigurg },
+		{ "sig_gdb_to_linux/sigstop",          test_sig_g2l_sigstop },
+		{ "sig_gdb_to_linux/sigtstp",          test_sig_g2l_sigtstp },
+		{ "sig_gdb_to_linux/sigcont",          test_sig_g2l_sigcont },
+		{ "sig_gdb_to_linux/sigchld",          test_sig_g2l_sigchld },
+		{ "sig_gdb_to_linux/pass_through_high",test_sig_g2l_pass_through_high },
+		{ "sig_roundtrip/sigstop",             test_sig_roundtrip_sigstop },
+		{ "sig_roundtrip/sigchld",             test_sig_roundtrip_sigchld },
+		{ "sig_roundtrip/sigcont",             test_sig_roundtrip_sigcont },
+		{ "sig_roundtrip/sigtstp",             test_sig_roundtrip_sigtstp },
+		{ "sig_roundtrip/sigurg",              test_sig_roundtrip_sigurg },
+		{ "sig_roundtrip/sigtrap",             test_sig_roundtrip_sigtrap },
 	};
 
 	return ela_run_test_suite("linux_gdbserver_pkt_util", cases,
