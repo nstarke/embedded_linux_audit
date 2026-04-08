@@ -632,6 +632,159 @@ static void test_roundtrip_arbitrary_payload(void)
 }
 
 /* =========================================================================
+ * FPU register hex encoding (80-bit / 10-byte st registers)
+ *
+ * These tests exercise the exact encode/decode path used by the x87 FPU
+ * register read (regs_read / reg_read_one) and write (reg_write_one /
+ * regs_write) fixes.  Each x87 st register is 80 bits = 10 bytes and is
+ * sent over the wire as 20 lowercase hex characters.
+ * ====================================================================== */
+
+static void test_hex_encode_fpu_register_zeros(void)
+{
+	/* All-zero 80-bit st register → 20 '0' characters */
+	uint8_t st[10];
+	char out[21];
+
+	memset(st, 0x00, sizeof(st));
+	ELA_ASSERT_INT_EQ(0, ela_gdb_hex_encode(st, 10, out, sizeof(out)));
+	ELA_ASSERT_STR_EQ("00000000000000000000", out);
+}
+
+static void test_hex_encode_fpu_register_known(void)
+{
+	/* 80-bit representation of the double-extended +1.0:
+	 * sign=0, exp=16383 (0x3fff), significand=0x8000000000000000
+	 * Bytes in little-endian memory order (x87 native):
+	 *   00 00 00 00 00 00 00 80  ff 3f
+	 * → 20 hex chars: "0000000000000080ff3f"
+	 */
+	uint8_t st[10] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80,
+			   0xff, 0x3f };
+	char out[21];
+
+	ELA_ASSERT_INT_EQ(0, ela_gdb_hex_encode(st, 10, out, sizeof(out)));
+	ELA_ASSERT_STR_EQ("0000000000000080ff3f", out);
+}
+
+static void test_hex_decode_fpu_register_zeros(void)
+{
+	/* 20 '0' chars → 10 zero bytes */
+	uint8_t out[10];
+	int n;
+
+	n = ela_gdb_hex_decode("00000000000000000000", out, sizeof(out));
+	ELA_ASSERT_INT_EQ(10, n);
+	ELA_ASSERT_INT_EQ(0, (int)out[0]);
+	ELA_ASSERT_INT_EQ(0, (int)out[9]);
+}
+
+static void test_hex_decode_fpu_register_known(void)
+{
+	/* 20 hex chars for 80-bit +1.0 in x87 LE byte order:
+	 *   "0000000000000080ff3f" → bytes 00..00 80 ff 3f */
+	uint8_t out[10];
+	int n;
+
+	n = ela_gdb_hex_decode("0000000000000080ff3f", out, sizeof(out));
+	ELA_ASSERT_INT_EQ(10, n);
+	ELA_ASSERT_INT_EQ(0x00, (int)out[0]);
+	ELA_ASSERT_INT_EQ(0x80, (int)out[7]);
+	ELA_ASSERT_INT_EQ(0xff, (int)out[8]);
+	ELA_ASSERT_INT_EQ(0x3f, (int)out[9]);
+}
+
+static void test_hex_decode_fpu_register_buf_too_small(void)
+{
+	/* 22 hex chars = 11 bytes but buffer only holds 10 → -1 */
+	uint8_t out[10];
+
+	ELA_ASSERT_INT_EQ(-1,
+		ela_gdb_hex_decode("000000000000008003ff3f", out, sizeof(out)));
+}
+
+static void test_hex_roundtrip_fpu_register(void)
+{
+	/* Encode 10 arbitrary bytes then decode back; result must be identical.
+	 * This is the exact round-trip exercised when GDB writes an st register
+	 * (reg_write_one) and reads it back (reg_read_one). */
+	uint8_t original[10] = { 0xde, 0xad, 0xbe, 0xef,
+				  0xca, 0xfe, 0xba, 0xbe,
+				  0x01, 0x23 };
+	uint8_t recovered[10];
+	char hex[21];
+	int n;
+
+	ELA_ASSERT_INT_EQ(0, ela_gdb_hex_encode(original, 10, hex, sizeof(hex)));
+	ELA_ASSERT_INT_EQ(20, (int)strlen(hex));
+
+	n = ela_gdb_hex_decode(hex, recovered, sizeof(recovered));
+	ELA_ASSERT_INT_EQ(10, n);
+	ELA_ASSERT_TRUE(memcmp(original, recovered, 10) == 0);
+}
+
+/* =========================================================================
+ * SVR4 library-list path filter (ela_gdb_svr4_path_skip)
+ *
+ * Bug fixed: paths with " (deleted)" suffix were included in the SVR4
+ * library list.  GDB tried to open them via vFile and received an I/O error
+ * because the file no longer exists.
+ * ====================================================================== */
+
+static void test_svr4_skip_deleted(void)
+{
+	/* A library that has been replaced in-place and whose mapping is
+	 * annotated "(deleted)" by the kernel must be excluded. */
+	ELA_ASSERT_INT_EQ(1, ela_gdb_svr4_path_skip(
+		"/usr/lib/x86_64-linux-gnu/libdconfsettings.so (deleted)"));
+}
+
+static void test_svr4_skip_deleted_path_only(void)
+{
+	/* The suffix check must work even when " (deleted)" appears at the end */
+	ELA_ASSERT_INT_EQ(1, ela_gdb_svr4_path_skip(
+		"/opt/myapp/lib/libfoo.so.1 (deleted)"));
+}
+
+static void test_svr4_include_normal_so(void)
+{
+	/* A normal shared library must not be skipped */
+	ELA_ASSERT_INT_EQ(0, ela_gdb_svr4_path_skip(
+		"/usr/lib/x86_64-linux-gnu/libc.so.6"));
+}
+
+static void test_svr4_skip_pseudo_mapping(void)
+{
+	/* Pseudo-mappings like [heap] and [stack] must be skipped */
+	ELA_ASSERT_INT_EQ(1, ela_gdb_svr4_path_skip("[heap]"));
+	ELA_ASSERT_INT_EQ(1, ela_gdb_svr4_path_skip("[stack]"));
+	ELA_ASSERT_INT_EQ(1, ela_gdb_svr4_path_skip("[vdso]"));
+}
+
+static void test_svr4_skip_non_so(void)
+{
+	/* Paths without ".so" (executables, data files) must be skipped.
+	 * Note: "/etc/ld.so.conf" contains ".so" and is NOT skipped by the
+	 * filter — proc/maps only shows memory-mapped files anyway, so a
+	 * config file would never appear there. */
+	ELA_ASSERT_INT_EQ(1, ela_gdb_svr4_path_skip("/usr/bin/myprogram"));
+	ELA_ASSERT_INT_EQ(1, ela_gdb_svr4_path_skip("/usr/libexec/gnome-terminal-server"));
+	ELA_ASSERT_INT_EQ(1, ela_gdb_svr4_path_skip("/dev/shm/myfile"));
+}
+
+static void test_svr4_skip_null(void)
+{
+	ELA_ASSERT_INT_EQ(1, ela_gdb_svr4_path_skip(NULL));
+}
+
+static void test_svr4_include_versioned_so(void)
+{
+	/* Versioned names like libfoo.so.2.1 must not be skipped */
+	ELA_ASSERT_INT_EQ(0, ela_gdb_svr4_path_skip(
+		"/usr/lib/libstdc++.so.6.0.33"));
+}
+
+/* =========================================================================
  * Test suite registration
  * ====================================================================== */
 
@@ -709,7 +862,24 @@ int run_linux_gdbserver_util_tests(void)
 		{ "parse_hex_u64/null",          test_parse_hex_u64_null },
 		{ "parse_hex_u64/bad_chars",     test_parse_hex_u64_bad_chars },
 		{ "parse_hex_u64/trailing_junk", test_parse_hex_u64_trailing_garbage },
-		{ "roundtrip/arbitrary_payload", test_roundtrip_arbitrary_payload },
+		{ "roundtrip/arbitrary_payload",         test_roundtrip_arbitrary_payload },
+		/* FPU register (80-bit) encode/decode — exercises the x87 st register
+		 * read/write path added to fix "Architecture rejected" warning */
+		{ "fpu_reg/encode_zeros",               test_hex_encode_fpu_register_zeros },
+		{ "fpu_reg/encode_known",               test_hex_encode_fpu_register_known },
+		{ "fpu_reg/decode_zeros",               test_hex_decode_fpu_register_zeros },
+		{ "fpu_reg/decode_known",               test_hex_decode_fpu_register_known },
+		{ "fpu_reg/decode_buf_too_small",       test_hex_decode_fpu_register_buf_too_small },
+		{ "fpu_reg/roundtrip",                  test_hex_roundtrip_fpu_register },
+		/* SVR4 library-list path filter — exercises the fix that skips
+		 * " (deleted)" paths so GDB does not receive I/O errors */
+		{ "svr4_path_skip/deleted",             test_svr4_skip_deleted },
+		{ "svr4_path_skip/deleted_path_only",   test_svr4_skip_deleted_path_only },
+		{ "svr4_path_skip/normal_so",           test_svr4_include_normal_so },
+		{ "svr4_path_skip/pseudo_mapping",      test_svr4_skip_pseudo_mapping },
+		{ "svr4_path_skip/non_so",              test_svr4_skip_non_so },
+		{ "svr4_path_skip/null",                test_svr4_skip_null },
+		{ "svr4_path_skip/versioned_so",        test_svr4_include_versioned_so },
 	};
 
 	return ela_run_test_suite("linux_gdbserver_util", cases,

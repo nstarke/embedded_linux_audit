@@ -107,3 +107,41 @@ int ela_gdb_vfile_flags_to_linux(int gflags)
 	if (gflags & 0x800) lflags |= O_EXCL;
 	return lflags;
 }
+
+/*
+ * GDB RSP uses SVR4-derived signal numbering.  Signals 1-15 have the same
+ * numbers as Linux, but the following diverge:
+ *
+ *   Linux  GDB  Name
+ *    16     16  SIGURG   (matches)  ← actually Linux=23 for SIGURG
+ *    17     20  SIGCHLD
+ *    18     19  SIGCONT
+ *    19     17  SIGSTOP
+ *    20     18  SIGTSTP
+ *    23     16  SIGURG
+ *
+ * All other signals pass through unchanged.
+ */
+int ela_gdb_linux_sig_to_gdb(int linux_sig)
+{
+	switch (linux_sig) {
+	case 17: return 20; /* SIGCHLD */
+	case 18: return 19; /* SIGCONT */
+	case 19: return 17; /* SIGSTOP */
+	case 20: return 18; /* SIGTSTP */
+	case 23: return 16; /* SIGURG  */
+	default: return linux_sig;
+	}
+}
+
+int ela_gdb_gdb_sig_to_linux(int gdb_sig)
+{
+	switch (gdb_sig) {
+	case 16: return 23; /* SIGURG  */
+	case 17: return 19; /* SIGSTOP */
+	case 18: return 20; /* SIGTSTP */
+	case 19: return 18; /* SIGCONT */
+	case 20: return 17; /* SIGCHLD */
+	default: return gdb_sig;
+	}
+}

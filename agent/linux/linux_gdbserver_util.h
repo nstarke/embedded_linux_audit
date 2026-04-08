@@ -123,4 +123,16 @@ int ela_gdb_decode_be64(const char *hex, uint64_t *out);
  */
 int ela_gdb_parse_hex_u64(const char *hex, uint64_t *out);
 
+/*
+ * Return 1 if path should be excluded from the SVR4 library list sent to GDB,
+ * 0 if it should be included.
+ *
+ * Excluded paths:
+ *  - anonymous/pseudo mappings that start with '[' (e.g. "[heap]", "[stack]")
+ *  - mappings that do not contain ".so" (not a shared library)
+ *  - mappings with " (deleted)" suffix (file has been removed; GDB cannot open
+ *    it via vFile and will report an I/O error instead)
+ */
+int ela_gdb_svr4_path_skip(const char *path);
+
 #endif /* LINUX_GDBSERVER_UTIL_H */

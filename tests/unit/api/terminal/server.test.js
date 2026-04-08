@@ -941,7 +941,7 @@ describe('terminal server orchestration', () => {
 
     await server.main();
 
-    expect(auth.init).toHaveBeenCalledWith(true, expect.any(Function));
+    expect(auth.init).toHaveBeenCalledWith(false, expect.any(Function));
     expect(initializeDatabase).toHaveBeenCalledTimes(1);
     expect(runMigrations).toHaveBeenCalledTimes(1);
     expect(loadLegacyAliases).toHaveBeenCalledWith(server.LEGACY_ALIASES_FILE);

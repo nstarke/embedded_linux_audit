@@ -267,3 +267,16 @@ int ela_gdb_parse_hex_u64(const char *hex, uint64_t *out)
 	*out = (uint64_t)val;
 	return 0;
 }
+
+int ela_gdb_svr4_path_skip(const char *path)
+{
+	if (!path)
+		return 1;
+	if (path[0] == '[')
+		return 1;
+	if (!strstr(path, ".so"))
+		return 1;
+	if (strstr(path, " (deleted)"))
+		return 1;
+	return 0;
+}

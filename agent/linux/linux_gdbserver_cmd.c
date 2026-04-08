@@ -166,7 +166,9 @@ static volatile int    g_stop;
 static int             g_noack;        /* set by QStartNoAckMode */
 static uint64_t        g_pass_signals; /* bitmask of signals to pass to inferior */
 static pid_t           g_current_tid;  /* most-recently-set thread (H packet) */
-static int             g_last_wstatus; /* wstatus from last waitpid — for '?' */
+static int             g_last_wstatus;       /* wstatus from last waitpid — for '?' */
+static int             g_initial_attach_stop; /* 1 after attach, cleared on first stop reply */
+static int             g_attach_sigstop_pending; /* 1 until first PTRACE_CONT returns SIGSTOP */
 static int             g_swbreak_feature;  /* GDB negotiated swbreak+ */
 static int             g_multiprocess;     /* GDB negotiated multiprocess+ */
 static int             g_catch_syscalls;   /* QCatchSyscalls enabled */
@@ -332,6 +334,86 @@ static int rsp_recv_packet(int fd, char *payload, size_t payload_sz)
 }
 
 /* -----------------------------------------------------------------------
+ * GDB signal number conversion
+ *
+ * GDB RSP uses GDB's internal signal enumeration (inherited from SVR4),
+ * which differs from Linux signal numbers above signal 15.  All T/S/C/W
+ * stop replies must use GDB signal numbers, and all C/S/vCont;C/vCont;S
+ * signal fields from GDB must be converted back to Linux before passing
+ * to ptrace.
+ *
+ * The relevant Linux ↔ GDB differences (signals 1-15 are identical):
+ *   Linux 16 (SIGSTKFLT) → GDB 16 (SIGURG is gdb 16; SIGSTKFLT → unmapped → pass as-is)
+ *   Linux 17 (SIGCHLD)   → GDB 20
+ *   Linux 18 (SIGCONT)   → GDB 19
+ *   Linux 19 (SIGSTOP)   → GDB 17
+ *   Linux 20 (SIGTSTP)   → GDB 18
+ *   Linux 21 (SIGTTIN)   → GDB 21  (same)
+ *   Linux 22 (SIGTTOU)   → GDB 22  (same)
+ *   Linux 23 (SIGURG)    → GDB 16
+ * ---------------------------------------------------------------------- */
+
+/* Signal conversion is in linux_gdbserver_pkt_util.c — use short aliases */
+#define linux_sig_to_gdb ela_gdb_linux_sig_to_gdb
+#define gdb_sig_to_linux ela_gdb_gdb_sig_to_linux
+
+/* -----------------------------------------------------------------------
+ * Single-step helper
+ * ---------------------------------------------------------------------- */
+
+/*
+ * Execute a single-step (PTRACE_SINGLESTEP with the given signal) and wait
+ * for the tracee to stop.  Returns 0 on success with *out_wstatus set, or
+ * -1 if ptrace fails.
+ *
+ * After PTRACE_ATTACH the kernel's first PTRACE_SINGLESTEP never advances
+ * the PC.  It may return SIGSTOP (when the process was blocked inside a
+ * syscall) or SIGTRAP with the PC unchanged (when the process was already
+ * in user-space).  Either way we detect it by comparing the PC before and
+ * after the step: if the PC did not move we retry once.  g_attach_sigstop_pending
+ * is cleared after the retry so subsequent steps are unaffected.
+ */
+static int do_singlestep(pid_t pid, int sig, int *out_wstatus)
+{
+	int wstatus;
+#if defined(__x86_64__)
+	struct user_regs_struct regs_before;
+	uint64_t pc_before = 0;
+	if (g_attach_sigstop_pending &&
+	    ptrace(PTRACE_GETREGS, pid, NULL, &regs_before) == 0)
+		pc_before = regs_before.rip;
+#endif
+
+	for (;;) {
+		if (ptrace(PTRACE_SINGLESTEP, pid, NULL,
+			   (void *)(uintptr_t)sig) != 0)
+			return -1;
+		waitpid(pid, &wstatus, 0);
+		sig = 0; /* re-issue without signal on retries */
+
+		if (g_attach_sigstop_pending && WIFSTOPPED(wstatus)) {
+			int skip = (WSTOPSIG(wstatus) == SIGSTOP);
+#if defined(__x86_64__)
+			if (!skip) {
+				struct user_regs_struct r;
+				if (ptrace(PTRACE_GETREGS, pid, NULL, &r) == 0 &&
+				    r.rip == pc_before)
+					skip = 1; /* SIGTRAP but PC did not advance */
+			}
+#endif
+			if (skip) {
+				g_attach_sigstop_pending = 0;
+				continue;
+			}
+		}
+		break;
+	}
+
+	*out_wstatus = wstatus;
+	return 0;
+}
+
+/* -----------------------------------------------------------------------
  * Stop reply
  * ---------------------------------------------------------------------- */
 
@@ -349,57 +431,83 @@ static void send_stop_reply(int fd, int wstatus)
 		 * CPU to advance the instruction pointer past the 0xCC byte
 		 * before delivering SIGTRAP.  GDB expects the reported PC to
 		 * point *at* the breakpoint instruction, so we must back RIP
-		 * up by 1.  We distinguish software breakpoints from single-
-		 * step traps using PTRACE_GETSIGINFO: TRAP_BRKPT means the
-		 * process hit an INT3 (or a Z0 breakpoint we inserted),
-		 * whereas TRAP_TRACE is a single-step event.
+		 * up by 1.
 		 *
-		 * TRAP_BRKPT (1) is defined in <signal.h> on Linux; provide
-		 * a fallback in case the build environment omits it.
+		 * We detect software breakpoints by checking our own breakpoint
+		 * table: if RIP-1 matches a registered breakpoint address, the
+		 * process hit one of our INT3 instructions.  This is more
+		 * reliable than relying on si_code == TRAP_BRKPT, whose value
+		 * can vary across kernel versions and ptrace scenarios.
 		 */
-#  ifndef TRAP_BRKPT
-#    define TRAP_BRKPT 1
-#  endif
 		if (sig == SIGTRAP) {
-			siginfo_t si;
-			if (ptrace(PTRACE_GETSIGINFO, g_pid, NULL, &si) == 0 &&
-			    si.si_code == TRAP_BRKPT) {
-				struct user_regs_struct r;
-				if (ptrace(PTRACE_GETREGS, g_pid, NULL, &r) == 0) {
-					r.rip -= 1;
-					ptrace(PTRACE_SETREGS, g_pid, NULL, &r);
+			struct user_regs_struct r;
+			if (ptrace(PTRACE_GETREGS, g_pid, NULL, &r) == 0) {
+				uint64_t pc_before = r.rip - 1; /* candidate bp addr */
+				int i;
+				for (i = 0; i < ELA_GDB_MAX_BREAKPOINTS; i++) {
+					if (g_bps[i].in_use &&
+					    g_bps[i].addr == pc_before) {
+						r.rip = pc_before;
+						ptrace(PTRACE_SETREGS, g_pid, NULL, &r);
+						is_swbreak = true;
+						break;
+					}
 				}
-				is_swbreak = true;
 			}
 		}
 #endif
 
-		/* T packet includes thread TID, eliminating a qC round-trip */
-		if (is_swbreak && g_swbreak_feature) {
-			if (g_multiprocess)
-				snprintf(buf, sizeof(buf),
-					 "T%02xthread:p%x.%x;swbreak:;",
-					 sig, (unsigned)g_pid,
-					 (unsigned)g_current_tid);
-			else
-				snprintf(buf, sizeof(buf),
-					 "T%02xthread:%x;swbreak:;",
-					 sig, (unsigned)g_current_tid);
-		} else {
-			if (g_multiprocess)
-				snprintf(buf, sizeof(buf),
-					 "T%02xthread:p%x.%x;",
-					 sig, (unsigned)g_pid,
-					 (unsigned)g_current_tid);
-			else
-				snprintf(buf, sizeof(buf),
-					 "T%02xthread:%x;",
-					 sig, (unsigned)g_current_tid);
+		/*
+		 * The initial ptrace-attach stop arrives as SIGSTOP.  If we
+		 * report T11 (GDB SIGSTOP) to GDB, it auto-resumes the process
+		 * (GDB's default "handle SIGSTOP nostop" behaviour) by sending
+		 * vCont;C11, causing the process to run indefinitely and making
+		 * further commands fail with "target is running".
+		 *
+		 * Real gdbservers report the attach-stop as T05 (SIGTRAP) to
+		 * signal "I'm stopped and ready for debugging" without triggering
+		 * GDB's SIGSTOP auto-resume.  We do the same: on the very first
+		 * stop reply after attach, substitute SIGSTOP → SIGTRAP.
+		 */
+		if (sig == SIGSTOP && g_initial_attach_stop) {
+			sig = SIGTRAP;
+			g_initial_attach_stop = 0;
+		}
+
+		/* Convert Linux signal number to GDB signal number for RSP */
+		{
+			int gdb_sig = linux_sig_to_gdb(sig);
+
+			/* T packet includes thread TID, eliminating a qC round-trip */
+			if (is_swbreak && g_swbreak_feature) {
+				if (g_multiprocess)
+					snprintf(buf, sizeof(buf),
+						 "T%02xthread:p%x.%x;swbreak:;",
+						 gdb_sig, (unsigned)g_pid,
+						 (unsigned)g_current_tid);
+				else
+					snprintf(buf, sizeof(buf),
+						 "T%02xthread:%x;swbreak:;",
+						 gdb_sig,
+						 (unsigned)g_current_tid);
+			} else {
+				if (g_multiprocess)
+					snprintf(buf, sizeof(buf),
+						 "T%02xthread:p%x.%x;",
+						 gdb_sig, (unsigned)g_pid,
+						 (unsigned)g_current_tid);
+				else
+					snprintf(buf, sizeof(buf),
+						 "T%02xthread:%x;",
+						 gdb_sig,
+						 (unsigned)g_current_tid);
+			}
 		}
 	} else if (WIFEXITED(wstatus)) {
 		snprintf(buf, sizeof(buf), "W%02x", WEXITSTATUS(wstatus));
 	} else if (WIFSIGNALED(wstatus)) {
-		snprintf(buf, sizeof(buf), "X%02x", WTERMSIG(wstatus));
+		snprintf(buf, sizeof(buf), "X%02x",
+			 linux_sig_to_gdb(WTERMSIG(wstatus)));
 	} else {
 		return;
 	}
@@ -449,6 +557,40 @@ static int regs_read(char *out, size_t out_sz)
 	EMIT32(r.cs); EMIT32(r.ss);
 	EMIT32(r.ds); EMIT32(r.es); EMIT32(r.fs); EMIT32(r.gs);
 
+	/* x87 FPU registers (st0-st7, then fctrl-fop) */
+	{
+		struct user_fpregs_struct fp;
+		int j;
+		char fptmp[21]; /* 10 bytes × 2 hex + NUL */
+
+		if (ptrace(PTRACE_GETFPREGS, g_pid, NULL, &fp) != 0)
+			memset(&fp, 0, sizeof(fp));
+
+		for (j = 0; j < 8; j++) {
+			/* Each st register occupies 16 bytes in st_space;
+			 * only the first 10 bytes are the 80-bit value. */
+			uint8_t *st = (uint8_t *)&fp.st_space[j * 4];
+			if (ela_gdb_hex_encode(st, 10, fptmp, sizeof(fptmp)) != 0)
+				return -1;
+			if (pos + 20 + 1 > out_sz) return -1;
+			memcpy(out + pos, fptmp, 20); pos += 20;
+		}
+		/* fctrl, fstat, ftag */
+		EMIT32((uint32_t)fp.cwd);
+		EMIT32((uint32_t)fp.swd);
+		EMIT32((uint32_t)fp.ftw);
+		/* fiseg (high 32 bits of FPU IP; 0 in 64-bit mode),
+		 * fioff (low 32 bits of FPU IP) */
+		EMIT32((uint32_t)(fp.rip >> 32));
+		EMIT32((uint32_t)fp.rip);
+		/* foseg (high 32 bits of FPU DP; 0 in 64-bit mode),
+		 * fooff (low 32 bits of FPU DP) */
+		EMIT32((uint32_t)(fp.rdp >> 32));
+		EMIT32((uint32_t)fp.rdp);
+		/* fop */
+		EMIT32((uint32_t)fp.fop);
+	}
+
 #undef EMIT64
 #undef EMIT32
 
@@ -488,7 +630,28 @@ static int reg_read_one(int regnum, char *out, size_t out_sz)
 	case 21: return ela_gdb_encode_le32((uint32_t)r.es,     out, out_sz);
 	case 22: return ela_gdb_encode_le32((uint32_t)r.fs,     out, out_sz);
 	case 23: return ela_gdb_encode_le32((uint32_t)r.gs,     out, out_sz);
-	default: return -1;
+	default: {
+		/* x87 FPU registers: st0-st7 (24-31), fctrl-fop (32-39) */
+		struct user_fpregs_struct fp;
+		if (ptrace(PTRACE_GETFPREGS, g_pid, NULL, &fp) != 0)
+			return -1;
+		if (regnum >= 24 && regnum <= 31) {
+			/* 80-bit st register: emit 10 bytes as 20 hex chars */
+			uint8_t *st = (uint8_t *)&fp.st_space[(regnum - 24) * 4];
+			return ela_gdb_hex_encode(st, 10, out, out_sz);
+		}
+		switch (regnum) {
+		case 32: return ela_gdb_encode_le32((uint32_t)fp.cwd,            out, out_sz);
+		case 33: return ela_gdb_encode_le32((uint32_t)fp.swd,            out, out_sz);
+		case 34: return ela_gdb_encode_le32((uint32_t)fp.ftw,            out, out_sz);
+		case 35: return ela_gdb_encode_le32((uint32_t)(fp.rip >> 32),    out, out_sz);
+		case 36: return ela_gdb_encode_le32((uint32_t)fp.rip,            out, out_sz);
+		case 37: return ela_gdb_encode_le32((uint32_t)(fp.rdp >> 32),    out, out_sz);
+		case 38: return ela_gdb_encode_le32((uint32_t)fp.rdp,            out, out_sz);
+		case 39: return ela_gdb_encode_le32((uint32_t)fp.fop,            out, out_sz);
+		default: return -1;
+		}
+	}
 	}
 }
 
@@ -526,6 +689,47 @@ static int reg_write_one(int regnum, const char *hex_val)
 	case 21: if (ela_gdb_decode_le32(hex_val, &v32)) return -1; r.es      = v32; break;
 	case 22: if (ela_gdb_decode_le32(hex_val, &v32)) return -1; r.fs      = v32; break;
 	case 23: if (ela_gdb_decode_le32(hex_val, &v32)) return -1; r.gs      = v32; break;
+	case 24: case 25: case 26: case 27:
+	case 28: case 29: case 30: case 31:
+	case 32: case 33: case 34: case 35:
+	case 36: case 37: case 38: case 39: {
+		/* x87 FPU registers via PTRACE_GETFPREGS / PTRACE_SETFPREGS */
+		struct user_fpregs_struct fp;
+		if (ptrace(PTRACE_GETFPREGS, g_pid, NULL, &fp) != 0)
+			return -1;
+		if (regnum >= 24 && regnum <= 31) {
+			/* 80-bit st register: decode 20 hex chars → 10 bytes */
+			uint8_t *st = (uint8_t *)&fp.st_space[(regnum - 24) * 4];
+			if (ela_gdb_hex_decode(hex_val, st, 10) != 10)
+				return -1;
+		} else {
+			if (ela_gdb_decode_le32(hex_val, &v32)) return -1;
+			switch (regnum) {
+			case 32: fp.cwd = (unsigned short)v32; break;
+			case 33: fp.swd = (unsigned short)v32; break;
+			case 34: fp.ftw = (unsigned short)v32; break;
+			case 35: /* fiseg: high 32 bits of rip */
+				fp.rip = ((uint64_t)v32 << 32) |
+					 ((uint32_t)fp.rip);
+				break;
+			case 36: /* fioff: low 32 bits of rip */
+				fp.rip = ((uint64_t)(uint32_t)(fp.rip >> 32) << 32) |
+					 (uint64_t)v32;
+				break;
+			case 37: /* foseg: high 32 bits of rdp */
+				fp.rdp = ((uint64_t)v32 << 32) |
+					 ((uint32_t)fp.rdp);
+				break;
+			case 38: /* fooff: low 32 bits of rdp */
+				fp.rdp = ((uint64_t)(uint32_t)(fp.rdp >> 32) << 32) |
+					 (uint64_t)v32;
+				break;
+			case 39: fp.fop = (unsigned short)v32; break;
+			default: return -1;
+			}
+		}
+		return ptrace(PTRACE_SETFPREGS, g_pid, NULL, &fp) != 0 ? -1 : 0;
+	}
 	default: return -1;
 	}
 	return ptrace(PTRACE_SETREGS, g_pid, NULL, &r) != 0 ? -1 : 0;
@@ -539,7 +743,9 @@ static int regs_write(const char *hex, size_t hex_len)
 	uint32_t v32;
 	size_t pos = 0;
 
-	if (hex_len < 328) /* 17×16 + 7×8 */
+	/* Minimum: 17×16 + 7×8 = 328 (integer regs only).
+	 * With FPU: + 8×20 (st0-st7) + 8×8 (fctrl-fop) = 552 total. */
+	if (hex_len < 328)
 		return -1;
 	if (ptrace(PTRACE_GETREGS, g_pid, NULL, &r) != 0)
 		return -1;
@@ -564,7 +770,49 @@ static int regs_write(const char *hex, size_t hex_len)
 #undef LOAD64
 #undef LOAD32
 
-	return ptrace(PTRACE_SETREGS, g_pid, NULL, &r) != 0 ? -1 : 0;
+	if (ptrace(PTRACE_SETREGS, g_pid, NULL, &r) != 0)
+		return -1;
+
+	/* Apply FPU portion if provided (st0-st7 + fctrl-fop = 224 hex chars) */
+	if (hex_len >= 552) {
+		struct user_fpregs_struct fp;
+		int j;
+
+		if (ptrace(PTRACE_GETFPREGS, g_pid, NULL, &fp) != 0)
+			return -1;
+
+		for (j = 0; j < 8; j++) {
+			uint8_t *st = (uint8_t *)&fp.st_space[j * 4];
+			if (ela_gdb_hex_decode(hex + pos, st, 10) != 10)
+				return -1;
+			pos += 20;
+		}
+		if (ela_gdb_decode_le32(hex + pos, &v32)) return -1;
+		fp.cwd = (unsigned short)v32; pos += 8;
+		if (ela_gdb_decode_le32(hex + pos, &v32)) return -1;
+		fp.swd = (unsigned short)v32; pos += 8;
+		if (ela_gdb_decode_le32(hex + pos, &v32)) return -1;
+		fp.ftw = (unsigned short)v32; pos += 8;
+		/* fiseg: high 32 bits of rip */
+		if (ela_gdb_decode_le32(hex + pos, &v32)) return -1;
+		fp.rip = ((uint64_t)v32 << 32) | (uint32_t)fp.rip; pos += 8;
+		/* fioff: low 32 bits of rip */
+		if (ela_gdb_decode_le32(hex + pos, &v32)) return -1;
+		fp.rip = (fp.rip & ~(uint64_t)0xffffffffu) | (uint64_t)v32; pos += 8;
+		/* foseg: high 32 bits of rdp */
+		if (ela_gdb_decode_le32(hex + pos, &v32)) return -1;
+		fp.rdp = ((uint64_t)v32 << 32) | (uint32_t)fp.rdp; pos += 8;
+		/* fooff: low 32 bits of rdp */
+		if (ela_gdb_decode_le32(hex + pos, &v32)) return -1;
+		fp.rdp = (fp.rdp & ~(uint64_t)0xffffffffu) | (uint64_t)v32; pos += 8;
+		if (ela_gdb_decode_le32(hex + pos, &v32)) return -1;
+		fp.fop = (unsigned short)v32;
+
+		if (ptrace(PTRACE_SETFPREGS, g_pid, NULL, &fp) != 0)
+			return -1;
+	}
+
+	return 0;
 }
 
 #elif defined(__aarch64__)
@@ -2333,6 +2581,16 @@ static int build_target_xml(char *out, size_t out_sz)
 			{"cs","32","int32"}, {"ss","32","int32"},
 			{"ds","32","int32"}, {"es","32","int32"},
 			{"fs","32","int32"}, {"gs","32","int32"},
+			/* x87 FPU data registers (80-bit each) */
+			{"st0","80","i387_ext"}, {"st1","80","i387_ext"},
+			{"st2","80","i387_ext"}, {"st3","80","i387_ext"},
+			{"st4","80","i387_ext"}, {"st5","80","i387_ext"},
+			{"st6","80","i387_ext"}, {"st7","80","i387_ext"},
+			/* x87 FPU control registers */
+			{"fctrl","32","int32"}, {"fstat","32","int32"},
+			{"ftag","32","int32"},  {"fiseg","32","int32"},
+			{"fioff","32","int32"}, {"foseg","32","int32"},
+			{"fooff","32","int32"}, {"fop","32","int32"},
 			{NULL, NULL, NULL}
 		};
 		int i;
@@ -2502,7 +2760,16 @@ static int build_memmap_xml(pid_t pid, char *out, size_t out_sz)
 			if (length == 0)
 				continue;
 
-			type = (perms[1] == 'w') ? "ram" : "rom";
+			/*
+			 * Always report "ram": ptrace(PTRACE_POKEDATA) can
+			 * write to any page in the traced process regardless
+			 * of the MMU protection bits, so all regions are
+			 * effectively writable for breakpoint insertion.
+			 * Reporting "rom" here causes GDB to refuse Z0
+			 * (software breakpoints) in text segments.
+			 */
+			type = "ram";
+			(void)perms;
 			mem = xmlNewChild(root, NULL, BAD_CAST "memory", NULL);
 			xmlNewProp(mem, BAD_CAST "type", BAD_CAST type);
 			snprintf(start_buf, sizeof(start_buf),
@@ -2678,9 +2945,7 @@ static int build_libraries_svr4_xml(pid_t pid, char *out, size_t out_sz)
 			nl = strchr(path, '\r');
 			if (nl) *nl = '\0';
 
-			if (path[0] == '[')
-				continue;
-			if (strstr(path, ".so") == NULL)
+			if (ela_gdb_svr4_path_skip(path))
 				continue;
 
 			/* Deduplicate via xmlGetProp instead of strstr */
@@ -3259,6 +3524,31 @@ static void do_continue(int fd, int initial_sig)
 				continue; /* filtered — keep running */
 			}
 
+			/*
+			 * SIGCONT is always forwarded unconditionally: it is a
+			 * kernel job-control artifact that appears when ptrace
+			 * resumes a process that was stopped by SIGSTOP
+			 * (e.g. after a vCont;S13 step-with-SIGSTOP sequence).
+			 * Stopping on SIGCONT would confuse GDB and block
+			 * breakpoint delivery.
+			 */
+			if (sig == SIGCONT) {
+				fwd_sig = sig;
+				continue;
+			}
+
+			/*
+			 * The first PTRACE_CONT after ptrace-attach produces a
+			 * spurious SIGSTOP (the kernel delivering the attach-stop
+			 * signal on the first resume).  We already reported the
+			 * attach stop as T05 (SIGTRAP), so skip this one SIGSTOP
+			 * and keep running.
+			 */
+			if (sig == SIGSTOP && g_attach_sigstop_pending) {
+				g_attach_sigstop_pending = 0;
+				continue;
+			}
+
 			/* Regular signal pass-through */
 			if (sig > 0 && sig < 64 &&
 			    (g_pass_signals & (1ULL << sig))) {
@@ -3403,28 +3693,57 @@ static void handle_packet(int fd, char *pkt)
 		break;
 
 	case 's': /* Single step */
-		if (ptrace(PTRACE_SINGLESTEP, g_pid, NULL, NULL) != 0) {
+		if (do_singlestep(g_pid, 0, &wstatus) != 0) {
 			rsp_send_str(fd, "E01");
 			break;
 		}
-		waitpid(g_pid, &wstatus, 0);
 		g_last_wstatus = wstatus;
 		send_stop_reply(fd, wstatus);
 		break;
 
 	case 'C': /* Continue with signal: C<sig>[;<addr>] */
-		do_continue(fd, (int)strtol(pkt + 1, NULL, 16));
+	{
+		int sig = gdb_sig_to_linux((int)strtol(pkt + 1, NULL, 16));
+		/*
+		 * When GDB sends C11 (GDB signal 17 = Linux SIGSTOP) it is
+		 * acknowledging the synthetic ptrace-attach stop and asking us
+		 * to resume.  Injecting SIGSTOP via PTRACE_CONT would
+		 * immediately stop the process again without executing any
+		 * instructions, preventing breakpoints from being hit.
+		 * Suppress the SIGSTOP and continue with no signal instead.
+		 */
+		if (sig == SIGSTOP)
+			sig = 0;
+		do_continue(fd, sig);
 		break;
+	}
 
 	case 'S': /* Step with signal: S<sig>[;<addr>] */
 	{
-		int sig = (int)strtol(pkt + 1, NULL, 16);
-		if (ptrace(PTRACE_SINGLESTEP, g_pid, NULL,
-			   (void *)(uintptr_t)sig) != 0) {
+		int sig = gdb_sig_to_linux((int)strtol(pkt + 1, NULL, 16));
+		/*
+		 * When GDB sends S11 (GDB signal 17 = Linux SIGSTOP) it wants
+		 * a single-step but without injecting SIGSTOP (which would
+		 * immediately re-stop the process).  Suppress SIGSTOP but keep
+		 * the step semantics.
+		 */
+		if (sig == SIGSTOP)
+			sig = 0;
+		if (do_singlestep(g_pid, sig, &wstatus) != 0) {
 			rsp_send_str(fd, "E01");
 			break;
 		}
-		waitpid(g_pid, &wstatus, 0);
+		/*
+		 * SIGSTOP injection can cause a kernel job-control group-stop,
+		 * which generates a SIGCONT that ptrace intercepts.  Forward
+		 * SIGCONT transparently and wait for the real stop.
+		 */
+		while (WIFSTOPPED(wstatus) &&
+		       WSTOPSIG(wstatus) == SIGCONT) {
+			ptrace(PTRACE_CONT, g_pid, NULL,
+			       (void *)(uintptr_t)SIGCONT);
+			waitpid(g_pid, &wstatus, 0);
+		}
 		g_last_wstatus = wstatus;
 		send_stop_reply(fd, wstatus);
 		break;
@@ -3437,24 +3756,51 @@ static void handle_packet(int fd, char *pkt)
 			do_continue(fd, 0);
 		} else if (strncmp(pkt, "vCont;C", 7) == 0) {
 			/* Continue with signal: vCont;C<sig>[:tid] */
-			do_continue(fd, (int)strtol(pkt + 7, NULL, 16));
+			int sig = gdb_sig_to_linux(
+				(int)strtol(pkt + 7, NULL, 16));
+			/*
+			 * Suppress SIGSTOP: GDB sends vCont;C11 to acknowledge
+			 * the ptrace-attach synthetic SIGSTOP stop.  Injecting
+			 * SIGSTOP would immediately re-stop the process without
+			 * advancing to the breakpoint.  Suppress it.
+			 */
+			if (sig == SIGSTOP)
+				sig = 0;
+			do_continue(fd, sig);
 		} else if (strncmp(pkt, "vCont;s", 7) == 0) {
-			if (ptrace(PTRACE_SINGLESTEP, g_pid, NULL, NULL) != 0) {
+			if (do_singlestep(g_pid, 0, &wstatus) != 0) {
 				rsp_send_str(fd, "E01");
 				break;
 			}
-			waitpid(g_pid, &wstatus, 0);
 			g_last_wstatus = wstatus;
 			send_stop_reply(fd, wstatus);
 		} else if (strncmp(pkt, "vCont;S", 7) == 0) {
 			/* Step with signal: vCont;S<sig>[:tid] */
-			int sig = (int)strtol(pkt + 7, NULL, 16);
-			if (ptrace(PTRACE_SINGLESTEP, g_pid, NULL,
-				   (void *)(uintptr_t)sig) != 0) {
+			int sig = gdb_sig_to_linux(
+				(int)strtol(pkt + 7, NULL, 16));
+			/*
+			 * Suppress SIGSTOP: step-with-SIGSTOP would immediately
+			 * re-stop the process without advancing the PC.  Keep the
+			 * step semantics but suppress the signal.
+			 */
+			if (sig == SIGSTOP)
+				sig = 0;
+			if (do_singlestep(g_pid, sig, &wstatus) != 0) {
 				rsp_send_str(fd, "E01");
 				break;
 			}
-			waitpid(g_pid, &wstatus, 0);
+			/*
+			 * SIGSTOP injection can cause a kernel job-control
+			 * group-stop, which generates a SIGCONT that ptrace
+			 * intercepts.  Forward SIGCONT and wait for the real
+			 * stop (e.g., a breakpoint SIGTRAP).
+			 */
+			while (WIFSTOPPED(wstatus) &&
+			       WSTOPSIG(wstatus) == SIGCONT) {
+				ptrace(PTRACE_CONT, g_pid, NULL,
+				       (void *)(uintptr_t)SIGCONT);
+				waitpid(g_pid, &wstatus, 0);
+			}
 			g_last_wstatus = wstatus;
 			send_stop_reply(fd, wstatus);
 		} else if (strncmp(pkt, "vFile:open:", 11) == 0) {
@@ -3830,7 +4176,11 @@ static void handle_packet(int fd, char *pkt)
 				 ";QCatchSyscalls+"
 				 ";multiprocess+"
 				 ";swbreak+"
-				 ";hwbreak+"
+				 /* hwbreak+ intentionally omitted: our Z1 is best-effort
+				  * only and returns OK even when hardware debug registers
+				  * are unavailable, causing GDB breakpoints to silently
+				  * fail.  Without hwbreak+, GDB uses Z0 (software INT3)
+				  * which we implement correctly via PTRACE_POKEDATA. */
 				 ,
 				 ELA_GDB_RSP_MAX_PACKET);
 
@@ -4534,9 +4884,13 @@ static void handle_packet(int fd, char *pkt)
 			uint64_t mask = 0;
 			while (*p) {
 				char *end;
-				unsigned long sig = strtoul(p, &end, 16);
+				unsigned long gdb_sig = strtoul(p, &end, 16);
+				unsigned long sig;
 				if (end == p)
 					break;
+				/* Convert GDB signal number to Linux signal */
+				sig = (unsigned long)gdb_sig_to_linux(
+					(int)gdb_sig);
 				if (sig > 0 && sig < 64)
 					mask |= (1ULL << sig);
 				p = (*end == ';') ? end + 1 : end;
@@ -4587,7 +4941,9 @@ static int run_session(int conn_fd, pid_t pid, int attach_wstatus)
 	g_noack            = 0;
 	g_pass_signals     = 0;
 	g_current_tid      = pid;
-	g_last_wstatus     = attach_wstatus;
+	g_last_wstatus        = attach_wstatus;
+	g_initial_attach_stop = 1;    /* cleared after first stop reply for initial SIGSTOP */
+	g_attach_sigstop_pending = 1; /* cleared after first PTRACE_CONT/SINGLESTEP returns SIGSTOP */
 	g_catch_syscalls   = 0;
 	g_catch_sysno_cnt  = 0;
 	g_in_syscall       = 0;
