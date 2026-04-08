@@ -66,6 +66,8 @@ LOOP_PID=
 LOOP_BIN=/tmp/ela_test_gdbserver_loop
 HEAP_PID=
 HEAP_BIN=/tmp/ela_test_gdbserver_heap
+WATCH_PID=
+WATCH_BIN=/tmp/ela_test_gdbserver_watch
 
 # Compile the target loop program once.
 compile_loop_target() {
@@ -127,6 +129,36 @@ stop_heap() {
         kill "$HEAP_PID" 2>/dev/null || true
         wait "$HEAP_PID" 2>/dev/null || true
         HEAP_PID=
+    fi
+}
+
+# Compile a small binary with a writable global counter for watchpoint tests.
+compile_watch_target() {
+    cat > /tmp/ela_test_gdbserver_watch.c << 'EOF'
+#include <time.h>
+int g_count = 0;
+int main(void) {
+    struct timespec ts = {0, 50000000}; /* 50 ms */
+    for (;;) {
+        g_count++;
+        nanosleep(&ts, NULL);
+    }
+    return 0;
+}
+EOF
+    gcc -O0 -g -o "$WATCH_BIN" /tmp/ela_test_gdbserver_watch.c || return 1
+}
+
+start_watch() {
+    "$WATCH_BIN" &
+    WATCH_PID=$!
+}
+
+stop_watch() {
+    if [ -n "$WATCH_PID" ]; then
+        kill "$WATCH_PID" 2>/dev/null || true
+        wait "$WATCH_PID" 2>/dev/null || true
+        WATCH_PID=
     fi
 }
 
@@ -207,9 +239,15 @@ if ! compile_heap_target; then
     exit 0
 fi
 
+if ! compile_watch_target; then
+    echo "SKIP: could not compile watch target (gcc not available?)"
+    exit 0
+fi
+
 start_loop
 start_heap
-trap 'stop_loop; stop_heap' EXIT INT TERM
+start_watch
+trap 'stop_loop; stop_heap; stop_watch' EXIT INT TERM
 
 # -------------------------------------------------------------------------
 # Test: software breakpoints (Z0)
@@ -632,6 +670,78 @@ assert_output_contains "find-multi: 4-byte pattern found" \
     "$OUT_FILE" "pattern[s]* found"
 assert_output_not_contains "find-multi: not failed" \
     "$OUT_FILE" "Pattern not found"
+rm -f "$OUT_FILE" "$GS_LOG"
+
+# -------------------------------------------------------------------------
+# Test: XMM/SSE registers visible via info registers and p/x $xmmN
+#
+# Exercises the org.gnu.gdb.i386.sse feature (xmm0-xmm15 at regnums 40-55,
+# mxcsr at regnum 56) added to the target description.  Without this feature
+# GDB creates 114 unnamed zero-size placeholder registers and no XMM data
+# appears in "info all-registers".  Uses "set sysroot /" to skip slow
+# remote library loading so the test completes within the timeout.
+# -------------------------------------------------------------------------
+
+PORT="$(next_port)"
+GS_LOG="$(mktemp /tmp/ela_gs.XXXXXX)"
+start_gdbserver "$LOOP_PID" "$PORT" "$GS_LOG"
+
+OUT="$(run_gdb "$PORT" "
+set sysroot /
+info all-registers
+p/x \$xmm0
+p/x \$mxcsr
+detach
+")"
+OUT_FILE="$OUT"
+
+assert_output_contains "sse: xmm0 present in info all-registers" \
+    "$OUT_FILE" "^xmm0"
+assert_output_contains "sse: xmm15 present in info all-registers" \
+    "$OUT_FILE" "^xmm15"
+assert_output_contains "sse: mxcsr present in info all-registers" \
+    "$OUT_FILE" "^mxcsr"
+assert_output_contains "sse: p/x xmm0 readable" \
+    "$OUT_FILE" '^\$[0-9]+ = 0x'
+assert_output_contains "sse: mxcsr readable (typical value 0x1f80)" \
+    "$OUT_FILE" '^\$[0-9]+ = 0x'
+rm -f "$OUT_FILE" "$GS_LOG"
+
+# -------------------------------------------------------------------------
+# Test: hardware watchpoint stop reports Old/New values (watch:addr in T pkt)
+#
+# Previously the T stop packet for a hardware watchpoint contained only
+# T05thread:...;  with no "watch:addr;" annotation.  GDB never recognised the
+# stop as a watchpoint and printed "Program received signal SIGTRAP" instead
+# of "Hardware watchpoint N: Old value = X / New value = Y".
+#
+# The fix: on SIGTRAP, inspect DR6 to detect data-breakpoint fires, read the
+# address from the triggered DRn slot, and include "watch:<addr>;" in the T
+# packet.  GDB then displays the expected watchpoint output.
+# -------------------------------------------------------------------------
+
+PORT="$(next_port)"
+GS_LOG="$(mktemp /tmp/ela_gs.XXXXXX)"
+start_gdbserver "$WATCH_PID" "$PORT" "$GS_LOG"
+
+OUT="$(run_gdb "$PORT" "
+set sysroot /
+file $WATCH_BIN
+watch g_count
+continue
+detach
+")"
+OUT_FILE="$OUT"
+
+# GDB must show "Hardware watchpoint N: g_count" plus Old/New value output
+assert_output_contains "hwwatch: watchpoint identified by GDB" \
+    "$OUT_FILE" "Hardware watchpoint [0-9]+: g_count"
+assert_output_contains "hwwatch: Old value shown" \
+    "$OUT_FILE" "Old value ="
+assert_output_contains "hwwatch: New value shown" \
+    "$OUT_FILE" "New value ="
+assert_output_not_contains "hwwatch: not reported as generic SIGTRAP" \
+    "$OUT_FILE" "Program received signal SIGTRAP"
 rm -f "$OUT_FILE" "$GS_LOG"
 
 # -------------------------------------------------------------------------
