@@ -224,7 +224,7 @@ jobs:
 
       - name: Upload locally built release binaries
         if: ${{ github.event_name != 'workflow_run' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ela-${{ matrix.isa }}
           path: api/data/release_binaries/${{ matrix.isa }}
@@ -329,7 +329,7 @@ jobs:
           fi
 
       - name: Upload unit test binary artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ela-unit-${{ matrix.name }}
           path: dist/${{ matrix.name }}/agent_unit_tests-${{ matrix.name }}
@@ -559,7 +559,7 @@ jobs:
 
       - name: Upload qemu ISA log
         if: ${{ always() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: qemu-log-${{ matrix.isa }}
           path: qemu-logs/${{ matrix.isa }}.log
@@ -668,13 +668,13 @@ jobs:
           path: release-metadata
 
       - name: Upload publishable release assets
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: publish-release-assets
           path: release-assets
 
       - name: Upload publishable release metadata
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: publish-release-metadata
           path: release-metadata/tag.txt

@@ -121,7 +121,7 @@ jobs:
           fi
 
       - name: Upload matrix artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ela-${{ matrix.name }}
           path: |
@@ -142,7 +142,7 @@ jobs:
           printf '%s\n' "${{ github.event.release.tag_name }}" > release-metadata/tag.txt
 
       - name: Upload release metadata artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-metadata
           path: release-metadata/tag.txt
