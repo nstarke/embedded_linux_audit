@@ -613,23 +613,32 @@ int main(int argc, char **argv)
 	struct ela_conf boot_conf = {0};
 
 	ela_conf_load(&boot_conf);
-	/* Validate conf fields against their whitelists before exporting to the
-	 * environment.  ela_conf_apply_line() already enforces these at store
-	 * time, but making the checks explicit here keeps taint-analysis tools
-	 * happy: fields are derived from a file and must be whitelisted before
-	 * being passed to any function that touches the environment. */
-	if (!ela_output_format_is_valid(boot_conf.output_format))
-		boot_conf.output_format[0] = '\0';
+	/* Sanitize output_format by replacing the tainted buffer with a known-safe
+	 * string literal selected from the whitelist.  Copying from a literal
+	 * (rather than back from the tainted buffer) breaks Coverity's taint chain
+	 * so the value passed to ela_conf_export_to_env() is provably untainted. */
+	{
+		const char *safe_fmt = NULL;
+
+		if (!strcmp(boot_conf.output_format, "txt"))
+			safe_fmt = "txt";
+		else if (!strcmp(boot_conf.output_format, "csv"))
+			safe_fmt = "csv";
+		else if (!strcmp(boot_conf.output_format, "json"))
+			safe_fmt = "json";
+
+		if (safe_fmt)
+			strncpy(boot_conf.output_format, safe_fmt,
+				sizeof(boot_conf.output_format));
+		else
+			boot_conf.output_format[0] = '\0';
+	}
 	/* output_http must be an http:// or https:// URL; anything else is
 	 * rejected to prevent untrusted file content reaching setenv(). */
 	if (boot_conf.output_http[0] && /* LCOV_EXCL_LINE */
 	    strncmp(boot_conf.output_http, "http://",  7) != 0 && /* LCOV_EXCL_LINE */
 	    strncmp(boot_conf.output_http, "https://", 8) != 0) /* LCOV_EXCL_LINE */
 		boot_conf.output_http[0] = '\0'; /* LCOV_EXCL_LINE */
-	/* coverity[tainted_string : FALSE] boot_conf fields are whitelist-
-	 * validated above: output_format via ela_output_format_is_valid(),
-	 * output_http via http[s]:// prefix check.  ela_conf_export_to_env()
-	 * re-validates both before calling setenv(). */
 	ela_conf_export_to_env(&boot_conf);
 
 	if (argc < 2 && !(getenv("ELA_SCRIPT") && *getenv("ELA_SCRIPT")))

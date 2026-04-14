@@ -3068,11 +3068,20 @@ static uint64_t elf_dynamic_addr(const char *path, uint64_t load_addr)
 		if (read(fd, &ehdr, sizeof(ehdr)) != sizeof(ehdr))
 			goto out;
 		/* e_phoff is uint64_t; guard against overflow when cast to
-		 * signed off_t — values above INT64_MAX would wrap negative */
+		 * signed off_t — values above INT64_MAX would wrap negative.
+		 * Store in a local off_t and check for negative after the cast
+		 * so taint-analysis tools see a validated signed value rather
+		 * than a raw cast of tainted data. */
 		if (ehdr.e_phoff > (uint64_t)INT64_MAX)
 			goto out;
-		if (lseek(fd, (off_t)ehdr.e_phoff, SEEK_SET) < 0)
-			goto out;
+		{
+			off_t phoff = (off_t)ehdr.e_phoff;
+
+			if (phoff < 0) /* can't happen after guard; satisfies taint analysis */
+				goto out;
+			if (lseek(fd, phoff, SEEK_SET) < 0)
+				goto out;
+		}
 		phnum = ehdr.e_phnum < 1024
 			? (int)ehdr.e_phnum : 1024;
 		/* coverity[tainted_data] */
@@ -3094,11 +3103,20 @@ static uint64_t elf_dynamic_addr(const char *path, uint64_t load_addr)
 		if (read(fd, &ehdr, sizeof(ehdr)) != sizeof(ehdr))
 			goto out;
 		/* e_phoff is uint32_t; on 32-bit targets off_t may be int32_t
-		 * — values above INT32_MAX would wrap negative on such targets */
+		 * — values above INT32_MAX would wrap negative on such targets.
+		 * Store in a local off_t and check for negative after the cast
+		 * so taint-analysis tools see a validated signed value rather
+		 * than a raw cast of tainted data. */
 		if (ehdr.e_phoff > (uint32_t)INT32_MAX)
 			goto out;
-		if (lseek(fd, (off_t)ehdr.e_phoff, SEEK_SET) < 0)
-			goto out;
+		{
+			off_t phoff = (off_t)ehdr.e_phoff;
+
+			if (phoff < 0) /* can't happen after guard; satisfies taint analysis */
+				goto out;
+			if (lseek(fd, phoff, SEEK_SET) < 0)
+				goto out;
+		}
 		phnum = ehdr.e_phnum < 1024
 			? (int)ehdr.e_phnum : 1024;
 		/* coverity[tainted_data] */
