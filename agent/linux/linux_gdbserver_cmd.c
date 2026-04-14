@@ -3137,11 +3137,14 @@ out:
 	close(fd);
 	if (!dyn_vaddr)
 		return 0;
-	/* coverity[overflow_before_widen : FALSE] All operands are uint64_t.
-	 * The subtraction computes the ELF load bias (load_addr - p_vaddr of
-	 * first PT_LOAD); unsigned wrap is intentional and correct — the
-	 * subsequent addition of dyn_vaddr produces the right runtime address.
-	 * This is the standard formula used by the kernel and GDB. */
+	/* All operands are uint64_t.  The subtraction computes the ELF load bias
+	 * (load_addr - p_vaddr of first PT_LOAD); unsigned wrap is intentional
+	 * and correct — the subsequent addition of dyn_vaddr produces the right
+	 * runtime address.  This is the standard formula used by the kernel and
+	 * GDB.  Coverity flags this as INTEGER_OVERFLOW / return_overflow because
+	 * it does not model intentional unsigned wrap; the annotation below
+	 * suppresses that false positive. */
+	/* coverity[integer_overflow] */
 	return (load_addr - first_load_vaddr) + dyn_vaddr;
 }
 
