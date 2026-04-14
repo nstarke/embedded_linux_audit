@@ -78,7 +78,7 @@ describe('tests route', () => {
     expect(res.sentFile).toBe(configuredShell);
   });
 
-  test('falls back to repo scripts for nested script paths served by the regex route', async () => {
+  test('falls back to repo scripts for nested script paths served by the wildcard route', async () => {
     const configuredScripts = path.join('/configured/tests', 'agent', 'scripts', 'nested', 'sample.ela');
     const repoScripts = path.resolve(__dirname, '../../../../tests/agent/scripts/nested/sample.ela');
     const { regexHandler } = register({
@@ -97,7 +97,7 @@ describe('tests route', () => {
     });
     const res = createRes();
 
-    await regexHandler({ params: ['scripts', 'nested/sample.ela'] }, res);
+    await regexHandler({ params: { type: 'scripts', scriptPath: 'nested/sample.ela' } }, res);
 
     expect(res.sentFile).toBe(repoScripts);
   });
@@ -106,7 +106,7 @@ describe('tests route', () => {
     const { regexHandler } = register();
     const res = createRes();
 
-    await regexHandler({ params: ['shell', '../escape.sh'] }, res);
+    await regexHandler({ params: { type: 'shell', scriptPath: '../escape.sh' } }, res);
 
     expect(res.statusCode).toBe(400);
     expect(res.body).toBe('invalid path\n');
@@ -225,13 +225,13 @@ describe('tests route', () => {
     expect(res.body).toBe('internal error\n');
   });
 
-  test('returns 500 from the regex route outer catch when sendAgentTest throws', async () => {
+  test('returns 500 from the wildcard route outer catch when sendAgentTest throws', async () => {
     const { regexHandler } = register({
       verboseRequestLog: jest.fn(() => { throw new Error('log error'); }),
     });
     const res = createRes();
 
-    await regexHandler({ params: ['shell', 'basic.sh'] }, res);
+    await regexHandler({ params: { type: 'shell', scriptPath: 'basic.sh' } }, res);
 
     expect(res.statusCode).toBe(500);
     expect(res.body).toBe('internal error\n');

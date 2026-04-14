@@ -80,10 +80,10 @@ module.exports = function registerTestsRoute(app, deps) {
     }
   });
 
-  app.get(/^\/tests\/agent\/([^/]+)\/(.+)$/, async (req, res) => {
+  app.get('/tests/agent/:type/*scriptPath', async (req, res) => {
     try {
-      const type = typeof req.params[0] === 'string' ? req.params[0] : '';
-      const scriptPath = typeof req.params[1] === 'string' ? req.params[1] : '';
+      const type = typeof req.params.type === 'string' ? req.params.type : '';
+      const scriptPath = typeof req.params.scriptPath === 'string' ? req.params.scriptPath : '';
       await sendAgentTest(req, res, type, scriptPath);
     } catch (err) {
       if (!res.headersSent) {
@@ -109,7 +109,7 @@ module.exports = function registerTestsRoute(app, deps) {
     }
   });
 
-  app.get('/tests/*', (req, res) => {
+  app.get('/tests/*catchall', (req, res) => {
     verboseRequestLog(req);
     res.status(404).type('text').send('not found\n');
     verboseResponseLog(req, 404, 10);
