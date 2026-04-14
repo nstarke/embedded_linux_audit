@@ -5,7 +5,7 @@
     "test:js": "jest --runInBand tests/unit/api"
   },
   "dependencies": {
-    "mime-types": "^2.1.35"
+    "mime-types": "^3.0.2"
   },
   "devDependencies": {
     "jest": "^30.0.5"
