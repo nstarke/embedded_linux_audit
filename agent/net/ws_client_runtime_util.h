@@ -23,4 +23,12 @@ int ela_ws_dispatch_incoming_frame(uint8_t opcode,
 				   void *ctx);
 bool ela_ws_should_reconnect_after_disconnect(int interactive_rc);
 
+/*
+ * Returns true when the reconnect attempt budget is exhausted.
+ * failed_attempts is the already-incremented failure count (1 on the first
+ * failure); max_attempts is the configured retry ceiling (0 = no retries,
+ * meaning any failure is immediately fatal).
+ */
+bool ela_ws_reconnect_budget_exhausted(int failed_attempts, int max_attempts);
+
 #endif /* ELA_WS_CLIENT_RUNTIME_UTIL_H */

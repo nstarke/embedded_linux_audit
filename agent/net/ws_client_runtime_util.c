@@ -61,3 +61,8 @@ bool ela_ws_should_reconnect_after_disconnect(int interactive_rc)
 {
 	return interactive_rc != ELA_WS_EXIT_CLEAN;
 }
+
+bool ela_ws_reconnect_budget_exhausted(int failed_attempts, int max_attempts)
+{
+	return failed_attempts > max_attempts;
+}
