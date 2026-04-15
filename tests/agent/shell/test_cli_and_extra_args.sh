@@ -94,6 +94,55 @@ run_exact_case "--remote invalid --retry-attempts too large" 2 "$BIN" --remote w
 run_exact_case "--remote invalid --retry-attempts non-integer" 2 "$BIN" --remote ws://127.0.0.1:1 --retry-attempts abc
 run_accept_case "--remote ELA_WS_RETRY_ATTEMPTS env var" env ELA_WS_RETRY_ATTEMPTS=3 "$BIN" --remote ws://127.0.0.1:1
 
+# Fork-before-connect child lifecycle: verify the daemon child exits cleanly when
+# given an unreachable target and --retry-attempts 0.  Waiting for the child pid
+# here is important for coverage builds: it ensures the forked child's gcov
+# instrumentation data (.gcda) is flushed to disk before lcov captures it,
+# giving coverage to the post-fork code (setsid, /dev/null redirect, reconnect
+# loop).  The child exits in <100 ms because the connection to 127.0.0.1:1 is
+# refused immediately and no retries are attempted.
+_fork_log="$(mktemp /tmp/test_fork_child.XXXXXX)"
+"$BIN" --remote ws://127.0.0.1:1 --retry-attempts 0 >"$_fork_log" 2>&1
+_fork_rc=$?
+_fork_pid="$(sed -n 's/.*Remote session started (pid=\([0-9][0-9]*\)).*/\1/p' "$_fork_log" | tail -n 1)"
+
+if [ "$_fork_rc" -eq 0 ] && [ -n "$_fork_pid" ]; then
+    if wait_for_background_process_exit "$_fork_pid" 50; then
+        echo "[PASS] --remote ws:// fork-before-connect child exits after budget exhausted"
+        PASS_COUNT="$(expr "$PASS_COUNT" + 1)"
+    else
+        echo "[FAIL] --remote ws:// fork-before-connect child did not exit within timeout"
+        FAIL_COUNT="$(expr "$FAIL_COUNT" + 1)"
+        kill "$_fork_pid" 2>/dev/null || true
+    fi
+else
+    echo "[FAIL] --remote ws:// fork-before-connect did not produce expected output (rc=$_fork_rc)"
+    FAIL_COUNT="$(expr "$FAIL_COUNT" + 1)"
+fi
+rm -f "$_fork_log"
+
+# Same coverage test for wss:// (TLS path — the main regression target for
+# arm32-le and powerpc-be).
+_fork_wss_log="$(mktemp /tmp/test_fork_wss_child.XXXXXX)"
+"$BIN" --insecure --remote wss://127.0.0.1:1 --retry-attempts 0 >"$_fork_wss_log" 2>&1
+_fork_wss_rc=$?
+_fork_wss_pid="$(sed -n 's/.*Remote session started (pid=\([0-9][0-9]*\)).*/\1/p' "$_fork_wss_log" | tail -n 1)"
+
+if [ "$_fork_wss_rc" -eq 0 ] && [ -n "$_fork_wss_pid" ]; then
+    if wait_for_background_process_exit "$_fork_wss_pid" 50; then
+        echo "[PASS] --remote wss:// fork-before-connect child exits after budget exhausted"
+        PASS_COUNT="$(expr "$PASS_COUNT" + 1)"
+    else
+        echo "[FAIL] --remote wss:// fork-before-connect child did not exit within timeout"
+        FAIL_COUNT="$(expr "$FAIL_COUNT" + 1)"
+        kill "$_fork_wss_pid" 2>/dev/null || true
+    fi
+else
+    echo "[FAIL] --remote wss:// fork-before-connect did not produce expected output (rc=$_fork_wss_rc)"
+    FAIL_COUNT="$(expr "$FAIL_COUNT" + 1)"
+fi
+rm -f "$_fork_wss_log"
+
 # Live daemon lifecycle: verify --remote daemonizes and prints "Remote session started"
 if command -v nc >/dev/null 2>&1; then
     remote_port=19873

@@ -270,6 +270,67 @@ static void test_ws_client_runtime_reconnect_policy(void)
 }
 
 /* -------------------------------------------------------------------------
+ * ela_ws_reconnect_budget_exhausted
+ * ---------------------------------------------------------------------- */
+
+/*
+ * retry_attempts=0: no retries; the very first failure (failed_attempts=1)
+ * must be immediately fatal.
+ */
+static void test_ws_reconnect_budget_no_retries_exhausted_on_first_failure(void)
+{
+	ELA_ASSERT_TRUE(ela_ws_reconnect_budget_exhausted(1, 0));
+}
+
+/*
+ * retry_attempts=5: failures 1-5 are within budget; failure 6 exhausts it.
+ * This mirrors the original inner-loop check `failed_attempts > retry_attempts`
+ * which allowed exactly retry_attempts reconnect attempts before giving up.
+ */
+static void test_ws_reconnect_budget_within_budget(void)
+{
+	ELA_ASSERT_FALSE(ela_ws_reconnect_budget_exhausted(1, 5));
+	ELA_ASSERT_FALSE(ela_ws_reconnect_budget_exhausted(3, 5));
+	ELA_ASSERT_FALSE(ela_ws_reconnect_budget_exhausted(5, 5));
+}
+
+static void test_ws_reconnect_budget_exhausted_at_limit_plus_one(void)
+{
+	ELA_ASSERT_TRUE(ela_ws_reconnect_budget_exhausted(6, 5));
+}
+
+static void test_ws_reconnect_budget_retry_attempts_one(void)
+{
+	ELA_ASSERT_FALSE(ela_ws_reconnect_budget_exhausted(1, 1));
+	ELA_ASSERT_TRUE(ela_ws_reconnect_budget_exhausted(2, 1));
+}
+
+/*
+ * Regression: wss:// daemonize on arm32-le failed because the TLS connection
+ * was established in the parent before fork().  OpenSSL's no-asm/no-threads
+ * build on arm32-le is not fork-safe; the inherited SSL state caused the
+ * first SSL_write in the child to fail.  The fix is to fork first and connect
+ * in the child, so no TLS state crosses the fork boundary.
+ *
+ * This test verifies that the reconnect budget helper (used by the unified
+ * fork-then-connect loop) handles the boundary exactly as the old two-loop
+ * structure did: with retry_attempts=N the loop makes N reconnect attempts
+ * before declaring exhaustion.
+ */
+static void test_ws_reconnect_budget_matches_original_loop_semantics(void)
+{
+	int i;
+	int max = 5;
+
+	/* Simulate the inner reconnect loop: increment then check. */
+	for (i = 1; i <= max; i++)
+		ELA_ASSERT_FALSE(ela_ws_reconnect_budget_exhausted(i, max));
+
+	/* One past the limit must be exhausted. */
+	ELA_ASSERT_TRUE(ela_ws_reconnect_budget_exhausted(max + 1, max));
+}
+
+/* -------------------------------------------------------------------------
  * ela_is_ws_url
  * ---------------------------------------------------------------------- */
 
@@ -327,6 +388,11 @@ int run_ws_client_runtime_util_tests(void)
 		{ "ws_dispatch_text_empty_payload_ignored",          test_ws_dispatch_text_empty_payload_ignored },
 		{ "ws_dispatch_text_null_payload_ignored",           test_ws_dispatch_text_null_payload_ignored },
 		{ "ws_client_runtime_reconnect_policy",              test_ws_client_runtime_reconnect_policy },
+		{ "ws_reconnect_budget_no_retries_exhausted_on_first_failure", test_ws_reconnect_budget_no_retries_exhausted_on_first_failure },
+		{ "ws_reconnect_budget_within_budget",               test_ws_reconnect_budget_within_budget },
+		{ "ws_reconnect_budget_exhausted_at_limit_plus_one", test_ws_reconnect_budget_exhausted_at_limit_plus_one },
+		{ "ws_reconnect_budget_retry_attempts_one",          test_ws_reconnect_budget_retry_attempts_one },
+		{ "ws_reconnect_budget_matches_original_loop_semantics", test_ws_reconnect_budget_matches_original_loop_semantics },
 		{ "ws_is_ws_url_valid_ws",                           test_ws_is_ws_url_valid_ws },
 		{ "ws_is_ws_url_valid_wss",                          test_ws_is_ws_url_valid_wss },
 		{ "ws_is_ws_url_null",                               test_ws_is_ws_url_null },

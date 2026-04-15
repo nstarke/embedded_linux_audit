@@ -4,6 +4,7 @@
 #include "net/api_key.h"
 #include "net/ela_conf.h"
 #include "net/ws_client.h"
+#include "net/ws_client_runtime_util.h"
 #include "net/ws_url_util.h"
 #include "shell/interactive.h"
 #include "shell/script_exec.h"
@@ -12,6 +13,7 @@
 #include "util/dispatch_parse_util.h"
 
 #include <errno.h>
+#include <fcntl.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -291,49 +293,74 @@ int embedded_linux_audit_dispatch(int argc, char **argv)
 		}
 
 		if (ela_is_ws_url(opts.remote_target)) {
-			struct ela_ws_conn ws;
-
-			if (ela_ws_connect(opts.remote_target, opts.insecure, &ws) != 0) {
-				fprintf(stderr, "--remote: failed to connect to %s\n",
-					opts.remote_target);
-				return 1;
-			}
-
+			/*
+			 * Fork BEFORE establishing the TLS connection so that no
+			 * OpenSSL state (SSL*, SSL_CTX*, DRBG) crosses the fork
+			 * boundary.  On arm32-le the OpenSSL no-asm/no-threads
+			 * build is not fork-safe: the child inheriting a live TLS
+			 * session from the parent causes the first SSL_write after
+			 * fork to fail, preventing the daemon from communicating.
+			 * Plain ws:// (no TLS) is unaffected because only a raw
+			 * socket fd is inherited, which the kernel handles safely.
+			 */
 			pid = fork();
-			if (pid < 0) {
-				ela_ws_close_parent_fd(&ws);
+			if (pid < 0) { /* LCOV_EXCL_START */
 				fprintf(stderr, "--remote: fork failed: %s\n",
 					strerror(errno));
 				return 1;
-			}
+			} /* LCOV_EXCL_STOP */
 
 			if (pid > 0) {
-				ela_ws_close_parent_fd(&ws);
 				fprintf(stdout, "Remote session started (pid=%ld)\n",
 					(long)pid);
 				return 0;
 			}
 
+			/* child: all TLS operations happen here, after fork */
 			setsid();
+
+			/*
+			 * Reopen stdin/stdout/stderr to /dev/null.  On
+			 * embedded targets (powerpc-be, arm32-le) the
+			 * standard fds are often closed at startup.  If
+			 * they are closed, the TLS library's socket will
+			 * be assigned fd 0, 1, or 2 by the kernel, and
+			 * any later fprintf(stderr, ...) or fprintf(stdout,
+			 * ...) call will corrupt the socket stream.
+			 * Opening /dev/null here ensures fds 0-2 are
+			 * occupied before the TLS stack opens any socket.
+			 */
 			{
-				bool reconnect = true; // cppcheck-suppress unreadVariable
+				int devnull = open("/dev/null", O_RDWR);
+
+				if (devnull >= 0) { /* LCOV_EXCL_BR_LINE */
+					if (devnull != STDIN_FILENO)
+						dup2(devnull, STDIN_FILENO);
+					dup2(STDIN_FILENO, STDOUT_FILENO);
+					dup2(STDIN_FILENO, STDERR_FILENO);
+					if (devnull > STDERR_FILENO)
+						close(devnull);
+				}
+			}
+
+			{
+				struct ela_ws_conn ws;
 				int failed_attempts = 0;
 
+				memset(&ws, 0, sizeof(ws));
+				ws.sock = -1;
+
 				for (;;) {
-					if (ela_ws_run_interactive(&ws, argv[0]) ==
-					    ELA_WS_EXIT_CLEAN) {
-						ela_ws_close(&ws);
-						exit(0);
-					}
-					ela_ws_close(&ws);
-
-					if (opts.retry_attempts == 0)
-						break;
-
-					reconnect = false;
-					for (;;) {
+					if (ela_ws_connect(opts.remote_target,
+							   opts.insecure,
+							   &ws) != 0) {
+						fprintf(stderr,
+							"--remote: failed to connect to %s\n",
+							opts.remote_target);
 						failed_attempts++;
-						if (failed_attempts > opts.retry_attempts)
+						if (ela_ws_reconnect_budget_exhausted(
+								failed_attempts,
+								opts.retry_attempts))
 							break;
 						fprintf(stderr,
 							"--remote: reconnect attempt %d/%d, waiting %ds\n",
@@ -341,19 +368,29 @@ int embedded_linux_audit_dispatch(int argc, char **argv)
 							opts.retry_attempts,
 							ELA_RETRY_DELAY_SECS);
 						sleep(ELA_RETRY_DELAY_SECS);
-						if (ela_ws_connect(opts.remote_target,
-								   opts.insecure,
-								   &ws) == 0) {
-							failed_attempts = 0;
-							reconnect = true;
-							break;
-						}
-						fprintf(stderr,
-							"--remote: failed to connect to %s\n",
-							opts.remote_target);
+						continue;
 					}
-					if (!reconnect)
+
+					failed_attempts = 0;
+
+					if (ela_ws_run_interactive(&ws, argv[0]) ==
+					    ELA_WS_EXIT_CLEAN) {
+						ela_ws_close(&ws);
+						exit(0);
+					}
+					ela_ws_close(&ws);
+
+					failed_attempts++;
+					if (ela_ws_reconnect_budget_exhausted(
+							failed_attempts,
+							opts.retry_attempts))
 						break;
+					fprintf(stderr,
+						"--remote: reconnect attempt %d/%d, waiting %ds\n",
+						failed_attempts,
+						opts.retry_attempts,
+						ELA_RETRY_DELAY_SECS);
+					sleep(ELA_RETRY_DELAY_SECS);
 				}
 				fprintf(stderr,
 					"--remote: max retry attempts (%d) reached, exiting\n",
