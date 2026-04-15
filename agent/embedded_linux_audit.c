@@ -304,11 +304,11 @@ int embedded_linux_audit_dispatch(int argc, char **argv)
 			 * socket fd is inherited, which the kernel handles safely.
 			 */
 			pid = fork();
-			if (pid < 0) {
+			if (pid < 0) { /* LCOV_EXCL_START */
 				fprintf(stderr, "--remote: fork failed: %s\n",
 					strerror(errno));
 				return 1;
-			}
+			} /* LCOV_EXCL_STOP */
 
 			if (pid > 0) {
 				fprintf(stdout, "Remote session started (pid=%ld)\n",
@@ -333,7 +333,7 @@ int embedded_linux_audit_dispatch(int argc, char **argv)
 			{
 				int devnull = open("/dev/null", O_RDWR);
 
-				if (devnull >= 0) {
+				if (devnull >= 0) { /* LCOV_EXCL_BR_LINE */
 					if (devnull != STDIN_FILENO)
 						dup2(devnull, STDIN_FILENO);
 					dup2(STDIN_FILENO, STDOUT_FILENO);
