@@ -16,8 +16,10 @@
 #include "ws_session_util.h"
 #include "ws_url_util.h"
 #include "tcp_util.h"
+#include "tcp_runtime_util.h"
 #include "../embedded_linux_audit_cmd.h"
 #include "../shell/interactive.h"
+#include "../util/isa_util.h"
 
 #include <stdarg.h>
 #include <errno.h>
@@ -32,9 +34,14 @@
 #include <sys/wait.h>
 
 #ifdef __linux__
+#include <arpa/inet.h>
+#include <dirent.h>
 #include <ifaddrs.h>
 #include <net/if.h>
+#include <netdb.h>
 #include <netpacket/packet.h>
+#include <sys/ioctl.h>
+#include <sys/socket.h>
 #endif
 
 /* -------------------------------------------------------------------------
@@ -241,12 +248,118 @@ static ssize_t ws_conn_write(const struct ela_ws_conn *ws,
  * Primary MAC address discovery (same as original ws_client.c)
  * ---------------------------------------------------------------------- */
 
+/*
+ * Try to read a MAC from /sys/class/net/<ifname>/address.
+ * Returns 1 on success, 0 on failure.
+ */
+#ifdef __linux__
+static int get_mac_from_sysfs(const char *ifname, char *buf, size_t buf_sz)
+{
+	char path[64 + IFNAMSIZ];
+	FILE *f;
+	char line[32];
+	size_t len;
+
+	snprintf(path, sizeof(path), "/sys/class/net/%s/address", ifname);
+	f = fopen(path, "r");
+	if (!f)
+		return 0;
+	if (!fgets(line, sizeof(line), f)) {
+		fclose(f);
+		return 0;
+	}
+	fclose(f);
+
+	/* strip trailing newline */
+	len = strlen(line);
+	while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r'))
+		line[--len] = '\0';
+
+	/* must look like xx:xx:xx:xx:xx:xx and not be all-zero */
+	if (len != 17)
+		return 0;
+	if (strcmp(line, "00:00:00:00:00:00") == 0)
+		return 0;
+
+	snprintf(buf, buf_sz, "%s", line);
+	return 1;
+}
+
+/*
+ * Try to read a MAC via ioctl SIOCGIFHWADDR on a named interface.
+ * Returns 1 on success, 0 on failure.
+ */
+static int get_mac_via_ioctl(const char *ifname, char *buf, size_t buf_sz)
+{
+	struct ifreq ifr;
+	int sock;
+	unsigned char *m;
+
+	sock = socket(AF_INET, SOCK_DGRAM, 0);
+	if (sock < 0)
+		return 0;
+
+	memset(&ifr, 0, sizeof(ifr));
+	strncpy(ifr.ifr_name, ifname, IFNAMSIZ - 1);
+
+	if (ioctl(sock, SIOCGIFHWADDR, &ifr) < 0) {
+		close(sock);
+		return 0;
+	}
+	close(sock);
+
+	m = (unsigned char *)ifr.ifr_hwaddr.sa_data;
+	if (ela_ws_mac_is_zero(m))
+		return 0;
+
+	ela_ws_format_mac_bytes(m, buf, buf_sz);
+	return 1;
+}
+
+/*
+ * Enumerate /sys/class/net looking for a non-loopback interface
+ * with a valid MAC.  Skips "lo" and any interface named "lo*".
+ * Returns 1 on success, 0 on failure.
+ */
+static int get_mac_from_sysfs_scan(char *buf, size_t buf_sz)
+{
+	DIR *d = opendir("/sys/class/net");
+	struct dirent *ent;
+
+	if (!d)
+		return 0;
+
+	while ((ent = readdir(d)) != NULL) {
+		const char *name = ent->d_name;
+
+		if (name[0] == '.')
+			continue;
+		/* skip loopback */
+		if (strcmp(name, "lo") == 0 || strncmp(name, "lo:", 3) == 0)
+			continue;
+
+		if (get_mac_from_sysfs(name, buf, buf_sz)) {
+			closedir(d);
+			return 1;
+		}
+		if (get_mac_via_ioctl(name, buf, buf_sz)) {
+			closedir(d);
+			return 1;
+		}
+	}
+
+	closedir(d);
+	return 0;
+}
+#endif /* __linux__ */
+
 static void get_primary_mac(char *buf, size_t buf_sz)
 {
 #ifdef __linux__
 	struct ifaddrs *ifap, *ifa;
 	unsigned char *m;
 
+	/* Primary: getifaddrs AF_PACKET (works when CONFIG_PACKET is enabled) */
 	if (getifaddrs(&ifap) == 0) {
 		for (ifa = ifap; ifa; ifa = ifa->ifa_next) {
 			struct sockaddr_ll *sll;
@@ -271,8 +384,15 @@ static void get_primary_mac(char *buf, size_t buf_sz)
 		}
 		freeifaddrs(ifap);
 	}
-#endif
+
+	/* Fallback 1: scan /sys/class/net (works without CONFIG_PACKET) */
+	if (get_mac_from_sysfs_scan(buf, buf_sz))
+		return;
+
+#endif /* __linux__ */
 	snprintf(buf, buf_sz, "unknown");
+	fprintf(stderr, "ws: warning: could not determine device MAC address;"
+		" session will use identifier \"unknown\"\n");
 }
 
 /*
@@ -362,6 +482,60 @@ static int ws_do_handshake(struct ela_ws_conn *ws,
 }
 
 /* -------------------------------------------------------------------------
+ * Host-route injection for restrictive routing environments (Linux only)
+ *
+ * On some devices (e.g. Aruba APs) all traffic is routed through a control
+ * tunnel (tun0) that silently drops arbitrary TCP.  The real internet gateway
+ * exists on a different interface (br0) but at a lower metric, so it is never
+ * chosen automatically.  We work around this by adding an explicit /32 host
+ * route for the WS server via the non-tunnel gateway before connecting.
+ * ---------------------------------------------------------------------- */
+
+#ifdef __linux__
+static void ela_ws_ensure_host_route_via_nontunnel(const char *hostname)
+{
+	struct addrinfo hints;
+	struct addrinfo *res = NULL;
+	char host_ip[INET_ADDRSTRLEN];
+	char gw[INET_ADDRSTRLEN];
+	char cmd[128];
+	FILE *f;
+
+	if (!hostname || !*hostname)
+		return;
+
+	/* Resolve hostname to an IPv4 address */
+	memset(&hints, 0, sizeof(hints));
+	hints.ai_family   = AF_INET;
+	hints.ai_socktype = SOCK_STREAM;
+	if (getaddrinfo(hostname, NULL, &hints, &res) != 0 || !res)
+		return;
+	if (inet_ntop(AF_INET,
+		      &((struct sockaddr_in *)res->ai_addr)->sin_addr,
+		      host_ip, sizeof(host_ip)) == NULL) {
+		freeaddrinfo(res);
+		return;
+	}
+	freeaddrinfo(res);
+
+	/* Get the non-tunnel default gateway from /proc/net/route */
+	f = fopen("/proc/net/route", "r");
+	if (!f)
+		return;
+	if (ela_tcp_get_gateway_from_route_file(f, gw, sizeof(gw)) != 0) {
+		fclose(f);
+		return;
+	}
+	fclose(f);
+
+	/* Add a host route so the server IP bypasses the tunnel interface */
+	snprintf(cmd, sizeof(cmd),
+		 "ip route add %s/32 via %s 2>/dev/null", host_ip, gw);
+	(void)system(cmd);
+}
+#endif /* __linux__ */
+
+/* -------------------------------------------------------------------------
  * Connection
  * ---------------------------------------------------------------------- */
 
@@ -390,6 +564,8 @@ int ela_ws_connect(const char *base_url, int insecure,
 		return -1;
 	}
 
+	fprintf(stderr, "ws: connecting to %s\n", full_url);
+
 	if (ela_ws_parse_url(full_url, host, sizeof(host), &port, path, sizeof(path),
 			     &is_tls) != 0) {
 		fprintf(stderr, "ws: malformed URL: %s\n", full_url);
@@ -402,13 +578,21 @@ int ela_ws_connect(const char *base_url, int insecure,
 		snprintf(ws_out->auth_token, sizeof(ws_out->auth_token),
 			 "%s", api_key);
 
+	/* Ensure server IP is reachable via the real internet gateway, not
+	 * a control tunnel that may silently drop arbitrary TCP connections. */
+#ifdef __linux__
+	ela_ws_ensure_host_route_via_nontunnel(host);
+#endif
+
 	/* TCP connect */
+	fprintf(stderr, "ws: tcp connect to %s:%u\n", host, (unsigned int)port);
 	sock = connect_tcp_host_port_any(host, port);
 	if (sock < 0) {
 		fprintf(stderr, "ws: connect to %s:%u failed\n",
 			host, (unsigned int)port);
 		return -1;
 	}
+	fprintf(stderr, "ws: tcp connected (fd=%d)\n", sock);
 	ws_out->sock   = sock;
 	ws_out->is_tls = is_tls;
 
@@ -417,8 +601,19 @@ int ela_ws_connect(const char *base_url, int insecure,
 		ws_ssl_ctx_t *ctx = NULL;
 		ws_ssl_t     *ssl = NULL;
 		int           rc;
+		struct timeval tls_tv;
 
+		/* 30-second timeout so SSL_connect can't hang indefinitely */
+		tls_tv.tv_sec  = 30;
+		tls_tv.tv_usec = 0;
+		setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO,
+			   &tls_tv, sizeof(tls_tv));
+		setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO,
+			   &tls_tv, sizeof(tls_tv));
+
+		ela_force_conservative_crypto_caps();
 		ws_tls_init();
+		fprintf(stderr, "ws: starting TLS handshake with %s\n", host);
 		ctx = ws_ctx_new();
 		if (!ctx) {
 			fprintf(stderr, "ws: TLS context creation failed\n");
@@ -455,19 +650,26 @@ int ela_ws_connect(const char *base_url, int insecure,
 			  ws_ssl_get_error(ssl, rc) == WS_TLS_WANT_WRITE));
 
 		if (rc != WS_TLS_SUCCESS) {
-			fprintf(stderr, "ws: TLS handshake failed\n");
+			fprintf(stderr, "ws: TLS handshake with %s failed\n", host);
+#ifndef ELA_HAS_WOLFSSL
+			ERR_print_errors_fp(stderr);
+#endif
 			ws_ssl_free(ssl);
 			ws_ctx_free(ctx);
 			goto fail;
 		}
 
+		fprintf(stderr, "ws: TLS handshake complete\n");
 		ws_out->ssl     = ssl;
 		ws_out->ssl_ctx = ctx;
 	}
 
 	/* HTTP WebSocket upgrade */
+	fprintf(stderr, "ws: sending WebSocket upgrade\n");
 	if (ws_do_handshake(ws_out, host, port, path, is_tls) != 0)
 		goto fail_tls;
+
+	fprintf(stderr, "ws: WebSocket upgrade complete\n");
 
 	return 0;
 
@@ -527,6 +729,7 @@ int ela_ws_connect_url(const char *url, int insecure,
 		ws_ssl_t     *ssl = NULL;
 		int           rc;
 
+		ela_force_conservative_crypto_caps();
 		ws_tls_init();
 		ctx = ws_ctx_new();
 		if (!ctx) {
@@ -564,7 +767,10 @@ int ela_ws_connect_url(const char *url, int insecure,
 			  ws_ssl_get_error(ssl, rc) == WS_TLS_WANT_WRITE));
 
 		if (rc != WS_TLS_SUCCESS) {
-			fprintf(stderr, "ws: TLS handshake failed\n");
+			fprintf(stderr, "ws: TLS handshake with %s failed\n", host);
+#ifndef ELA_HAS_WOLFSSL
+			ERR_print_errors_fp(stderr);
+#endif
 			ws_ssl_free(ssl);
 			ws_ctx_free(ctx);
 			goto fail;
@@ -827,6 +1033,10 @@ int ela_ws_run_interactive(struct ela_ws_conn *ws, const char *prog)
 	time_t last_ping_t;
 	char   mac[32];
 	int    child_exited = 0;
+	int    child_status = 0;
+	const char *exit_reason = "unknown";
+
+	fprintf(stderr, "ws: starting interactive session\n");
 
 	if (pipe(pipe_to_loop) != 0 || pipe(pipe_from_loop) != 0) {
 		fprintf(stderr, "ws: pipe: %s\n", strerror(errno));
@@ -838,6 +1048,7 @@ int ela_ws_run_interactive(struct ela_ws_conn *ws, const char *prog)
 	setenv("ELA_SESSION_MAC", mac, 1);
 
 	child = fork();
+	fprintf(stderr, "ws: session process forked (pid=%d)\n", (int)child);
 	if (child < 0) {
 		fprintf(stderr, "ws: fork: %s\n", strerror(errno));
 		return 1;
@@ -866,12 +1077,12 @@ int ela_ws_run_interactive(struct ela_ws_conn *ws, const char *prog)
 		struct timeval tv;
 		int            maxfd;
 		int            sel;
-		int            child_status;
 		uint8_t        opcode;
 		ssize_t        frame_len;
 
 		if (ela_ws_child_wait_exited(waitpid(child, &child_status, WNOHANG))) {
 			child_exited = 1;
+			exit_reason = "session process exited";
 			break;
 		}
 
@@ -899,6 +1110,7 @@ int ela_ws_run_interactive(struct ela_ws_conn *ws, const char *prog)
 		if (sel < 0) {
 			if (errno == EINTR)
 				continue;
+			exit_reason = "select error";
 			break;
 		}
 
@@ -928,8 +1140,10 @@ int ela_ws_run_interactive(struct ela_ws_conn *ws, const char *prog)
 		if (ela_ws_socket_readable(ws_readable, ws->is_tls != 0, pending_bytes)) {
 			frame_len = ws_recv_frame(ws, &opcode,
 						  frame_buf, sizeof(frame_buf));
-			if (frame_len < 0)
+			if (frame_len < 0) {
+				exit_reason = "ws read error";
 				break;
+			}
 
 			{
 				int dispatch_rc = ela_ws_dispatch_incoming_frame(
@@ -938,8 +1152,10 @@ int ela_ws_run_interactive(struct ela_ws_conn *ws, const char *prog)
 					frame_len > 0 ? (size_t)frame_len : 0U,
 					&dispatch_ops,
 					&dispatch_ctx);
-				if (dispatch_rc != 0)
+				if (dispatch_rc != 0) {
+					exit_reason = "ws close frame";
 					break;
+				}
 			}
 		}
 		} /* end ws_readable compound block */
@@ -948,15 +1164,37 @@ int ela_ws_run_interactive(struct ela_ws_conn *ws, const char *prog)
 		if (FD_ISSET(pipe_from_loop[0], &rfds)) {
 			ssize_t n = read(pipe_from_loop[0],
 					 read_buf, sizeof(read_buf));
-			if (ela_ws_child_output_should_break(n))
+			if (ela_ws_child_output_should_break(n)) {
+				exit_reason = "session process pipe closed";
 				break;
+			}
 			ws_send_text(ws, read_buf, (size_t)n);
 		}
 	}
 
+	fprintf(stderr, "ws: relay loop exited: %s\n", exit_reason);
+
 	close(pipe_to_loop[1]);
 	close(pipe_from_loop[0]);
-	waitpid(child, NULL, 0);
+	{
+		int final_status = 0;
+		waitpid(child, &final_status, 0);
+		if (!child_exited) {
+			if (WIFSIGNALED(final_status))
+				fprintf(stderr, "ws: session process killed by signal %d\n",
+					WTERMSIG(final_status));
+			else if (WIFEXITED(final_status))
+				fprintf(stderr, "ws: session process exited with status %d\n",
+					WEXITSTATUS(final_status));
+		} else {
+			if (WIFSIGNALED(child_status))
+				fprintf(stderr, "ws: session process killed by signal %d\n",
+					WTERMSIG(child_status));
+			else if (WIFEXITED(child_status))
+				fprintf(stderr, "ws: session process exited with status %d\n",
+					WEXITSTATUS(child_status));
+		}
+	}
 
 	if (ws->ssl) {
 		ws_ssl_free((ws_ssl_t *)ws->ssl);

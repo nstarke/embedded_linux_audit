@@ -144,16 +144,22 @@ bool ela_isa_supported_for_efi_bios(const char *isa)
 	       !strcmp(normalized, ELA_ISA_AARCH64_LE);
 }
 
-static bool isa_is_arm32_family(const char *isa)
+bool isa_is_arm32_family(const char *isa)
 {
 	if (!isa)
 		return false;
 
-	/* Match the canonical test ISA names used in the QEMU CI harness.
-	 * Native arm32 hardware reports different names (e.g. "armv7l") via
-	 * uname, so those paths keep their hardware-accelerated crypto caps. */
-	return !strcmp(isa, "arm32-le") ||
-	       !strcmp(isa, "arm32-be");
+	/* QEMU CI harness canonical names */
+	if (!strcmp(isa, "arm32-le") || !strcmp(isa, "arm32-be"))
+		return true;
+
+	/* Real hardware: uname(2) returns strings like "armv7l", "armv6l",
+	 * "armv5tel", "armv5tl", "arm".  Match any "arm" prefix that is NOT
+	 * aarch64 (64-bit ARM is handled separately). */
+	if (strncmp(isa, "arm", 3) == 0 && strncmp(isa, "aarch64", 7) != 0)
+		return true;
+
+	return false;
 }
 
 void ela_force_conservative_crypto_caps(void)

@@ -79,6 +79,50 @@ static void test_powerpc_family_null_and_non_powerpc_return_false(void)
 }
 
 /* =========================================================================
+ * isa_is_arm32_family
+ * ====================================================================== */
+
+static void test_arm32_family_qemu_canonical_names(void)
+{
+	ELA_ASSERT_TRUE(isa_is_arm32_family("arm32-le"));
+	ELA_ASSERT_TRUE(isa_is_arm32_family("arm32-be"));
+}
+
+static void test_arm32_family_real_hardware_uname_strings(void)
+{
+	/* Common strings returned by uname(2) on real 32-bit ARM hardware */
+	ELA_ASSERT_TRUE(isa_is_arm32_family("armv7l"));
+	ELA_ASSERT_TRUE(isa_is_arm32_family("armv6l"));
+	ELA_ASSERT_TRUE(isa_is_arm32_family("armv5tel"));
+	ELA_ASSERT_TRUE(isa_is_arm32_family("armv5tl"));
+	ELA_ASSERT_TRUE(isa_is_arm32_family("arm"));
+}
+
+static void test_arm32_family_aarch64_not_matched(void)
+{
+	/* 64-bit ARM must NOT be treated as arm32 */
+	ELA_ASSERT_FALSE(isa_is_arm32_family("aarch64"));
+	ELA_ASSERT_FALSE(isa_is_arm32_family("aarch64-le"));
+	ELA_ASSERT_FALSE(isa_is_arm32_family("aarch64-be"));
+	ELA_ASSERT_FALSE(isa_is_arm32_family("aarch64le"));
+	ELA_ASSERT_FALSE(isa_is_arm32_family("aarch64be"));
+}
+
+static void test_arm32_family_non_arm_not_matched(void)
+{
+	ELA_ASSERT_FALSE(isa_is_arm32_family("x86_64"));
+	ELA_ASSERT_FALSE(isa_is_arm32_family("x86"));
+	ELA_ASSERT_FALSE(isa_is_arm32_family("powerpc"));
+	ELA_ASSERT_FALSE(isa_is_arm32_family("mips"));
+	ELA_ASSERT_FALSE(isa_is_arm32_family("riscv32"));
+}
+
+static void test_arm32_family_null_returns_false(void)
+{
+	ELA_ASSERT_FALSE(isa_is_arm32_family(NULL));
+}
+
+/* =========================================================================
  * ela_isa_supported_for_efi_bios
  * ====================================================================== */
 
@@ -134,6 +178,12 @@ int run_isa_util_tests(void)
 		/* isa_is_powerpc_family */
 		{ "powerpc/all_variants",         test_powerpc_family_all_variants },
 		{ "powerpc/null_and_non_powerpc", test_powerpc_family_null_and_non_powerpc_return_false },
+		/* isa_is_arm32_family */
+		{ "arm32/qemu_canonical_names",       test_arm32_family_qemu_canonical_names },
+		{ "arm32/real_hardware_uname_strings", test_arm32_family_real_hardware_uname_strings },
+		{ "arm32/aarch64_not_matched",        test_arm32_family_aarch64_not_matched },
+		{ "arm32/non_arm_not_matched",        test_arm32_family_non_arm_not_matched },
+		{ "arm32/null_returns_false",         test_arm32_family_null_returns_false },
 		/* ela_isa_supported_for_efi_bios */
 		{ "efi_bios/null",                test_efi_bios_null_returns_false },
 		{ "efi_bios/empty",               test_efi_bios_empty_returns_false },

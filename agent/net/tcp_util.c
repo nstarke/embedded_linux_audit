@@ -240,11 +240,25 @@ int connect_tcp_host_port_any(const char *host, uint16_t port)
 	}
 
 	for (ai = res; ai; ai = ai->ai_next) {
+		char addr_str[INET6_ADDRSTRLEN] = "?";
+
+		if (ai->ai_family == AF_INET) {
+			inet_ntop(AF_INET,
+				  &((struct sockaddr_in *)ai->ai_addr)->sin_addr,
+				  addr_str, sizeof(addr_str));
+		} else if (ai->ai_family == AF_INET6) {
+			inet_ntop(AF_INET6,
+				  &((struct sockaddr_in6 *)ai->ai_addr)->sin6_addr,
+				  addr_str, sizeof(addr_str));
+		}
+		fprintf(stderr, "ws: trying %s\n", addr_str);
+
 		sock = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
 		if (sock < 0)
 			continue;
 		if (connect(sock, ai->ai_addr, ai->ai_addrlen) == 0)
 			break;
+		fprintf(stderr, "ws: %s failed: %s\n", addr_str, strerror(errno));
 		close(sock);
 		sock = -1;
 	}
