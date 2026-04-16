@@ -484,11 +484,11 @@ static int ws_do_handshake(struct ela_ws_conn *ws,
 /* -------------------------------------------------------------------------
  * Host-route injection for restrictive routing environments (Linux only)
  *
- * On some devices (e.g. Aruba APs) all traffic is routed through a control
- * tunnel (tun0) that silently drops arbitrary TCP.  The real internet gateway
- * exists on a different interface (br0) but at a lower metric, so it is never
- * chosen automatically.  We work around this by adding an explicit /32 host
- * route for the WS server via the non-tunnel gateway before connecting.
+ * On some devices all traffic is routed through a control tunnel that silently
+ * drops arbitrary TCP.  The real internet gateway exists on a different
+ * interface but at a lower metric, so it is never chosen automatically.  We
+ * work around this by adding an explicit /32 host route for the WS server via
+ * the non-tunnel gateway before connecting.
  * ---------------------------------------------------------------------- */
 
 #ifdef __linux__

@@ -354,11 +354,10 @@ static void test_get_gateway_from_route_file_skips_non_default_and_finds_default
 static void test_get_gateway_from_route_file_skips_tunnel_default_route(void)
 {
 	/*
-	 * Simulates the Aruba AP routing table where two default routes exist:
-	 *   tun0: destination=0, gateway=0, flags=0x0001 (UP only, no RTF_GATEWAY)
-	 *         — this is the control tunnel; must be skipped
-	 *   br0:  destination=0, gateway=192.168.35.1, flags=0x0003 (UP+GATEWAY)
-	 *         — this is the real internet interface; must be returned
+	 * Two default routes (destination=0) where the first is a tunnel
+	 * interface with no gateway (flags=0x0001, no RTF_GATEWAY) and the
+	 * second is the real internet interface (flags=0x0003, has RTF_GATEWAY).
+	 * The tunnel entry must be skipped; the real gateway must be returned.
 	 *
 	 * 192.168.35.1 in little-endian hex = 0x0123A8C0
 	 */
