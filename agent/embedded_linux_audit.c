@@ -320,24 +320,28 @@ int embedded_linux_audit_dispatch(int argc, char **argv)
 			setsid();
 
 			/*
-			 * Reopen stdin/stdout/stderr to /dev/null.  On
+			 * Fill any closed standard fds with /dev/null.  On
 			 * embedded targets (powerpc-be, arm32-le) the
 			 * standard fds are often closed at startup.  If
 			 * they are closed, the TLS library's socket will
 			 * be assigned fd 0, 1, or 2 by the kernel, and
 			 * any later fprintf(stderr, ...) or fprintf(stdout,
 			 * ...) call will corrupt the socket stream.
-			 * Opening /dev/null here ensures fds 0-2 are
-			 * occupied before the TLS stack opens any socket.
+			 *
+			 * Only redirect fds that are actually closed so
+			 * that error messages remain visible when running
+			 * interactively from a terminal.
 			 */
 			{
 				int devnull = open("/dev/null", O_RDWR);
 
 				if (devnull >= 0) { /* LCOV_EXCL_BR_LINE */
-					if (devnull != STDIN_FILENO)
+					if (fcntl(STDIN_FILENO,  F_GETFD) < 0)
 						dup2(devnull, STDIN_FILENO);
-					dup2(STDIN_FILENO, STDOUT_FILENO);
-					dup2(STDIN_FILENO, STDERR_FILENO);
+					if (fcntl(STDOUT_FILENO, F_GETFD) < 0)
+						dup2(devnull, STDOUT_FILENO);
+					if (fcntl(STDERR_FILENO, F_GETFD) < 0)
+						dup2(devnull, STDERR_FILENO);
 					if (devnull > STDERR_FILENO)
 						close(devnull);
 				}
