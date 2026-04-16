@@ -351,6 +351,29 @@ static void test_get_gateway_from_route_file_skips_non_default_and_finds_default
 	fclose(f);
 }
 
+static void test_get_gateway_from_route_file_skips_tunnel_default_route(void)
+{
+	/*
+	 * Two default routes (destination=0) where the first is a tunnel
+	 * interface with no gateway (flags=0x0001, no RTF_GATEWAY) and the
+	 * second is the real internet interface (flags=0x0003, has RTF_GATEWAY).
+	 * The tunnel entry must be skipped; the real gateway must be returned.
+	 *
+	 * 192.168.35.1 in little-endian hex = 0x0123A8C0
+	 */
+	const char *content =
+		"Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n"
+		"tun0\t00000000\t00000000\t0001\t0\t0\t0\t00000000\t0\t0\t0\n"
+		"br0\t00000000\t0123A8C0\t0003\t0\t0\t100\t00000000\t0\t0\t0\n";
+	char gw[32];
+	FILE *f = fmemopen((void *)content, strlen(content), "r");
+
+	ELA_ASSERT_TRUE(f != NULL);
+	ELA_ASSERT_INT_EQ(0, ela_tcp_get_gateway_from_route_file(f, gw, sizeof(gw)));
+	ELA_ASSERT_STR_EQ("192.168.35.1", gw);
+	fclose(f);
+}
+
 int run_tcp_runtime_util_tests(void)
 {
 	static const struct ela_test_case cases[] = {
@@ -396,6 +419,7 @@ int run_tcp_runtime_util_tests(void)
 		{ "get_gateway_from_route_file_returns_neg1_for_header_only", test_get_gateway_from_route_file_returns_neg1_for_header_only },
 		{ "get_gateway_from_route_file_returns_neg1_for_null", test_get_gateway_from_route_file_returns_neg1_for_null },
 		{ "get_gateway_from_route_file_skips_non_default_and_finds_default", test_get_gateway_from_route_file_skips_non_default_and_finds_default },
+		{ "get_gateway_from_route_file_skips_tunnel_default_route", test_get_gateway_from_route_file_skips_tunnel_default_route },
 	};
 
 	return ela_run_test_suite("tcp_runtime_util", cases, sizeof(cases) / sizeof(cases[0]));

@@ -11,6 +11,11 @@ const char *normalize_isa_name(const char *isa);
 /* Return true if the given ISA string belongs to the PowerPC family. */
 bool isa_is_powerpc_family(const char *isa);
 
+/* Return true if the given ISA string belongs to the 32-bit ARM family.
+ * Matches QEMU CI canonical names ("arm32-le", "arm32-be") as well as real
+ * hardware uname(2) strings ("armv7l", "armv6l", "arm", etc.). */
+bool isa_is_arm32_family(const char *isa);
+
 /* Install the SIGILL debug handler (no-op in non-DEBUG builds). */
 void ela_install_sigill_debug_handler(void);
 
