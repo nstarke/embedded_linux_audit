@@ -281,7 +281,20 @@ static int get_mac_from_sysfs(const char *ifname, char *buf, size_t buf_sz)
 	if (strcmp(line, "00:00:00:00:00:00") == 0)
 		return 0;
 
-	snprintf(buf, buf_sz, "%s", line);
+	/* Parse into raw bytes and reformat via ela_ws_format_mac_bytes so the
+	 * output is built from integer values, not the fgets()-tainted string. */
+	{
+		unsigned int v[6];
+		uint8_t m[6];
+
+		if (sscanf(line, "%02x:%02x:%02x:%02x:%02x:%02x",
+			   &v[0], &v[1], &v[2], &v[3], &v[4], &v[5]) != 6)
+			return 0;
+		m[0] = (uint8_t)v[0]; m[1] = (uint8_t)v[1];
+		m[2] = (uint8_t)v[2]; m[3] = (uint8_t)v[3];
+		m[4] = (uint8_t)v[4]; m[5] = (uint8_t)v[5];
+		ela_ws_format_mac_bytes(m, buf, buf_sz);
+	}
 	return 1;
 }
 
@@ -606,10 +619,12 @@ int ela_ws_connect(const char *base_url, int insecure,
 		/* 30-second timeout so SSL_connect can't hang indefinitely */
 		tls_tv.tv_sec  = 30;
 		tls_tv.tv_usec = 0;
-		setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO,
-			   &tls_tv, sizeof(tls_tv));
-		setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO,
-			   &tls_tv, sizeof(tls_tv));
+		if (setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO,
+			       &tls_tv, sizeof(tls_tv)) != 0)
+			fprintf(stderr, "ws: SO_RCVTIMEO failed: %s\n", strerror(errno));
+		if (setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO,
+			       &tls_tv, sizeof(tls_tv)) != 0)
+			fprintf(stderr, "ws: SO_SNDTIMEO failed: %s\n", strerror(errno));
 
 		ela_force_conservative_crypto_caps();
 		ws_tls_init();

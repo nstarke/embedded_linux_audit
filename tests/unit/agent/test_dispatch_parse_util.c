@@ -105,6 +105,19 @@ static void test_insecure_flag(void)
 	int rc = parse(2, argv, NULL, &opts, NULL, 0);
 	ELA_ASSERT_INT_EQ(0, rc);
 	ELA_ASSERT_TRUE(opts.insecure);
+	ELA_ASSERT_TRUE(opts.insecure_explicit);
+}
+
+static void test_insecure_not_explicit_from_env(void)
+{
+	struct ela_dispatch_env env = empty_env();
+	env.output_insecure = "1";
+	char *argv[] = { "prog" };
+	struct ela_dispatch_opts opts;
+	int rc = parse(1, argv, &env, &opts, NULL, 0);
+	ELA_ASSERT_INT_EQ(0, rc);
+	ELA_ASSERT_TRUE(opts.insecure);
+	ELA_ASSERT_FALSE(opts.insecure_explicit);
 }
 
 /* =========================================================================
@@ -503,6 +516,7 @@ static void test_env_insecure(void)
 	int rc = parse(1, argv, &env, &opts, NULL, 0);
 	ELA_ASSERT_INT_EQ(0, rc);
 	ELA_ASSERT_TRUE(opts.insecure);
+	ELA_ASSERT_FALSE(opts.insecure_explicit);
 }
 
 static void test_env_ws_retry(void)
@@ -581,6 +595,7 @@ static void test_env_api_insecure(void)
 	int rc = parse(1, argv, &env, &opts, NULL, 0);
 	ELA_ASSERT_INT_EQ(0, rc);
 	ELA_ASSERT_TRUE(opts.insecure);
+	ELA_ASSERT_FALSE(opts.insecure_explicit);
 }
 
 static void test_env_script_fallback(void)
@@ -655,6 +670,7 @@ int run_dispatch_parse_util_tests(void)
 		{ "help/word",                          test_help_word },
 		{ "quiet/flag",                         test_quiet_flag },
 		{ "insecure/flag",                      test_insecure_flag },
+		{ "insecure/not_explicit_from_env",     test_insecure_not_explicit_from_env },
 		{ "output_format/space",                test_output_format_space },
 		{ "output_format/equals",               test_output_format_equals },
 		{ "output_format/missing_value",        test_output_format_missing_value },

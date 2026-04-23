@@ -42,6 +42,7 @@ struct ela_dispatch_opts {
 	int         retry_attempts;
 	bool        verbose;
 	bool        insecure;
+	bool        insecure_explicit;  /* --insecure was given on the current command line */
 	bool        output_format_explicit;
 	bool        output_explicit;
 	bool        conf_needs_save;
