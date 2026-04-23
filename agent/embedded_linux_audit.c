@@ -186,7 +186,7 @@ int embedded_linux_audit_dispatch(int argc, char **argv)
 				 "%s", opts.remote_target);
 		snprintf(save_conf.output_format, sizeof(save_conf.output_format),
 			 "%s", opts.output_format ? opts.output_format : "txt");
-		save_conf.insecure = opts.insecure ? 1 : 0;
+		save_conf.insecure = opts.insecure_explicit ? 1 : 0;
 		ela_conf_save(&save_conf);
 	}
 

@@ -111,6 +111,7 @@ int ela_dispatch_parse_args(int argc, char **argv,
 		/* --insecure */
 		if (!strcmp(argv[cmd_idx], "--insecure")) {
 			opts->insecure = true;
+			opts->insecure_explicit = true;
 			cmd_idx++;
 			continue;
 		}
