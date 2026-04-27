@@ -175,6 +175,62 @@ void ela_ensure_dns_configured(void)
 }
 #endif
 
+/* -------------------------------------------------------------------------
+ * Host-route injection for restrictive routing environments (Linux only)
+ *
+ * On some devices all traffic is routed through a control tunnel that silently
+ * drops arbitrary TCP.  The real internet gateway exists on a different
+ * interface but at a lower metric, so it is never chosen automatically.  We
+ * work around this by adding an explicit /32 host route for the destination
+ * via the non-tunnel gateway before connecting.
+ * ---------------------------------------------------------------------- */
+
+#ifdef __linux__
+void ela_ensure_host_route_via_nontunnel(const char *hostname)
+{
+	struct addrinfo hints;
+	struct addrinfo *res = NULL;
+	char host_ip[INET_ADDRSTRLEN];
+	char gw[INET_ADDRSTRLEN];
+	char cmd[128];
+	FILE *f;
+
+	if (!hostname || !*hostname)
+		return;
+
+	memset(&hints, 0, sizeof(hints));
+	hints.ai_family   = AF_INET;
+	hints.ai_socktype = SOCK_STREAM;
+	if (getaddrinfo(hostname, NULL, &hints, &res) != 0 || !res)
+		return;
+	if (inet_ntop(AF_INET,
+		      &((struct sockaddr_in *)res->ai_addr)->sin_addr,
+		      host_ip, sizeof(host_ip)) == NULL) {
+		freeaddrinfo(res);
+		return;
+	}
+	freeaddrinfo(res);
+
+	f = fopen("/proc/net/route", "r");
+	if (!f)
+		return;
+	if (ela_tcp_get_gateway_from_route_file(f, gw, sizeof(gw)) != 0) {
+		fclose(f);
+		return;
+	}
+	fclose(f);
+
+	snprintf(cmd, sizeof(cmd),
+		 "ip route add %s/32 via %s 2>/dev/null", host_ip, gw);
+	(void)system(cmd);
+}
+#else
+void ela_ensure_host_route_via_nontunnel(const char *hostname)
+{
+	(void)hostname;
+}
+#endif
+
 int connect_tcp_host_port(const char *host, uint16_t port)
 {
 	struct in_addr addr;

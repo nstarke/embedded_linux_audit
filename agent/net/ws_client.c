@@ -494,59 +494,6 @@ static int ws_do_handshake(struct ela_ws_conn *ws,
 	return 0;
 }
 
-/* -------------------------------------------------------------------------
- * Host-route injection for restrictive routing environments (Linux only)
- *
- * On some devices all traffic is routed through a control tunnel that silently
- * drops arbitrary TCP.  The real internet gateway exists on a different
- * interface but at a lower metric, so it is never chosen automatically.  We
- * work around this by adding an explicit /32 host route for the WS server via
- * the non-tunnel gateway before connecting.
- * ---------------------------------------------------------------------- */
-
-#ifdef __linux__
-static void ela_ws_ensure_host_route_via_nontunnel(const char *hostname)
-{
-	struct addrinfo hints;
-	struct addrinfo *res = NULL;
-	char host_ip[INET_ADDRSTRLEN];
-	char gw[INET_ADDRSTRLEN];
-	char cmd[128];
-	FILE *f;
-
-	if (!hostname || !*hostname)
-		return;
-
-	/* Resolve hostname to an IPv4 address */
-	memset(&hints, 0, sizeof(hints));
-	hints.ai_family   = AF_INET;
-	hints.ai_socktype = SOCK_STREAM;
-	if (getaddrinfo(hostname, NULL, &hints, &res) != 0 || !res)
-		return;
-	if (inet_ntop(AF_INET,
-		      &((struct sockaddr_in *)res->ai_addr)->sin_addr,
-		      host_ip, sizeof(host_ip)) == NULL) {
-		freeaddrinfo(res);
-		return;
-	}
-	freeaddrinfo(res);
-
-	/* Get the non-tunnel default gateway from /proc/net/route */
-	f = fopen("/proc/net/route", "r");
-	if (!f)
-		return;
-	if (ela_tcp_get_gateway_from_route_file(f, gw, sizeof(gw)) != 0) {
-		fclose(f);
-		return;
-	}
-	fclose(f);
-
-	/* Add a host route so the server IP bypasses the tunnel interface */
-	snprintf(cmd, sizeof(cmd),
-		 "ip route add %s/32 via %s 2>/dev/null", host_ip, gw);
-	(void)system(cmd);
-}
-#endif /* __linux__ */
 
 /* -------------------------------------------------------------------------
  * Connection
@@ -593,9 +540,7 @@ int ela_ws_connect(const char *base_url, int insecure,
 
 	/* Ensure server IP is reachable via the real internet gateway, not
 	 * a control tunnel that may silently drop arbitrary TCP connections. */
-#ifdef __linux__
-	ela_ws_ensure_host_route_via_nontunnel(host);
-#endif
+	ela_ensure_host_route_via_nontunnel(host);
 
 	/* TCP connect */
 	fprintf(stderr, "ws: tcp connect to %s:%u\n", host, (unsigned int)port);
@@ -729,6 +674,10 @@ int ela_ws_connect_url(const char *url, int insecure,
 	if (api_key && *api_key)
 		snprintf(ws_out->auth_token, sizeof(ws_out->auth_token),
 			 "%s", api_key);
+
+	/* Ensure server IP is reachable via the real internet gateway, not
+	 * a control tunnel that may silently drop arbitrary TCP connections. */
+	ela_ensure_host_route_via_nontunnel(host);
 
 	sock = connect_tcp_host_port_any(host, port);
 	if (sock < 0) {

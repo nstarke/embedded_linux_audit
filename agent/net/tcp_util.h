@@ -15,4 +15,7 @@ int connect_tcp_host_port_any(const char *host, uint16_t port);
 /* Ensure /etc/resolv.conf has at least one nameserver when possible. */
 void ela_ensure_dns_configured(void);
 
+/* Add a /32 host route for hostname via the non-tunnel gateway (Linux only). */
+void ela_ensure_host_route_via_nontunnel(const char *hostname);
+
 #endif /* NET_TCP_UTIL_H */
