@@ -730,6 +730,12 @@ int ela_ws_connect_url(const char *url, int insecure,
 		snprintf(ws_out->auth_token, sizeof(ws_out->auth_token),
 			 "%s", api_key);
 
+	/* Ensure server IP is reachable via the real internet gateway, not
+	 * a control tunnel that may silently drop arbitrary TCP connections. */
+#ifdef __linux__
+	ela_ws_ensure_host_route_via_nontunnel(host);
+#endif
+
 	sock = connect_tcp_host_port_any(host, port);
 	if (sock < 0) {
 		fprintf(stderr, "ws: connect to %s:%u failed\n",
