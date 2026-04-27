@@ -2,6 +2,9 @@
 
 #include "embedded_linux_audit_cmd.h"
 #include "linux/remote_copy_cmd_util.h"
+#include "net/tcp_util.h"
+#include "net/tcp_parse_util.h"
+#include "net/http_client_parse_util.h"
 #include "util/remote_copy_util.h"
 #include "util/str_util.h"
 
@@ -436,6 +439,25 @@ int linux_remote_copy_scan_main(int argc, char **argv)
 	};
 	char errbuf[256];
 	int rc;
+
+	/* Ensure output targets are reachable via the real gateway, not a
+	 * control tunnel that may silently drop arbitrary TCP connections. */
+	if (env.output_tcp && *env.output_tcp) {
+		char tcp_host[256];
+		uint16_t tcp_port;
+		if (ela_parse_tcp_target(env.output_tcp, tcp_host, sizeof(tcp_host), &tcp_port) == 0)
+			ela_ensure_host_route_via_nontunnel(tcp_host);
+	}
+	if (env.output_http && *env.output_http) {
+		char http_host[256];
+		if (ela_http_parse_url_authority(env.output_http, http_host, sizeof(http_host), NULL, 0) == 0)
+			ela_ensure_host_route_via_nontunnel(http_host);
+	}
+	if (env.output_https && *env.output_https) {
+		char https_host[256];
+		if (ela_http_parse_url_authority(env.output_https, https_host, sizeof(https_host), NULL, 0) == 0)
+			ela_ensure_host_route_via_nontunnel(https_host);
+	}
 
 	rc = ela_remote_copy_prepare_request(argc, argv, &env, &request, errbuf, sizeof(errbuf));
 	if (rc != 0) {
