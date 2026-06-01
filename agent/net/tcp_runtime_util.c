@@ -121,10 +121,10 @@ int ela_tcp_get_gateway_from_route_file(FILE *f, char *buf, size_t buf_sz)
 	return -1;
 }
 
-static int ela_tcp_parse_default_gateway_line_with_metric(const char *line,
-							  char *buf,
-							  size_t buf_sz,
-							  unsigned int *metric_out)
+int ela_tcp_parse_default_gateway_line_with_metric(const char *line,
+						   char *buf,
+						   size_t buf_sz,
+						   unsigned int *metric_out)
 {
 	char iface[64];
 	unsigned int dest, gw, flags, mask;
