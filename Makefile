@@ -504,6 +504,9 @@ AGENT_UNIT_TEST_SRC := \
 	tests/unit/agent/test_remote_copy_cmd_util.c \
 	tests/unit/agent/test_script_exec_util.c \
 	tests/unit/agent/test_interactive_util.c \
+	tests/unit/agent/test_interactive.c \
+	tests/unit/agent/test_script_exec.c \
+	tests/unit/agent/test_shell_stubs.c \
 	tests/unit/agent/test_linux_execute_command_util.c \
 	tests/unit/agent/test_linux_download_file_util.c \
 	tests/unit/agent/test_linux_grep_util.c \
@@ -526,6 +529,25 @@ AGENT_UNIT_TEST_SRC := \
 	tests/unit/agent/test_uboot_validate_secureboot_util.c \
 	tests/unit/agent/test_uboot_validate_env_security_util.c \
 	tests/unit/agent/test_uboot_validate_cmdline_init_util.c
+
+# The tpm2/ command sources are gated behind ELA_HAS_TPM2 and only built when
+# TPM2 support is enabled.  Their unit tests stub the libtss2/network entry
+# points, so they compile against the tss2 headers alone (no tss2 link needed).
+ifeq ($(ELA_ENABLE_TPM2),1)
+TPM2_UNIT_TEST_SRC := \
+	tests/unit/agent/test_tpm2_util.c \
+	tests/unit/agent/test_tpm2_output.c
+TPM2_UNIT_DEPS := \
+	agent/tpm2/tpm2_util.c \
+	agent/tpm2/tpm2_output.c
+TPM2_UNIT_CFLAGS := -DELA_HAS_TPM2=1 $(TPM2_TSS_CFLAGS)
+else
+TPM2_UNIT_TEST_SRC :=
+TPM2_UNIT_DEPS :=
+TPM2_UNIT_CFLAGS :=
+endif
+AGENT_UNIT_TEST_SRC += $(TPM2_UNIT_TEST_SRC)
+
 AGENT_UNIT_TEST_DEPS := \
 	agent/util/str_util.c \
 	agent/util/isa_util.c \
@@ -595,6 +617,8 @@ AGENT_UNIT_TEST_DEPS := \
 	agent/device/device_scan.c \
 	agent/shell/script_exec_util.c \
 	agent/shell/interactive_util.c \
+	agent/shell/interactive.c \
+	agent/shell/script_exec.c \
 	agent/util/dispatch_util.c \
 	agent/util/dispatch_parse_util.c \
 	agent/uboot/image/uboot_image_scan_util.c \
@@ -1180,8 +1204,8 @@ $(TARGET): $(TARGET_DEPS)
 
 static: all
 
-$(AGENT_UNIT_TEST_BIN): $(AGENT_UNIT_TEST_SRC) $(AGENT_UNIT_TEST_DEPS) $(JSONC_LIB) | $(GENERATED_DIR)
-	$(UNIT_TEST_CC) $(UNIT_TEST_CFLAGS) -I. -Iagent -Ithird_party -Ithird_party/libcsv -I$(JSONC_DIR) -I$(JSONC_BUILD) \
+$(AGENT_UNIT_TEST_BIN): $(AGENT_UNIT_TEST_SRC) $(AGENT_UNIT_TEST_DEPS) $(TPM2_UNIT_DEPS) $(JSONC_LIB) | $(GENERATED_DIR)
+	$(UNIT_TEST_CC) $(UNIT_TEST_CFLAGS) $(TPM2_UNIT_CFLAGS) -I. -Iagent -Ithird_party -Ithird_party/libcsv -I$(JSONC_DIR) -I$(JSONC_BUILD) \
 		-o $@ \
 		$(AGENT_UNIT_TEST_SRC) \
 		third_party/libcsv/libcsv.c \
@@ -1253,12 +1277,15 @@ $(AGENT_UNIT_TEST_BIN): $(AGENT_UNIT_TEST_SRC) $(AGENT_UNIT_TEST_DEPS) $(JSONC_L
 			agent/device/device_scan.c \
 			agent/shell/script_exec_util.c \
 			agent/shell/interactive_util.c \
+			agent/shell/interactive.c \
+			agent/shell/script_exec.c \
 			agent/util/dispatch_util.c \
 			agent/util/dispatch_parse_util.c \
 			agent/uboot/image/uboot_image_scan_util.c \
 			agent/uboot/image/uboot_image_pull_util.c \
 			agent/uboot/image/uboot_image_list_commands_util.c \
 			agent/uboot/image/uboot_image_find_address_util.c \
+			$(TPM2_UNIT_DEPS) \
 			$(JSONC_LIB) \
 			$(UNIT_TEST_LDFLAGS)
 

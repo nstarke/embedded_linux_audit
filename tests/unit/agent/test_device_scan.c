@@ -3,7 +3,10 @@
 #include "test_harness.h"
 #include "../../../agent/embedded_linux_audit_cmd.h"
 
+#include <dirent.h>
+#include <glob.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -448,6 +451,13 @@ static void test_emmc_wrong_prefix_returns_false(void)
 	ELA_ASSERT_FALSE(uboot_is_emmc_block_name("mmcblX0"));
 }
 
+static void test_emmc_digit_then_non_p_returns_false(void)
+{
+	/* digits present but the trailing char after them is not 'p' */
+	ELA_ASSERT_FALSE(uboot_is_emmc_block_name("mmcblk0x"));
+	ELA_ASSERT_FALSE(uboot_is_emmc_block_name("mmcblk12z"));
+}
+
 /* =========================================================================
  * uboot_free_created_nodes
  * ====================================================================== */
@@ -481,6 +491,281 @@ static void test_free_heap_allocated_nodes(void)
 	ELA_ASSERT_TRUE(1);
 
 	(void)i;
+}
+
+/* =========================================================================
+ * uboot_guess_size/erasesize_from_sysfs
+ *
+ * These read hard-coded /sys/class/mtd paths.  A non-MTD name makes
+ * uboot_get_mtd_index() fail (early return); a valid-but-absent index makes
+ * the index parse succeed but read_u64_from_file() hit its open()-failure
+ * path.  Both return 0.
+ * ====================================================================== */
+
+static void test_guess_size_from_sysfs_non_mtd_returns_zero(void)
+{
+	ELA_ASSERT_INT_EQ(0, (int)uboot_guess_size_from_sysfs("/dev/sda"));
+}
+
+static void test_guess_size_from_sysfs_absent_index_returns_zero(void)
+{
+	ELA_ASSERT_INT_EQ(0, (int)uboot_guess_size_from_sysfs("/dev/mtd99999"));
+}
+
+static void test_guess_erasesize_from_sysfs_non_mtd_returns_zero(void)
+{
+	ELA_ASSERT_INT_EQ(0, (int)uboot_guess_erasesize_from_sysfs("/dev/sda"));
+}
+
+static void test_guess_erasesize_from_sysfs_absent_index_returns_zero(void)
+{
+	ELA_ASSERT_INT_EQ(0, (int)uboot_guess_erasesize_from_sysfs("/dev/mtd99999"));
+}
+
+/* =========================================================================
+ * uboot_guess_size/erasesize_from_proc_mtd
+ *
+ * A non-MTD name makes make_proc_mtd_name() yield an empty string (early
+ * return).  A valid MTD name with no matching /proc/mtd entry walks the file
+ * (or fails to open it) and returns 0.
+ * ====================================================================== */
+
+static void test_guess_size_from_proc_mtd_non_mtd_returns_zero(void)
+{
+	ELA_ASSERT_INT_EQ(0, (int)uboot_guess_size_from_proc_mtd("/dev/sda"));
+}
+
+static void test_guess_size_from_proc_mtd_absent_entry_returns_zero(void)
+{
+	ELA_ASSERT_INT_EQ(0, (int)uboot_guess_size_from_proc_mtd("/dev/mtd99999"));
+}
+
+static void test_guess_erasesize_from_proc_mtd_non_mtd_returns_zero(void)
+{
+	ELA_ASSERT_INT_EQ(0, (int)uboot_guess_erasesize_from_proc_mtd("/dev/sda"));
+}
+
+static void test_guess_erasesize_from_proc_mtd_absent_entry_returns_zero(void)
+{
+	ELA_ASSERT_INT_EQ(0, (int)uboot_guess_erasesize_from_proc_mtd("/dev/mtd99999"));
+}
+
+/* =========================================================================
+ * uboot_guess_size/step_from_ubi_sysfs
+ *
+ * A non-UBI name makes uboot_get_ubi_indices() fail (early return); valid
+ * indices with absent attribute files walk every read_u64_from_file() lookup
+ * and return 0.
+ * ====================================================================== */
+
+static void test_guess_size_from_ubi_sysfs_non_ubi_returns_zero(void)
+{
+	ELA_ASSERT_INT_EQ(0, (int)uboot_guess_size_from_ubi_sysfs("/dev/sda"));
+}
+
+static void test_guess_size_from_ubi_sysfs_absent_attrs_returns_zero(void)
+{
+	ELA_ASSERT_INT_EQ(0, (int)uboot_guess_size_from_ubi_sysfs("/dev/ubi99_99"));
+}
+
+static void test_guess_step_from_ubi_sysfs_non_ubi_returns_zero(void)
+{
+	ELA_ASSERT_INT_EQ(0, (int)uboot_guess_step_from_ubi_sysfs("/dev/sda"));
+}
+
+static void test_guess_step_from_ubi_sysfs_absent_attrs_returns_zero(void)
+{
+	ELA_ASSERT_INT_EQ(0, (int)uboot_guess_step_from_ubi_sysfs("/dev/ubi99_99"));
+}
+
+/* =========================================================================
+ * uboot_guess_size/step_from_block_sysfs
+ * ====================================================================== */
+
+static void test_guess_size_from_block_sysfs_null_returns_zero(void)
+{
+	/* dev_basename(NULL) returns NULL -> early return */
+	ELA_ASSERT_INT_EQ(0, (int)uboot_guess_size_from_block_sysfs(NULL));
+}
+
+static void test_guess_size_from_block_sysfs_empty_basename_returns_zero(void)
+{
+	/* trailing slash -> empty basename -> early return */
+	ELA_ASSERT_INT_EQ(0, (int)uboot_guess_size_from_block_sysfs("/dev/"));
+}
+
+static void test_guess_size_from_block_sysfs_absent_returns_zero(void)
+{
+	/* nonexistent device -> /size absent -> sectors == 0 -> return 0 */
+	ELA_ASSERT_INT_EQ(0, (int)uboot_guess_size_from_block_sysfs("/dev/zzznosuchdev0"));
+}
+
+static void test_guess_step_from_block_sysfs_null_returns_zero(void)
+{
+	ELA_ASSERT_INT_EQ(0, (int)uboot_guess_step_from_block_sysfs(NULL));
+}
+
+static void test_guess_step_from_block_sysfs_absent_returns_default_512(void)
+{
+	/* both io-size files absent -> documented 512-byte default */
+	ELA_ASSERT_INT_EQ(512, (int)uboot_guess_step_from_block_sysfs("/dev/zzznosuchdev0"));
+}
+
+/*
+ * If the host exposes any block device, exercise the success path of
+ * read_u64_from_file() and the block-sysfs guessers against a real /size
+ * attribute.  Pure smoke test: it must not crash, and the numeric result is
+ * environment-dependent so it is not asserted.
+ */
+static void test_guess_block_sysfs_real_device_smoke(void)
+{
+	DIR *dir = opendir("/sys/class/block");
+	struct dirent *de;
+
+	if (!dir) {
+		ELA_ASSERT_TRUE(1); /* no sysfs block class available */
+		return;
+	}
+
+	while ((de = readdir(dir))) {
+		char dev[sizeof("/dev/") + sizeof(de->d_name)];
+
+		if (de->d_name[0] == '.')
+			continue;
+
+		snprintf(dev, sizeof(dev), "/dev/%s", de->d_name);
+		(void)uboot_guess_size_from_block_sysfs(dev);
+		(void)uboot_guess_step_from_block_sysfs(dev);
+		(void)uboot_guess_size_any(dev);
+		(void)uboot_guess_step_any(dev);
+		break;
+	}
+
+	closedir(dir);
+	ELA_ASSERT_TRUE(1);
+}
+
+/* =========================================================================
+ * uboot_guess_size_any / uboot_guess_step_any
+ * ====================================================================== */
+
+static void test_guess_size_any_invalid_returns_zero(void)
+{
+	/* No MTD/proc/UBI/block source resolves -> 0 */
+	ELA_ASSERT_INT_EQ(0, (int)uboot_guess_size_any("/dev/zzznosuchdev0"));
+}
+
+static void test_guess_step_any_invalid_returns_block_default_512(void)
+{
+	/*
+	 * MTD/proc/UBI steps all resolve to 0, so the chain falls through to
+	 * uboot_guess_step_from_block_sysfs(), which defaults to 512.
+	 */
+	ELA_ASSERT_INT_EQ(512, (int)uboot_guess_step_any("/dev/zzznosuchdev0"));
+}
+
+/* =========================================================================
+ * uboot_glob_scan_devices
+ * ====================================================================== */
+
+static void test_glob_scan_null_out_returns_minus1(void)
+{
+	ELA_ASSERT_INT_EQ(-1, uboot_glob_scan_devices(NULL, FW_SCAN_GLOB_MTDBLOCK));
+}
+
+static void test_glob_scan_zero_flags_returns_zero(void)
+{
+	glob_t g;
+
+	/* No patterns selected: the loop body never runs, result is empty. */
+	ELA_ASSERT_INT_EQ(0, uboot_glob_scan_devices(&g, 0));
+	globfree(&g);
+}
+
+static void test_glob_scan_each_flag(void)
+{
+	static const unsigned int flags[] = {
+		FW_SCAN_GLOB_MTDBLOCK, FW_SCAN_GLOB_MTDCHAR,
+		FW_SCAN_GLOB_UBI,      FW_SCAN_GLOB_UBIBLOCK,
+		FW_SCAN_GLOB_MMCBLK,   FW_SCAN_GLOB_SDBLK,
+	};
+	size_t i;
+
+	for (i = 0; i < sizeof(flags) / sizeof(flags[0]); i++) {
+		glob_t g;
+
+		ELA_ASSERT_INT_EQ(0, uboot_glob_scan_devices(&g, flags[i]));
+		globfree(&g);
+	}
+}
+
+static void test_glob_scan_all_flags(void)
+{
+	glob_t g;
+	unsigned int all = FW_SCAN_GLOB_MTDBLOCK | FW_SCAN_GLOB_MTDCHAR |
+			   FW_SCAN_GLOB_UBI | FW_SCAN_GLOB_UBIBLOCK |
+			   FW_SCAN_GLOB_MMCBLK | FW_SCAN_GLOB_SDBLK;
+
+	/* Multiple patterns exercise the GLOB_APPEND (did_call) branch. */
+	ELA_ASSERT_INT_EQ(0, uboot_glob_scan_devices(&g, all));
+	globfree(&g);
+}
+
+/* =========================================================================
+ * uboot_ensure_* node scanners
+ *
+ * Run as a non-root user, mknod() fails with EPERM and creates nothing, so
+ * these are effectively read-only directory walks.  /sys/class/mtd and
+ * /sys/class/ubi are usually absent on a build host (opendir fails -> -1),
+ * while /sys/class/block exists (returns 0).  We only assert the return code
+ * is sane and that the calls do not crash.
+ * ====================================================================== */
+
+static void test_ensure_mtd_nodes_collect_smoke(void)
+{
+	char **nodes = NULL;
+	size_t count = 0;
+	int rc = uboot_ensure_mtd_nodes_collect(false, &nodes, &count);
+
+	ELA_ASSERT_TRUE(rc == 0 || rc == -1);
+	uboot_free_created_nodes(nodes, count);
+}
+
+static void test_ensure_ubi_nodes_collect_smoke(void)
+{
+	char **nodes = NULL;
+	size_t count = 0;
+	int rc = uboot_ensure_ubi_nodes_collect(false, &nodes, &count);
+
+	ELA_ASSERT_TRUE(rc == 0 || rc == -1);
+	uboot_free_created_nodes(nodes, count);
+}
+
+static void test_ensure_block_nodes_collect_include_smoke(void)
+{
+	char **nodes = NULL;
+	size_t count = 0;
+	/* include_sd / include_emmc true exercises the name-match arms */
+	int rc = uboot_ensure_block_nodes_collect(false, true, true, &nodes, &count);
+
+	ELA_ASSERT_TRUE(rc == 0 || rc == -1);
+	uboot_free_created_nodes(nodes, count);
+}
+
+static void test_ensure_block_nodes_collect_exclude_smoke(void)
+{
+	/* include flags false exercises the skip-continue arms */
+	int rc = uboot_ensure_block_nodes_collect(false, false, false, NULL, NULL);
+
+	ELA_ASSERT_TRUE(rc == 0 || rc == -1);
+}
+
+static void test_ensure_void_wrappers_smoke(void)
+{
+	uboot_ensure_mtd_nodes(false);
+	uboot_ensure_ubi_nodes(false);
+	uboot_ensure_block_nodes(false, false, false);
+	ELA_ASSERT_TRUE(1);
 }
 
 /* =========================================================================
@@ -556,9 +841,46 @@ int run_device_scan_tests(void)
 		{ "emmc_name/p_no_digits",              test_emmc_p_with_no_digits_returns_false },
 		{ "emmc_name/p_nonnumeric",             test_emmc_p_with_nonnumeric_returns_false },
 		{ "emmc_name/wrong_prefix",             test_emmc_wrong_prefix_returns_false },
+		{ "emmc_name/digit_then_non_p",         test_emmc_digit_then_non_p_returns_false },
 		/* uboot_free_created_nodes */
 		{ "free_nodes/null_no_crash",           test_free_null_nodes_no_crash },
 		{ "free_nodes/heap_allocated",          test_free_heap_allocated_nodes },
+		/* uboot_guess_size/erasesize_from_sysfs */
+		{ "guess/size_sysfs_non_mtd",           test_guess_size_from_sysfs_non_mtd_returns_zero },
+		{ "guess/size_sysfs_absent_index",      test_guess_size_from_sysfs_absent_index_returns_zero },
+		{ "guess/erasesize_sysfs_non_mtd",      test_guess_erasesize_from_sysfs_non_mtd_returns_zero },
+		{ "guess/erasesize_sysfs_absent_index", test_guess_erasesize_from_sysfs_absent_index_returns_zero },
+		/* uboot_guess_size/erasesize_from_proc_mtd */
+		{ "guess/size_proc_mtd_non_mtd",        test_guess_size_from_proc_mtd_non_mtd_returns_zero },
+		{ "guess/size_proc_mtd_absent",         test_guess_size_from_proc_mtd_absent_entry_returns_zero },
+		{ "guess/erasesize_proc_mtd_non_mtd",   test_guess_erasesize_from_proc_mtd_non_mtd_returns_zero },
+		{ "guess/erasesize_proc_mtd_absent",    test_guess_erasesize_from_proc_mtd_absent_entry_returns_zero },
+		/* uboot_guess_size/step_from_ubi_sysfs */
+		{ "guess/size_ubi_non_ubi",             test_guess_size_from_ubi_sysfs_non_ubi_returns_zero },
+		{ "guess/size_ubi_absent_attrs",        test_guess_size_from_ubi_sysfs_absent_attrs_returns_zero },
+		{ "guess/step_ubi_non_ubi",             test_guess_step_from_ubi_sysfs_non_ubi_returns_zero },
+		{ "guess/step_ubi_absent_attrs",        test_guess_step_from_ubi_sysfs_absent_attrs_returns_zero },
+		/* uboot_guess_size/step_from_block_sysfs */
+		{ "guess/size_block_null",              test_guess_size_from_block_sysfs_null_returns_zero },
+		{ "guess/size_block_empty_basename",    test_guess_size_from_block_sysfs_empty_basename_returns_zero },
+		{ "guess/size_block_absent",            test_guess_size_from_block_sysfs_absent_returns_zero },
+		{ "guess/step_block_null",              test_guess_step_from_block_sysfs_null_returns_zero },
+		{ "guess/step_block_absent_default",    test_guess_step_from_block_sysfs_absent_returns_default_512 },
+		{ "guess/block_real_device_smoke",      test_guess_block_sysfs_real_device_smoke },
+		/* uboot_guess_size_any / uboot_guess_step_any */
+		{ "guess/size_any_invalid",             test_guess_size_any_invalid_returns_zero },
+		{ "guess/step_any_invalid_default",     test_guess_step_any_invalid_returns_block_default_512 },
+		/* uboot_glob_scan_devices */
+		{ "glob_scan/null_out",                 test_glob_scan_null_out_returns_minus1 },
+		{ "glob_scan/zero_flags",               test_glob_scan_zero_flags_returns_zero },
+		{ "glob_scan/each_flag",                test_glob_scan_each_flag },
+		{ "glob_scan/all_flags",                test_glob_scan_all_flags },
+		/* uboot_ensure_* node scanners */
+		{ "ensure/mtd_collect_smoke",           test_ensure_mtd_nodes_collect_smoke },
+		{ "ensure/ubi_collect_smoke",           test_ensure_ubi_nodes_collect_smoke },
+		{ "ensure/block_collect_include_smoke", test_ensure_block_nodes_collect_include_smoke },
+		{ "ensure/block_collect_exclude_smoke", test_ensure_block_nodes_collect_exclude_smoke },
+		{ "ensure/void_wrappers_smoke",         test_ensure_void_wrappers_smoke },
 	};
 
 	return ela_run_test_suite("device_scan", cases, sizeof(cases) / sizeof(cases[0]));

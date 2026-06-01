@@ -452,6 +452,79 @@ static void test_highmetric_gateway_returns_neg1_for_null(void)
 	ELA_ASSERT_INT_EQ(-1, ela_tcp_get_highmetric_gateway_from_route_file(NULL, gw, sizeof(gw)));
 }
 
+static void test_highmetric_gateway_returns_neg1_for_empty_file(void)
+{
+	/* No header line at all: the initial fgets() fails and we bail out. */
+	const char *content = "";
+	char gw[32];
+	FILE *f = fmemopen((void *)content, 0, "r");
+
+	ELA_ASSERT_TRUE(f != NULL);
+	ELA_ASSERT_INT_EQ(-1, ela_tcp_get_highmetric_gateway_from_route_file(f, gw, sizeof(gw)));
+	fclose(f);
+}
+
+/* -----------------------------------------------------------------------
+ * ela_tcp_parse_default_gateway_line_with_metric
+ * ---------------------------------------------------------------------- */
+
+static void test_parse_default_gateway_line_with_metric_valid(void)
+{
+	/* 192.168.1.1 in LE hex = 0x0101A8C0, metric 100 */
+	const char *line =
+		"eth0\t00000000\t0101A8C0\t0003\t0\t0\t100\t00000000\t0\t0\t0\n";
+	char gw[32];
+	unsigned int metric = 0;
+
+	ELA_ASSERT_INT_EQ(0, ela_tcp_parse_default_gateway_line_with_metric(
+				    line, gw, sizeof(gw), &metric));
+	ELA_ASSERT_STR_EQ("192.168.1.1", gw);
+	ELA_ASSERT_INT_EQ(100, (int)metric);
+}
+
+static void test_parse_default_gateway_line_with_metric_rejects_null_inputs(void)
+{
+	const char *line =
+		"eth0\t00000000\t0101A8C0\t0003\t0\t0\t100\t00000000\t0\t0\t0\n";
+	char gw[32];
+	unsigned int metric = 0;
+
+	ELA_ASSERT_INT_EQ(-1, ela_tcp_parse_default_gateway_line_with_metric(
+				    NULL, gw, sizeof(gw), &metric));
+	ELA_ASSERT_INT_EQ(-1, ela_tcp_parse_default_gateway_line_with_metric(
+				    line, NULL, sizeof(gw), &metric));
+	ELA_ASSERT_INT_EQ(-1, ela_tcp_parse_default_gateway_line_with_metric(
+				    line, gw, 0, &metric));
+	ELA_ASSERT_INT_EQ(-1, ela_tcp_parse_default_gateway_line_with_metric(
+				    line, gw, sizeof(gw), NULL));
+}
+
+static void test_parse_default_gateway_line_with_metric_rejects_short_line(void)
+{
+	/* Fewer than 8 whitespace-separated fields: sscanf returns < 8. */
+	const char *line = "eth0\t00000000\t0101A8C0\t0003\t0\t0\n";
+	char gw[32];
+	unsigned int metric = 0;
+
+	ELA_ASSERT_INT_EQ(-1, ela_tcp_parse_default_gateway_line_with_metric(
+				    line, gw, sizeof(gw), &metric));
+}
+
+static void test_parse_default_gateway_line_with_metric_rejects_tiny_buffer(void)
+{
+	/*
+	 * A valid default route, but buf is too small to hold the dotted-decimal
+	 * gateway, so inet_ntop() fails and we return -1.
+	 */
+	const char *line =
+		"eth0\t00000000\t0101A8C0\t0003\t0\t0\t100\t00000000\t0\t0\t0\n";
+	char gw[4];
+	unsigned int metric = 0;
+
+	ELA_ASSERT_INT_EQ(-1, ela_tcp_parse_default_gateway_line_with_metric(
+				    line, gw, sizeof(gw), &metric));
+}
+
 int run_tcp_runtime_util_tests(void)
 {
 	static const struct ela_test_case cases[] = {
@@ -504,6 +577,12 @@ int run_tcp_runtime_util_tests(void)
 		{ "highmetric_gateway_skips_zero_gateway_tunnel_entry", test_highmetric_gateway_skips_zero_gateway_tunnel_entry },
 		{ "highmetric_gateway_returns_neg1_when_no_default", test_highmetric_gateway_returns_neg1_when_no_default },
 		{ "highmetric_gateway_returns_neg1_for_null", test_highmetric_gateway_returns_neg1_for_null },
+		{ "highmetric_gateway_returns_neg1_for_empty_file", test_highmetric_gateway_returns_neg1_for_empty_file },
+		/* ela_tcp_parse_default_gateway_line_with_metric */
+		{ "parse_default_gateway_line_with_metric_valid", test_parse_default_gateway_line_with_metric_valid },
+		{ "parse_default_gateway_line_with_metric_rejects_null_inputs", test_parse_default_gateway_line_with_metric_rejects_null_inputs },
+		{ "parse_default_gateway_line_with_metric_rejects_short_line", test_parse_default_gateway_line_with_metric_rejects_short_line },
+		{ "parse_default_gateway_line_with_metric_rejects_tiny_buffer", test_parse_default_gateway_line_with_metric_rejects_tiny_buffer },
 	};
 
 	return ela_run_test_suite("tcp_runtime_util", cases, sizeof(cases) / sizeof(cases[0]));
