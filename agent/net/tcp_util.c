@@ -214,7 +214,7 @@ void ela_ensure_host_route_via_nontunnel(const char *hostname)
 	f = fopen("/proc/net/route", "r");
 	if (!f)
 		return;
-	if (ela_tcp_get_gateway_from_route_file(f, gw, sizeof(gw)) != 0) {
+	if (ela_tcp_get_highmetric_gateway_from_route_file(f, gw, sizeof(gw)) != 0) {
 		fclose(f);
 		return;
 	}

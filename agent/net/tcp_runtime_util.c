@@ -120,3 +120,70 @@ int ela_tcp_get_gateway_from_route_file(FILE *f, char *buf, size_t buf_sz)
 	}
 	return -1;
 }
+
+static int ela_tcp_parse_default_gateway_line_with_metric(const char *line,
+							  char *buf,
+							  size_t buf_sz,
+							  unsigned int *metric_out)
+{
+	char iface[64];
+	unsigned int dest, gw, flags, mask;
+	unsigned int ref, use, metric, mtu, win, irtt;
+	struct in_addr addr;
+	int n;
+
+	if (!line || !buf || buf_sz == 0 || !metric_out)
+		return -1;
+
+	n = sscanf(line, "%63s %X %X %X %u %u %u %X %u %u %u",
+		   iface, &dest, &gw, &flags,
+		   &ref, &use, &metric, &mask,
+		   &mtu, &win, &irtt);
+	if (n < 8)
+		return -1;
+	if (dest != 0 || !(flags & 0x0002) || gw == 0)
+		return -1;
+
+	addr.s_addr = gw;
+	if (!inet_ntop(AF_INET, &addr, buf, (socklen_t)buf_sz))
+		return -1;
+
+	*metric_out = metric;
+	return 0;
+}
+
+int ela_tcp_get_highmetric_gateway_from_route_file(FILE *f, char *buf,
+						   size_t buf_sz)
+{
+	char line[256];
+	char best_gw[INET_ADDRSTRLEN];
+	unsigned int best_metric = 0;
+	int found = 0;
+
+	if (!f || !buf || buf_sz == 0)
+		return -1;
+	/* skip header */
+	if (!fgets(line, (int)sizeof(line), f))
+		return -1;
+
+	while (fgets(line, (int)sizeof(line), f)) {
+		char candidate[INET_ADDRSTRLEN];
+		unsigned int metric = 0;
+
+		if (ela_tcp_parse_default_gateway_line_with_metric(
+			    line, candidate, sizeof(candidate), &metric) != 0)
+			continue;
+
+		if (!found || metric > best_metric) {
+			best_metric = metric;
+			snprintf(best_gw, sizeof(best_gw), "%s", candidate);
+			found = 1;
+		}
+	}
+
+	if (!found)
+		return -1;
+
+	snprintf(buf, buf_sz, "%s", best_gw);
+	return 0;
+}

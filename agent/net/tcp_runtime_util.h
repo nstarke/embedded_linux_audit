@@ -30,4 +30,14 @@ int ela_tcp_read_nameservers_from_file(FILE *f, char ns[][16], int max_ns);
  */
 int ela_tcp_get_gateway_from_route_file(FILE *f, char *buf, size_t buf_sz);
 
+/*
+ * Like ela_tcp_get_gateway_from_route_file, but returns the default gateway
+ * with the HIGHEST metric value among all valid default routes.  On a tunneled
+ * host the tunnel's route has a lower metric (higher priority) and the real
+ * internet gateway has a higher metric, so this selects the physical gateway.
+ * Returns 0 on success, -1 if no valid default route is found.
+ */
+int ela_tcp_get_highmetric_gateway_from_route_file(FILE *f, char *buf,
+						   size_t buf_sz);
+
 #endif
