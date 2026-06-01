@@ -374,6 +374,84 @@ static void test_get_gateway_from_route_file_skips_tunnel_default_route(void)
 	fclose(f);
 }
 
+/* -----------------------------------------------------------------------
+ * ela_tcp_get_highmetric_gateway_from_route_file
+ * ---------------------------------------------------------------------- */
+
+static void test_highmetric_gateway_picks_highest_metric_default_route(void)
+{
+	/*
+	 * Tunnel default route (metric 0, lower metric = higher priority) and
+	 * physical gateway (metric 100, higher metric = lower priority).
+	 * Both have valid gateway IPs with RTF_GATEWAY (flags=0x0003).
+	 * The physical gateway must be returned because it has the higher metric.
+	 *
+	 * 10.8.0.1 in LE hex = 0x0100080A
+	 * 192.168.1.1 in LE hex = 0x0101A8C0
+	 */
+	const char *content =
+		"Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n"
+		"tun0\t00000000\t0100080A\t0003\t0\t0\t0\t00000000\t0\t0\t0\n"
+		"eth0\t00000000\t0101A8C0\t0003\t0\t0\t100\t00000000\t0\t0\t0\n";
+	char gw[32];
+	FILE *f = fmemopen((void *)content, strlen(content), "r");
+
+	ELA_ASSERT_TRUE(f != NULL);
+	ELA_ASSERT_INT_EQ(0, ela_tcp_get_highmetric_gateway_from_route_file(f, gw, sizeof(gw)));
+	ELA_ASSERT_STR_EQ("192.168.1.1", gw);
+	fclose(f);
+}
+
+static void test_highmetric_gateway_returns_only_route_when_one_default(void)
+{
+	const char *content =
+		"Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n"
+		"eth0\t00000000\t0101A8C0\t0003\t0\t0\t0\t00000000\t0\t0\t0\n";
+	char gw[32];
+	FILE *f = fmemopen((void *)content, strlen(content), "r");
+
+	ELA_ASSERT_TRUE(f != NULL);
+	ELA_ASSERT_INT_EQ(0, ela_tcp_get_highmetric_gateway_from_route_file(f, gw, sizeof(gw)));
+	ELA_ASSERT_STR_EQ("192.168.1.1", gw);
+	fclose(f);
+}
+
+static void test_highmetric_gateway_skips_zero_gateway_tunnel_entry(void)
+{
+	/* tun0 with gw=0 (flags has no RTF_GATEWAY) must be skipped entirely */
+	const char *content =
+		"Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n"
+		"tun0\t00000000\t00000000\t0001\t0\t0\t0\t00000000\t0\t0\t0\n"
+		"br0\t00000000\t0123A8C0\t0003\t0\t0\t100\t00000000\t0\t0\t0\n";
+	char gw[32];
+	FILE *f = fmemopen((void *)content, strlen(content), "r");
+
+	ELA_ASSERT_TRUE(f != NULL);
+	ELA_ASSERT_INT_EQ(0, ela_tcp_get_highmetric_gateway_from_route_file(f, gw, sizeof(gw)));
+	ELA_ASSERT_STR_EQ("192.168.35.1", gw);
+	fclose(f);
+}
+
+static void test_highmetric_gateway_returns_neg1_when_no_default(void)
+{
+	const char *content =
+		"Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n"
+		"eth0\t0001A8C0\t00000000\t0001\t0\t0\t0\t00FFFFFF\t0\t0\t0\n";
+	char gw[32];
+	FILE *f = fmemopen((void *)content, strlen(content), "r");
+
+	ELA_ASSERT_TRUE(f != NULL);
+	ELA_ASSERT_INT_EQ(-1, ela_tcp_get_highmetric_gateway_from_route_file(f, gw, sizeof(gw)));
+	fclose(f);
+}
+
+static void test_highmetric_gateway_returns_neg1_for_null(void)
+{
+	char gw[32];
+
+	ELA_ASSERT_INT_EQ(-1, ela_tcp_get_highmetric_gateway_from_route_file(NULL, gw, sizeof(gw)));
+}
+
 int run_tcp_runtime_util_tests(void)
 {
 	static const struct ela_test_case cases[] = {
@@ -420,6 +498,12 @@ int run_tcp_runtime_util_tests(void)
 		{ "get_gateway_from_route_file_returns_neg1_for_null", test_get_gateway_from_route_file_returns_neg1_for_null },
 		{ "get_gateway_from_route_file_skips_non_default_and_finds_default", test_get_gateway_from_route_file_skips_non_default_and_finds_default },
 		{ "get_gateway_from_route_file_skips_tunnel_default_route", test_get_gateway_from_route_file_skips_tunnel_default_route },
+		/* ela_tcp_get_highmetric_gateway_from_route_file */
+		{ "highmetric_gateway_picks_highest_metric_default_route", test_highmetric_gateway_picks_highest_metric_default_route },
+		{ "highmetric_gateway_returns_only_route_when_one_default", test_highmetric_gateway_returns_only_route_when_one_default },
+		{ "highmetric_gateway_skips_zero_gateway_tunnel_entry", test_highmetric_gateway_skips_zero_gateway_tunnel_entry },
+		{ "highmetric_gateway_returns_neg1_when_no_default", test_highmetric_gateway_returns_neg1_when_no_default },
+		{ "highmetric_gateway_returns_neg1_for_null", test_highmetric_gateway_returns_neg1_for_null },
 	};
 
 	return ela_run_test_suite("tcp_runtime_util", cases, sizeof(cases) / sizeof(cases[0]));
