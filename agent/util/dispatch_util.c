@@ -54,6 +54,7 @@ bool ela_command_should_emit_lifecycle_events(int argc, char **argv,
 	    (!strcmp(subcommand, "download-file") ||
 	     !strcmp(subcommand, "list-files") ||
 	     !strcmp(subcommand, "list-symlinks") ||
+	     !strcmp(subcommand, "modules") ||
 	     !strcmp(subcommand, "remote-copy")))
 		return false;
 

@@ -141,6 +141,13 @@ static void test_lifecycle_linux_remote_copy_false(void)
 		3, argv, 1, NULL));
 }
 
+static void test_lifecycle_linux_modules_false(void)
+{
+	char *argv[] = { "prog", "linux", "modules" };
+	ELA_ASSERT_FALSE(ela_command_should_emit_lifecycle_events(
+		3, argv, 1, NULL));
+}
+
 static void test_lifecycle_linux_scan_true(void)
 {
 	char *argv[] = { "prog", "linux", "scan" };
@@ -202,6 +209,7 @@ int run_dispatch_util_tests(void)
 		{ "lifecycle/list-files_false",      test_lifecycle_linux_list_files_false },
 		{ "lifecycle/list-symlinks_false",   test_lifecycle_linux_list_symlinks_false },
 		{ "lifecycle/remote-copy_false",     test_lifecycle_linux_remote_copy_false },
+		{ "lifecycle/modules_false",         test_lifecycle_linux_modules_false },
 		{ "lifecycle/linux_scan_true",       test_lifecycle_linux_scan_true },
 		{ "lifecycle/linux_no_sub_true",     test_lifecycle_linux_no_subcommand_true },
 		{ "lifecycle/uboot_true",            test_lifecycle_uboot_cmd_true },

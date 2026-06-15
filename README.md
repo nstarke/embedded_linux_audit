@@ -33,6 +33,7 @@
 | `linux list-symlinks` | Enumerate symbolic links under a path (optionally recursive) |
 | `linux grep` | Search file contents under a directory for a pattern |
 | `linux download-file` | Fetch a file from an HTTP(S) URL to a local path |
+| `linux netstat` | List listening and active TCP/UDP sockets with PID/program data |
 | `linux remote-copy` | Upload a local file to a remote HTTP(S) endpoint |
 | `linux ssh client` | Open an interactive SSH session (via libssh) |
 | `linux ssh copy` | Transfer files over SFTP |
@@ -42,6 +43,7 @@
 | `linux process watch off <needle>` | Stop watching a previously registered needle |
 | `linux process watch list` | List all active needles and their current matching PIDs |
 | `linux gdbserver <PID> <PORT>` | Attach to a running process and expose a GDB remote stub on the given TCP port; connect with `target remote <agent-ip>:<PORT>` in `gdb-multiarch` |
+| `linux modules` | List, load, unload, and inspect kernel modules directly through `/proc/modules`, module files, and module syscalls |
 
 ### `efi` — EFI/UEFI inspection
 

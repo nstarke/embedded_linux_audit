@@ -56,10 +56,12 @@ static void usage(const char *prog)
 		"  linux grep         Search files in a directory for a string\n"
 		"  linux list-files   List files under a directory (use --recursive to recurse)\n"
 		"  linux list-symlinks List symlinks under a directory (use --recursive to recurse)\n"
+		"  linux netstat      List listening and active TCP/UDP sockets with PID/program data\n"
 		"  linux remote-copy  Copy a local file to remote destination\n"
 		"  linux ssh          SSH client/copy/tunnel operations\n"
 		"  linux process      Watch for process restarts matching a needle string\n"
 		"  linux gdbserver    GDB RSP server; attach gdb-multiarch with target remote\n"
+		"  linux modules      List/load/unload modules and read module vermagic without utilities\n"
 		"  tpm2               Run built-in TPM2 commands through the TPM2-TSS library\n"
 		"  efi orom           EFI option ROM utilities (pull/list)\n"
 		"  efi dump-vars      Dump EFI variables with txt/csv/json formatting\n"
@@ -81,9 +83,14 @@ static void usage(const char *prog)
 		"  %s --output-http http://127.0.0.1:5000/dmesg linux dmesg\n"
 		"  %s linux download-file https://example.com/fw.bin /tmp/fw.bin\n"
 		"  %s --output-format json --output-http http://127.0.0.1:5000 linux execute-command \"uname -a\"\n"
+		"  %s linux modules list\n"
+		"  %s linux modules load --force /tmp/demo.ko debug=1\n"
+		"  %s linux modules unload demo\n"
+		"  %s --output-format json linux modules vermagic /tmp/demo.ko\n"
 		"  %s --output-http http://127.0.0.1:5000 linux grep --search root --path /etc --recursive\n"
 		"  %s --output-http http://127.0.0.1:5000 linux list-files /etc\n"
 		"  %s --output-format json --output-http http://127.0.0.1:5000 linux list-symlinks /etc --recursive\n"
+		"  %s linux netstat\n"
 		"  %s --output-http https://127.0.0.1:5443 linux remote-copy /tmp/fw.bin\n"
 		"  %s linux ssh client 192.168.1.10 --port 22\n"
 		"  %s tpm2 getcap properties-fixed\n"
@@ -98,6 +105,8 @@ static void usage(const char *prog)
 		prog, prog, prog, prog,
 		prog, prog, prog, prog,
 		prog, prog, prog, prog,
+		prog, prog, prog, prog,
+		prog,
 		prog);
 }
 
@@ -553,10 +562,18 @@ int embedded_linux_audit_dispatch(int argc, char **argv)
 		} else if (!strcmp(argv[sub_idx], "list-symlinks"))
 			ret = linux_list_symlinks_scan_main(argc - sub_idx,
 							    argv + sub_idx);
+		else if (!strcmp(argv[sub_idx], "netstat")) {
+			if (opts.output_format_explicit)
+				fprintf(stderr,
+					"Warning: --output-format has no effect for netstat; output is always text/plain\n");
+			ret = linux_netstat_scan_main(argc - sub_idx, argv + sub_idx);
+		}
 		else if (!strcmp(argv[sub_idx], "process"))
 			ret = linux_process_main(argc - sub_idx, argv + sub_idx);
 		else if (!strcmp(argv[sub_idx], "gdbserver"))
 			ret = linux_gdbserver_main(argc - sub_idx, argv + sub_idx);
+		else if (!strcmp(argv[sub_idx], "modules"))
+			ret = linux_kernel_module_main(argc - sub_idx, argv + sub_idx);
 		else {
 			fprintf(stderr, "Unknown linux subcommand: %s\n\n",
 				argv[sub_idx]);

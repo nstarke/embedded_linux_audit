@@ -79,6 +79,7 @@ static void interactive_usage(const char *prog)
 	       "  linux ssh\n"
 	       "  linux process\n"
 	       "  linux gdbserver\n"
+	       "  linux modules\n"
 	       "  tpm2\n"
 	       "  efi orom\n"
 	       "  efi dump-vars\n"
