@@ -42,6 +42,7 @@
 | `linux process watch off <needle>` | Stop watching a previously registered needle |
 | `linux process watch list` | List all active needles and their current matching PIDs |
 | `linux gdbserver <PID> <PORT>` | Attach to a running process and expose a GDB remote stub on the given TCP port; connect with `target remote <agent-ip>:<PORT>` in `gdb-multiarch` |
+| `linux modules` | List, load, and unload kernel modules directly through `/proc/modules` and module syscalls |
 
 ### `efi` — EFI/UEFI inspection
 

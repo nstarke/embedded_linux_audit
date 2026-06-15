@@ -60,6 +60,7 @@ static void usage(const char *prog)
 		"  linux ssh          SSH client/copy/tunnel operations\n"
 		"  linux process      Watch for process restarts matching a needle string\n"
 		"  linux gdbserver    GDB RSP server; attach gdb-multiarch with target remote\n"
+		"  linux modules      List, load, and unload kernel modules without module utilities\n"
 		"  tpm2               Run built-in TPM2 commands through the TPM2-TSS library\n"
 		"  efi orom           EFI option ROM utilities (pull/list)\n"
 		"  efi dump-vars      Dump EFI variables with txt/csv/json formatting\n"
@@ -81,6 +82,9 @@ static void usage(const char *prog)
 		"  %s --output-http http://127.0.0.1:5000/dmesg linux dmesg\n"
 		"  %s linux download-file https://example.com/fw.bin /tmp/fw.bin\n"
 		"  %s --output-format json --output-http http://127.0.0.1:5000 linux execute-command \"uname -a\"\n"
+		"  %s linux modules list\n"
+		"  %s linux modules load --force /tmp/demo.ko debug=1\n"
+		"  %s linux modules unload demo\n"
 		"  %s --output-http http://127.0.0.1:5000 linux grep --search root --path /etc --recursive\n"
 		"  %s --output-http http://127.0.0.1:5000 linux list-files /etc\n"
 		"  %s --output-format json --output-http http://127.0.0.1:5000 linux list-symlinks /etc --recursive\n"
@@ -98,6 +102,7 @@ static void usage(const char *prog)
 		prog, prog, prog, prog,
 		prog, prog, prog, prog,
 		prog, prog, prog, prog,
+		prog, prog, prog,
 		prog);
 }
 
@@ -557,6 +562,8 @@ int embedded_linux_audit_dispatch(int argc, char **argv)
 			ret = linux_process_main(argc - sub_idx, argv + sub_idx);
 		else if (!strcmp(argv[sub_idx], "gdbserver"))
 			ret = linux_gdbserver_main(argc - sub_idx, argv + sub_idx);
+		else if (!strcmp(argv[sub_idx], "modules"))
+			ret = linux_kernel_module_main(argc - sub_idx, argv + sub_idx);
 		else {
 			fprintf(stderr, "Unknown linux subcommand: %s\n\n",
 				argv[sub_idx]);
