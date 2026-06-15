@@ -48,6 +48,7 @@ static void test_prepare_list_load_unload_requests(void)
 		"modules", "load", "--force", "/tmp/demo.ko", "debug=1", "name=demo"
 	};
 	char *unload_argv[] = { "modules", "unload", "demo" };
+	char *vermagic_argv[] = { "modules", "vermagic", "/tmp/demo.ko" };
 
 	ELA_ASSERT_INT_EQ(0, ela_kernel_module_prepare_request(
 		2, list_argv, &req, errbuf, sizeof(errbuf)));
@@ -66,6 +67,11 @@ static void test_prepare_list_load_unload_requests(void)
 		3, unload_argv, &req, errbuf, sizeof(errbuf)));
 	ELA_ASSERT_INT_EQ(ELA_KERNEL_MODULE_ACTION_UNLOAD, req.action);
 	ELA_ASSERT_STR_EQ("demo", req.module_name);
+
+	ELA_ASSERT_INT_EQ(0, ela_kernel_module_prepare_request(
+		3, vermagic_argv, &req, errbuf, sizeof(errbuf)));
+	ELA_ASSERT_INT_EQ(ELA_KERNEL_MODULE_ACTION_VERMAGIC, req.action);
+	ELA_ASSERT_STR_EQ("/tmp/demo.ko", req.module_path);
 }
 
 static void test_prepare_rejects_invalid_requests(void)
@@ -75,6 +81,8 @@ static void test_prepare_rejects_invalid_requests(void)
 	char *load_missing[] = { "modules", "load" };
 	char *unload_missing[] = { "modules", "unload" };
 	char *unload_extra[] = { "modules", "unload", "demo", "extra" };
+	char *vermagic_missing[] = { "modules", "vermagic" };
+	char *vermagic_extra[] = { "modules", "vermagic", "/tmp/demo.ko", "extra" };
 	char *unknown[] = { "modules", "reload", "demo" };
 
 	ELA_ASSERT_INT_EQ(2, ela_kernel_module_prepare_request(
@@ -90,6 +98,14 @@ static void test_prepare_rejects_invalid_requests(void)
 	ELA_ASSERT_TRUE(strstr(errbuf, "exactly one module name") != NULL);
 
 	ELA_ASSERT_INT_EQ(2, ela_kernel_module_prepare_request(
+		2, vermagic_missing, &req, errbuf, sizeof(errbuf)));
+	ELA_ASSERT_TRUE(strstr(errbuf, "exactly one module path") != NULL);
+
+	ELA_ASSERT_INT_EQ(2, ela_kernel_module_prepare_request(
+		4, vermagic_extra, &req, errbuf, sizeof(errbuf)));
+	ELA_ASSERT_TRUE(strstr(errbuf, "exactly one module path") != NULL);
+
+	ELA_ASSERT_INT_EQ(2, ela_kernel_module_prepare_request(
 		3, unknown, &req, errbuf, sizeof(errbuf)));
 	ELA_ASSERT_TRUE(strstr(errbuf, "Unknown modules action") != NULL);
 }
@@ -100,6 +116,7 @@ static void test_prepare_help(void)
 	char errbuf[256];
 	char *argv_top[] = { "modules", "--help" };
 	char *argv_load[] = { "modules", "load", "--help" };
+	char *argv_vermagic[] = { "modules", "vermagic", "--help" };
 
 	ELA_ASSERT_INT_EQ(0, ela_kernel_module_prepare_request(
 		2, argv_top, &req, errbuf, sizeof(errbuf)));
@@ -108,6 +125,39 @@ static void test_prepare_help(void)
 	ELA_ASSERT_INT_EQ(0, ela_kernel_module_prepare_request(
 		3, argv_load, &req, errbuf, sizeof(errbuf)));
 	ELA_ASSERT_TRUE(req.show_help);
+
+	ELA_ASSERT_INT_EQ(0, ela_kernel_module_prepare_request(
+		3, argv_vermagic, &req, errbuf, sizeof(errbuf)));
+	ELA_ASSERT_TRUE(req.show_help);
+}
+
+static void test_extract_vermagic(void)
+{
+	static const unsigned char blob[] =
+		"\x7f""ELF"
+		"license=GPL\0"
+		"vermagic=6.1.0 SMP preempt mod_unload aarch64\0"
+		"name=demo\0";
+	char out[128];
+
+	ELA_ASSERT_INT_EQ(0, ela_kernel_module_extract_vermagic(
+		blob, sizeof(blob) - 1U, out, sizeof(out)));
+	ELA_ASSERT_STR_EQ("6.1.0 SMP preempt mod_unload aarch64", out);
+}
+
+static void test_extract_vermagic_rejects_invalid_inputs(void)
+{
+	static const unsigned char no_vermagic[] = "license=GPL\0name=demo\0";
+	static const unsigned char unterminated[] = "prefix\0vermagic=unterminated";
+	char out[8];
+
+	ELA_ASSERT_INT_EQ(-1, ela_kernel_module_extract_vermagic(NULL, 0, out, sizeof(out)));
+	ELA_ASSERT_INT_EQ(-1, ela_kernel_module_extract_vermagic(no_vermagic,
+		sizeof(no_vermagic) - 1U, out, sizeof(out)));
+	ELA_ASSERT_INT_EQ(-1, ela_kernel_module_extract_vermagic(unterminated,
+		sizeof(unterminated) - 1U, out, sizeof(out)));
+	ELA_ASSERT_INT_EQ(-1, ela_kernel_module_extract_vermagic(
+		(const unsigned char *)"vermagic=too-long\0", 18, out, sizeof(out)));
 }
 
 int run_linux_kernel_module_util_tests(void)
@@ -119,6 +169,8 @@ int run_linux_kernel_module_util_tests(void)
 		{ "prepare/actions", test_prepare_list_load_unload_requests },
 		{ "prepare/invalid", test_prepare_rejects_invalid_requests },
 		{ "prepare/help", test_prepare_help },
+		{ "extract/vermagic", test_extract_vermagic },
+		{ "extract/invalid", test_extract_vermagic_rejects_invalid_inputs },
 	};
 
 	return ela_run_test_suite("linux_kernel_module_util", cases,

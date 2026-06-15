@@ -2,6 +2,7 @@
 
 #include "embedded_linux_audit_cmd.h"
 #include "linux_kernel_module_util.h"
+#include "util/command_io_util.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -36,10 +37,141 @@ static void usage(const char *prog)
 		"Usage: %s list\n"
 		"       %s load [--force] <module.ko> [param=value ...]\n"
 		"       %s unload <module-name>\n"
+		"       %s vermagic <module.ko>\n"
 		"  list reads /proc/modules directly\n"
 		"  load uses finit_module/init_module directly; --force ignores vermagic\n"
-		"  unload uses delete_module directly\n",
-		prog, prog, prog);
+		"  unload uses delete_module directly\n"
+		"  vermagic reads the module file and emits its kernel vermagic\n",
+		prog, prog, prog, prog);
+}
+
+static int append_json_string(char *out, size_t out_len, size_t *pos, const char *value)
+{
+	size_t i;
+
+	if (!out || !out_len || !pos || !value)
+		return -1;
+
+	for (i = 0; value[i]; i++) {
+		unsigned char c = (unsigned char)value[i];
+		const char *esc = NULL;
+		char hex[7];
+		size_t need;
+
+		if (c == '"')
+			esc = "\\\"";
+		else if (c == '\\')
+			esc = "\\\\";
+		else if (c == '\n')
+			esc = "\\n";
+		else if (c == '\r')
+			esc = "\\r";
+		else if (c == '\t')
+			esc = "\\t";
+
+		if (esc) {
+			need = strlen(esc);
+			if (*pos + need >= out_len)
+				return -1;
+			memcpy(out + *pos, esc, need);
+			*pos += need;
+			continue;
+		}
+
+		if (c < 0x20) {
+			snprintf(hex, sizeof(hex), "\\u%04x", c);
+			need = strlen(hex);
+			if (*pos + need >= out_len)
+				return -1;
+			memcpy(out + *pos, hex, need);
+			*pos += need;
+			continue;
+		}
+
+		if (*pos + 1U >= out_len)
+			return -1;
+		out[*pos] = (char)c;
+		(*pos)++;
+	}
+	out[*pos] = '\0';
+	return 0;
+}
+
+static int format_vermagic_payload(const char *format, const char *path,
+				   const char *vermagic, char *out, size_t out_len)
+{
+	size_t pos;
+	int n;
+
+	if (!out || !out_len || !path || !vermagic)
+		return -1;
+
+	if (format && !strcmp(format, "json")) {
+		n = snprintf(out, out_len, "{\"path\":\"");
+		if (n < 0 || (size_t)n >= out_len)
+			return -1;
+		pos = (size_t)n;
+		if (append_json_string(out, out_len, &pos, path) != 0)
+			return -1;
+		n = snprintf(out + pos, out_len - pos, "\",\"vermagic\":\"");
+		if (n < 0 || (size_t)n >= out_len - pos)
+			return -1;
+		pos += (size_t)n;
+		if (append_json_string(out, out_len, &pos, vermagic) != 0)
+			return -1;
+		n = snprintf(out + pos, out_len - pos, "\"}\n");
+		return (n >= 0 && (size_t)n < out_len - pos) ? 0 : -1;
+	}
+
+	if (format && !strcmp(format, "csv"))
+		n = snprintf(out, out_len, "\"%s\",\"%s\"\n", path, vermagic);
+	else
+		n = snprintf(out, out_len, "path=%s vermagic=%s\n", path, vermagic);
+
+	return (n >= 0 && (size_t)n < out_len) ? 0 : -1;
+}
+
+static int emit_payload_remote(const char *payload, const char *upload_type)
+{
+	const char *output_tcp = getenv("ELA_OUTPUT_TCP");
+	const char *output_http = getenv("ELA_OUTPUT_HTTP");
+	const char *output_https = getenv("ELA_OUTPUT_HTTPS");
+	const char *output_uri = output_http && *output_http ? output_http : output_https;
+	const char *format = getenv("ELA_OUTPUT_FORMAT");
+	bool insecure = getenv("ELA_OUTPUT_INSECURE") &&
+		!strcmp(getenv("ELA_OUTPUT_INSECURE"), "1");
+	int rc = 0;
+	size_t len;
+
+	if (!payload)
+		return -1;
+
+	len = strlen(payload);
+	if (output_tcp && *output_tcp) {
+		int sock = ela_connect_tcp_ipv4(output_tcp);
+		if (sock < 0 || ela_send_all(sock, (const uint8_t *)payload, len) != 0)
+			rc = -1;
+		if (sock >= 0)
+			close(sock);
+	}
+
+	if (output_uri && *output_uri) {
+		char errbuf[256];
+		char *upload_uri = ela_http_build_upload_uri(output_uri, upload_type, NULL);
+
+		if (!upload_uri) {
+			rc = -1;
+		} else if (ela_http_post(upload_uri, (const uint8_t *)payload, len,
+					 ela_execute_command_content_type(format),
+					 insecure, false, errbuf, sizeof(errbuf)) != 0) {
+			fprintf(stderr, "Failed to POST module output to %s: %s\n",
+				upload_uri, errbuf[0] ? errbuf : "unknown error");
+			rc = -1;
+		}
+		free(upload_uri);
+	}
+
+	return rc;
 }
 
 static int list_modules(void)
@@ -191,6 +323,70 @@ static int unload_module(const struct ela_kernel_module_request *request)
 #endif
 }
 
+static int print_vermagic(const struct ela_kernel_module_request *request)
+{
+	int fd;
+	struct stat st;
+	unsigned char *buf;
+	size_t off = 0;
+	ssize_t got;
+	char vermagic[512];
+	char payload[2048];
+	const char *format = getenv("ELA_OUTPUT_FORMAT");
+
+	fd = open(request->module_path, O_RDONLY | O_CLOEXEC);
+	if (fd < 0) {
+		fprintf(stderr, "Cannot open module %s: %s\n",
+			request->module_path, strerror(errno));
+		return 1;
+	}
+	if (fstat(fd, &st) != 0 || st.st_size < 0) {
+		fprintf(stderr, "Cannot stat module %s: %s\n",
+			request->module_path, strerror(errno));
+		close(fd);
+		return 1;
+	}
+	buf = malloc((size_t)st.st_size);
+	if (!buf) {
+		fprintf(stderr, "Cannot allocate module buffer\n");
+		close(fd);
+		return 1;
+	}
+	while (off < (size_t)st.st_size) {
+		got = read(fd, buf + off, (size_t)st.st_size - off);
+		if (got <= 0) {
+			fprintf(stderr, "Cannot read module %s: %s\n",
+				request->module_path,
+				got < 0 ? strerror(errno) : "unexpected EOF");
+			free(buf);
+			close(fd);
+			return 1;
+		}
+		off += (size_t)got;
+	}
+	close(fd);
+
+	if (ela_kernel_module_extract_vermagic(buf, (size_t)st.st_size,
+					      vermagic, sizeof(vermagic)) != 0) {
+		fprintf(stderr, "No vermagic found in module %s\n", request->module_path);
+		free(buf);
+		return 1;
+	}
+	free(buf);
+
+	if (format_vermagic_payload(format, request->module_path, vermagic,
+				    payload, sizeof(payload)) != 0) {
+		fprintf(stderr, "Failed to format module vermagic output\n");
+		return 1;
+	}
+
+	fputs(payload, stdout);
+	if (emit_payload_remote(payload, "module-vermagic") != 0)
+		return 1;
+
+	return 0;
+}
+
 int linux_kernel_module_main(int argc, char **argv)
 {
 	struct ela_kernel_module_request request;
@@ -218,6 +414,8 @@ int linux_kernel_module_main(int argc, char **argv)
 		return load_module(&request);
 	if (request.action == ELA_KERNEL_MODULE_ACTION_UNLOAD)
 		return unload_module(&request);
+	if (request.action == ELA_KERNEL_MODULE_ACTION_VERMAGIC)
+		return print_vermagic(&request);
 
 	usage(argv[0]);
 	return 2;

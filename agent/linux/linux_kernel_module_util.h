@@ -14,6 +14,7 @@ enum ela_kernel_module_action {
 	ELA_KERNEL_MODULE_ACTION_LIST,
 	ELA_KERNEL_MODULE_ACTION_LOAD,
 	ELA_KERNEL_MODULE_ACTION_UNLOAD,
+	ELA_KERNEL_MODULE_ACTION_VERMAGIC,
 };
 
 struct ela_kernel_module_record {
@@ -40,5 +41,7 @@ int ela_kernel_module_prepare_request(int argc, char **argv,
 				      struct ela_kernel_module_request *request,
 				      char *errbuf, size_t errbuf_len);
 unsigned int ela_kernel_module_load_flags(const struct ela_kernel_module_request *request);
+int ela_kernel_module_extract_vermagic(const unsigned char *data, size_t data_len,
+				       char *out, size_t out_len);
 
 #endif

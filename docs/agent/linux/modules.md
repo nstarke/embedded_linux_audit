@@ -1,6 +1,6 @@
 # `embedded_linux_audit linux modules` Command
 
-Lists, loads, and unloads Linux kernel modules without invoking module command-line utilities such as `lsmod`, `insmod`, `rmmod`, or `modprobe`.
+Lists, loads, unloads, and inspects Linux kernel modules without invoking module command-line utilities such as `lsmod`, `insmod`, `rmmod`, or `modprobe`.
 
 ## Subcommands
 
@@ -22,6 +22,12 @@ Open the module file and load it with the kernel module syscalls.
 
 Unload a module with the `delete_module` syscall.
 
+### `vermagic <module.ko>`
+
+Read the module file and emit the kernel `vermagic` string from its module metadata.
+
+Output format is controlled by the top-level `--output-format <txt|csv|json>` option. The same payload is also sent to `--output-tcp` and `--output-http` destinations when configured.
+
 ## Examples
 
 ```bash
@@ -30,4 +36,5 @@ Unload a module with the `delete_module` syscall.
 ./embedded_linux_audit linux modules load /tmp/demo.ko debug=1
 ./embedded_linux_audit linux modules load --force /tmp/demo.ko
 ./embedded_linux_audit linux modules unload demo
+./embedded_linux_audit --output-format json linux modules vermagic /tmp/demo.ko
 ```

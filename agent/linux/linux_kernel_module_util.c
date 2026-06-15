@@ -137,6 +137,20 @@ int ela_kernel_module_prepare_request(int argc, char **argv,
 		return 0;
 	}
 
+	if (!strcmp(argv[1], "vermagic")) {
+		request->action = ELA_KERNEL_MODULE_ACTION_VERMAGIC;
+		if (argc == 3 && (!strcmp(argv[2], "-h") || !strcmp(argv[2], "--help"))) {
+			request->show_help = true;
+			return 0;
+		}
+		if (argc != 3) {
+			set_err(errbuf, errbuf_len, "modules vermagic requires exactly one module path");
+			return 2;
+		}
+		request->module_path = argv[2];
+		return 0;
+	}
+
 	set_err(errbuf, errbuf_len, "Unknown modules action");
 	return 2;
 }
@@ -146,4 +160,38 @@ unsigned int ela_kernel_module_load_flags(const struct ela_kernel_module_request
 	if (!request || !request->force_vermagic)
 		return 0;
 	return ELA_MODULE_INIT_IGNORE_VERMAGIC;
+}
+
+int ela_kernel_module_extract_vermagic(const unsigned char *data, size_t data_len,
+				       char *out, size_t out_len)
+{
+	static const char prefix[] = "vermagic=";
+	size_t prefix_len = sizeof(prefix) - 1U;
+	size_t i;
+	size_t j;
+
+	if (!data || !out || out_len == 0)
+		return -1;
+
+	out[0] = '\0';
+	if (data_len < prefix_len)
+		return -1;
+
+	for (i = 0; i <= data_len - prefix_len; i++) {
+		if (memcmp(data + i, prefix, prefix_len) != 0)
+			continue;
+
+		i += prefix_len;
+		for (j = 0; i + j < data_len && data[i + j] != '\0'; j++) {
+			if (j + 1U >= out_len)
+				return -1;
+			out[j] = (char)data[i + j];
+		}
+		if (i + j >= data_len)
+			return -1;
+		out[j] = '\0';
+		return j > 0 ? 0 : -1;
+	}
+
+	return -1;
 }

@@ -60,7 +60,7 @@ static void usage(const char *prog)
 		"  linux ssh          SSH client/copy/tunnel operations\n"
 		"  linux process      Watch for process restarts matching a needle string\n"
 		"  linux gdbserver    GDB RSP server; attach gdb-multiarch with target remote\n"
-		"  linux modules      List, load, and unload kernel modules without module utilities\n"
+		"  linux modules      List/load/unload modules and read module vermagic without utilities\n"
 		"  tpm2               Run built-in TPM2 commands through the TPM2-TSS library\n"
 		"  efi orom           EFI option ROM utilities (pull/list)\n"
 		"  efi dump-vars      Dump EFI variables with txt/csv/json formatting\n"
@@ -85,6 +85,7 @@ static void usage(const char *prog)
 		"  %s linux modules list\n"
 		"  %s linux modules load --force /tmp/demo.ko debug=1\n"
 		"  %s linux modules unload demo\n"
+		"  %s --output-format json linux modules vermagic /tmp/demo.ko\n"
 		"  %s --output-http http://127.0.0.1:5000 linux grep --search root --path /etc --recursive\n"
 		"  %s --output-http http://127.0.0.1:5000 linux list-files /etc\n"
 		"  %s --output-format json --output-http http://127.0.0.1:5000 linux list-symlinks /etc --recursive\n"
@@ -102,7 +103,7 @@ static void usage(const char *prog)
 		prog, prog, prog, prog,
 		prog, prog, prog, prog,
 		prog, prog, prog, prog,
-		prog, prog, prog,
+		prog, prog, prog, prog,
 		prog);
 }
 
