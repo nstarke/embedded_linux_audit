@@ -1,0 +1,5 @@
+# Interactive/script coverage for linux netstat
+linux netstat --help
+ela linux netstat --help
+embedded_linux_audit linux netstat --help
+embedded_linux_audit --output-format json linux netstat --help # inline comment should be ignored
