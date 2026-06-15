@@ -827,6 +827,7 @@ SRC := \
 	agent/linux/linux_list_files_util.c \
 	agent/linux/linux_list_symlinks_cmd.c \
 	agent/linux/linux_list_symlinks_util.c \
+	agent/linux/linux_netstat_cmd.c \
 	agent/linux/linux_remote_copy_cmd.c \
 	agent/linux/remote_copy_cmd_util.c \
 	agent/linux/linux_ssh_cmd.c \

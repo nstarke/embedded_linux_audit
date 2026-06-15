@@ -100,6 +100,7 @@ int linux_grep_scan_main(int argc, char **argv);
 int linux_download_file_scan_main(int argc, char **argv);
 int linux_list_files_scan_main(int argc, char **argv);
 int linux_list_symlinks_scan_main(int argc, char **argv);
+int linux_netstat_scan_main(int argc, char **argv);
 int linux_remote_copy_scan_main(int argc, char **argv);
 int linux_ssh_scan_main(int argc, char **argv);
 int linux_process_main(int argc, char **argv);

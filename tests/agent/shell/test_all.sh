@@ -53,6 +53,7 @@ for test_script in \
     "$SCRIPT_DIR/linux/test_linux_filesystem_integration.sh" \
     "$SCRIPT_DIR/linux/test_linux_list_files_args.sh" \
     "$SCRIPT_DIR/linux/test_linux_list_symlinks_args.sh" \
+    "$SCRIPT_DIR/linux/test_linux_netstat_args.sh" \
     "$SCRIPT_DIR/linux/test_linux_modules_args.sh" \
     "$SCRIPT_DIR/linux/test_linux_remote_copy_args.sh" \
     "$SCRIPT_DIR/linux/test_linux_ssh_args.sh" \

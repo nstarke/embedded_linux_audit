@@ -33,6 +33,7 @@
 | `linux list-symlinks` | Enumerate symbolic links under a path (optionally recursive) |
 | `linux grep` | Search file contents under a directory for a pattern |
 | `linux download-file` | Fetch a file from an HTTP(S) URL to a local path |
+| `linux netstat` | List listening and active TCP/UDP sockets with PID/program data |
 | `linux remote-copy` | Upload a local file to a remote HTTP(S) endpoint |
 | `linux ssh client` | Open an interactive SSH session (via libssh) |
 | `linux ssh copy` | Transfer files over SFTP |
