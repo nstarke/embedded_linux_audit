@@ -40,4 +40,14 @@ int ela_tcp_get_gateway_from_route_file(FILE *f, char *buf, size_t buf_sz);
 int ela_tcp_get_highmetric_gateway_from_route_file(FILE *f, char *buf,
 						   size_t buf_sz);
 
+/*
+ * Parse a single /proc/net/route line as a default route, filling buf with the
+ * gateway in dotted-decimal form and *metric_out with the route metric.
+ * Returns 0 on success, -1 if the line is not a valid default route (RTF_UP |
+ * RTF_GATEWAY, destination 0.0.0.0, non-zero gateway) or on invalid arguments.
+ */
+int ela_tcp_parse_default_gateway_line_with_metric(const char *line, char *buf,
+						   size_t buf_sz,
+						   unsigned int *metric_out);
+
 #endif

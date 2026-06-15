@@ -74,6 +74,12 @@ int run_linux_process_watch_util_tests(void);
 int run_linux_gdbserver_util_tests(void);
 int run_linux_gdbserver_pkt_util_tests(void);
 int run_linux_gdbserver_tunnel_util_tests(void);
+int run_interactive_tests(void);
+int run_script_exec_tests(void);
+#if defined(ELA_HAS_TPM2)
+int run_tpm2_util_tests(void);
+int run_tpm2_output_tests(void);
+#endif
 int run_linux_kernel_module_util_tests(void);
 
 int main(void)
@@ -154,6 +160,12 @@ int main(void)
 	rc |= run_linux_gdbserver_util_tests();
 	rc |= run_linux_gdbserver_pkt_util_tests();
 	rc |= run_linux_gdbserver_tunnel_util_tests();
+	rc |= run_interactive_tests();
+	rc |= run_script_exec_tests();
+#if defined(ELA_HAS_TPM2)
+	rc |= run_tpm2_util_tests();
+	rc |= run_tpm2_output_tests();
+#endif
 	rc |= run_linux_kernel_module_util_tests();
 
 	return rc;
