@@ -32,16 +32,22 @@ function loadPcapWebSocket(options = {}) {
   const auth = {
     checkBearer: jest.fn(() => true),
   };
+  const serverUtils = {
+    isValidMacAddress: jest.fn(() => true),
+    getClientIp: jest.fn((req) => req.socket?.remoteAddress || 'unknown'),
+  };
 
   if (options.auth) Object.assign(auth, options.auth);
 
   jest.spyOn(process.stderr, 'write').mockImplementation(() => true);
   jest.spyOn(process.stdout, 'write').mockImplementation(() => true);
+  jest.doMock('fs', () => jest.requireActual('fs'));
   jest.doMock('ws', () => ({ WebSocketServer }), { virtual: true });
   jest.doMock('../../../../api/auth', () => auth);
+  jest.doMock('../../../../api/agent/serverUtils', () => serverUtils);
 
   const mod = require('../../../../api/agent/pcapWebSocket');
-  return { ...mod, WebSocketServer, auth };
+  return { ...mod, WebSocketServer, auth, serverUtils };
 }
 
 describe('agent pcap websocket receiver', () => {
