@@ -55,6 +55,7 @@ for test_script in \
     "$SCRIPT_DIR/linux/test_linux_list_symlinks_args.sh" \
     "$SCRIPT_DIR/linux/test_linux_netstat_args.sh" \
     "$SCRIPT_DIR/linux/test_linux_modules_args.sh" \
+    "$SCRIPT_DIR/linux/test_linux_pcap_args.sh" \
     "$SCRIPT_DIR/linux/test_linux_remote_copy_args.sh" \
     "$SCRIPT_DIR/linux/test_linux_ssh_args.sh" \
     "$SCRIPT_DIR/tpm2/test_tpm2_args.sh" \

@@ -5,17 +5,20 @@ This guide covers how to run, inspect, and maintain the containerized
 
 ## Services
 
-The default [docker-compose.yml](/home/nick/Documents/git/embedded_linux_audit/docker-compose.yml) starts four containers:
+The default [docker-compose.yml](/home/nick/Documents/git/embedded_linux_audit/docker-compose.yml) starts five containers:
 
 - `postgres` - PostgreSQL database
 - `agent-api` - HTTP upload and asset-serving API
 - `terminal-api` - WebSocket terminal server
+- `gdb-api` - WebSocket GDB RSP bridge
 - `nginx` - frontend reverse proxy for both APIs
 
 Traffic flow:
 
 - `http://localhost/` -> `agent-api`
 - `http://localhost/terminal/<mac>` -> `terminal-api`
+- `http://localhost/gdb/...` -> `gdb-api`
+- `http://localhost/pcap/<mac>` -> `agent-api`
 
 ## Prerequisites
 
@@ -239,6 +242,21 @@ curl -i http://localhost/terminal/test
 That request will not complete a WebSocket handshake, but it confirms nginx is
 routing the path.
 
+Verify the pcap WebSocket path is routed to the agent API:
+
+```bash
+curl -i http://localhost/pcap/aa:bb:cc:dd:ee:ff
+```
+
+That request also will not complete a WebSocket handshake, but it should not be
+handled by the terminal or GDB services. A real capture stream is started from
+the agent with:
+
+```bash
+./embedded_linux_audit --output-http http://localhost/upload \
+  linux pcap --interface eth0
+```
+
 ## Resetting The Stack
 
 ### Soft Reset
@@ -353,6 +371,9 @@ If the upload type is new, confirm it is included in:
 
 - [api/agent/server.js](/home/nick/Documents/git/embedded_linux_audit/api/agent/server.js)
 - [api/lib/db/normalizeUpload.js](/home/nick/Documents/git/embedded_linux_audit/api/lib/db/normalizeUpload.js)
+
+For pcap captures, the database row uses upload type `pcap` and the packet data
+is stored as a `.pcap` artifact under the per-device runtime data directory.
 
 ### Terminal aliases do not appear
 

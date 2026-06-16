@@ -83,6 +83,7 @@ function loadAgentServer(options = {}) {
   const closeDatabase = jest.fn().mockResolvedValue(undefined);
   const persistUpload = jest.fn();
   const createApp = jest.fn(() => 'app-instance');
+  const createPcapWebSocketServer = jest.fn();
   const selectStartupDataDir = jest.fn().mockResolvedValue({
     dataDir: '/repo/data/123',
     timestamp: '123',
@@ -153,6 +154,9 @@ function loadAgentServer(options = {}) {
   jest.doMock('../../../../api/agent/app', () => ({
     createApp,
   }));
+  jest.doMock('../../../../api/agent/pcapWebSocket', () => ({
+    createPcapWebSocketServer,
+  }));
   jest.doMock('../../../../api/agent/serverUtils', () => ({
     findProjectRoot: jest.fn(() => '/repo'),
     isValidMacAddress: jest.fn(),
@@ -182,6 +186,7 @@ function loadAgentServer(options = {}) {
     runMigrations,
     closeDatabase,
     createApp,
+    createPcapWebSocketServer,
     persistUpload,
     loadApiKeyHashes,
     selectStartupDataDir,
@@ -371,6 +376,12 @@ describe('agent server', () => {
       verbose: true,
       persistUpload: loaded.persistUpload,
     }));
+    expect(loaded.createPcapWebSocketServer).toHaveBeenCalledWith({
+      server: loaded.httpServer,
+      dataDir: '/repo/data/123',
+      persistUpload: loaded.persistUpload,
+      verbose: true,
+    });
     expect(loaded.httpServer.listen).toHaveBeenCalledWith(5050, '127.0.0.1', expect.any(Function));
     expect(loaded.consoleLog).toHaveBeenCalledWith(expect.stringContaining('Skipping release asset sync; serving assets from'));
     expect(loaded.processOn).toHaveBeenCalledWith('SIGINT', expect.any(Function));

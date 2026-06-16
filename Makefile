@@ -378,6 +378,10 @@ LIBSSH_BUILD  := $(LIBSSH_DIR)/build-$(CC_TAG)
 # builds because OUTPUT_SUFFIX is empty in that case.
 LIBSSH_LIB    := $(LIBSSH_BUILD)/src/libssh.a
 LIBSSH_CFLAGS := -I$(LIBSSH_DIR)/include -I$(LIBSSH_BUILD)/include -I$(LIBSSH_BUILD)
+LIBPCAP_DIR   := third_party/libpcap
+LIBPCAP_BUILD := $(LIBPCAP_DIR)/build-$(CC_TAG)
+LIBPCAP_LIB   := $(LIBPCAP_BUILD)/libpcap.a
+LIBPCAP_CFLAGS := -I$(LIBPCAP_DIR) -I$(LIBPCAP_BUILD)
 TPM2_TSS_DIR := third_party/tpm2-tss
 TPM2_TSS_BUILD := $(TPM2_TSS_DIR)/build-$(CC_TAG)
 TPM2_TSS_BUILD_STAMP := $(TPM2_TSS_BUILD)/.ela-build-stamp
@@ -516,6 +520,7 @@ AGENT_UNIT_TEST_SRC := \
 	tests/unit/agent/test_linux_gdbserver_util.c \
 	tests/unit/agent/test_linux_gdbserver_pkt_util.c \
 	tests/unit/agent/test_linux_gdbserver_tunnel_util.c \
+	tests/unit/agent/test_linux_pcap_cmd_util.c \
 	tests/unit/agent/test_linux_kernel_module_util.c \
 	tests/unit/agent/test_device_scan.c \
 	tests/unit/agent/test_dispatch_util.c \
@@ -615,6 +620,7 @@ AGENT_UNIT_TEST_DEPS := \
 	agent/linux/linux_gdbserver_util.c \
 	agent/linux/linux_gdbserver_pkt_util.c \
 	agent/linux/linux_gdbserver_tunnel_util.c \
+	agent/linux/linux_pcap_cmd_util.c \
 	agent/linux/linux_kernel_module_util.c \
 	agent/device/device_scan.c \
 	agent/shell/script_exec_util.c \
@@ -658,6 +664,7 @@ AGENT_UNIT_TEST_DEPS := \
 	agent/linux/linux_gdbserver_util.h \
 	agent/linux/linux_gdbserver_pkt_util.h \
 	agent/linux/linux_gdbserver_tunnel_util.h \
+	agent/linux/linux_pcap_cmd_util.h \
 	agent/linux/linux_kernel_module_util.h \
 	agent/net/ela_conf_util.h \
 	agent/net/ela_conf.h \
@@ -705,6 +712,7 @@ CFLAGS += $(JSONC_CFLAGS)
 CFLAGS += $(LIBXML2_CFLAGS)
 CFLAGS += $(CURL_CFLAGS)
 CFLAGS += $(LIBSSH_CFLAGS)
+CFLAGS += $(LIBPCAP_CFLAGS)
 ifeq ($(ELA_ENABLE_WOLFSSL),1)
 CFLAGS += $(WOLFSSL_CFLAGS)
 CFLAGS += -DELA_HAS_WOLFSSL=1
@@ -863,6 +871,8 @@ SRC := \
 	agent/linux/linux_gdbserver_cmd.c \
 	agent/linux/linux_kernel_module_util.c \
 	agent/linux/linux_kernel_module_cmd.c \
+	agent/linux/linux_pcap_cmd_util.c \
+	agent/linux/linux_pcap_cmd.c \
 	agent/tpm2/tpm2_cmd.c \
 	agent/tpm2/tpm2_util.c \
 	agent/tpm2/tpm2_output.c \
@@ -1039,6 +1049,11 @@ $(LIBSSH_LIB): $(OPENSSL_SSL_LIB) $(ZLIB_LIB)
 	cmake -S $(LIBSSH_DIR) -B $(LIBSSH_BUILD) $(LIBSSH_CMAKE_ARGS) -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DBUILD_STATIC_LIB=ON -DWITH_EXAMPLES=OFF -DUNIT_TESTING=OFF -DCLIENT_TESTING=OFF -DSERVER_TESTING=OFF -DWITH_SERVER=OFF -DWITH_GSSAPI=OFF -DWITH_NACL=OFF -DWITH_ZLIB=ON -DZLIB_INCLUDE_DIR="$(abspath $(ZLIB_DIR))" -DZLIB_LIBRARY="$(abspath $(ZLIB_LIB))" -DOPENSSL_ROOT_DIR="$(abspath $(OPENSSL_INSTALL))" -DOPENSSL_INCLUDE_DIR="$(abspath $(OPENSSL_INSTALL))/include" -DOPENSSL_CRYPTO_LIBRARY="$(abspath $(OPENSSL_LIB))" -DWITH_PCAP=OFF -DWITH_DEBUG_CALLTRACE=OFF
 	cmake --build $(LIBSSH_BUILD) --parallel $(JOBS) --target ssh-static
 
+$(LIBPCAP_LIB):
+	rm -rf $(LIBPCAP_BUILD)
+	cmake -S $(LIBPCAP_DIR) -B $(LIBPCAP_BUILD) $(CMAKE_CC_ARGS) -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DENABLE_REMOTE=OFF -DBUILD_WITH_LIBNL=OFF -DDISABLE_BLUETOOTH=ON -DDISABLE_DBUS=ON -DDISABLE_RDMA=ON -DDISABLE_DAG=ON -DDISABLE_SNF=ON
+	cmake --build $(LIBPCAP_BUILD) --parallel $(JOBS) --target pcap_static
+
 $(TPM2_TSS_BUILD_STAMP): $(OPENSSL_SSL_LIB)
 	if [ ! -x "$(TPM2_TSS_DIR)/configure" ] || [ ! -f "$(TPM2_TSS_DIR)/src_vars.mk" ] || [ ! -f "$(TPM2_TSS_DIR)/aclocal.m4" ] || [ ! -f "$(TPM2_TSS_DIR)/config.guess" ] || [ ! -f "$(TPM2_TSS_DIR)/config.sub" ] || [ ! -f "$(TPM2_TSS_DIR)/install-sh" ] || grep -qE '\b(AX_[A-Z0-9_]+|DX_[A-Z0-9_]+)\b' "$(TPM2_TSS_DIR)/configure"; then \
 		$(MAKE) check-autoreconf; \
@@ -1191,8 +1206,8 @@ $(READLINE_BUILD_STAMP):
 	$(MAKE) -C $(READLINE_DIR) -j$(JOBS) libreadline.a libhistory.a
 	touch $@
 
-TARGET_DEPS := $(SRC) $(ZLIB_LIB) $(LIBUBOOTENV_LIB) $(LIBEFIVAR_BUILD_STAMP) $(LIBEFIVAR_LINK_LIB) $(JSONC_LIB) $(LIBXML2_LIB) $(CURL_LIB) $(LIBSSH_LIB) $(OPENSSL_SSL_LIB) $(OPENSSL_LIB) $(READLINE_DEPS)
-TARGET_LIBS := $(LIBUBOOTENV_LIB) $(LIBEFIVAR_LINK_LIB) $(JSONC_LIB) $(LIBXML2_LIB) $(CURL_LIB) $(LIBSSH_LIB) $(ZLIB_LIB) -lm
+TARGET_DEPS := $(SRC) $(ZLIB_LIB) $(LIBUBOOTENV_LIB) $(LIBEFIVAR_BUILD_STAMP) $(LIBEFIVAR_LINK_LIB) $(JSONC_LIB) $(LIBXML2_LIB) $(CURL_LIB) $(LIBSSH_LIB) $(LIBPCAP_LIB) $(OPENSSL_SSL_LIB) $(OPENSSL_LIB) $(READLINE_DEPS)
+TARGET_LIBS := $(LIBUBOOTENV_LIB) $(LIBEFIVAR_LINK_LIB) $(JSONC_LIB) $(LIBXML2_LIB) $(CURL_LIB) $(LIBSSH_LIB) $(LIBPCAP_LIB) $(ZLIB_LIB) -lm
 ifeq ($(ELA_ENABLE_TPM2),1)
 TARGET_DEPS += $(TPM2_TSS_BUILD_STAMP)
 TARGET_LIBS += $(TPM2_TSS_ESYS_LIB) $(TPM2_TSS_SYS_LIB) $(TPM2_TSS_TCTI_DEVICE_LIB) $(TPM2_TSS_MU_LIB) $(TPM2_TSS_RC_LIB)
@@ -1280,6 +1295,7 @@ $(AGENT_UNIT_TEST_BIN): $(AGENT_UNIT_TEST_SRC) $(AGENT_UNIT_TEST_DEPS) $(TPM2_UN
 			agent/linux/linux_gdbserver_util.c \
 			agent/linux/linux_gdbserver_pkt_util.c \
 			agent/linux/linux_gdbserver_tunnel_util.c \
+			agent/linux/linux_pcap_cmd_util.c \
 			agent/linux/linux_kernel_module_util.c \
 			agent/device/device_scan.c \
 			agent/shell/script_exec_util.c \
@@ -1350,6 +1366,7 @@ clean:
 	rm -rf $(ZLIB_DIR)/build*
 	rm -rf $(CURL_DIR)/build*
 	rm -rf $(LIBSSH_DIR)/build*
+	rm -rf $(LIBPCAP_DIR)/build*
 	rm -rf $(TPM2_TSS_DIR)/build*
 	rm -rf $(WOLFSSL_DIR)/build*
 	-cd $(OPENSSL_DIR) && $(MAKE) distclean >/dev/null 2>&1 || true

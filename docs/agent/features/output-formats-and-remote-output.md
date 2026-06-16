@@ -43,6 +43,11 @@ Remote output notes:
 - `./embedded_linux_audit --output-http <https://host:port/path> linux dmesg` sends dmesg text output in a single HTTPS POST request with `Content-Type: text/plain; charset=utf-8`, using embedded CA certificates.
 - `./embedded_linux_audit --insecure --output-http <https://host:port/path> linux dmesg` disables TLS certificate and hostname verification for HTTPS output.
 - `--output-format` does not affect `linux dmesg`; if specified, a warning is emitted.
+- `./embedded_linux_audit linux pcap --interface <ifname>` writes binary pcap data to stdout.
+- `./embedded_linux_audit --output-http <http://host:port/path> linux pcap --interface <ifname>` streams binary pcap data over WebSocket to `ws://host:port/pcap/<mac>`.
+- `./embedded_linux_audit --output-http <https://host:port/path> linux pcap --interface <ifname>` streams binary pcap data over WebSocket to `wss://host:port/pcap/<mac>`, using embedded CA certificates.
+- `./embedded_linux_audit --insecure --output-http <https://host:port/path> linux pcap --interface <ifname>` disables TLS certificate and hostname verification for the pcap WebSocket stream.
+- `--output-format` does not affect `linux pcap`; if specified, a warning is emitted.
 - `./embedded_linux_audit --output-tcp <ip:port> linux remote-copy <path>` sends raw file bytes over TCP.
 - `./embedded_linux_audit --output-http <http://host:port/path> linux remote-copy <path>` sends raw file bytes in a single HTTP POST request with `Content-Type: application/octet-stream`, using the API upload type `file` and including the absolute source path as `filePath`.
 - `./embedded_linux_audit --output-http <https://host:port/path> linux remote-copy <path>` sends raw file bytes in a single HTTPS POST request with `Content-Type: application/octet-stream`, using the API upload type `file` and including the absolute source path as `filePath`, using embedded CA certificates.

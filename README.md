@@ -35,6 +35,7 @@
 | `linux download-file` | Fetch a file from an HTTP(S) URL to a local path |
 | `linux netstat` | List listening and active TCP/UDP sockets with PID/program data |
 | `linux remote-copy` | Upload a local file to a remote HTTP(S) endpoint |
+| `linux pcap` | Capture packets from an interface as pcap data; stream to the agent API over WebSocket when `--output-http` is configured |
 | `linux ssh client` | Open an interactive SSH session (via libssh) |
 | `linux ssh copy` | Transfer files over SFTP |
 | `linux ssh tunnel` | Establish a reverse SSH tunnel |
@@ -84,7 +85,7 @@ Running `ela` with no arguments starts a REPL that exposes all command groups ab
 |---|---|
 | `--output-format <txt\|csv\|json>` | Output encoding (default: `txt`) |
 | `--output-tcp <ip:port>` | Stream command output to a TCP listener |
-| `--output-http <url>` | POST command output to an HTTP(S) endpoint |
+| `--output-http <url>` | POST command output to an HTTP(S) endpoint; `linux pcap` uses the same base URL to open `ws(s)://.../pcap/<mac>` |
 | `--script <path\|url>` | Execute commands from a local or remote script file |
 | `--remote <target>` | Connect to a reverse-shell/WebSocket terminal before starting |
 | `--api-key <key>` | Bearer token for API server authentication |
@@ -100,6 +101,7 @@ API keys are also read from the `ELA_API_KEY` environment variable or `/tmp/ela.
 A Node.js HTTP(S) server that acts as a collection point for agent data and a distribution server for binaries and test scripts.
 
 - Accepts `POST /:mac/upload/:type` for command output, dmesg, file contents, EFI variables, option ROM data, U-Boot images, and environment dumps
+- Accepts `ws(s)://host/pcap/<mac>` for streaming `linux pcap` captures as binary pcap data
 - Normalizes uploads into a PostgreSQL schema and stores raw payloads alongside relational records
 - Optionally keeps runtime file artifacts under timestamped per-device directories in `api/agent/data/`
 - Serves release binaries (with optional auto-download from GitHub), test scripts, and U-Boot environment files
@@ -133,7 +135,7 @@ See [docs/api/terminal/index.md](docs/api/terminal/index.md).
 
 ### nginx reverse proxy (`nginx/ela.conf`)
 
-An example nginx configuration that exposes both server components behind a single frontend — HTTP on port 80 and HTTPS on port 443 — routing `/terminal/<mac>` to the WebSocket terminal server and everything else to the agent helper API.
+An example nginx configuration that exposes the server components behind a single frontend — HTTP on port 80 and HTTPS on port 443 — routing `/terminal/<mac>` to the WebSocket terminal server, `/gdb/` to the GDB bridge, `/pcap/<mac>` to the agent API WebSocket receiver, and everything else to the agent helper API.
 
 See [docs/api/nginx.md](docs/api/nginx.md).
 
@@ -149,6 +151,7 @@ The default stack exposes:
 
 - `http://localhost/` → agent helper API
 - `http://localhost/terminal/<mac>` → terminal WebSocket endpoint
+- `http://localhost/pcap/<mac>` → pcap capture WebSocket endpoint
 
 The agent API container runs database migrations automatically on startup. Compose defaults target the bundled PostgreSQL container using the `ela`/`ela` credentials defined in `docker-compose.yml`.
 

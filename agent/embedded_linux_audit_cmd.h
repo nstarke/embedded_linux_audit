@@ -106,6 +106,7 @@ int linux_ssh_scan_main(int argc, char **argv);
 int linux_process_main(int argc, char **argv);
 int linux_gdbserver_main(int argc, char **argv);
 int linux_kernel_module_main(int argc, char **argv);
+int linux_pcap_main(int argc, char **argv);
 int tpm2_scan_main(int argc, char **argv);
 int efi_orom_main(int argc, char **argv);
 int efi_dump_vars_main(int argc, char **argv);
