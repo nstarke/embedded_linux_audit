@@ -128,8 +128,23 @@ static char *build_pcap_ws_url(const char *http_uri)
 	return out;
 }
 
+/*
+ * linux_pcap_main orchestrates live packet capture and output streaming.
+ *
+ * High-level flow:
+ *  1) Parse CLI arguments (interface, destination mode, help).
+ *  2) Resolve output destination (stdout/file path or host websocket).
+ *  3) Open and activate a libpcap capture handle for the selected interface.
+ *  4) Emit PCAP global header, then stream per-packet record+payload data.
+ *  5) Tear down resources on normal completion, signal interruption, or error.
+ *
+ * Notes:
+ *  - Signal handling uses pcap_breakloop() to terminate the capture loop.
+ *  - Error paths are expected to converge on common cleanup before return.
+ */
 int linux_pcap_main(int argc, char **argv)
 {
+	/* CLI options accepted by this command. */
 	static const struct option long_opts[] = {
 		{ "interface",      required_argument, NULL, 'i' },
 		{ "stream-to-host", no_argument,       NULL, 's' },
