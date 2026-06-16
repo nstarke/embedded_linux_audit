@@ -13,12 +13,14 @@ Internet
     ├── HTTP  / WS  (port 80)  ──► nginx container
     └── HTTPS / WSS (port 443) ──►     ├── /terminal/<mac>  ──► terminal-api:8080
                                         ├── /gdb/<in|out>/*  ──► gdb-api:9000
+                                        ├── /pcap/<mac>      ──► agent-api:5000
                                         └── /*               ──► agent-api:5000
 ```
 
 `/terminal/<mac>` is routed to the WebSocket terminal server. `/gdb/` is routed
-to the GDB bridge WebSocket server. Everything else is passed to the agent API
-at its native web root.
+to the GDB bridge WebSocket server. `/pcap/<mac>` is routed to the agent API
+with WebSocket upgrade headers for packet capture streaming. Everything else is
+passed to the agent API at its native web root.
 
 Both HTTP (port 80) and HTTPS (port 443) are served independently — plain HTTP
 is never redirected to HTTPS so that agents on networks without TLS can
@@ -133,6 +135,7 @@ All agent API routes are served at the web root:
 GET  http://localhost/                                     →  agent-api:5000/
 GET  http://localhost/tests/agent/shell/download_tests.sh →  agent-api:5000/tests/agent/shell/download_tests.sh
 POST http://localhost/upload                              →  agent-api:5000/upload
+WS   ws://localhost/pcap/<mac>                            →  agent-api:5000/pcap/<mac>
 ```
 
 `client_max_body_size` remains `200m` in the bundled Docker nginx config.
@@ -146,6 +149,21 @@ The agent connects using the public URL:
 ```
 
 The agent always appends `/terminal/<mac>` to the base URL before connecting.
+
+## PCAP capture WebSocket endpoint (`/pcap/<mac>`)
+
+The `linux pcap` command streams packet captures to the agent API through this
+endpoint when global `--output-http` is configured:
+
+```sh
+./embedded_linux_audit --output-http http://localhost/upload \
+  linux pcap --interface eth0
+```
+
+The agent derives `ws://localhost/pcap/<mac>` from the HTTP URL above. With an
+HTTPS URL, it derives `wss://localhost/pcap/<mac>`. nginx forwards the WebSocket
+upgrade to `agent-api:5000`, and the agent API writes the capture under the
+per-device `pcap/` runtime artifact directory.
 
 ## GDB bridge WebSocket endpoint (`/gdb/`)
 

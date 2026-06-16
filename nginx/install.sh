@@ -482,6 +482,8 @@ if [ "$DETACH" -eq 1 ]; then
     echo "Frontend URL (HTTPS): https://$HOSTNAME/"
     echo "Terminal URL base:    ws://$HOSTNAME/terminal/<mac>"
     echo "Terminal URL base:    wss://$HOSTNAME/terminal/<mac>"
+    echo "PCAP capture stream:  ws://$HOSTNAME/pcap/<mac>"
+    echo "PCAP capture stream:  wss://$HOSTNAME/pcap/<mac>"
     echo "GDB tunnel (agent):   linux gdbserver tunnel [--insecure] <PID> wss://$HOSTNAME"
     echo "GDB tunnel (GDB):     wss-remote [--insecure] wss://$HOSTNAME/gdb/out/<key>"
     echo "Follow logs with: docker compose -f $COMPOSE_FILE logs -f"

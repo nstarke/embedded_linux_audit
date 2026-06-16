@@ -208,6 +208,15 @@ This checklist is intended to guide a manual security assessment of an embedded 
   linux execute-command "iptables -L -n -v 2>/dev/null; ip6tables -L -n -v 2>/dev/null"
   ```
 - [ ] Confirm no unexpected outbound connections are established at boot
+- [ ] Capture representative network traffic for offline review when permitted by the engagement scope
+  ```
+  linux pcap --interface eth0
+  ```
+  To stream directly to the helper API:
+  ```
+  ./ela --api-key <token> --output-http http://<workstation>:5000/upload \
+       linux pcap --interface eth0
+  ```
 - [ ] Assess whether any remote management interface (SSH, HTTP API, MQTT, SNMP) is accessible from untrusted network segments
 - [ ] Check TLS certificate validity and cipher configuration for any exposed HTTPS services
 

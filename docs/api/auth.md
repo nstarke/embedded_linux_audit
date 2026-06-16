@@ -73,9 +73,9 @@ for details.
 - **No logging of token values**: rejected requests emit an HTTP `401` with
   `{"error":"Unauthorized"}` body; the submitted token is never written to
   logs.
-- WebSocket connections are rejected with HTTP `401` before the upgrade
-  handshake completes, so no WebSocket connection object is created for
-  unauthorised clients.
+- WebSocket connections, including terminal sessions and pcap capture streams,
+  are rejected with HTTP `401` before the upgrade handshake completes, so no
+  WebSocket connection object is created for unauthorised clients.
 
 ## nginx and TLS
 
