@@ -366,7 +366,7 @@ static int get_mac_from_sysfs_scan(char *buf, size_t buf_sz)
 }
 #endif /* __linux__ */
 
-static void get_primary_mac(char *buf, size_t buf_sz)
+void ela_ws_get_primary_mac(char *buf, size_t buf_sz)
 {
 #ifdef __linux__
 	struct ifaddrs *ifap, *ifa;
@@ -517,7 +517,7 @@ int ela_ws_connect(const char *base_url, int insecure,
 	memset(ws_out, 0, sizeof(*ws_out));
 	ws_out->sock = -1;
 
-	get_primary_mac(mac, sizeof(mac));
+	ela_ws_get_primary_mac(mac, sizeof(mac));
 
 	if (ela_ws_build_terminal_url(base_url, mac, full_url, sizeof(full_url)) != 0) {
 		fprintf(stderr, "ws: URL too long: %s\n", base_url);
@@ -1008,7 +1008,7 @@ int ela_ws_run_interactive(struct ela_ws_conn *ws, const char *prog)
 	}
 
 	/* Let the child know its session MAC so it can show the prompt. */
-	get_primary_mac(mac, sizeof(mac));
+	ela_ws_get_primary_mac(mac, sizeof(mac));
 	setenv("ELA_SESSION_MAC", mac, 1);
 
 	child = fork();
@@ -1180,8 +1180,8 @@ int ela_ws_run_interactive(struct ela_ws_conn *ws, const char *prog)
  * ---------------------------------------------------------------------- */
 
 /* Send a single binary frame (FIN=1, MASK=1, opcode=0x02) */
-static int ws_send_binary(const struct ela_ws_conn *ws,
-			  const void *payload, size_t payload_len)
+int ela_ws_send_binary(const struct ela_ws_conn *ws,
+		       const void *payload, size_t payload_len)
 {
 	uint8_t  mask[4];
 	uint8_t *frame = NULL;
@@ -1346,7 +1346,7 @@ int ela_ws_run_gdb_bridge(struct ela_ws_conn *ws, int rsp_fd, int debug_fd)
 			gdb_relay_log(debug_fd,
 				      "rsp→WS read #%ld len=%zd",
 				      rsp_reads, n);
-			if (ws_send_binary(ws, rsp_buf, (size_t)n) < 0) {
+			if (ela_ws_send_binary(ws, rsp_buf, (size_t)n) < 0) {
 				gdb_relay_log(debug_fd,
 					      "ws_send_binary error: %s"
 					      " — exiting relay",

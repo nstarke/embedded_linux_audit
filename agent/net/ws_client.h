@@ -5,6 +5,8 @@
 
 #include "api_key.h"
 
+#include <stddef.h>
+
 /*
  * Native WebSocket connection handle.  No curl types here; TLS state is held
  * as void* so callers don't need to pull in wolfSSL or OpenSSL headers.
@@ -43,6 +45,18 @@ int ela_ws_connect_url(const char *url, int insecure,
  * (pass g_gdb_debug_fd from linux_gdbserver_cmd.c, or -1 to disable).
  */
 int ela_ws_run_gdb_bridge(struct ela_ws_conn *ws, int rsp_fd, int debug_fd);
+
+/*
+ * Send a single binary WebSocket frame on an established connection.
+ */
+int ela_ws_send_binary(const struct ela_ws_conn *ws,
+		       const void *payload, size_t payload_len);
+
+/*
+ * Discover the primary device MAC address using the same logic as terminal
+ * WebSocket sessions. Falls back to "unknown" when discovery fails.
+ */
+void ela_ws_get_primary_mac(char *buf, size_t buf_sz);
 
 /*
  * Close the parent's copy of the socket after fork() without sending a

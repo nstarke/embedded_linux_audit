@@ -1,0 +1,110 @@
+'use strict';
+
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+
+function createFakeWs() {
+  const handlers = new Map();
+  return {
+    handlers,
+    on: jest.fn((event, handler) => {
+      handlers.set(event, handler);
+    }),
+    close: jest.fn(),
+  };
+}
+
+function flush() {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
+function loadPcapWebSocket(options = {}) {
+  jest.resetModules();
+
+  const WebSocketServer = jest.fn(function WebSocketServer(opts) {
+    this.options = opts;
+    this.handlers = new Map();
+    this.on = jest.fn((event, handler) => {
+      this.handlers.set(event, handler);
+    });
+  });
+  const auth = {
+    checkBearer: jest.fn(() => true),
+  };
+
+  if (options.auth) Object.assign(auth, options.auth);
+
+  jest.spyOn(process.stderr, 'write').mockImplementation(() => true);
+  jest.spyOn(process.stdout, 'write').mockImplementation(() => true);
+  jest.doMock('ws', () => ({ WebSocketServer }), { virtual: true });
+  jest.doMock('../../../../api/auth', () => auth);
+
+  const mod = require('../../../../api/agent/pcapWebSocket');
+  return { ...mod, WebSocketServer, auth };
+}
+
+describe('agent pcap websocket receiver', () => {
+  afterEach(() => {
+    jest.resetModules();
+    jest.restoreAllMocks();
+  });
+
+  test('verifyClient enforces pcap path and bearer auth', () => {
+    const { createPcapWebSocketServer, WebSocketServer, auth } = loadPcapWebSocket();
+    createPcapWebSocketServer({
+      server: {},
+      dataDir: '/tmp/noop',
+      persistUpload: jest.fn(),
+    });
+    const verifyClient = WebSocketServer.mock.instances[0].options.verifyClient;
+    const done = jest.fn();
+
+    verifyClient({ req: { url: '/upload/aa:bb', headers: {} } }, done);
+    expect(done).toHaveBeenLastCalledWith(false, 404, 'Not Found');
+
+    auth.checkBearer.mockReturnValueOnce(false);
+    verifyClient({ req: { url: '/pcap/aa:bb:cc:dd:ee:ff', headers: {} } }, done);
+    expect(done).toHaveBeenLastCalledWith(false, 401, 'Unauthorized');
+
+    verifyClient({ req: { url: '/pcap/aa:bb:cc:dd:ee:ff', headers: { authorization: 'Bearer ok' } } }, done);
+    expect(done).toHaveBeenLastCalledWith(true);
+  });
+
+  test('connection writes binary chunks and persists artifact path on close', async () => {
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ela-pcap-ws-'));
+    const persistUpload = jest.fn().mockResolvedValue({});
+    const { createPcapWebSocketServer, WebSocketServer } = loadPcapWebSocket();
+    createPcapWebSocketServer({
+      server: {},
+      dataDir,
+      persistUpload,
+    });
+    const onConnection = WebSocketServer.mock.instances[0].handlers.get('connection');
+    const ws = createFakeWs();
+
+    onConnection(ws, {
+      url: '/pcap/aa:bb:cc:dd:ee:ff',
+      socket: { remoteAddress: '127.0.0.1' },
+      headers: {},
+    });
+    ws.handlers.get('message')(Buffer.from([0xd4, 0xc3, 0xb2, 0xa1]));
+    ws.handlers.get('message')(Buffer.from([1, 2, 3]));
+    ws.handlers.get('close')();
+
+    for (let i = 0; i < 20 && persistUpload.mock.calls.length === 0; i += 1) {
+      await flush();
+    }
+
+    expect(persistUpload).toHaveBeenCalledWith(expect.objectContaining({
+      macAddress: 'aa:bb:cc:dd:ee:ff',
+      uploadType: 'pcap',
+      contentType: 'application/octet-stream',
+      localArtifactPath: expect.stringMatching(/capture_.*\.pcap$/),
+    }));
+    const artifactPath = persistUpload.mock.calls[0][0].localArtifactPath;
+    expect(fs.readFileSync(artifactPath)).toEqual(Buffer.from([0xd4, 0xc3, 0xb2, 0xa1, 1, 2, 3]));
+
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  });
+});

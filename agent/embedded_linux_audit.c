@@ -62,6 +62,7 @@ static void usage(const char *prog)
 		"  linux process      Watch for process restarts matching a needle string\n"
 		"  linux gdbserver    GDB RSP server; attach gdb-multiarch with target remote\n"
 		"  linux modules      List/load/unload modules and read module vermagic without utilities\n"
+		"  linux pcap         Capture packets from an interface as pcap data\n"
 		"  tpm2               Run built-in TPM2 commands through the TPM2-TSS library\n"
 		"  efi orom           EFI option ROM utilities (pull/list)\n"
 		"  efi dump-vars      Dump EFI variables with txt/csv/json formatting\n"
@@ -87,6 +88,8 @@ static void usage(const char *prog)
 		"  %s linux modules load --force /tmp/demo.ko debug=1\n"
 		"  %s linux modules unload demo\n"
 		"  %s --output-format json linux modules vermagic /tmp/demo.ko\n"
+		"  %s linux pcap --interface eth0\n"
+		"  %s --output-http http://127.0.0.1:5000 linux pcap --interface eth0\n"
 		"  %s --output-http http://127.0.0.1:5000 linux grep --search root --path /etc --recursive\n"
 		"  %s --output-http http://127.0.0.1:5000 linux list-files /etc\n"
 		"  %s --output-format json --output-http http://127.0.0.1:5000 linux list-symlinks /etc --recursive\n"
@@ -104,6 +107,7 @@ static void usage(const char *prog)
 		prog, prog, prog, prog,
 		prog, prog, prog, prog,
 		prog, prog, prog, prog,
+		prog, prog,
 		prog, prog, prog, prog,
 		prog, prog, prog, prog,
 		prog,
@@ -574,6 +578,12 @@ int embedded_linux_audit_dispatch(int argc, char **argv)
 			ret = linux_gdbserver_main(argc - sub_idx, argv + sub_idx);
 		else if (!strcmp(argv[sub_idx], "modules"))
 			ret = linux_kernel_module_main(argc - sub_idx, argv + sub_idx);
+		else if (!strcmp(argv[sub_idx], "pcap")) {
+			if (opts.output_format_explicit)
+				fprintf(stderr,
+					"Warning: --output-format has no effect for pcap; output is pcap binary data\n");
+			ret = linux_pcap_main(argc - sub_idx, argv + sub_idx);
+		}
 		else {
 			fprintf(stderr, "Unknown linux subcommand: %s\n\n",
 				argv[sub_idx]);
