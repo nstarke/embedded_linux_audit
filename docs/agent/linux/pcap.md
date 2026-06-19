@@ -42,6 +42,24 @@ embedded_linux_audit \
 
 `--insecure` disables TLS certificate and hostname verification for `wss://` pcap streams.
 
+## `replay` subcommand
+
+Replay packets stored in a pcap file by re-injecting them onto a network interface:
+
+```sh
+embedded_linux_audit linux pcap replay capture.pcap --interface eth0
+```
+
+The first non-option argument is the path to a classic pcap file. Both microsecond and nanosecond pcap files are accepted in either byte order; record fields are normalized to the host byte order before each frame is sent. Like live capture, injecting frames requires privileges that allow writing raw packets to the interface, such as running as root or holding the needed Linux capabilities.
+
+### Options
+
+| Option | Description |
+|---|---|
+| `--interface <ifname>` | Required network interface to replay packets onto, such as `eth0` |
+
+On completion the command reports how many packets were replayed on stderr. Replay stops with a non-zero exit status if the file is not a valid pcap, a record is truncated, or the interface rejects a frame.
+
 ## Agent API storage
 
 The agent helper API accepts pcap streams at:
