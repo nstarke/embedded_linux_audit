@@ -388,11 +388,27 @@ static void read_proc_comm(const char *pid, const struct ela_coredump_ops *ops,
 		trim_line(out);
 }
 
+/*
+ * Collect a coredump payload from stdin and persist it to the configured
+ * output directory, enriching metadata from /proc where available.
+ *
+ * Behavior summary:
+ * - Uses caller-provided ops when present, otherwise falls back to defaults.
+ * - Resolves configuration and output directory, then creates/permissions path.
+ * - Streams coredump bytes from stdin into a dynamically grown payload buffer.
+ * - Writes the final artifact and returns the selected output path via out_path.
+ *
+ * Error handling:
+ * - Returns 0 on success, -1 on failure.
+ * - errbuf is populated with a human-readable failure reason when provided.
+ * - A single cleanup path (`out:`) releases transient resources.
+ */
 int ela_coredump_collect(const struct ela_coredump_collect_request *request,
 			 const struct ela_coredump_ops *ops,
 			 char *out_path, size_t out_path_len,
 			 char *errbuf, size_t errbuf_len)
 {
+	/* Resolve dependency hooks; default_ops provides production syscalls. */
 	const struct ela_coredump_ops *effective_ops = ops ? ops : &default_ops;
 	struct ela_coredump_config_file config;
 	const char *output_dir;
@@ -496,9 +512,11 @@ int ela_coredump_collect(const struct ela_coredump_collect_request *request,
 	rc = 0;
 
 out:
+	/* Unified cleanup for all success/failure paths above. */
 	if (fd >= 0)
 		(void)effective_ops->close_fn(fd);
 	free(payload);
+	/* Signal is currently informational in this implementation. */
 	(void)request->signal;
 	return rc;
 }
