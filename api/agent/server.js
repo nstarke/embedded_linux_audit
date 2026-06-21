@@ -35,7 +35,7 @@ const RELEASE_STATE_FILE = '.release_state.json';
 
 const PROJECT_ROOT = findProjectRoot(__dirname);
 const WEB_ROOT = __dirname;
-const VALID_UPLOAD_TYPES = new Set(['arch', 'cmd', 'dmesg', 'efi-vars', 'file', 'file-list', 'grep', 'log', 'logs', 'netstat', 'orom', 'pcap', 'symlink-list', 'tpm2-createprimary', 'tpm2-getcap', 'tpm2-nvreadpublic', 'tpm2-pcrread', 'uboot-image', 'uboot-environment']);
+const VALID_UPLOAD_TYPES = new Set(['arch', 'cmd', 'coredump', 'dmesg', 'efi-vars', 'file', 'file-list', 'grep', 'log', 'logs', 'netstat', 'orom', 'pcap', 'symlink-list', 'tpm2-createprimary', 'tpm2-getcap', 'tpm2-nvreadpublic', 'tpm2-pcrread', 'uboot-image', 'uboot-environment']);
 const VALID_CONTENT_TYPES = {
   'text/plain': 'text_plain',
   'text/csv': 'text_csv',

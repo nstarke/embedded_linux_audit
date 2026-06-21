@@ -36,6 +36,7 @@
 | `linux netstat` | List listening and active TCP/UDP sockets with PID/program data |
 | `linux remote-copy` | Upload a local file to a remote HTTP(S) endpoint |
 | `linux pcap` | Capture packets from an interface as pcap data; stream to the agent API over WebSocket when `--output-http` is configured |
+| `linux coredump` | Configure kernel coredump collection to `/tmp`; with `--output-http`, POST captured cores to the agent API |
 | `linux ssh client` | Open an interactive SSH session (via libssh) |
 | `linux ssh copy` | Transfer files over SFTP |
 | `linux ssh tunnel` | Establish a reverse SSH tunnel |
@@ -100,7 +101,7 @@ API keys are also read from the `ELA_API_KEY` environment variable or `/tmp/ela.
 
 A Node.js HTTP(S) server that acts as a collection point for agent data and a distribution server for binaries and test scripts.
 
-- Accepts `POST /:mac/upload/:type` for command output, dmesg, file contents, EFI variables, option ROM data, U-Boot images, and environment dumps
+- Accepts `POST /:mac/upload/:type` for command output, dmesg, coredumps, file contents, EFI variables, option ROM data, U-Boot images, and environment dumps
 - Accepts `ws(s)://host/pcap/<mac>` for streaming `linux pcap` captures as binary pcap data
 - Normalizes uploads into a PostgreSQL schema and stores raw payloads alongside relational records
 - Optionally keeps runtime file artifacts under timestamped per-device directories in `api/agent/data/`

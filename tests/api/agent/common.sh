@@ -133,14 +133,21 @@ const path = require('path');
 const repoRoot = process.env.REPO_ROOT;
 const tmpDir = process.env.TEST_WEB_TMPDIR;
 const port = Number(process.env.TEST_WEB_PORT);
-const { createApp } = require(path.join(repoRoot, 'api', 'agent', 'server.js'));
+const {
+  createApp,
+  VALID_UPLOAD_TYPES,
+  VALID_CONTENT_TYPES,
+} = require(path.join(repoRoot, 'api', 'agent', 'server.js'));
 
 const app = createApp({
   logPrefix: path.join(tmpDir, 'post_requests'),
   assetsDir: path.join(tmpDir, 'assets'),
   dataDir: path.join(tmpDir, 'data'),
   testsDir: path.join(tmpDir, 'tests'),
-  verbose: false
+  verbose: false,
+  validUploadTypes: VALID_UPLOAD_TYPES,
+  validContentTypes: VALID_CONTENT_TYPES,
+  persistUpload: async () => {}
 });
 
 const server = http.createServer(app);

@@ -39,7 +39,7 @@ POST handling notes:
 - log output is split by content type into files derived from `--log-prefix` (for example `post_requests.text_plain.log`, `post_requests.text_csv.log`, and `post_requests.application_octet_stream.log`).
 - `application/octet-stream` uploads are additionally written as raw `.bin` files under the per-host runtime upload directories for later analysis.
 - upload metadata and normalized records are persisted in PostgreSQL.
-- runtime upload data may also be stored under `<data-dir>/<startup_timestamp>/<mac_address>/...` for `fs`, `file-list`, `env`, `logs`, `dmesg`, `orom`, `pcap`, `uboot/image`, and `uboot/env`.
+- runtime upload data may also be stored under `<data-dir>/<startup_timestamp>/<mac_address>/...` for `fs`, `file-list`, `env`, `logs`, `dmesg`, `coredump`, `orom`, `pcap`, `uboot/image`, and `uboot/env`.
 - `/upload/log` and `/upload/logs` are both accepted and stored under `<data-dir>/<startup_timestamp>/<mac_address>/logs/`.
 - downloaded release binaries are cached separately under `<data-dir>/release_binaries` by default.
 - `GET /` returns an HTML index of release binaries and agent test scripts.

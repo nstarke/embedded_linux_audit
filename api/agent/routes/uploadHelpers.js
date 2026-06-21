@@ -9,6 +9,8 @@ function uploadDirectoryForType(path, baseDir, uploadType) {
       return path.join(baseDir, 'dmesg');
     case 'cmd':
       return path.join(baseDir, 'cmd');
+    case 'coredump':
+      return path.join(baseDir, 'coredump');
     case 'efi-vars':
       return path.join(baseDir, 'efi-vars');
     case 'file-list':
