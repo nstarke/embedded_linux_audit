@@ -2,8 +2,30 @@
 
 #include "linux_pcap_cmd_util.h"
 
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+
+static uint16_t pcap_read_u16(const uint8_t *p, int swap)
+{
+	uint16_t v;
+
+	memcpy(&v, p, sizeof(v));
+	if (swap)
+		v = (uint16_t)((v >> 8) | (v << 8));
+	return v;
+}
+
+static uint32_t pcap_read_u32(const uint8_t *p, int swap)
+{
+	uint32_t v;
+
+	memcpy(&v, p, sizeof(v));
+	if (swap)
+		v = ((v & 0x000000ffU) << 24) | ((v & 0x0000ff00U) << 8) |
+		    ((v & 0x00ff0000U) >> 8) | ((v & 0xff000000U) >> 24);
+	return v;
+}
 
 int ela_pcap_make_global_header(int linktype, int snaplen,
 				struct ela_pcap_file_header *out)
@@ -71,4 +93,55 @@ int ela_pcap_build_ws_url(const char *http_uri,
 	n = snprintf(out, out_sz, "%s%.*s/pcap/%s",
 		     scheme, (int)authority_len, authority, mac);
 	return (n > 0 && (size_t)n < out_sz) ? 0 : -1;
+}
+
+int ela_pcap_parse_global_header(const void *buf, size_t len,
+				 struct ela_pcap_file_header *out,
+				 int *needs_swap)
+{
+	const uint8_t *p = (const uint8_t *)buf;
+	uint32_t magic;
+	int swap;
+
+	if (!buf || !out || !needs_swap ||
+	    len < sizeof(struct ela_pcap_file_header))
+		return -1;
+
+	memcpy(&magic, p, sizeof(magic));
+	if (magic == ELA_PCAP_MAGIC_USEC || magic == ELA_PCAP_MAGIC_NSEC)
+		swap = 0;
+	else if (magic == ELA_PCAP_MAGIC_USEC_SWAPPED ||
+		 magic == ELA_PCAP_MAGIC_NSEC_SWAPPED)
+		swap = 1;
+	else
+		return -1;
+
+	memset(out, 0, sizeof(*out));
+	out->magic = magic;
+	out->version_major = pcap_read_u16(p + 4, swap);
+	out->version_minor = pcap_read_u16(p + 6, swap);
+	out->thiszone = (int32_t)pcap_read_u32(p + 8, swap);
+	out->sigfigs = pcap_read_u32(p + 12, swap);
+	out->snaplen = pcap_read_u32(p + 16, swap);
+	out->linktype = pcap_read_u32(p + 20, swap);
+	*needs_swap = swap;
+	return 0;
+}
+
+int ela_pcap_parse_record_header(const void *buf, size_t len, int needs_swap,
+				 struct ela_pcap_record_header *out)
+{
+	const uint8_t *p = (const uint8_t *)buf;
+
+	if (!buf || !out || len < sizeof(struct ela_pcap_record_header))
+		return -1;
+
+	memset(out, 0, sizeof(*out));
+	out->ts_sec = pcap_read_u32(p, needs_swap);
+	out->ts_usec = pcap_read_u32(p + 4, needs_swap);
+	out->caplen = pcap_read_u32(p + 8, needs_swap);
+	out->len = pcap_read_u32(p + 12, needs_swap);
+	if (out->caplen > out->len)
+		return -1;
+	return 0;
 }

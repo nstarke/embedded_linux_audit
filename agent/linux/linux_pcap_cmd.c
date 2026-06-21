@@ -32,10 +32,12 @@ static void usage(const char *prog)
 {
 	fprintf(stderr,
 		"Usage: %s --interface <ifname> [--stream-to-host]\n"
+		"       %s replay <file.pcap> --interface <ifname>\n"
 		"  Capture packets from a Linux network interface as pcap data\n"
 		"  Without --stream-to-host, pcap data is written to stdout\n"
-		"  With --stream-to-host, global --output-http/--output-https selects the agent API WebSocket\n",
-		prog);
+		"  With --stream-to-host, global --output-http/--output-https selects the agent API WebSocket\n"
+		"  replay re-injects packets from a pcap file onto the interface\n",
+		prog, prog);
 }
 
 static void on_capture_signal(int signo)
@@ -164,6 +166,9 @@ int linux_pcap_main(int argc, char **argv)
 	int opt;
 	int rc = 1;
 
+	if (argc >= 2 && !strcmp(argv[1], "replay"))
+		return linux_pcap_replay_main(argc - 1, argv + 1);
+
 	optind = 1;
 	while ((opt = getopt_long(argc, argv, "hi:s", long_opts, NULL)) != -1) {
 		switch (opt) {
@@ -274,6 +279,163 @@ out:
 	if (ws.sock >= 0)
 		ela_ws_close(&ws);
 	free(ws_url);
+	return rc;
+}
+
+#define ELA_PCAP_REPLAY_MAX_PACKET 262144U
+
+static void replay_usage(void)
+{
+	fprintf(stderr,
+		"Usage: pcap replay <file.pcap> --interface <ifname>\n"
+		"  Replay packets from a pcap file out a Linux network interface\n");
+}
+
+/*
+ * linux_pcap_replay_main reads a classic pcap file and re-injects each
+ * stored packet onto a live network interface.
+ *
+ * High-level flow:
+ *  1) Parse CLI arguments (pcap file path positional, --interface, help).
+ *  2) Open the pcap file and validate/parse its global header, tracking the
+ *     on-disk byte order so record headers can be normalized to host order.
+ *  3) Open a live libpcap handle on the target interface for injection.
+ *  4) For each record, parse its header, read the captured bytes, and send
+ *     the frame with pcap_sendpacket().
+ *  5) Tear down resources on completion or error.
+ *
+ * Note: injecting frames requires the same capture privileges as live
+ * capture, so this path is only exercised by argument-parsing shell tests.
+ */
+int linux_pcap_replay_main(int argc, char **argv)
+{
+	/* Parse replay-specific options: required target interface and help. */
+	static const struct option long_opts[] = {
+		{ "interface", required_argument, NULL, 'i' },
+		{ "help",      no_argument,       NULL, 'h' },
+		{ 0, 0, 0, 0 }
+	};
+	const char *ifname = NULL;
+	/* Positional argument: path to a classic pcap file to replay. */
+	const char *path = NULL;
+	char errbuf[PCAP_ERRBUF_SIZE];
+	uint8_t ghdr[sizeof(struct ela_pcap_file_header)];
+	uint8_t rhdr[sizeof(struct ela_pcap_record_header)];
+	struct ela_pcap_file_header file_hdr;
+	uint8_t *pkt = NULL;
+	pcap_t *handle = NULL;
+	FILE *fp = NULL;
+	int needs_swap = 0;
+	int opt;
+	int rc = 1;
+	unsigned long sent = 0;
+
+	optind = 1;
+	while ((opt = getopt_long(argc, argv, "hi:", long_opts, NULL)) != -1) {
+		switch (opt) {
+		case 'i':
+			ifname = optarg;
+			break;
+		case 'h':
+			replay_usage();
+			return 0;
+		default:
+			replay_usage();
+			return 2;
+		}
+	}
+
+	if (optind < argc)
+		path = argv[optind++];
+	if (optind < argc) {
+		fprintf(stderr, "pcap replay: unexpected argument: %s\n",
+			argv[optind]);
+		replay_usage();
+		return 2;
+	}
+	if (!path || !*path) {
+		fprintf(stderr, "pcap replay: a pcap file path is required\n");
+		replay_usage();
+		return 2;
+	}
+	if (!ifname || !*ifname) {
+		fprintf(stderr, "pcap replay: --interface is required\n");
+		replay_usage();
+		return 2;
+	}
+
+	fp = fopen(path, "rb");
+	if (!fp) {
+		fprintf(stderr, "pcap replay: failed to open %s: %s\n",
+			path, strerror(errno));
+		return 1;
+	}
+
+	if (fread(ghdr, 1, sizeof(ghdr), fp) != sizeof(ghdr) ||
+	    ela_pcap_parse_global_header(ghdr, sizeof(ghdr), &file_hdr,
+					 &needs_swap) != 0) {
+		fprintf(stderr, "pcap replay: %s is not a valid pcap file\n",
+			path);
+		goto out;
+	}
+
+	handle = pcap_open_live(ifname, 65535, 0, 1000, errbuf);
+	if (!handle) {
+		fprintf(stderr, "pcap replay: failed to open %s: %s\n",
+			ifname, errbuf);
+		goto out;
+	}
+
+	for (;;) {
+		struct ela_pcap_record_header rec;
+		size_t n = fread(rhdr, 1, sizeof(rhdr), fp);
+
+		if (n == 0)
+			break;
+		if (n != sizeof(rhdr) ||
+		    ela_pcap_parse_record_header(rhdr, sizeof(rhdr), needs_swap,
+						 &rec) != 0) {
+			fprintf(stderr, "pcap replay: truncated or corrupt record in %s\n",
+				path);
+			goto out;
+		}
+		if (rec.caplen == 0 || rec.caplen > ELA_PCAP_REPLAY_MAX_PACKET) {
+			fprintf(stderr, "pcap replay: implausible packet length %u\n",
+				rec.caplen);
+			goto out;
+		}
+
+		pkt = (uint8_t *)malloc(rec.caplen);
+		if (!pkt) {
+			fprintf(stderr, "pcap replay: out of memory\n");
+			goto out;
+		}
+		if (fread(pkt, 1, rec.caplen, fp) != rec.caplen) {
+			fprintf(stderr, "pcap replay: truncated packet payload in %s\n",
+				path);
+			goto out;
+		}
+		if (pcap_sendpacket(handle, pkt, (int)rec.caplen) != 0) {
+			fprintf(stderr, "pcap replay: failed to send packet: %s\n",
+				pcap_geterr(handle));
+			goto out;
+		}
+		free(pkt);
+		pkt = NULL;
+		sent++;
+	}
+
+	fprintf(stderr, "pcap replay: replayed %lu packet(s) on %s\n",
+		sent, ifname);
+	rc = 0;
+
+out:
+	/* Unified cleanup path: free packet buffer, close pcap handle and file. */
+	free(pkt);
+	if (handle)
+		pcap_close(handle);
+	if (fp)
+		fclose(fp);
 	return rc;
 }
 
