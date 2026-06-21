@@ -50,6 +50,11 @@ static int default_close(int fd)
 	return close(fd);
 }
 
+static time_t default_time(time_t *tloc)
+{
+	return time(tloc);
+}
+
 static int write_all_fd(int fd, const void *buf, size_t len,
 			const struct ela_coredump_ops *ops)
 {
@@ -161,6 +166,7 @@ static const struct ela_coredump_ops default_ops = {
 	.write_fn = default_write,
 	.open_file_fn = default_open_file,
 	.close_fn = default_close,
+	.time_fn = default_time,
 	.build_upload_uri_fn = default_build_upload_uri,
 	.http_post_fn = default_http_post,
 	.api_key_init_fn = default_api_key_init,
@@ -215,7 +221,7 @@ int ela_coredump_build_core_pattern(const char *collector_path, const char *outp
 		return -1;
 
 	n = snprintf(out, out_len,
-		     "|%s linux coredump collect --output-dir %s --pid %%p --signal %%s --time %%t --exe %%e",
+		     "|%s linux coredump collect --output-dir %s --pid %%p --signal %%s",
 		     collector_path, output_dir);
 	if (n < 0 || (size_t)n >= out_len)
 		return -1;
@@ -357,6 +363,31 @@ static int append_mem(unsigned char **buf, size_t *len, size_t *cap,
 	return 0;
 }
 
+static void trim_line(char *s)
+{
+	size_t len;
+
+	if (!s)
+		return;
+	len = strlen(s);
+	while (len > 0 && (s[len - 1] == '\n' || s[len - 1] == '\r' ||
+			   s[len - 1] == ' ' || s[len - 1] == '\t'))
+		s[--len] = '\0';
+}
+
+static void read_proc_comm(const char *pid, const struct ela_coredump_ops *ops,
+			   char *out, size_t out_len)
+{
+	char proc_path[128];
+
+	if (!pid || !*pid || !ops->read_text_file_fn || !out || out_len == 0)
+		return;
+	if (snprintf(proc_path, sizeof(proc_path), "/proc/%s/comm", pid) >= (int)sizeof(proc_path))
+		return;
+	if (ops->read_text_file_fn(proc_path, out, out_len) == 0)
+		trim_line(out);
+}
+
 int ela_coredump_collect(const struct ela_coredump_collect_request *request,
 			 const struct ela_coredump_ops *ops,
 			 char *out_path, size_t out_path_len,
@@ -365,7 +396,9 @@ int ela_coredump_collect(const struct ela_coredump_collect_request *request,
 	const struct ela_coredump_ops *effective_ops = ops ? ops : &default_ops;
 	struct ela_coredump_config_file config;
 	const char *output_dir;
+	time_t now;
 	char exe[96];
+	char proc_exe[96];
 	char pid[32];
 	char ts[32];
 	char path[512];
@@ -381,9 +414,17 @@ int ela_coredump_collect(const struct ela_coredump_collect_request *request,
 		return -1;
 	}
 	output_dir = nonempty_or_default(request->output_dir, ELA_COREDUMP_DEFAULT_OUTPUT_DIR);
-	sanitize_component(request->exe_name, exe, sizeof(exe));
 	sanitize_component(request->pid, pid, sizeof(pid));
-	sanitize_component(request->timestamp, ts, sizeof(ts));
+	proc_exe[0] = '\0';
+	if (!request->exe_name || !*request->exe_name)
+		read_proc_comm(pid, effective_ops, proc_exe, sizeof(proc_exe));
+	sanitize_component(nonempty_or_default(request->exe_name, proc_exe), exe, sizeof(exe));
+	if (request->timestamp && *request->timestamp) {
+		sanitize_component(request->timestamp, ts, sizeof(ts));
+	} else {
+		now = effective_ops->time_fn ? effective_ops->time_fn(NULL) : time(NULL);
+		snprintf(ts, sizeof(ts), "%lld", (long long)now);
+	}
 	if (snprintf(path, sizeof(path), "%s/core.%s.%s.%s", output_dir, exe, pid, ts) >=
 	    (int)sizeof(path)) {
 		set_err(errbuf, errbuf_len, "coredump: output path too long");

@@ -7,6 +7,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <sys/types.h>
+#include <time.h>
 
 #define ELA_COREDUMP_DEFAULT_OUTPUT_DIR  "/tmp"
 #define ELA_COREDUMP_DEFAULT_CONFIG_PATH "/tmp/ela-coredump.conf"
@@ -45,6 +46,7 @@ struct ela_coredump_ops {
 	ssize_t (*write_fn)(int fd, const void *buf, size_t count);
 	int (*open_file_fn)(const char *path, int flags, unsigned int mode);
 	int (*close_fn)(int fd);
+	time_t (*time_fn)(time_t *tloc);
 	char *(*build_upload_uri_fn)(const char *base_uri, const char *upload_type,
 				     const char *file_path);
 	int (*http_post_fn)(const char *uri, const uint8_t *data, size_t len,

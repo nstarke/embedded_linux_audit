@@ -21,11 +21,9 @@ static void usage(const char *prog)
 {
 	fprintf(stderr,
 		"Usage: %s [--output-dir /tmp] [--config-path /tmp/ela-coredump.conf]\n"
-		"       %s collect [--output-dir /tmp] [--config-path /tmp/ela-coredump.conf]\n"
-		"                 --pid <pid> --signal <signal> --time <unix-time> --exe <name>\n"
 		"  Configure Linux to write process coredumps to /tmp.\n"
 		"  With global --output-http, future coredumps are also POSTed to /:mac/upload/coredump.\n",
-		prog, prog);
+		prog);
 }
 
 static int run_collect(int argc, char **argv)
@@ -78,8 +76,8 @@ static int run_collect(int argc, char **argv)
 		}
 	}
 
-	if (!request.pid || !request.signal || !request.timestamp || !request.exe_name) {
-		fprintf(stderr, "coredump collect requires --pid, --signal, --time, and --exe\n");
+	if (!request.pid) {
+		fprintf(stderr, "coredump collect requires --pid\n");
 		usage(argv[0]);
 		return 2;
 	}

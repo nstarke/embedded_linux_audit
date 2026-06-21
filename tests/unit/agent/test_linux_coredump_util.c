@@ -7,6 +7,7 @@
 #include <fcntl.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 struct fake_state {
@@ -27,6 +28,7 @@ struct fake_state {
 	size_t posted_len;
 	bool posted_insecure;
 	char api_key[128];
+	time_t fake_time;
 	int mkdir_count;
 	int chmod_count;
 	int post_calls;
@@ -38,6 +40,7 @@ static void reset_fake_state(void)
 {
 	memset(&g, 0, sizeof(g));
 	g.stdin_data = "";
+	g.fake_time = 456;
 	snprintf(g.upload_uri, sizeof(g.upload_uri), "http://api/upload/coredump");
 }
 
@@ -71,7 +74,10 @@ static int fake_write_text_file(const char *path, const char *text, unsigned int
 
 static int fake_read_text_file(const char *path, char *buf, size_t buf_len)
 {
-	(void)path;
+	if (!strcmp(path, "/proc/123/comm")) {
+		snprintf(buf, buf_len, "crasher\n");
+		return 0;
+	}
 	snprintf(buf, buf_len, "%s", g.config_text);
 	return 0;
 }
@@ -113,6 +119,13 @@ static int fake_close(int fd)
 {
 	(void)fd;
 	return 0;
+}
+
+static time_t fake_time(time_t *tloc)
+{
+	if (tloc)
+		*tloc = g.fake_time;
+	return g.fake_time;
 }
 
 static char *fake_build_upload_uri(const char *base_uri, const char *upload_type,
@@ -157,6 +170,7 @@ static const struct ela_coredump_ops fake_ops = {
 	.write_fn = fake_write,
 	.open_file_fn = fake_open_file,
 	.close_fn = fake_close,
+	.time_fn = fake_time,
 	.build_upload_uri_fn = fake_build_upload_uri,
 	.http_post_fn = fake_http_post,
 	.api_key_init_fn = fake_api_key_init,
@@ -168,7 +182,7 @@ static void test_build_core_pattern_uses_pipe_collector(void)
 
 	ELA_ASSERT_INT_EQ(0, ela_coredump_build_core_pattern("/bin/ela", "/tmp",
 							     pattern, sizeof(pattern)));
-	ELA_ASSERT_STR_EQ("|/bin/ela linux coredump collect --output-dir /tmp --pid %p --signal %s --time %t --exe %e",
+	ELA_ASSERT_STR_EQ("|/bin/ela linux coredump collect --output-dir /tmp --pid %p --signal %s",
 			  pattern);
 	ELA_ASSERT_INT_EQ(-1, ela_coredump_build_core_pattern("relative", "/tmp",
 							      pattern, sizeof(pattern)));
@@ -211,8 +225,6 @@ static void test_collect_writes_core_and_posts_binary_upload(void)
 		.config_path = "/tmp/ela-coredump.conf",
 		.pid = "123",
 		.signal = "11",
-		.timestamp = "456",
-		.exe_name = "crasher",
 	};
 	char path[512];
 	char errbuf[128];
@@ -251,6 +263,7 @@ static void test_collect_without_config_only_writes_file(void)
 
 	reset_fake_state();
 	g.stdin_data = "X";
+	g.fake_time = 8;
 	g.config_text[0] = '\0';
 
 	ELA_ASSERT_INT_EQ(0, ela_coredump_collect(&request, &fake_ops, path, sizeof(path),
