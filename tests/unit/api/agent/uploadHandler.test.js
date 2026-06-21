@@ -34,7 +34,7 @@ describe('upload handler', () => {
       symlink: jest.fn().mockResolvedValue(undefined),
     },
     crypto: { randomUUID: () => '12345678-1234-1234-1234-123456789abc' },
-    validUploadTypes: new Set(['cmd', 'file', 'file-list', 'symlink-list', 'log', 'logs', 'arch', 'grep']),
+    validUploadTypes: new Set(['cmd', 'coredump', 'file', 'file-list', 'symlink-list', 'log', 'logs', 'arch', 'grep']),
     validContentTypes: {
       'text/plain': 'text_plain',
       'application/json': 'application_json',
@@ -151,6 +151,30 @@ describe('upload handler', () => {
     expect(baseDeps.persistUpload).toHaveBeenCalledWith(expect.objectContaining({
       uploadType: 'grep',
       localArtifactPath: expect.stringMatching(/^\/data\/aa:bb:cc:dd:ee:ff\/grep\/etc_[0-9T]+Z$/),
+    }));
+  });
+
+  test('stores coredump binary uploads under coredump artifacts', async () => {
+    const handler = createUploadHandler(baseDeps);
+    const req = {
+      params: { mac: 'aa:bb:cc:dd:ee:ff', type: 'coredump' },
+      query: {},
+      body: Buffer.from([0x7f, 0x45, 0x4c, 0x46]),
+      get: () => 'application/octet-stream',
+    };
+    const res = createRes();
+
+    await handler(req, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(baseDeps.fsp.writeFile).toHaveBeenCalledWith(
+      expect.stringMatching(/^\/data\/aa:bb:cc:dd:ee:ff\/coredump\/upload_.*\.bin$/),
+      expect.any(Buffer),
+    );
+    expect(baseDeps.persistUpload).toHaveBeenCalledWith(expect.objectContaining({
+      uploadType: 'coredump',
+      contentType: 'application/octet-stream',
+      localArtifactPath: expect.stringMatching(/\/coredump\/upload_.*\.bin$/),
     }));
   });
 

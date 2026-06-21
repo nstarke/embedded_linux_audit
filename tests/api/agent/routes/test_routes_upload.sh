@@ -104,6 +104,14 @@ else
     fail_case "binary upload creates generated .bin file" sh -c "find \"$MAC_DIR/uboot/image\" -maxdepth 1 -type f -print"
 fi
 
+run_curl_case "POST coredump stores binary artifact" POST "$TEST_WEB_BASE_URL/$MAC/upload/coredump" 200 "ok" -H "Content-Type: application/octet-stream" --data-binary "CORE"
+coredump_count="$(find "$MAC_DIR/coredump" -type f -name 'upload_*.bin' | wc -l | tr -d ' ')"
+if [ "$coredump_count" = "1" ]; then
+    pass_case "coredump upload creates generated .bin file"
+else
+    fail_case "coredump upload creates generated .bin file" sh -c "find \"$MAC_DIR/coredump\" -maxdepth 1 -type f -print"
+fi
+
 run_curl_case "POST uboot-environment stores text log" POST "$TEST_WEB_BASE_URL/$MAC/upload/uboot-environment" 200 "ok" -H "Content-Type: text/plain" --data-binary "env line"
 assert_file_contains "uboot-environment upload writes env log" "$MAC_DIR/uboot/env/uboot-environment.text_plain.log" "env line"
 
