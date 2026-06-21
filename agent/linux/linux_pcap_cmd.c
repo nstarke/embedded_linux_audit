@@ -309,12 +309,14 @@ static void replay_usage(void)
  */
 int linux_pcap_replay_main(int argc, char **argv)
 {
+	/* Parse replay-specific options: required target interface and help. */
 	static const struct option long_opts[] = {
 		{ "interface", required_argument, NULL, 'i' },
 		{ "help",      no_argument,       NULL, 'h' },
 		{ 0, 0, 0, 0 }
 	};
 	const char *ifname = NULL;
+	/* Positional argument: path to a classic pcap file to replay. */
 	const char *path = NULL;
 	char errbuf[PCAP_ERRBUF_SIZE];
 	uint8_t ghdr[sizeof(struct ela_pcap_file_header)];
@@ -428,6 +430,7 @@ int linux_pcap_replay_main(int argc, char **argv)
 	rc = 0;
 
 out:
+	/* Unified cleanup path: free packet buffer, close pcap handle and file. */
 	free(pkt);
 	if (handle)
 		pcap_close(handle);
