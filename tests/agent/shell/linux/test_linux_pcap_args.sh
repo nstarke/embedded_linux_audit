@@ -18,4 +18,9 @@ run_exact_case "linux pcap extra arg" 2 "$BIN" linux pcap --interface lo extra
 run_exact_case "linux pcap stream-to-host without output-http" 2 "$BIN" linux pcap --interface lo --stream-to-host
 run_accept_case "linux pcap output-format warning" "$BIN" --output-format json linux pcap --help
 
+run_exact_case "linux pcap replay --help" 0 "$BIN" linux pcap replay --help
+run_exact_case "linux pcap replay missing file" 2 "$BIN" linux pcap replay --interface lo
+run_exact_case "linux pcap replay missing interface" 2 "$BIN" linux pcap replay /tmp/does_not_exist.pcap
+run_exact_case "linux pcap replay extra arg" 2 "$BIN" linux pcap replay /tmp/a.pcap extra --interface lo
+
 finish_tests
