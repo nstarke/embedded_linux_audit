@@ -133,7 +133,7 @@ static char *fake_build_upload_uri(const char *base_uri, const char *upload_type
 {
 	if (strcmp("http://api/upload", base_uri ? base_uri : "") ||
 	    strcmp("coredump", upload_type ? upload_type : "") ||
-	    strstr(file_path ? file_path : "", "/tmp/core.crasher.123.456") == NULL)
+	    strstr(file_path ? file_path : "", "/tmp/core.") == NULL)
 		return NULL;
 	return strdup(g.upload_uri);
 }
@@ -218,6 +218,23 @@ static void test_configure_writes_kernel_prerequisites_and_upload_config(void)
 	ELA_ASSERT_INT_EQ(0600, (int)g.write_modes[3]);
 }
 
+static void test_disable_restores_non_collector_settings(void)
+{
+	char errbuf[128];
+
+	reset_fake_state();
+	ELA_ASSERT_INT_EQ(0, ela_coredump_disable("/tmp/ela-coredump.conf", &fake_ops,
+						  errbuf, sizeof(errbuf)));
+	ELA_ASSERT_STR_EQ("/proc/sys/kernel/core_pattern", g.write_paths[0]);
+	ELA_ASSERT_STR_EQ("core\n", g.writes[0]);
+	ELA_ASSERT_STR_EQ("/proc/sys/kernel/core_uses_pid", g.write_paths[1]);
+	ELA_ASSERT_STR_EQ("1\n", g.writes[1]);
+	ELA_ASSERT_STR_EQ("/proc/sys/fs/suid_dumpable", g.write_paths[2]);
+	ELA_ASSERT_STR_EQ("0\n", g.writes[2]);
+	ELA_ASSERT_STR_EQ("/tmp/ela-coredump.conf", g.write_paths[3]);
+	ELA_ASSERT_STR_EQ("", g.writes[3]);
+}
+
 static void test_collect_writes_core_and_posts_binary_upload(void)
 {
 	struct ela_coredump_collect_request request = {
@@ -249,6 +266,25 @@ static void test_collect_writes_core_and_posts_binary_upload(void)
 	ELA_ASSERT_TRUE(memcmp(g.posted_data, "COREBYTES", 9) == 0);
 }
 
+static void test_collect_without_pid_uses_unknown_name_and_current_time(void)
+{
+	struct ela_coredump_collect_request request = {
+		.output_dir = "/tmp",
+	};
+	char path[512];
+	char errbuf[128];
+
+	reset_fake_state();
+	g.stdin_data = "X";
+	g.fake_time = 99;
+	g.config_text[0] = '\0';
+
+	ELA_ASSERT_INT_EQ(0, ela_coredump_collect(&request, &fake_ops, path, sizeof(path),
+						  errbuf, sizeof(errbuf)));
+	ELA_ASSERT_STR_EQ("/tmp/core.unknown.unknown.99", path);
+	ELA_ASSERT_INT_EQ(0, g.post_calls);
+}
+
 static void test_collect_without_config_only_writes_file(void)
 {
 	struct ela_coredump_collect_request request = {
@@ -277,7 +313,9 @@ int run_linux_coredump_util_tests(void)
 	const struct ela_test_case cases[] = {
 		{ "build_core_pattern_uses_pipe_collector", test_build_core_pattern_uses_pipe_collector },
 		{ "configure_writes_kernel_prerequisites_and_upload_config", test_configure_writes_kernel_prerequisites_and_upload_config },
+		{ "disable_restores_non_collector_settings", test_disable_restores_non_collector_settings },
 		{ "collect_writes_core_and_posts_binary_upload", test_collect_writes_core_and_posts_binary_upload },
+		{ "collect_without_pid_uses_unknown_name_and_current_time", test_collect_without_pid_uses_unknown_name_and_current_time },
 		{ "collect_without_config_only_writes_file", test_collect_without_config_only_writes_file },
 	};
 

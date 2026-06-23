@@ -67,6 +67,9 @@ int ela_coredump_read_config(const char *config_path,
 int ela_coredump_configure(const struct ela_coredump_config_request *request,
 			   const struct ela_coredump_ops *ops,
 			   char *errbuf, size_t errbuf_len);
+int ela_coredump_disable(const char *config_path,
+			 const struct ela_coredump_ops *ops,
+			 char *errbuf, size_t errbuf_len);
 int ela_coredump_collect(const struct ela_coredump_collect_request *request,
 			 const struct ela_coredump_ops *ops,
 			 char *out_path, size_t out_path_len,

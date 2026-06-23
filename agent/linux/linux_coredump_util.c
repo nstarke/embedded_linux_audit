@@ -332,6 +332,25 @@ int ela_coredump_configure(const struct ela_coredump_config_request *request,
 	return ela_coredump_write_config(request, effective_ops, errbuf, errbuf_len);
 }
 
+int ela_coredump_disable(const char *config_path,
+			 const struct ela_coredump_ops *ops,
+			 char *errbuf, size_t errbuf_len)
+{
+	const struct ela_coredump_ops *effective_ops = ops ? ops : &default_ops;
+
+	if (!effective_ops->write_text_file_fn)
+		return -1;
+	if (effective_ops->write_text_file_fn("/proc/sys/kernel/core_pattern", "core\n", 0644) != 0) {
+		set_err(errbuf, errbuf_len, "coredump: failed to write /proc/sys/kernel/core_pattern");
+		return -1;
+	}
+	(void)effective_ops->write_text_file_fn("/proc/sys/kernel/core_uses_pid", "1\n", 0644);
+	(void)effective_ops->write_text_file_fn("/proc/sys/fs/suid_dumpable", "0\n", 0644);
+	(void)effective_ops->write_text_file_fn(nonempty_or_default(config_path, ELA_COREDUMP_DEFAULT_CONFIG_PATH),
+						 "", 0600);
+	return 0;
+}
+
 static int append_mem(unsigned char **buf, size_t *len, size_t *cap,
 		      const unsigned char *data, size_t data_len)
 {
