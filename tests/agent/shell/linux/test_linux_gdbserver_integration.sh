@@ -70,6 +70,9 @@ WATCH_PID=
 WATCH_BIN=/tmp/ela_test_gdbserver_watch
 EXIT_PID=
 EXIT_BIN=/tmp/ela_test_gdbserver_exit
+FORK_PID=
+FORK_BIN=/tmp/ela_test_gdbserver_fork
+FORK_CHILD_PID_FILE=/tmp/ela_test_gdbserver_fork_child.pid
 
 # Compile the target loop program once.
 compile_loop_target() {
@@ -182,6 +185,46 @@ EOF
     gcc -O0 -o "$EXIT_BIN" /tmp/ela_test_gdbserver_exit.c || return 1
 }
 
+# Compile a target that forks only after GDB flips g_fork_now.
+# Used to verify that follow-fork-mode child lands on the new process.
+compile_fork_target() {
+    cat > /tmp/ela_test_gdbserver_fork.c << 'EOF'
+#include <fcntl.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/types.h>
+#include <time.h>
+#include <unistd.h>
+
+volatile int g_fork_now = 0;
+
+static void sleep_short(void) {
+    struct timespec ts = {0, 50000000};
+    nanosleep(&ts, NULL);
+}
+
+int main(void) {
+    while (!g_fork_now)
+        sleep_short();
+
+    pid_t child = fork();
+    if (child == 0) {
+        FILE *fp = fopen("/tmp/ela_test_gdbserver_fork_child.pid", "w");
+        if (fp) {
+            fprintf(fp, "%ld\n", (long)getpid());
+            fclose(fp);
+        }
+        for (;;)
+            sleep_short();
+    }
+
+    for (;;)
+        sleep_short();
+}
+EOF
+    gcc -O0 -g -o "$FORK_BIN" /tmp/ela_test_gdbserver_fork.c || return 1
+}
+
 start_exit_target() {
     "$EXIT_BIN" &
     EXIT_PID=$!
@@ -192,6 +235,28 @@ stop_exit_target() {
         kill "$EXIT_PID" 2>/dev/null || true
         wait "$EXIT_PID" 2>/dev/null || true
         EXIT_PID=
+    fi
+}
+
+start_fork_target() {
+    rm -f "$FORK_CHILD_PID_FILE"
+    "$FORK_BIN" &
+    FORK_PID=$!
+}
+
+stop_fork_target() {
+    if [ -f "$FORK_CHILD_PID_FILE" ]; then
+        _fork_child_pid="$(sed -n '1p' "$FORK_CHILD_PID_FILE" 2>/dev/null || true)"
+        if [ -n "$_fork_child_pid" ]; then
+            kill "$_fork_child_pid" 2>/dev/null || true
+            wait "$_fork_child_pid" 2>/dev/null || true
+        fi
+        rm -f "$FORK_CHILD_PID_FILE"
+    fi
+    if [ -n "$FORK_PID" ]; then
+        kill "$FORK_PID" 2>/dev/null || true
+        wait "$FORK_PID" 2>/dev/null || true
+        FORK_PID=
     fi
 }
 
@@ -282,10 +347,15 @@ if ! compile_exit_target; then
     exit 0
 fi
 
+if ! compile_fork_target; then
+    echo "SKIP: could not compile fork target (gcc not available?)"
+    exit 0
+fi
+
 start_loop
 start_heap
 start_watch
-trap 'stop_loop; stop_heap; stop_watch; stop_exit_target' EXIT INT TERM
+trap 'stop_loop; stop_heap; stop_watch; stop_exit_target; stop_fork_target' EXIT INT TERM
 
 # -------------------------------------------------------------------------
 # Test: software breakpoints (Z0)
@@ -818,6 +888,83 @@ assert_output_contains "signal-stop: GDB detached cleanly" \
 # Stop it explicitly so it does not interfere with the next test.
 stop_exit_target
 rm -f "$OUT_FILE" "$GS_LOG"
+
+# -------------------------------------------------------------------------
+# Test: follow-fork-mode parent
+#
+# GDB uses the fork-events+ qSupported feature and defaults to following the
+# parent. The target forks only after GDB writes g_fork_now. After continue
+# returns, "monitor pid" should still report the original parent pid.
+# -------------------------------------------------------------------------
+
+start_fork_target
+PORT="$(next_port)"
+GS_LOG="$(mktemp /tmp/ela_gs.XXXXXX)"
+start_gdbserver "$FORK_PID" "$PORT" "$GS_LOG"
+
+OUT="$(run_gdb "$PORT" "
+set sysroot /
+file $FORK_BIN
+set follow-fork-mode parent
+set detach-on-fork on
+set g_fork_now = 1
+continue
+monitor pid
+detach
+")"
+OUT_FILE="$OUT"
+
+FOLLOW_PID="$(sed -n 's/.*pid: \([0-9][0-9]*\).*/\1/p' "$OUT_FILE" | tail -n 1)"
+if [ "$FOLLOW_PID" = "$FORK_PID" ]; then
+    echo "[PASS] follow-fork-parent: monitor pid stayed on parent $FORK_PID"
+    PASS_COUNT="$(expr "$PASS_COUNT" + 1)"
+else
+    echo "[FAIL] follow-fork-parent: expected monitor pid $FORK_PID (got ${FOLLOW_PID:-none})"
+    head -60 "$OUT_FILE"
+    FAIL_COUNT="$(expr "$FAIL_COUNT" + 1)"
+fi
+assert_output_not_contains "follow-fork-parent: no remote protocol error" \
+    "$OUT_FILE" "Remote failure reply|not supported"
+rm -f "$OUT_FILE" "$GS_LOG"
+stop_fork_target
+
+# -------------------------------------------------------------------------
+# Test: follow-fork-mode child
+#
+# With follow-fork-mode child, GDB should select the child from the same fork
+# event. "monitor pid" should report a pid different from the attached parent.
+# -------------------------------------------------------------------------
+
+start_fork_target
+PORT="$(next_port)"
+GS_LOG="$(mktemp /tmp/ela_gs.XXXXXX)"
+start_gdbserver "$FORK_PID" "$PORT" "$GS_LOG"
+
+OUT="$(run_gdb "$PORT" "
+set sysroot /
+file $FORK_BIN
+set follow-fork-mode child
+set detach-on-fork on
+set g_fork_now = 1
+continue
+monitor pid
+detach
+")"
+OUT_FILE="$OUT"
+
+FOLLOW_PID="$(sed -n 's/.*pid: \([0-9][0-9]*\).*/\1/p' "$OUT_FILE" | tail -n 1)"
+if [ -n "$FOLLOW_PID" ] && [ "$FOLLOW_PID" != "$FORK_PID" ]; then
+    echo "[PASS] follow-fork-child: monitor pid switched from parent $FORK_PID to child $FOLLOW_PID"
+    PASS_COUNT="$(expr "$PASS_COUNT" + 1)"
+else
+    echo "[FAIL] follow-fork-child: expected monitor pid to differ from parent $FORK_PID (got ${FOLLOW_PID:-none})"
+    head -60 "$OUT_FILE"
+    FAIL_COUNT="$(expr "$FAIL_COUNT" + 1)"
+fi
+assert_output_not_contains "follow-fork-child: no remote protocol error" \
+    "$OUT_FILE" "Remote failure reply|not supported"
+rm -f "$OUT_FILE" "$GS_LOG"
+stop_fork_target
 
 # -------------------------------------------------------------------------
 # Test: continue with forwarded signal produces process exit (W packet)

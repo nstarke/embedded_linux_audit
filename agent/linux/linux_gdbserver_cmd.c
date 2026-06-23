@@ -28,6 +28,10 @@
 #include <dirent.h>
 #include <elf.h>
 
+#ifndef __WALL
+#define __WALL 0x40000000
+#endif
+
 #if defined(__x86_64__)
 #  include <sys/user.h>
 #elif defined(__aarch64__)
@@ -174,6 +178,13 @@ static int             g_multiprocess;     /* GDB negotiated multiprocess+ */
 static int             g_catch_syscalls;   /* QCatchSyscalls enabled */
 static int             g_in_syscall;       /* 0=expecting entry, 1=expecting exit */
 static uint64_t        g_last_sysno;       /* syscall# saved at entry for exit stop */
+static int             g_fork_events;      /* QSetForkEvents enabled */
+static int             g_vfork_events;     /* QSetVforkEvents enabled */
+static int             g_clone_events;     /* QSetCloneEvents enabled */
+static pid_t           g_last_detached_pid; /* pid detached during fork handoff */
+static pid_t           g_pending_fork_parent;
+static pid_t           g_pending_fork_child;
+static int             g_pending_fork_child_status;
 
 /* Syscall filter list: if cnt==0 catch all; otherwise only listed sysno */
 #define ELA_GDB_MAX_CATCH_SYSCALLS 64
@@ -411,6 +422,148 @@ static int do_singlestep(pid_t pid, int sig, int *out_wstatus)
 
 	*out_wstatus = wstatus;
 	return 0;
+}
+
+static void bp_clear_all(void);
+
+static long ptrace_session_options(void)
+{
+	long opts = PTRACE_O_TRACESYSGOOD;
+
+	if (g_fork_events)
+		opts |= PTRACE_O_TRACEFORK;
+#ifdef PTRACE_O_TRACEVFORK
+	if (g_vfork_events)
+		opts |= PTRACE_O_TRACEVFORK;
+#endif
+#ifdef PTRACE_O_TRACECLONE
+	if (g_clone_events)
+		opts |= PTRACE_O_TRACECLONE;
+#endif
+	return opts;
+}
+
+static void ptrace_update_options(pid_t pid)
+{
+	ptrace(PTRACE_SETOPTIONS, pid, NULL,
+	       (void *)(uintptr_t)ptrace_session_options());
+}
+
+static int ptrace_event_from_status(int wstatus)
+{
+	if (!WIFSTOPPED(wstatus) || WSTOPSIG(wstatus) != SIGTRAP)
+		return 0;
+	return (wstatus >> 16) & 0xffff;
+}
+
+static void reset_process_caches(void)
+{
+	g_svr4_xml_len    = -1;
+	g_threads_xml_len = -1;
+	g_memmap_xml_len  = -1;
+	g_target_xml_len  = -1;
+	g_in_syscall      = 0;
+	g_last_sysno      = 0;
+	memset(g_bps, 0, sizeof(g_bps));
+}
+
+static void clear_pending_fork(void)
+{
+	g_pending_fork_parent = 0;
+	g_pending_fork_child = 0;
+	g_pending_fork_child_status = 0;
+}
+
+static int switch_to_pending_fork_child(void)
+{
+	if (g_pending_fork_child <= 0)
+		return 0;
+
+	if (g_pid == g_pending_fork_parent) {
+		bp_clear_all();
+		ptrace(PTRACE_DETACH, g_pending_fork_parent, NULL, NULL);
+		g_last_detached_pid = g_pending_fork_parent;
+	}
+
+	g_pid = g_pending_fork_child;
+	g_current_tid = g_pending_fork_child;
+	g_initial_attach_stop = 1;
+	g_attach_sigstop_pending = 0;
+	g_last_wstatus = g_pending_fork_child_status;
+	reset_process_caches();
+	ptrace_update_options(g_pid);
+	clear_pending_fork();
+	return 1;
+}
+
+static int detach_pending_fork_child(void)
+{
+	if (g_pending_fork_child <= 0)
+		return 0;
+
+	ptrace(PTRACE_DETACH, g_pending_fork_child, NULL, NULL);
+	g_last_detached_pid = g_pending_fork_child;
+	clear_pending_fork();
+	return 1;
+}
+
+static int send_fork_event_stop(int fd, pid_t parent_pid, int event)
+{
+	unsigned long msg = 0;
+	pid_t child_pid;
+	int child_status = 0;
+	const char *reason = "fork";
+	char stop_buf[128];
+
+	if (event != PTRACE_EVENT_FORK
+#ifdef PTRACE_EVENT_VFORK
+	    && event != PTRACE_EVENT_VFORK
+#endif
+#ifdef PTRACE_EVENT_CLONE
+	    && event != PTRACE_EVENT_CLONE
+#endif
+	    )
+		return 0;
+
+	if (ptrace(PTRACE_GETEVENTMSG, parent_pid, NULL, &msg) != 0)
+		return -1;
+	child_pid = (pid_t)msg;
+	if (child_pid <= 0)
+		return -1;
+
+#ifdef PTRACE_EVENT_VFORK
+	if (event == PTRACE_EVENT_VFORK)
+		reason = "vfork";
+#endif
+#ifdef PTRACE_EVENT_CLONE
+	if (event == PTRACE_EVENT_CLONE)
+		reason = "clone";
+#endif
+
+	/*
+	 * Leave both parent and child stopped and report the fork event.  GDB
+	 * decides which process to follow; later H/D packets select or detach
+	 * the pending child or parent.
+	 */
+	if (waitpid(child_pid, &child_status, __WALL) < 0)
+		return -1;
+
+	g_pending_fork_parent = parent_pid;
+	g_pending_fork_child = child_pid;
+	g_pending_fork_child_status = child_status;
+	ptrace_update_options(child_pid);
+
+	if (g_multiprocess)
+		snprintf(stop_buf, sizeof(stop_buf),
+			 "T05thread:p%x.%x;%s:p%x.%x;",
+			 (unsigned)parent_pid, (unsigned)parent_pid,
+			 reason, (unsigned)child_pid, (unsigned)child_pid);
+	else
+		snprintf(stop_buf, sizeof(stop_buf),
+			 "T05thread:%x;%s:%x;",
+			 (unsigned)parent_pid, reason, (unsigned)child_pid);
+	rsp_send_str(fd, stop_buf);
+	return 1;
 }
 
 /* -----------------------------------------------------------------------
@@ -3729,6 +3882,7 @@ static void do_continue(int fd, int initial_sig)
 
 	for (;;) {
 		int req = g_catch_syscalls ? PTRACE_SYSCALL : PTRACE_CONT;
+		pid_t waited_pid;
 		if (ptrace(req, g_pid, NULL, (void *)(uintptr_t)fwd_sig) != 0) {
 			/*
 			 * ptrace failed — the process likely died (e.g. SIGKILL)
@@ -3742,7 +3896,12 @@ static void do_continue(int fd, int initial_sig)
 			rsp_send_str(fd, "E01");
 			return;
 		}
-		if (waitpid(g_pid, &wstatus, 0) < 0) {
+		waited_pid = waitpid((g_fork_events || g_vfork_events ||
+				      g_clone_events) ? -1 : g_pid,
+				     &wstatus,
+				     (g_fork_events || g_vfork_events ||
+				      g_clone_events) ? __WALL : 0);
+		if (waited_pid < 0) {
 			rsp_send_str(fd, "E01");
 			return;
 		}
@@ -3750,6 +3909,18 @@ static void do_continue(int fd, int initial_sig)
 
 		if (!WIFSTOPPED(wstatus))
 			break;
+
+		{
+			int follow_rc = send_fork_event_stop(
+				fd, waited_pid, ptrace_event_from_status(wstatus));
+			if (follow_rc > 0) {
+				return;
+			}
+			if (follow_rc < 0) {
+				rsp_send_str(fd, "E01");
+				return;
+			}
+		}
 
 		{
 			int sig = WSTOPSIG(wstatus);
@@ -4267,8 +4438,7 @@ static void handle_packet(int fd, char *pkt)
 				break;
 			}
 
-			ptrace(PTRACE_SETOPTIONS, new_pid, NULL,
-			       (void *)(uintptr_t)PTRACE_O_TRACESYSGOOD);
+			ptrace_update_options(new_pid);
 
 			g_pid             = new_pid;
 			g_last_wstatus    = new_ws;
@@ -4314,13 +4484,16 @@ static void handle_packet(int fd, char *pkt)
 		 * Update g_current_tid so subsequent packets use the right thread.
 		 */
 		pid_t h_tid = 0;
+		pid_t h_pid = 0;
 		if (pkt[2] != '\0') {
 			const char *tid_str = pkt + 2;
 			/* -1 (all) and 0 (any) → keep current thread */
 			if (strcmp(tid_str, "-1") != 0 &&
 			    strcmp(tid_str, "0") != 0) {
-				ela_gdb_parse_thread_id(tid_str, NULL, &h_tid);
-				if (h_tid > 0)
+				ela_gdb_parse_thread_id(tid_str, &h_pid, &h_tid);
+				if (h_pid == g_pending_fork_child)
+					switch_to_pending_fork_child();
+				if (h_tid > 0 && (h_pid <= 0 || h_pid == g_pid))
 					g_current_tid = h_tid;
 			}
 		}
@@ -4436,6 +4609,8 @@ static void handle_packet(int fd, char *pkt)
 				client_feats++;
 			g_swbreak_feature = (strstr(client_feats, "swbreak+") != NULL);
 			g_multiprocess    = (strstr(client_feats, "multiprocess+") != NULL);
+			g_fork_events     = (strstr(client_feats, "fork-events+") != NULL);
+			ptrace_update_options(g_pid);
 
 			snprintf(resp, sizeof(resp),
 				 "PacketSize=%x"
@@ -4452,6 +4627,7 @@ static void handle_packet(int fd, char *pkt)
 				 ";QStartNoAckMode+"
 				 ";QPassSignals+"
 				 ";QCatchSyscalls+"
+				 ";fork-events+"
 				 ";multiprocess+"
 				 ";swbreak+"
 				 /* hwbreak+ intentionally omitted: our Z1 is best-effort
@@ -5161,6 +5337,42 @@ static void handle_packet(int fd, char *pkt)
 			} else {
 				rsp_send_str(fd, "E01");
 			}
+		} else if (strncmp(pkt, "QSetForkEvents:", 15) == 0) {
+			if (pkt[15] == '0' && pkt[16] == '\0') {
+				g_fork_events = 0;
+				ptrace_update_options(g_pid);
+				rsp_send_str(fd, "OK");
+			} else if (pkt[15] == '1' && pkt[16] == '\0') {
+				g_fork_events = 1;
+				ptrace_update_options(g_pid);
+				rsp_send_str(fd, "OK");
+			} else {
+				rsp_send_str(fd, "E01");
+			}
+		} else if (strncmp(pkt, "QSetVforkEvents:", 16) == 0) {
+			if (pkt[16] == '0' && pkt[17] == '\0') {
+				g_vfork_events = 0;
+				ptrace_update_options(g_pid);
+				rsp_send_str(fd, "OK");
+			} else if (pkt[16] == '1' && pkt[17] == '\0') {
+				g_vfork_events = 1;
+				ptrace_update_options(g_pid);
+				rsp_send_str(fd, "OK");
+			} else {
+				rsp_send_str(fd, "E01");
+			}
+		} else if (strncmp(pkt, "QSetCloneEvents:", 16) == 0) {
+			if (pkt[16] == '0' && pkt[17] == '\0') {
+				g_clone_events = 0;
+				ptrace_update_options(g_pid);
+				rsp_send_str(fd, "OK");
+			} else if (pkt[16] == '1' && pkt[17] == '\0') {
+				g_clone_events = 1;
+				ptrace_update_options(g_pid);
+				rsp_send_str(fd, "OK");
+			} else {
+				rsp_send_str(fd, "E01");
+			}
 		} else if (strncmp(pkt, "QPassSignals:", 13) == 0) {
 			/*
 			 * QPassSignals:<sig1>;<sig2>;...
@@ -5190,12 +5402,51 @@ static void handle_packet(int fd, char *pkt)
 		}
 		break;
 
-	case 'D': /* Detach */
+	case 'D': /* Detach: D or D;<pid-hex> */
+	{
+		pid_t detach_pid = g_pid;
+		int explicit_pid = (pkt[1] == ';');
+
+		if (explicit_pid)
+			detach_pid = (pid_t)strtol(pkt + 2, NULL, 16);
+
+		if (explicit_pid && detach_pid == g_pending_fork_child) {
+			detach_pending_fork_child();
+			rsp_send_str(fd, "OK");
+			break;
+		}
+		if (explicit_pid &&
+		    detach_pid == g_pending_fork_parent &&
+		    g_pending_fork_child > 0) {
+			bp_clear_all();
+			ptrace(PTRACE_DETACH, g_pending_fork_parent, NULL, NULL);
+			g_last_detached_pid = g_pending_fork_parent;
+			g_pid = g_pending_fork_child;
+			g_current_tid = g_pending_fork_child;
+			g_initial_attach_stop = 1;
+			g_attach_sigstop_pending = 0;
+			g_last_wstatus = g_pending_fork_child_status;
+			reset_process_caches();
+			ptrace_update_options(g_pid);
+			clear_pending_fork();
+			rsp_send_str(fd, "OK");
+			break;
+		}
+		if (detach_pid == g_last_detached_pid) {
+			rsp_send_str(fd, "OK");
+			break;
+		}
+		if (detach_pid != g_pid) {
+			rsp_send_str(fd, "E01");
+			break;
+		}
+
 		bp_clear_all();
 		ptrace(PTRACE_DETACH, g_pid, NULL, NULL);
 		rsp_send_str(fd, "OK");
 		g_stop = 1;
 		break;
+	}
 
 	case 'k': /* Kill — we interpret as detach */
 		bp_clear_all();
@@ -5236,6 +5487,11 @@ static int run_session(int conn_fd, pid_t pid, int attach_wstatus)
 	g_catch_sysno_cnt  = 0;
 	g_in_syscall       = 0;
 	g_last_sysno       = 0;
+	g_fork_events      = 0;
+	g_vfork_events     = 0;
+	g_clone_events     = 0;
+	g_last_detached_pid = 0;
+	clear_pending_fork();
 	memset(g_bps, 0, sizeof(g_bps));
 	xmlInitParser();
 
@@ -5245,8 +5501,7 @@ static int run_session(int conn_fd, pid_t pid, int attach_wstatus)
 	 * stop signal (SIGTRAP|0x80) for PTRACE_SYSCALL stops, leaving
 	 * regular breakpoint/signal traps as plain SIGTRAP (5).
 	 */
-	ptrace(PTRACE_SETOPTIONS, pid, NULL,
-	       (void *)(uintptr_t)PTRACE_O_TRACESYSGOOD);
+	ptrace_update_options(pid);
 
 	while (!g_stop) {
 		n = rsp_recv_packet(conn_fd, payload, sizeof(payload));
@@ -5266,6 +5521,7 @@ static int run_session(int conn_fd, pid_t pid, int attach_wstatus)
 		handle_packet(conn_fd, payload);
 	}
 
+	detach_pending_fork_child();
 	return 0;
 }
 
