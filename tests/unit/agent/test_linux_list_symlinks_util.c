@@ -4,6 +4,7 @@
 #include "test_harness.h"
 
 #include <errno.h>
+#include <fcntl.h>
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -190,6 +191,9 @@ struct fake_run_state {
 	int close_calls;
 	int send_rc;
 	int http_post_rc;
+	int log_rc;
+	int log_calls;
+	int build_uri_fail;
 	char sent_data[2048];
 	size_t sent_data_len;
 	char stdout_data[2048];
@@ -203,13 +207,57 @@ struct fake_run_state {
 	char format_used[16];
 	char last_link_path[PATH_MAX];
 	char last_target_path[PATH_MAX];
+	char log_message[512];
+	char lstat_fail_path[PATH_MAX];
+	char readlink_fail_path[PATH_MAX];
 };
+
+/* Temporarily silence stderr around paths that intentionally emit diagnostics. */
+static int silence_stderr(void)
+{
+	int saved = dup(STDERR_FILENO);
+	int null_fd = open("/dev/null", O_WRONLY);
+
+	if (null_fd >= 0) {
+		dup2(null_fd, STDERR_FILENO);
+		close(null_fd);
+	}
+	return saved;
+}
+
+static void restore_stderr(int saved)
+{
+	if (saved >= 0) {
+		dup2(saved, STDERR_FILENO);
+		close(saved);
+	}
+}
 
 static struct fake_run_state fake_run_state;
 
 static void reset_run_state(void)
 {
 	memset(&fake_run_state, 0, sizeof(fake_run_state));
+}
+
+static int fake_run_lstat(const char *path, struct stat *st)
+{
+	if (fake_run_state.lstat_fail_path[0] != '\0' &&
+	    strcmp(path, fake_run_state.lstat_fail_path) == 0) {
+		errno = EACCES;
+		return -1;
+	}
+	return lstat(path, st);
+}
+
+static ssize_t fake_run_readlink(const char *path, char *buf, size_t bufsiz)
+{
+	if (fake_run_state.readlink_fail_path[0] != '\0' &&
+	    strcmp(path, fake_run_state.readlink_fail_path) == 0) {
+		errno = EACCES;
+		return -1;
+	}
+	return readlink(path, buf, bufsiz);
 }
 
 static int append_text(char *dst, size_t *dst_len, size_t cap, const char *src, size_t src_len)
@@ -272,6 +320,8 @@ static char *fake_build_upload_uri(const char *base_uri, const char *upload_type
 	snprintf(fake_run_state.upload_base_uri, sizeof(fake_run_state.upload_base_uri), "%s", base_uri ? base_uri : "");
 	snprintf(fake_run_state.upload_type, sizeof(fake_run_state.upload_type), "%s", upload_type ? upload_type : "");
 	snprintf(fake_run_state.upload_file_path, sizeof(fake_run_state.upload_file_path), "%s", file_path ? file_path : "");
+	if (fake_run_state.build_uri_fail)
+		return NULL;
 	snprintf(fake_run_state.upload_uri, sizeof(fake_run_state.upload_uri), "%s/%s", base_uri, upload_type);
 	return strdup(fake_run_state.upload_uri);
 }
@@ -310,12 +360,13 @@ static int fake_http_post_log_message(const char *base_uri, const char *message,
 				      char *errbuf, size_t errbuf_len)
 {
 	(void)base_uri;
-	(void)message;
 	(void)insecure;
 	(void)verbose;
-	(void)errbuf;
-	(void)errbuf_len;
-	return 0;
+	fake_run_state.log_calls++;
+	snprintf(fake_run_state.log_message, sizeof(fake_run_state.log_message), "%s", message ? message : "");
+	if (fake_run_state.log_rc != 0 && errbuf && errbuf_len)
+		snprintf(errbuf, errbuf_len, "log post failed");
+	return fake_run_state.log_rc;
 }
 
 static int fake_close(int fd)
@@ -374,8 +425,8 @@ static void create_test_tree(char *root_buf, size_t root_buf_len,
 }
 
 static struct ela_list_symlinks_run_ops fake_run_ops = {
-	.lstat_fn = lstat,
-	.readlink_fn = readlink,
+	.lstat_fn = fake_run_lstat,
+	.readlink_fn = fake_run_readlink,
 	.format_symlink_record_fn = fake_format_symlink_record,
 	.send_all_fn = fake_send_all,
 	.append_output_fn = output_buffer_append_len,
@@ -487,14 +538,143 @@ static void test_list_symlinks_run_reports_tcp_and_http_failures(void)
 	cleanup_test_tree(root);
 }
 
+static void test_list_symlinks_prepare_unknown_option_and_https_env(void)
+{
+	struct ela_list_symlinks_request request;
+	struct ela_list_symlinks_prepare_ops ops = {
+		.parse_http_output_uri_fn = fake_parse_http_output_uri,
+		.connect_tcp_ipv4_fn = fake_connect_tcp_ipv4,
+		.lstat_fn = fake_prepare_lstat,
+	};
+	struct ela_list_symlinks_env env = { 0 };
+	char errbuf[256];
+	char *argv_unknown[] = { "list-symlinks", "-z", "/tmp/tree" };
+	char *argv_ok[] = { "list-symlinks", "/tmp/tree" };
+	int saved;
+
+	/* Unknown option → "invalid option". */
+	reset_prepare_fakes();
+	saved = silence_stderr(); /* getopt_long warns on stderr */
+	ELA_ASSERT_INT_EQ(2, ela_list_symlinks_prepare_request(3, argv_unknown, &env, &ops,
+						       &request, errbuf, sizeof(errbuf)));
+	restore_stderr(saved);
+	ELA_ASSERT_TRUE(strstr(errbuf, "invalid option") != NULL);
+
+	/* parsed https from the http parser is honored. */
+	reset_prepare_fakes();
+	env.output_format = "txt";
+	env.output_http = "http://ela.example/upload";
+	fake_parsed_https = "https://parsed.example/upload";
+	ELA_ASSERT_INT_EQ(0, ela_list_symlinks_prepare_request(2, argv_ok, &env, &ops,
+						       &request, errbuf, sizeof(errbuf)));
+	ELA_ASSERT_STR_EQ("https://parsed.example/upload", request.output_uri);
+
+	/* env.output_https directly wins. */
+	reset_prepare_fakes();
+	env.output_http = NULL;
+	env.output_https = "https://direct.example/upload";
+	ELA_ASSERT_INT_EQ(0, ela_list_symlinks_prepare_request(2, argv_ok, &env, &ops,
+						       &request, errbuf, sizeof(errbuf)));
+	ELA_ASSERT_STR_EQ("https://direct.example/upload", request.output_uri);
+}
+
+static void test_list_symlinks_run_opendir_failure_reports_and_logs(void)
+{
+	struct ela_list_symlinks_request request = {
+		.output_format = "txt",
+		.dir_path = "/tmp/ela-list-symlinks-missing-XYZ",
+		.output_uri = "https://ela.example/upload",
+		.insecure = true,
+		.output_sock = -1,
+	};
+	char errbuf[256];
+	int saved;
+
+	reset_run_state();
+	fake_run_state.log_rc = -1; /* exercise the failed-log-post branch */
+	saved = silence_stderr();
+	ELA_ASSERT_INT_EQ(1, ela_list_symlinks_run(&request, &fake_run_ops, errbuf, sizeof(errbuf)));
+	restore_stderr(saved);
+	ELA_ASSERT_INT_EQ(1, fake_run_state.log_calls);
+	ELA_ASSERT_TRUE(strstr(fake_run_state.log_message, "Cannot open directory") != NULL);
+}
+
+static void test_list_symlinks_run_reports_stat_and_readlink_failures(void)
+{
+	struct ela_list_symlinks_request request = {
+		.output_format = "txt",
+		.output_uri = "https://ela.example/upload",
+		.insecure = true,
+		.output_sock = -1,
+		.recursive = false,
+	};
+	char root[PATH_MAX];
+	char top_link[PATH_MAX];
+	char nested_link[PATH_MAX];
+	char errbuf[256];
+	int saved;
+
+	create_test_tree(root, sizeof(root), top_link, sizeof(top_link), nested_link, sizeof(nested_link));
+	request.dir_path = root;
+
+	/* lstat failure on the top-level entry is reported and skipped. */
+	reset_run_state();
+	snprintf(fake_run_state.lstat_fail_path, sizeof(fake_run_state.lstat_fail_path), "%s", top_link);
+	saved = silence_stderr();
+	ELA_ASSERT_INT_EQ(0, ela_list_symlinks_run(&request, &fake_run_ops, errbuf, sizeof(errbuf)));
+	restore_stderr(saved);
+	ELA_ASSERT_TRUE(strstr(fake_run_state.log_message, "Cannot stat") != NULL);
+
+	/* readlink failure on a symlink is reported and skipped. */
+	reset_run_state();
+	snprintf(fake_run_state.readlink_fail_path, sizeof(fake_run_state.readlink_fail_path), "%s", top_link);
+	saved = silence_stderr();
+	ELA_ASSERT_INT_EQ(0, ela_list_symlinks_run(&request, &fake_run_ops, errbuf, sizeof(errbuf)));
+	restore_stderr(saved);
+	ELA_ASSERT_TRUE(strstr(fake_run_state.log_message, "Cannot read symlink") != NULL);
+
+	cleanup_test_tree(root);
+}
+
+static void test_list_symlinks_run_build_upload_uri_failure(void)
+{
+	struct ela_list_symlinks_request request = {
+		.output_format = "txt",
+		.output_uri = "https://ela.example/upload",
+		.insecure = true,
+		.output_sock = -1,
+		.recursive = false,
+	};
+	char root[PATH_MAX];
+	char top_link[PATH_MAX];
+	char nested_link[PATH_MAX];
+	char errbuf[256];
+
+	create_test_tree(root, sizeof(root), top_link, sizeof(top_link), nested_link, sizeof(nested_link));
+	request.dir_path = root;
+
+	reset_run_state();
+	fake_run_state.build_uri_fail = 1;
+	ELA_ASSERT_INT_EQ(1, ela_list_symlinks_run(&request, &fake_run_ops, errbuf, sizeof(errbuf)));
+	ELA_ASSERT_INT_EQ(1, fake_run_state.build_upload_uri_calls);
+	ELA_ASSERT_INT_EQ(0, fake_run_state.http_post_calls);
+	ELA_ASSERT_TRUE(strstr(errbuf, "Unable to build upload URI") != NULL);
+
+	cleanup_test_tree(root);
+}
+
 int run_linux_list_symlinks_util_tests(void)
 {
 	static const struct ela_test_case cases[] = {
 		{ "list_symlinks_prepare_request_accepts_defaults_and_help", test_list_symlinks_prepare_request_accepts_defaults_and_help },
 		{ "list_symlinks_prepare_request_rejects_invalid_inputs", test_list_symlinks_prepare_request_rejects_invalid_inputs },
+		{ "list_symlinks_prepare_unknown_option_and_https_env", test_list_symlinks_prepare_unknown_option_and_https_env },
 		{ "list_symlinks_run_honors_recursive_traversal_and_formatting", test_list_symlinks_run_honors_recursive_traversal_and_formatting },
 		{ "list_symlinks_run_supports_tcp_and_http_outputs", test_list_symlinks_run_supports_tcp_and_http_outputs },
 		{ "list_symlinks_run_reports_tcp_and_http_failures", test_list_symlinks_run_reports_tcp_and_http_failures },
+		{ "list_symlinks_run_opendir_failure_reports_and_logs", test_list_symlinks_run_opendir_failure_reports_and_logs },
+		{ "list_symlinks_run_reports_stat_and_readlink_failures", test_list_symlinks_run_reports_stat_and_readlink_failures },
+		{ "list_symlinks_run_build_upload_uri_failure", test_list_symlinks_run_build_upload_uri_failure },
 	};
 
 	return ela_run_test_suite("linux_list_symlinks_util",

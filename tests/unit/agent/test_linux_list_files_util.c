@@ -4,7 +4,10 @@
 #include "test_harness.h"
 
 #include <errno.h>
+#include <fcntl.h>
+#include <grp.h>
 #include <limits.h>
+#include <pwd.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -214,6 +217,10 @@ struct fake_run_state {
 	int close_calls;
 	int send_rc;
 	int write_rc;
+	int http_post_rc;
+	int log_rc;
+	int log_calls;
+	int build_uri_fail;
 	char sent_data[1024];
 	size_t sent_data_len;
 	char stdout_data[1024];
@@ -224,7 +231,30 @@ struct fake_run_state {
 	char upload_uri[256];
 	char http_body[1024];
 	char http_content_type[128];
+	char log_message[512];
+	char lstat_fail_path[PATH_MAX];
 };
+
+/* Temporarily silence stderr around paths that intentionally emit diagnostics. */
+static int silence_stderr(void)
+{
+	int saved = dup(STDERR_FILENO);
+	int null_fd = open("/dev/null", O_WRONLY);
+
+	if (null_fd >= 0) {
+		dup2(null_fd, STDERR_FILENO);
+		close(null_fd);
+	}
+	return saved;
+}
+
+static void restore_stderr(int saved)
+{
+	if (saved >= 0) {
+		dup2(saved, STDERR_FILENO);
+		close(saved);
+	}
+}
 
 static struct fake_run_state fake_run_state;
 
@@ -272,8 +302,20 @@ static char *fake_build_upload_uri(const char *base_uri, const char *upload_type
 	snprintf(fake_run_state.upload_base_uri, sizeof(fake_run_state.upload_base_uri), "%s", base_uri ? base_uri : "");
 	snprintf(fake_run_state.upload_type, sizeof(fake_run_state.upload_type), "%s", upload_type ? upload_type : "");
 	snprintf(fake_run_state.upload_file_path, sizeof(fake_run_state.upload_file_path), "%s", file_path ? file_path : "");
+	if (fake_run_state.build_uri_fail)
+		return NULL;
 	snprintf(fake_run_state.upload_uri, sizeof(fake_run_state.upload_uri), "%s/%s", base_uri, upload_type);
 	return strdup(fake_run_state.upload_uri);
+}
+
+static int fake_run_lstat(const char *path, struct stat *st)
+{
+	if (fake_run_state.lstat_fail_path[0] != '\0' &&
+	    strcmp(path, fake_run_state.lstat_fail_path) == 0) {
+		errno = EACCES;
+		return -1;
+	}
+	return lstat(path, st);
 }
 
 static int fake_http_post(const char *uri, const uint8_t *data, size_t len,
@@ -282,8 +324,6 @@ static int fake_http_post(const char *uri, const uint8_t *data, size_t len,
 {
 	(void)insecure;
 	(void)verbose;
-	(void)errbuf;
-	(void)errbuf_len;
 	fake_run_state.http_post_calls++;
 	snprintf(fake_run_state.upload_uri, sizeof(fake_run_state.upload_uri), "%s", uri ? uri : "");
 	snprintf(fake_run_state.http_content_type, sizeof(fake_run_state.http_content_type), "%s",
@@ -292,7 +332,9 @@ static int fake_http_post(const char *uri, const uint8_t *data, size_t len,
 		memcpy(fake_run_state.http_body, data, len);
 		fake_run_state.http_body[len] = '\0';
 	}
-	return 0;
+	if (fake_run_state.http_post_rc != 0 && errbuf && errbuf_len)
+		snprintf(errbuf, errbuf_len, "upload failed");
+	return fake_run_state.http_post_rc;
 }
 
 static int fake_http_post_log_message(const char *base_uri, const char *message,
@@ -300,12 +342,13 @@ static int fake_http_post_log_message(const char *base_uri, const char *message,
 				      char *errbuf, size_t errbuf_len)
 {
 	(void)base_uri;
-	(void)message;
 	(void)insecure;
 	(void)verbose;
-	(void)errbuf;
-	(void)errbuf_len;
-	return 0;
+	fake_run_state.log_calls++;
+	snprintf(fake_run_state.log_message, sizeof(fake_run_state.log_message), "%s", message ? message : "");
+	if (fake_run_state.log_rc != 0 && errbuf && errbuf_len)
+		snprintf(errbuf, errbuf_len, "log post failed");
+	return fake_run_state.log_rc;
 }
 
 static int fake_close(int fd)
@@ -382,7 +425,7 @@ static void create_test_tree(char *root_buf, size_t root_buf_len,
 }
 
 static struct ela_list_files_run_ops fake_run_ops = {
-	.lstat_fn = lstat,
+	.lstat_fn = fake_run_lstat,
 	.send_all_fn = fake_send_all,
 	.append_output_fn = output_buffer_append,
 	.write_stdout_fn = fake_write_stdout,
@@ -469,13 +512,168 @@ static void test_list_files_run_supports_tcp_and_http_outputs(void)
 	cleanup_test_tree(root);
 }
 
+static void test_list_files_prepare_help_and_name_lookups(void)
+{
+	struct ela_list_files_request request;
+	struct ela_list_files_prepare_ops ops = {
+		.parse_permissions_filter_fn = fake_parse_permissions_filter,
+		.parse_http_output_uri_fn = fake_parse_http_output_uri,
+		.connect_tcp_ipv4_fn = fake_connect_tcp_ipv4,
+		.lstat_fn = fake_prepare_lstat,
+	};
+	struct ela_list_files_env env = { 0 };
+	char errbuf[256];
+	char *argv_help[] = { "list-files", "--help" };
+	struct passwd *pw = getpwuid(getuid());
+	struct group *gr = getgrgid(getgid());
+
+	/* --help short-circuits parsing. */
+	reset_prepare_fakes();
+	ELA_ASSERT_INT_EQ(0, ela_list_files_prepare_request(2, argv_help, &env, &ops,
+						      &request, errbuf, sizeof(errbuf)));
+	ELA_ASSERT_TRUE(request.show_help);
+
+	/* --user / --group by name exercise the getpwnam()/getgrnam() branches. */
+	if (pw && pw->pw_name) {
+		char *argv_user[] = { "list-files", "--user", pw->pw_name, "/tmp/tree" };
+
+		reset_prepare_fakes();
+		ELA_ASSERT_INT_EQ(0, ela_list_files_prepare_request(4, argv_user, &env, &ops,
+							      &request, errbuf, sizeof(errbuf)));
+		ELA_ASSERT_TRUE(request.filters.user_set);
+		ELA_ASSERT_INT_EQ((int)getuid(), (int)request.filters.uid);
+	}
+	if (gr && gr->gr_name) {
+		char *argv_group[] = { "list-files", "--group", gr->gr_name, "/tmp/tree" };
+
+		reset_prepare_fakes();
+		ELA_ASSERT_INT_EQ(0, ela_list_files_prepare_request(4, argv_group, &env, &ops,
+							      &request, errbuf, sizeof(errbuf)));
+		ELA_ASSERT_TRUE(request.filters.group_set);
+		ELA_ASSERT_INT_EQ((int)getgid(), (int)request.filters.gid);
+	}
+}
+
+static void test_list_files_run_opendir_failure_reports_and_logs(void)
+{
+	struct ela_list_files_request request = {
+		.dir_path = "/tmp/ela-list-files-missing-XYZ",
+		.output_uri = "https://ela.example/upload",
+		.insecure = true,
+		.output_sock = -1,
+	};
+	char errbuf[256];
+	int saved;
+
+	reset_run_state();
+	fake_run_state.log_rc = -1; /* exercise the failed-log-post branch */
+	saved = silence_stderr();
+	ELA_ASSERT_INT_EQ(1, ela_list_files_run(&request, &fake_run_ops, errbuf, sizeof(errbuf)));
+	restore_stderr(saved);
+	ELA_ASSERT_INT_EQ(1, fake_run_state.log_calls);
+	ELA_ASSERT_TRUE(strstr(fake_run_state.log_message, "Cannot open directory") != NULL);
+}
+
+static void test_list_files_run_reports_child_stat_failure(void)
+{
+	struct ela_list_files_request request = {
+		.recursive = false,
+		.output_uri = "https://ela.example/upload",
+		.insecure = true,
+		.output_sock = -1,
+	};
+	char root[PATH_MAX];
+	char plain[PATH_MAX];
+	char suid[PATH_MAX];
+	char nested[PATH_MAX];
+	char errbuf[256];
+	int saved;
+
+	create_test_tree(root, sizeof(root), plain, sizeof(plain), suid, sizeof(suid), nested, sizeof(nested));
+	request.dir_path = root;
+
+	reset_run_state();
+	snprintf(fake_run_state.lstat_fail_path, sizeof(fake_run_state.lstat_fail_path), "%s", plain);
+	saved = silence_stderr();
+	ELA_ASSERT_INT_EQ(0, ela_list_files_run(&request, &fake_run_ops, errbuf, sizeof(errbuf)));
+	restore_stderr(saved);
+	ELA_ASSERT_INT_EQ(1, fake_run_state.log_calls);
+	ELA_ASSERT_TRUE(strstr(fake_run_state.log_message, "Cannot stat") != NULL);
+
+	cleanup_test_tree(root);
+}
+
+static void test_list_files_run_emit_path_failure_propagates(void)
+{
+	struct ela_list_files_request request = {
+		.recursive = false,
+		.output_sock = 7,
+	};
+	char root[PATH_MAX];
+	char plain[PATH_MAX];
+	char suid[PATH_MAX];
+	char nested[PATH_MAX];
+
+	create_test_tree(root, sizeof(root), plain, sizeof(plain), suid, sizeof(suid), nested, sizeof(nested));
+	request.dir_path = root;
+
+	/* send_all failure inside emit_path aborts the whole walk with rc 1. */
+	reset_run_state();
+	fake_run_state.send_rc = -1;
+	ELA_ASSERT_INT_EQ(1, ela_list_files_run(&request, &fake_run_ops, NULL, 0));
+	ELA_ASSERT_INT_EQ(1, fake_run_state.send_calls);
+	ELA_ASSERT_INT_EQ(1, fake_run_state.close_calls);
+
+	cleanup_test_tree(root);
+}
+
+static void test_list_files_run_upload_failures(void)
+{
+	struct ela_list_files_request request = {
+		.recursive = false,
+		.output_sock = -1,
+		.output_uri = "https://ela.example/upload",
+		.insecure = true,
+	};
+	char root[PATH_MAX];
+	char plain[PATH_MAX];
+	char suid[PATH_MAX];
+	char nested[PATH_MAX];
+	char errbuf[256];
+
+	create_test_tree(root, sizeof(root), plain, sizeof(plain), suid, sizeof(suid), nested, sizeof(nested));
+	request.dir_path = root;
+
+	/* build_upload_uri returns NULL. */
+	reset_run_state();
+	fake_run_state.build_uri_fail = 1;
+	ELA_ASSERT_INT_EQ(1, ela_list_files_run(&request, &fake_run_ops, errbuf, sizeof(errbuf)));
+	ELA_ASSERT_INT_EQ(1, fake_run_state.build_upload_uri_calls);
+	ELA_ASSERT_INT_EQ(0, fake_run_state.http_post_calls);
+	ELA_ASSERT_TRUE(strstr(errbuf, "Unable to build upload URI") != NULL);
+
+	/* http_post returns failure. */
+	reset_run_state();
+	fake_run_state.http_post_rc = -1;
+	ELA_ASSERT_INT_EQ(1, ela_list_files_run(&request, &fake_run_ops, errbuf, sizeof(errbuf)));
+	ELA_ASSERT_INT_EQ(1, fake_run_state.http_post_calls);
+	ELA_ASSERT_TRUE(strstr(errbuf, "Failed HTTP(S) POST") != NULL);
+
+	cleanup_test_tree(root);
+}
+
 int run_linux_list_files_util_tests(void)
 {
 	static const struct ela_test_case cases[] = {
 		{ "list_files_prepare_request_accepts_defaults_and_filters", test_list_files_prepare_request_accepts_defaults_and_filters },
 		{ "list_files_prepare_request_rejects_invalid_inputs", test_list_files_prepare_request_rejects_invalid_inputs },
+		{ "list_files_prepare_help_and_name_lookups", test_list_files_prepare_help_and_name_lookups },
 		{ "list_files_run_applies_filters_and_recursion", test_list_files_run_applies_filters_and_recursion },
 		{ "list_files_run_supports_tcp_and_http_outputs", test_list_files_run_supports_tcp_and_http_outputs },
+		{ "list_files_run_opendir_failure_reports_and_logs", test_list_files_run_opendir_failure_reports_and_logs },
+		{ "list_files_run_reports_child_stat_failure", test_list_files_run_reports_child_stat_failure },
+		{ "list_files_run_emit_path_failure_propagates", test_list_files_run_emit_path_failure_propagates },
+		{ "list_files_run_upload_failures", test_list_files_run_upload_failures },
 	};
 
 	return ela_run_test_suite("linux_list_files_util",

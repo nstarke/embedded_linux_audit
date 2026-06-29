@@ -216,7 +216,31 @@ struct fake_run_state {
 	size_t http_body_len;
 	char http_content_type[128];
 	char log_message[512];
+	int build_uri_fail;
 };
+
+/* Temporarily silence stderr around code paths that intentionally emit
+ * diagnostics (opendir/stat failures, log-post failures) so the test runner
+ * output stays clean.  Returns the saved fd to pass to restore_stderr(). */
+static int silence_stderr(void)
+{
+	int saved = dup(STDERR_FILENO);
+	int null_fd = open("/dev/null", O_WRONLY);
+
+	if (null_fd >= 0) {
+		dup2(null_fd, STDERR_FILENO);
+		close(null_fd);
+	}
+	return saved;
+}
+
+static void restore_stderr(int saved)
+{
+	if (saved >= 0) {
+		dup2(saved, STDERR_FILENO);
+		close(saved);
+	}
+}
 
 static struct fake_run_state fake_run_state;
 
@@ -297,6 +321,8 @@ static char *fake_build_upload_uri(const char *base_uri, const char *upload_type
 	snprintf(fake_run_state.upload_base_uri, sizeof(fake_run_state.upload_base_uri), "%s", base_uri ? base_uri : "");
 	snprintf(fake_run_state.upload_type, sizeof(fake_run_state.upload_type), "%s", upload_type ? upload_type : "");
 	snprintf(fake_run_state.upload_file_path, sizeof(fake_run_state.upload_file_path), "%s", file_path ? file_path : "");
+	if (fake_run_state.build_uri_fail)
+		return NULL;
 	if (!fake_run_state.upload_uri[0])
 		snprintf(fake_run_state.upload_uri, sizeof(fake_run_state.upload_uri), "%s/%s", base_uri, upload_type);
 	return strdup(fake_run_state.upload_uri);
@@ -526,14 +552,191 @@ static void test_grep_run_reports_file_read_errors_and_continues(void)
 	cleanup_test_tree(root);
 }
 
+static void test_grep_prepare_rejects_unknown_option_and_missing_path(void)
+{
+	struct ela_grep_request request;
+	struct ela_grep_prepare_ops ops = {
+		.parse_http_output_uri_fn = fake_parse_http_output_uri,
+		.connect_tcp_ipv4_fn = fake_connect_tcp_ipv4,
+		.lstat_fn = fake_prepare_lstat,
+	};
+	struct ela_grep_env env = { 0 };
+	char errbuf[256];
+	char *argv_unknown[] = { "grep", "--search", "needle", "-z" };
+	char *argv_no_path[] = { "grep", "--search", "needle" };
+	int saved;
+
+	reset_prepare_fakes();
+	saved = silence_stderr(); /* getopt_long prints to stderr on bad option */
+	ELA_ASSERT_INT_EQ(2, ela_grep_prepare_request(4, argv_unknown, &env, &ops,
+						      &request, errbuf, sizeof(errbuf)));
+	restore_stderr(saved);
+	ELA_ASSERT_TRUE(strstr(errbuf, "invalid option") != NULL);
+
+	reset_prepare_fakes();
+	ELA_ASSERT_INT_EQ(2, ela_grep_prepare_request(3, argv_no_path, &env, &ops,
+						      &request, errbuf, sizeof(errbuf)));
+	ELA_ASSERT_TRUE(strstr(errbuf, "grep requires --path") != NULL);
+}
+
+static void test_grep_prepare_uses_output_https_env(void)
+{
+	struct ela_grep_request request;
+	struct ela_grep_prepare_ops ops = {
+		.parse_http_output_uri_fn = fake_parse_http_output_uri,
+		.connect_tcp_ipv4_fn = fake_connect_tcp_ipv4,
+		.lstat_fn = fake_prepare_lstat,
+	};
+	struct ela_grep_env env = {
+		.output_http = NULL,
+		.output_https = "https://ela.example/upload",
+	};
+	char errbuf[256];
+	char *argv_ok[] = { "grep", "--search", "needle", "--path", "/tmp/test" };
+
+	reset_prepare_fakes();
+	ELA_ASSERT_INT_EQ(0, ela_grep_prepare_request(5, argv_ok, &env, &ops,
+						      &request, errbuf, sizeof(errbuf)));
+	ELA_ASSERT_STR_EQ("https://ela.example/upload", request.output_uri);
+}
+
+static void test_grep_run_opendir_failure_reports_and_logs(void)
+{
+	struct ela_grep_request request = {
+		.search = "needle",
+		.dir_path = "/tmp/ela-grep-does-not-exist-XYZ",
+		.output_uri = "https://ela.example/upload",
+		.insecure = true,
+		.output_sock = -1,
+	};
+	char errbuf[256];
+	int saved;
+
+	reset_run_state();
+	fake_run_state.log_rc = -1; /* exercise the "failed to POST log" branch */
+	saved = silence_stderr();
+	ELA_ASSERT_INT_EQ(1, ela_grep_run(&request, &fake_run_ops, errbuf, sizeof(errbuf)));
+	restore_stderr(saved);
+	ELA_ASSERT_INT_EQ(1, fake_run_state.log_calls);
+	ELA_ASSERT_TRUE(strstr(fake_run_state.log_message, "Cannot open directory") != NULL);
+	ELA_ASSERT_INT_EQ(0, fake_run_state.http_post_calls);
+}
+
+static void test_grep_run_build_upload_uri_failure(void)
+{
+	struct ela_grep_request request = {
+		.search = "needle",
+		.recursive = false,
+		.insecure = true,
+		.output_sock = -1,
+		.output_uri = "https://ela.example/upload",
+	};
+	char root[PATH_MAX];
+	char root_file[PATH_MAX];
+	char child_file[PATH_MAX];
+	char errbuf[256];
+
+	create_test_tree(root, sizeof(root), root_file, sizeof(root_file), child_file, sizeof(child_file));
+	request.dir_path = root;
+
+	reset_run_state();
+	fake_run_state.build_uri_fail = 1;
+	ELA_ASSERT_INT_EQ(1, ela_grep_run(&request, &fake_run_ops, errbuf, sizeof(errbuf)));
+	ELA_ASSERT_INT_EQ(1, fake_run_state.build_upload_uri_calls);
+	ELA_ASSERT_INT_EQ(0, fake_run_state.http_post_calls);
+	ELA_ASSERT_TRUE(strstr(errbuf, "Unable to build upload URI") != NULL);
+
+	cleanup_test_tree(root);
+}
+
+static void test_grep_run_http_post_failure(void)
+{
+	struct ela_grep_request request = {
+		.search = "needle",
+		.recursive = false,
+		.insecure = true,
+		.output_sock = -1,
+		.output_uri = "https://ela.example/upload",
+	};
+	char root[PATH_MAX];
+	char root_file[PATH_MAX];
+	char child_file[PATH_MAX];
+	char errbuf[256];
+
+	create_test_tree(root, sizeof(root), root_file, sizeof(root_file), child_file, sizeof(child_file));
+	request.dir_path = root;
+
+	reset_run_state();
+	snprintf(fake_run_state.upload_uri, sizeof(fake_run_state.upload_uri),
+		 "https://ela.example/upload/grep");
+	fake_run_state.http_post_rc = -1;
+	ELA_ASSERT_INT_EQ(1, ela_grep_run(&request, &fake_run_ops, errbuf, sizeof(errbuf)));
+	ELA_ASSERT_INT_EQ(1, fake_run_state.http_post_calls);
+	ELA_ASSERT_TRUE(strstr(errbuf, "Failed HTTP(S) POST") != NULL);
+
+	cleanup_test_tree(root);
+}
+
+static void test_grep_run_emit_match_failures(void)
+{
+	struct ela_grep_request request = {
+		.search = "needle",
+		.recursive = false,
+		.insecure = false,
+		.output_sock = -1,
+	};
+	char root[PATH_MAX];
+	char root_file[PATH_MAX];
+	char child_file[PATH_MAX];
+	int saved;
+
+	create_test_tree(root, sizeof(root), root_file, sizeof(root_file), child_file, sizeof(child_file));
+	request.dir_path = root;
+
+	/* format failure: emit_match bails early; grep_directory logs & continues,
+	 * so the overall run still succeeds. */
+	reset_run_state();
+	fake_run_state.format_rc = -1;
+	saved = silence_stderr();
+	ELA_ASSERT_INT_EQ(0, ela_grep_run(&request, &fake_run_ops, NULL, 0));
+	restore_stderr(saved);
+	ELA_ASSERT_INT_EQ(1, fake_run_state.format_calls);
+
+	/* write_stdout failure on the stdout branch. */
+	reset_run_state();
+	fake_run_state.write_rc = -1;
+	saved = silence_stderr();
+	ELA_ASSERT_INT_EQ(0, ela_grep_run(&request, &fake_run_ops, NULL, 0));
+	restore_stderr(saved);
+	ELA_ASSERT_INT_EQ(1, fake_run_state.write_calls);
+
+	/* send_all failure on the TCP branch. */
+	request.output_sock = 9;
+	reset_run_state();
+	fake_run_state.send_rc = -1;
+	saved = silence_stderr();
+	ELA_ASSERT_INT_EQ(0, ela_grep_run(&request, &fake_run_ops, NULL, 0));
+	restore_stderr(saved);
+	ELA_ASSERT_INT_EQ(1, fake_run_state.send_calls);
+	ELA_ASSERT_INT_EQ(1, fake_run_state.close_calls);
+
+	cleanup_test_tree(root);
+}
+
 int run_linux_grep_util_tests(void)
 {
 	static const struct ela_test_case cases[] = {
 		{ "grep_prepare_request_accepts_valid_inputs_and_help", test_grep_prepare_request_accepts_valid_inputs_and_help },
 		{ "grep_prepare_request_rejects_invalid_inputs", test_grep_prepare_request_rejects_invalid_inputs },
+		{ "grep_prepare_rejects_unknown_option_and_missing_path", test_grep_prepare_rejects_unknown_option_and_missing_path },
+		{ "grep_prepare_uses_output_https_env", test_grep_prepare_uses_output_https_env },
 		{ "grep_run_honors_recursive_policy_and_stdout_branch", test_grep_run_honors_recursive_policy_and_stdout_branch },
 		{ "grep_run_uses_tcp_and_http_output_branches", test_grep_run_uses_tcp_and_http_output_branches },
 		{ "grep_run_reports_file_read_errors_and_continues", test_grep_run_reports_file_read_errors_and_continues },
+		{ "grep_run_opendir_failure_reports_and_logs", test_grep_run_opendir_failure_reports_and_logs },
+		{ "grep_run_build_upload_uri_failure", test_grep_run_build_upload_uri_failure },
+		{ "grep_run_http_post_failure", test_grep_run_http_post_failure },
+		{ "grep_run_emit_match_failures", test_grep_run_emit_match_failures },
 	};
 
 	return ela_run_test_suite("linux_grep_util",
