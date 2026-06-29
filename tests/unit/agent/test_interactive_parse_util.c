@@ -51,12 +51,42 @@ static void test_interactive_parse_line_rejects_unterminated_quotes(void)
 	ELA_ASSERT_TRUE(argv == NULL);
 }
 
+static void test_interactive_parse_line_rejects_null_outputs(void)
+{
+	char **argv = NULL;
+	int argc = 0;
+
+	ELA_ASSERT_INT_EQ(-1, interactive_parse_line("cmd", NULL, &argc));
+	ELA_ASSERT_INT_EQ(-1, interactive_parse_line("cmd", &argv, NULL));
+}
+
+/*
+ * An empty quoted token ("") never appends a character to the per-arg buffer,
+ * so the parser falls through to interactive_append_arg() — the only code path
+ * that reaches it.  This pins that path under coverage and documents the
+ * current behavior: the raw quote characters are preserved as the argument.
+ */
+static void test_interactive_parse_line_empty_quoted_token(void)
+{
+	char **argv = NULL;
+	int argc = 0;
+
+	ELA_ASSERT_INT_EQ(0, interactive_parse_line("cmd \"\"", &argv, &argc));
+	ELA_ASSERT_INT_EQ(2, argc);
+	ELA_ASSERT_STR_EQ("cmd", argv[0]);
+	ELA_ASSERT_STR_EQ("\"\"", argv[1]);
+	ELA_ASSERT_TRUE(argv[2] == NULL);
+	interactive_free_argv(argv, argc);
+}
+
 int run_interactive_parse_util_tests(void)
 {
 	static const struct ela_test_case cases[] = {
 		{ "interactive_parse_line_handles_quotes_escapes_and_comments", test_interactive_parse_line_handles_quotes_escapes_and_comments },
 		{ "interactive_parse_line_skips_blank_and_comment_lines", test_interactive_parse_line_skips_blank_and_comment_lines },
 		{ "interactive_parse_line_rejects_unterminated_quotes", test_interactive_parse_line_rejects_unterminated_quotes },
+		{ "interactive_parse_line_rejects_null_outputs", test_interactive_parse_line_rejects_null_outputs },
+		{ "interactive_parse_line_empty_quoted_token", test_interactive_parse_line_empty_quoted_token },
 	};
 
 	return ela_run_test_suite("interactive_parse_util", cases, sizeof(cases) / sizeof(cases[0]));

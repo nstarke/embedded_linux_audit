@@ -4,6 +4,9 @@
 #include "../../../agent/util/isa_util.h"
 #include "../../../agent/embedded_linux_audit_cmd.h"
 
+#include <stdlib.h>
+#include <string.h>
+
 /* =========================================================================
  * normalize_isa_name
  * ====================================================================== */
@@ -161,6 +164,69 @@ static void test_efi_bios_non_supported_return_false(void)
 }
 
 /* =========================================================================
+ * ela_set_sigill_stage
+ *
+ * In non-DEBUG builds this only records the stage string; there is no public
+ * getter, so we simply exercise both the "valid stage" and "ignored" paths to
+ * confirm they do not crash and that NULL/empty inputs are tolerated.
+ * ====================================================================== */
+
+static void test_set_sigill_stage_accepts_and_ignores(void)
+{
+	ela_set_sigill_stage("unit-test-stage");
+	ela_set_sigill_stage(NULL);  /* ignored, must not crash */
+	ela_set_sigill_stage("");    /* ignored, must not crash */
+	ELA_ASSERT_TRUE(1);
+}
+
+static void test_install_sigill_debug_handler_is_safe(void)
+{
+	/* No-op unless DEBUG + ELA_SIGILL_DEBUG=1; must always be safe to call. */
+	ela_install_sigill_debug_handler();
+	ELA_ASSERT_TRUE(1);
+}
+
+/* =========================================================================
+ * ela_detect_isa / ela_force_conservative_crypto_caps
+ *
+ * ela_detect_isa() caches its result in a process-global on the first call.
+ * None of the other code linked into the unit-test binary calls it, so this
+ * suite is the first to do so and the ELA_TEST_ISA override below is honored.
+ * We pin the detected ISA to a PowerPC value so the conservative-caps path is
+ * deterministic regardless of the host architecture.
+ * ====================================================================== */
+
+static void test_detect_isa_honors_env_override(void)
+{
+	const char *isa;
+
+	setenv("ELA_TEST_ISA", "ppc64", 1);
+	isa = ela_detect_isa();
+	ELA_ASSERT_TRUE(isa != NULL);
+	ELA_ASSERT_STR_EQ("ppc64", isa);
+	/* Second call returns the cached value. */
+	ELA_ASSERT_STR_EQ("ppc64", ela_detect_isa());
+}
+
+static void test_force_conservative_caps_sets_ppccap(void)
+{
+	/* Detection is cached as ppc64 from the test above, so this exercises the
+	 * PowerPC branch and the setenv(..., 0) "only when unset" guard. */
+	unsetenv("OPENSSL_ppccap");
+	ela_force_conservative_crypto_caps();
+	ELA_ASSERT_TRUE(getenv("OPENSSL_ppccap") != NULL);
+	ELA_ASSERT_STR_EQ("0", getenv("OPENSSL_ppccap"));
+}
+
+static void test_force_conservative_caps_respects_existing_ppccap(void)
+{
+	/* When the cap mask is already set, the value must be preserved. */
+	setenv("OPENSSL_ppccap", "ffff", 1);
+	ela_force_conservative_crypto_caps();
+	ELA_ASSERT_STR_EQ("ffff", getenv("OPENSSL_ppccap"));
+}
+
+/* =========================================================================
  * Suite registration
  * ====================================================================== */
 
@@ -190,6 +256,14 @@ int run_isa_util_tests(void)
 		{ "efi_bios/x86_family",          test_efi_bios_x86_family_supported },
 		{ "efi_bios/aarch64_family",      test_efi_bios_aarch64_family_supported },
 		{ "efi_bios/non_supported",       test_efi_bios_non_supported_return_false },
+		/* sigill stage helpers (non-DEBUG: safe no-ops) */
+		{ "sigill/set_stage_accepts_and_ignores", test_set_sigill_stage_accepts_and_ignores },
+		{ "sigill/install_handler_is_safe",       test_install_sigill_debug_handler_is_safe },
+		/* ela_detect_isa must run before the conservative-caps tests so the
+		 * process-global ISA cache is pinned to ppc64. */
+		{ "detect_isa/honors_env_override",       test_detect_isa_honors_env_override },
+		{ "force_caps/sets_ppccap",               test_force_conservative_caps_sets_ppccap },
+		{ "force_caps/respects_existing_ppccap",  test_force_conservative_caps_respects_existing_ppccap },
 	};
 
 	return ela_run_test_suite("isa_util", cases, sizeof(cases) / sizeof(cases[0]));
