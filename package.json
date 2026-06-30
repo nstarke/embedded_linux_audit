@@ -5,6 +5,7 @@
     "test:js": "jest --runInBand tests/unit/api"
   },
   "dependencies": {
+    "express": "^5.2.1",
     "mime-types": "^2.1.35",
     "ws": "^8.18.0"
   },

@@ -229,7 +229,7 @@ describe('terminal Express app', () => {
       const res = await request(app, { method: 'POST', path: `/terminal/${mac}/exec`, body: { command: 'ls', timeoutMs: 0 } });
 
       expect(res.statusCode).toBe(400);
-      expect(res.body).toEqual({ error: 'timeoutMs must be a positive number' });
+      expect(res.body).toEqual({ error: 'timeoutMs must be a positive integer <= 60000' });
     });
 
     test('rejects an invalid mac with 400', async () => {
