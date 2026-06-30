@@ -29,13 +29,29 @@ describe('clientUploads', () => {
     await expect(lib.listUploadTypesForUser('ghost')).resolves.toEqual([]);
   });
 
-  test('returns [] when the user has no associated devices', async () => {
+  test('returns empty/null when the user has no associated devices', async () => {
     const models = {
       User: { findOne: jest.fn().mockResolvedValue({ id: 7 }) },
       UserDevice: { findAll: jest.fn().mockResolvedValue([]) },
+      Upload: { findAll: jest.fn(), findOne: jest.fn() },
+      Device: {},
     };
     const lib = loadClientUploads({ models });
+
     await expect(lib.listUploadTypesForUser('alice')).resolves.toEqual([]);
+    await expect(lib.listUploadsForUser('dmesg', 'alice')).resolves.toEqual([]);
+    await expect(lib.getUploadForUser('dmesg', '1', 'alice')).resolves.toBeNull();
+    // Devices were never queried for uploads.
+    expect(models.Upload.findAll).not.toHaveBeenCalled();
+    expect(models.Upload.findOne).not.toHaveBeenCalled();
+  });
+
+  test('an empty/missing username resolves to no devices', async () => {
+    const models = { User: { findOne: jest.fn() } };
+    const lib = loadClientUploads({ models });
+    await expect(lib.listUploadTypesForUser('')).resolves.toEqual([]);
+    await expect(lib.listUploadTypesForUser(undefined)).resolves.toEqual([]);
+    expect(models.User.findOne).not.toHaveBeenCalled();
   });
 
   test('listUploadTypesForUser groups uploads by type for the associated devices', async () => {

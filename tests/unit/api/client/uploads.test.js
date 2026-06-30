@@ -153,4 +153,73 @@ describe('client uploads routes', () => {
     expect(res.headers['content-type']).toBe('text/plain');
     expect(res.body).toBe('kernel: boot\n');
   });
+
+  test('GET /uploads/:type uses default limit/offset when not supplied', async () => {
+    const listUploadsForUser = jest.fn(async () => []);
+    const handlers = register({ listUploadsForUser });
+    const res = createRes();
+
+    await handlers['/uploads/:type']({ authUser: 'alice', params: { type: 'dmesg' }, query: {} }, res);
+
+    expect(listUploadsForUser).toHaveBeenCalledWith('dmesg', 'alice', { limit: 100, offset: 0 });
+    expect(res.jsonBody).toEqual({ uploadType: 'dmesg', limit: 100, offset: 0, uploads: [] });
+  });
+
+  test('GET /uploads/:type/:id/raw returns 404 for invalid type or id', async () => {
+    const getUploadForUser = jest.fn();
+    const handlers = register({ getUploadForUser });
+
+    const resBadType = createRes();
+    await handlers['/uploads/:type/:id/raw']({ authUser: 'alice', params: { type: 'bogus', id: '5' } }, resBadType);
+    expect(resBadType.statusCode).toBe(404);
+
+    const resBadId = createRes();
+    await handlers['/uploads/:type/:id/raw']({ authUser: 'alice', params: { type: 'dmesg', id: 'abc' } }, resBadId);
+    expect(resBadId.statusCode).toBe(404);
+
+    expect(getUploadForUser).not.toHaveBeenCalled();
+  });
+
+  test('GET /uploads/:type/:id/raw returns 404 when the artifact is not found', async () => {
+    const getUploadForUser = jest.fn().mockResolvedValue(null);
+    const handlers = register({ getUploadForUser });
+    const res = createRes();
+
+    await handlers['/uploads/:type/:id/raw']({ authUser: 'alice', params: { type: 'dmesg', id: '5' } }, res);
+
+    expect(res.statusCode).toBe(404);
+    expect(res.jsonBody).toEqual({ error: 'not found' });
+  });
+
+  test('GET /uploads/:type/:id/raw serves stored JSON payloads', async () => {
+    const getUploadForUser = jest.fn().mockResolvedValue({
+      contentType: 'application/json',
+      payloadText: null,
+      payloadJson: { a: 1 },
+      payloadBinary: null,
+    });
+    const handlers = register({ getUploadForUser });
+    const res = createRes();
+
+    await handlers['/uploads/:type/:id/raw']({ authUser: 'alice', params: { type: 'cmd', id: '5' } }, res);
+
+    expect(res.headers['content-type']).toBe('application/json');
+    expect(res.body).toBe(JSON.stringify({ a: 1 }));
+  });
+
+  test('GET /uploads/:type/:id/raw 404s when no raw payload is stored', async () => {
+    const getUploadForUser = jest.fn().mockResolvedValue({
+      contentType: 'text/plain',
+      payloadText: null,
+      payloadJson: null,
+      payloadBinary: null,
+    });
+    const handlers = register({ getUploadForUser });
+    const res = createRes();
+
+    await handlers['/uploads/:type/:id/raw']({ authUser: 'alice', params: { type: 'dmesg', id: '5' } }, res);
+
+    expect(res.statusCode).toBe(404);
+    expect(res.jsonBody).toEqual({ error: 'no raw payload stored for this upload' });
+  });
 });

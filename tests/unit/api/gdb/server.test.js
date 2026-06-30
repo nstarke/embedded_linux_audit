@@ -65,8 +65,17 @@ function loadGdbServer(options = {}) {
   const server = require('../../../../api/gdb/server');
 
   return {
-    server, httpServer, WebSocketServer, auth,
+    server, httpServer, WebSocketServer, auth, sm,
     initializeDatabase, runMigrations, closeDatabase, loadApiKeyHashes, parseGdbUrl, processOn,
+  };
+}
+
+function fakeWs() {
+  const handlers = {};
+  return {
+    on: jest.fn((event, cb) => { handlers[event] = cb; }),
+    close: jest.fn(),
+    emit: (event, ...args) => handlers[event] && handlers[event](...args),
   };
 }
 
@@ -154,6 +163,83 @@ describe('gdb server', () => {
     expect(runMigrations).toHaveBeenCalledTimes(1);
     expect(loadApiKeyHashes).not.toHaveBeenCalled(); // keys are read per connection
     expect(httpServer.listen).toHaveBeenCalledTimes(1);
+  });
+
+  test('connection with an unparseable url is closed immediately', () => {
+    const { server, parseGdbUrl } = loadGdbServer();
+    const onConnection = server.wss.handlers.get('connection');
+    parseGdbUrl.mockReturnValueOnce(null);
+    const ws = fakeWs();
+
+    onConnection(ws, { url: '/bad' });
+    expect(ws.close).toHaveBeenCalled();
+  });
+
+  test('in connection relays to the out peer and tears down the session on close', () => {
+    const { server, parseGdbUrl, sm } = loadGdbServer();
+    const onConnection = server.wss.handlers.get('connection');
+    const session = { in: null, out: { id: 'out-ws' } };
+    sm.getOrCreate.mockReturnValue(session);
+    parseGdbUrl.mockReturnValueOnce({ direction: 'in', hexkey: 'abc' });
+
+    const ws = fakeWs();
+    onConnection(ws, { url: '/gdb/in/abc' });
+    expect(session.in).toBe(ws);
+
+    // message -> relay to the peer (out)
+    ws.emit('message', Buffer.from('rsp'));
+    expect(sm.relay).toHaveBeenCalledWith(session.out, Buffer.from('rsp'));
+
+    // close (agent/in) -> clears slot and purges the whole session
+    ws.emit('close');
+    expect(session.in).toBeNull();
+    expect(sm.purge).toHaveBeenCalledWith('abc', 4001, 'agent disconnected');
+  });
+
+  test('out connection close deletes an empty session and replaces an existing socket', () => {
+    const { server, parseGdbUrl, sm } = loadGdbServer();
+    const onConnection = server.wss.handlers.get('connection');
+    const stale = fakeWs();
+    const session = { in: null, out: stale };
+    sm.getOrCreate.mockReturnValue(session);
+    parseGdbUrl.mockReturnValueOnce({ direction: 'out', hexkey: 'abc' });
+
+    const ws = fakeWs();
+    onConnection(ws, { url: '/gdb/out/abc' });
+    expect(stale.close).toHaveBeenCalled(); // existing out socket replaced
+    expect(session.out).toBe(ws);
+
+    ws.emit('close');
+    expect(session.out).toBeNull();
+    expect(sm.sessions.has('abc') || sm.keys().includes('abc')).toBe(false);
+  });
+
+  test('connection error clears only the matching slot', () => {
+    const { server, parseGdbUrl, sm } = loadGdbServer();
+    const onConnection = server.wss.handlers.get('connection');
+    const session = { in: null, out: null };
+    sm.getOrCreate.mockReturnValue(session);
+    parseGdbUrl.mockReturnValueOnce({ direction: 'in', hexkey: 'abc' });
+
+    const ws = fakeWs();
+    onConnection(ws, { url: '/gdb/in/abc' });
+    ws.emit('error', new Error('reset'));
+    expect(session.in).toBeNull();
+  });
+
+  test('SIGTERM purges all sessions and closes the server; SIGINT exits', () => {
+    const { httpServer, sm, processOn } = loadGdbServer();
+    sm.keys.mockReturnValue(['k1', 'k2']);
+
+    const sigterm = processOn.mock.calls.find(([e]) => e === 'SIGTERM')[1];
+    sigterm();
+    expect(sm.purge).toHaveBeenCalledWith('k1');
+    expect(sm.purge).toHaveBeenCalledWith('k2');
+    expect(httpServer.close).toHaveBeenCalled();
+
+    const sigint = processOn.mock.calls.find(([e]) => e === 'SIGINT')[1];
+    sigint();
+    expect(process.exit).toHaveBeenCalledWith(0);
   });
 
   test('main exits when database initialization fails', async () => {

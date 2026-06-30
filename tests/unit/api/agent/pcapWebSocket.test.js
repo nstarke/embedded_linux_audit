@@ -84,6 +84,12 @@ describe('agent pcap websocket receiver', () => {
     verifyClient({ req: { url: '/pcap/aa:bb:cc:dd:ee:ff', headers: { authorization: 'Bearer ok' } } }, done);
     await flush();
     expect(done).toHaveBeenLastCalledWith(true);
+
+    // A key-lookup error fails closed (401).
+    auth.resolveBearer.mockRejectedValueOnce(new Error('db down'));
+    verifyClient({ req: { url: '/pcap/aa:bb:cc:dd:ee:ff', headers: { authorization: 'Bearer ok' } } }, done);
+    await flush();
+    expect(done).toHaveBeenLastCalledWith(false, 401, 'Unauthorized');
   });
 
   test('connection writes binary chunks and persists artifact path on close', async () => {
