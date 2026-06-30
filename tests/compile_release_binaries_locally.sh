@@ -304,6 +304,17 @@ build_with_targets() {
             fi
         fi
 
+        # libefivar.a is built at a fixed path (third_party/libefivar/src) but its
+        # build stamp is keyed per target (.ela-build-<CC_TAG>). When several
+        # ISAs are built in one source tree, a stale stamp lets a previous
+        # target's libefivar.a be reused, producing "is incompatible with
+        # <arch>" link errors. Reset the stamp and the repacked link archive so
+        # libefivar is rebuilt with this target's compiler. (The third_party
+        # cmake libs use per-target build-<CC_TAG> dirs and are unaffected.)
+        rm -f "$REPO_ROOT"/third_party/libefivar/.ela-build-* 2>/dev/null || true
+        rm -f "$REPO_ROOT"/generated/libefivar-link-*.a 2>/dev/null || true
+        rm -rf "$REPO_ROOT"/generated/libefivar-repack-* 2>/dev/null || true
+
         build_ok=1
         make -C "$REPO_ROOT" static \
             JOBS="$jobs_arg" \
