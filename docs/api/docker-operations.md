@@ -285,6 +285,22 @@ binary set and serves the matching architecture; an unknown token simply yields
 logs/proxies) — the binary it returns embeds that same token, so treat the URL
 as a credential.
 
+### Removing a user
+
+`tools/remove-user-key.js` is the inverse of `add-user-key.js`:
+
+```bash
+docker compose exec agent-api node /app/tools/remove-user-key.js --username alice
+```
+
+It deletes the user row (its `api_keys` cascade-delete), removes that user's
+pending build jobs from the queue, and deletes the per-user binary directories
+`users/<keyHash>/`. Uploaded artifacts are **retained** but unlinked from the
+user (`uploads.user_id` → NULL), so they no longer appear in the client API.
+Flags: `--keep-binaries`, `--keep-queue`, `--assets-dir <dir>`. An already-running
+build for that user can't be cancelled mid-flight — re-run the command after it
+finishes if it recreated the directory.
+
 ### Reading back artifacts (client API)
 
 Use the **client key** with the [client API](client/index.md) to read back what

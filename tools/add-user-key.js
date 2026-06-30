@@ -31,7 +31,12 @@ const repoRoot = path.resolve(__dirname, '..');
 const { initializeDatabase, runMigrations, closeDatabase } = require(path.join(repoRoot, 'api/lib/db'));
 const { createApiKey } = require(path.join(repoRoot, 'api/lib/db/deviceRegistry'));
 const { getAgentServiceConfig } = require(path.join(repoRoot, 'api/lib/config'));
-const { getBuildQueue, closeBuildQueue } = require(path.join(repoRoot, 'api/lib/queue'));
+
+// The queue (and its bullmq/redis deps) is only loaded when a build is actually
+// enqueued, so --skip-build and usage errors don't require it.
+function loadQueue() {
+  return require(path.join(repoRoot, 'api/lib/queue'));
+}
 
 function getArg(flag) {
   const idx = process.argv.indexOf(flag);
@@ -71,6 +76,7 @@ function resolveAssetsDir() {
 }
 
 async function enqueueBuild(plaintextKey, keyHash) {
+  const { getBuildQueue, closeBuildQueue } = loadQueue();
   const outDir = path.join(resolveAssetsDir(), 'users', keyHash);
   const queue = getBuildQueue();
   try {
@@ -152,5 +158,5 @@ async function main() {
 
 main().catch((err) => {
   process.stderr.write(`error: ${err.message}\n`);
-  Promise.allSettled([closeDatabase(), closeBuildQueue()]).finally(() => process.exit(1));
+  closeDatabase().catch(() => {}).finally(() => process.exit(1));
 });

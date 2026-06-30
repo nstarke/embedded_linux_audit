@@ -213,6 +213,30 @@ async function createUser(username) {
   return { user, created };
 }
 
+async function getUserWithKeys(username) {
+  const { User, ApiKey } = getModels();
+  const user = await User.findOne({
+    where: { username },
+    include: [{ model: ApiKey }],
+  });
+  if (!user) {
+    return null;
+  }
+  return {
+    id: user.id,
+    username: user.username,
+    keys: (user.ApiKeys || []).map((k) => ({ keyHash: k.keyHash, scope: k.scope, label: k.label })),
+  };
+}
+
+async function deleteUserByUsername(username) {
+  const { User } = getModels();
+  // The api_keys FK is ON DELETE CASCADE and uploads.user_id is ON DELETE SET
+  // NULL, so removing the user row drops its keys and orphans (keeps) its
+  // uploads at the database level.
+  return User.destroy({ where: { username } });
+}
+
 async function createApiKey(username, keyHash, label = null, scope = 'agent') {
   const sequelize = getSequelize();
   const { User, ApiKey } = getModels();
@@ -242,6 +266,8 @@ module.exports = {
   loadApiKeyHashes,
   createUser,
   createApiKey,
+  getUserWithKeys,
+  deleteUserByUsername,
   recordTerminalConnection,
   touchTerminalHeartbeat,
   closeTerminalConnection,

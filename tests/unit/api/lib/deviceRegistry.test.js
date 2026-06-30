@@ -671,6 +671,49 @@ describe('device registry', () => {
     expect(result).toEqual({ key, created: false });
   });
 
+  test('getUserWithKeys returns null when the user does not exist', async () => {
+    const ApiKey = { name: 'ApiKey' };
+    const models = { User: { findOne: jest.fn().mockResolvedValue(null) }, ApiKey };
+    const { registry } = loadDeviceRegistry({ models });
+
+    await expect(registry.getUserWithKeys('ghost')).resolves.toBeNull();
+  });
+
+  test('getUserWithKeys returns the user and its keys', async () => {
+    const ApiKey = { name: 'ApiKey' };
+    const user = {
+      id: 5,
+      username: 'alice',
+      ApiKeys: [
+        { keyHash: 'agenthash', scope: 'agent', label: null },
+        { keyHash: 'clienthash', scope: 'client', label: 'client' },
+      ],
+    };
+    const models = { User: { findOne: jest.fn().mockResolvedValue(user) }, ApiKey };
+    const { registry } = loadDeviceRegistry({ models });
+
+    await expect(registry.getUserWithKeys('alice')).resolves.toEqual({
+      id: 5,
+      username: 'alice',
+      keys: [
+        { keyHash: 'agenthash', scope: 'agent', label: null },
+        { keyHash: 'clienthash', scope: 'client', label: 'client' },
+      ],
+    });
+    expect(models.User.findOne).toHaveBeenCalledWith({
+      where: { username: 'alice' },
+      include: [{ model: ApiKey }],
+    });
+  });
+
+  test('deleteUserByUsername destroys the user row (keys cascade at the db level)', async () => {
+    const models = { User: { destroy: jest.fn().mockResolvedValue(1) } };
+    const { registry } = loadDeviceRegistry({ models });
+
+    await expect(registry.deleteUserByUsername('alice')).resolves.toBe(1);
+    expect(models.User.destroy).toHaveBeenCalledWith({ where: { username: 'alice' } });
+  });
+
   test('touchTerminalHeartbeat and closeTerminalConnection update the connection record', async () => {
     const models = {
       TerminalConnection: {
