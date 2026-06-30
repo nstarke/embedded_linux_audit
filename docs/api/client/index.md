@@ -4,6 +4,24 @@ The client API (`api/client/`) exposes the artifacts uploaded by the agent as
 JSON, so an operator's own tooling can read back what was collected. It is a
 read-only service, separate from the ingest-side agent helper API.
 
+## Interactive docs (Swagger UI)
+
+The service ships a built-in OpenAPI 3 description and a Swagger UI web client
+for trying the API from a browser — both are public (no token needed to view):
+
+- `GET /docs` — Swagger UI. Click **Authorize**, paste your **client** token,
+  then use **Try it out** on any route.
+- `GET /openapi.json` — the raw OpenAPI 3 document (import into Postman, codegen,
+  etc.).
+
+Direct (the client-api port): <http://localhost:7000/docs/>. Through the bundled
+nginx proxy: `https://<host>/client/docs/` (keep the trailing slash). In Swagger
+UI's **Servers** dropdown pick `/` for direct access or `/client` when going
+through nginx, so **Try it out** targets the right base path.
+
+The OpenAPI document's upload-type enum is generated from
+`api/lib/uploadTypes.js`, so it always matches what the service accepts.
+
 ## Authentication — the client token
 
 The client API uses a **client-scoped** bearer token that is distinct from the

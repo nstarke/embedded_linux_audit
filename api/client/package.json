@@ -18,6 +18,7 @@
     "express-rate-limit": "^8.3.2",
     "pg": "^8.13.3",
     "sequelize": "^6.37.5",
+    "swagger-ui-express": "^5.0.1",
     "umzug": "^3.8.2"
   }
 }

@@ -2,8 +2,10 @@
 
 const express = require('express');
 const rateLimit = require('express-rate-limit');
+const swaggerUi = require('swagger-ui-express');
 const auth = require('../auth');
 const registerUploadsRoutes = require('./routes/uploads');
+const { openapiSpec } = require('./openapi');
 
 /**
  * Build the client API express app.  Every route is scoped to the
@@ -19,6 +21,14 @@ function createApp(deps = {}) {
     standardHeaders: true,
     legacyHeaders: false,
   }));
+
+  // API documentation is public so the docs page can load and the user can then
+  // enter their client token to try requests. Mounted BEFORE auth.middleware.
+  app.get('/openapi.json', (req, res) => res.json(openapiSpec));
+  app.use('/docs', swaggerUi.serve, swaggerUi.setup(openapiSpec, {
+    customSiteTitle: 'ELA Client API',
+  }));
+
   app.use(auth.middleware);
   app.use((req, res, next) => {
     if (!req.authUser) {
