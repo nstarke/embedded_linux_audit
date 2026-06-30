@@ -16,6 +16,7 @@ void ela_gdb_tunnel_format_hex_key(const uint8_t *raw, size_t raw_len,
 }
 
 int ela_gdb_tunnel_build_urls(const char *base_url, const char *hex_key,
+			      const char *mac,
 			      char *in_url,  size_t in_sz,
 			      char *out_url, size_t out_sz)
 {
@@ -26,8 +27,12 @@ int ela_gdb_tunnel_build_urls(const char *base_url, const char *hex_key,
 	while (base_len > 0 && base_url[base_len - 1] == '/')
 		base_len--;
 
-	n = snprintf(in_url, in_sz, "%.*s/gdb/in/%s",
-		     (int)base_len, base_url, hex_key);
+	if (mac && mac[0] != '\0')
+		n = snprintf(in_url, in_sz, "%.*s/gdb/in/%s?mac=%s",
+			     (int)base_len, base_url, hex_key, mac);
+	else
+		n = snprintf(in_url, in_sz, "%.*s/gdb/in/%s",
+			     (int)base_len, base_url, hex_key);
 	if (n < 0 || (size_t)n >= in_sz)
 		return -1;
 

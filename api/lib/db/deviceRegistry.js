@@ -154,6 +154,23 @@ async function associateUserDevice(userId, deviceId, transaction = undefined) {
   return { link, created };
 }
 
+// Return true iff `username` resolves to a user associated (via user_devices)
+// with the device identified by `macAddress`. Used by the gdb bridge to gate
+// the operator (out) side to users associated with the device on the agent
+// (in) side. Returns false for missing/unknown inputs rather than throwing.
+async function isUserAssociatedWithDevice(username, macAddress) {
+  if (!username || !macAddress) return false;
+  const { User, Device, UserDevice } = getModels();
+  const user = await User.findOne({ where: { username } });
+  if (!user) return false;
+  const device = await Device.findOne({ where: { macAddress } });
+  if (!device) return false;
+  const link = await UserDevice.findOne({
+    where: { userId: user.id, deviceId: device.id },
+  });
+  return link !== null;
+}
+
 async function recordTerminalConnection(macAddress, remoteAddress, authenticatedUser = null) {
   const sequelize = getSequelize();
   const { DeviceAlias, TerminalConnection, User } = getModels();
@@ -295,6 +312,7 @@ module.exports = {
   getUserWithKeys,
   deleteUserByUsername,
   associateUserDevice,
+  isUserAssociatedWithDevice,
   recordTerminalConnection,
   touchTerminalHeartbeat,
   closeTerminalConnection,

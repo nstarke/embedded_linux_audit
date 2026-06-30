@@ -23,6 +23,7 @@ function loadGdbServer(options = {}) {
   const runMigrations = jest.fn().mockResolvedValue([]);
   const closeDatabase = jest.fn().mockResolvedValue(undefined);
   const loadApiKeyHashes = jest.fn((scope) => Promise.resolve(scope === 'client' ? ['client'] : ['agent']));
+  const isUserAssociatedWithDevice = jest.fn().mockResolvedValue(true);
   const parseGdbUrl = jest.fn(() => null);
   const sm = {
     sessions: new Map(),
@@ -54,6 +55,7 @@ function loadGdbServer(options = {}) {
   }));
   jest.doMock('../../../../api/lib/db/deviceRegistry', () => ({
     loadApiKeyHashes,
+    isUserAssociatedWithDevice,
   }));
   jest.doMock('../../../../api/gdb/urlParser', () => ({
     parseGdbUrl,
@@ -66,7 +68,8 @@ function loadGdbServer(options = {}) {
 
   return {
     server, httpServer, WebSocketServer, auth, sm,
-    initializeDatabase, runMigrations, closeDatabase, loadApiKeyHashes, parseGdbUrl, processOn,
+    initializeDatabase, runMigrations, closeDatabase, loadApiKeyHashes,
+    isUserAssociatedWithDevice, parseGdbUrl, processOn,
   };
 }
 
@@ -139,6 +142,77 @@ describe('gdb server', () => {
     await flush();
     await auth.resolveBearer.mock.calls[1][1]();
     expect(loadApiKeyHashes).toHaveBeenLastCalledWith('client');
+  });
+
+  test('out side is accepted when the user is associated with the in-side device', async () => {
+    const { server, auth, parseGdbUrl, sm, isUserAssociatedWithDevice } = loadGdbServer();
+    const verifyClient = server.wss.options.verifyClient;
+    const done = jest.fn();
+
+    sm.sessions.set('abc', { in: {}, out: null, deviceMac: 'aa:bb:cc:dd:ee:ff' });
+    parseGdbUrl.mockReturnValueOnce({ direction: 'out', hexkey: 'abc', mac: null });
+    auth.resolveBearer.mockResolvedValueOnce('alice');
+    isUserAssociatedWithDevice.mockResolvedValueOnce(true);
+
+    verifyClient({ req: { url: '/gdb/out/abc', headers: { authorization: 'Bearer client' } } }, done);
+    await flush();
+    expect(isUserAssociatedWithDevice).toHaveBeenCalledWith('alice', 'aa:bb:cc:dd:ee:ff');
+    expect(done).toHaveBeenCalledWith(true);
+  });
+
+  test('out side is forbidden when the user is not associated with the device', async () => {
+    const { server, auth, parseGdbUrl, sm, isUserAssociatedWithDevice } = loadGdbServer();
+    const verifyClient = server.wss.options.verifyClient;
+    const done = jest.fn();
+
+    sm.sessions.set('abc', { in: {}, out: null, deviceMac: 'aa:bb:cc:dd:ee:ff' });
+    parseGdbUrl.mockReturnValueOnce({ direction: 'out', hexkey: 'abc', mac: null });
+    auth.resolveBearer.mockResolvedValueOnce('mallory');
+    isUserAssociatedWithDevice.mockResolvedValueOnce(false);
+
+    verifyClient({ req: { url: '/gdb/out/abc', headers: { authorization: 'Bearer client' } } }, done);
+    await flush();
+    expect(done).toHaveBeenCalledWith(false, 403, 'Forbidden');
+  });
+
+  test('out side is forbidden when no agent (in) side has declared a device yet', async () => {
+    const { server, auth, parseGdbUrl, isUserAssociatedWithDevice } = loadGdbServer();
+    const verifyClient = server.wss.options.verifyClient;
+    const done = jest.fn();
+
+    // No session registered for this hexkey.
+    parseGdbUrl.mockReturnValueOnce({ direction: 'out', hexkey: 'abc', mac: null });
+    auth.resolveBearer.mockResolvedValueOnce('alice');
+
+    verifyClient({ req: { url: '/gdb/out/abc', headers: { authorization: 'Bearer client' } } }, done);
+    await flush();
+    expect(done).toHaveBeenCalledWith(false, 403, 'Forbidden');
+    expect(isUserAssociatedWithDevice).not.toHaveBeenCalled();
+  });
+
+  test('out side skips association when auth is open (no resolved user)', async () => {
+    const { server, auth, parseGdbUrl, isUserAssociatedWithDevice } = loadGdbServer();
+    const verifyClient = server.wss.options.verifyClient;
+    const done = jest.fn();
+
+    parseGdbUrl.mockReturnValueOnce({ direction: 'out', hexkey: 'abc', mac: null });
+    auth.resolveBearer.mockResolvedValueOnce(true); // open mode -> not a username
+
+    verifyClient({ req: { url: '/gdb/out/abc', headers: {} } }, done);
+    await flush();
+    expect(done).toHaveBeenCalledWith(true);
+    expect(isUserAssociatedWithDevice).not.toHaveBeenCalled();
+  });
+
+  test('in connection records the declared device MAC on the session', () => {
+    const { server, parseGdbUrl, sm } = loadGdbServer();
+    const onConnection = server.wss.handlers.get('connection');
+    const session = { in: null, out: null, deviceMac: null };
+    sm.getOrCreate.mockReturnValue(session);
+    parseGdbUrl.mockReturnValueOnce({ direction: 'in', hexkey: 'abc', mac: 'aa:bb:cc:dd:ee:ff' });
+
+    onConnection(fakeWs(), { url: '/gdb/in/abc?mac=aa:bb:cc:dd:ee:ff' });
+    expect(session.deviceMac).toBe('aa:bb:cc:dd:ee:ff');
   });
 
   test('verifyClient rejects with 401 when the key lookup errors', async () => {

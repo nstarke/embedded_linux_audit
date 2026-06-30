@@ -71,13 +71,47 @@ static void test_build_urls_basic(void)
 
 	rc = ela_gdb_tunnel_build_urls(
 		"wss://host", "aabbccddeeff00112233445566778899",
-		in_url, sizeof(in_url), out_url, sizeof(out_url));
+		NULL, in_url, sizeof(in_url), out_url, sizeof(out_url));
 
 	ELA_ASSERT_INT_EQ(0, rc);
 	ELA_ASSERT_STR_EQ(
 		"wss://host/gdb/in/aabbccddeeff00112233445566778899",  in_url);
 	ELA_ASSERT_STR_EQ(
 		"wss://host/gdb/out/aabbccddeeff00112233445566778899", out_url);
+}
+
+static void test_build_urls_appends_mac_to_in_url_only(void)
+{
+	char in_url[256], out_url[256];
+	int  rc;
+
+	rc = ela_gdb_tunnel_build_urls(
+		"wss://host", "aabbccddeeff00112233445566778899",
+		"aa:bb:cc:dd:ee:ff",
+		in_url, sizeof(in_url), out_url, sizeof(out_url));
+
+	ELA_ASSERT_INT_EQ(0, rc);
+	ELA_ASSERT_STR_EQ(
+		"wss://host/gdb/in/aabbccddeeff00112233445566778899"
+		"?mac=aa:bb:cc:dd:ee:ff", in_url);
+	/* The out URL never carries the MAC. */
+	ELA_ASSERT_STR_EQ(
+		"wss://host/gdb/out/aabbccddeeff00112233445566778899", out_url);
+}
+
+static void test_build_urls_empty_mac_omits_query(void)
+{
+	char in_url[256], out_url[256];
+	int  rc;
+
+	rc = ela_gdb_tunnel_build_urls(
+		"wss://host", "aabbccddeeff00112233445566778899",
+		"",
+		in_url, sizeof(in_url), out_url, sizeof(out_url));
+
+	ELA_ASSERT_INT_EQ(0, rc);
+	ELA_ASSERT_STR_EQ(
+		"wss://host/gdb/in/aabbccddeeff00112233445566778899", in_url);
 }
 
 static void test_build_urls_strips_one_slash(void)
@@ -87,7 +121,7 @@ static void test_build_urls_strips_one_slash(void)
 
 	rc = ela_gdb_tunnel_build_urls(
 		"wss://host/", "aabbccddeeff00112233445566778899",
-		in_url, sizeof(in_url), out_url, sizeof(out_url));
+		NULL, in_url, sizeof(in_url), out_url, sizeof(out_url));
 
 	ELA_ASSERT_INT_EQ(0, rc);
 	ELA_ASSERT_STR_EQ(
@@ -103,7 +137,7 @@ static void test_build_urls_strips_multiple_slashes(void)
 
 	rc = ela_gdb_tunnel_build_urls(
 		"wss://host///", "aabbccddeeff00112233445566778899",
-		in_url, sizeof(in_url), out_url, sizeof(out_url));
+		NULL, in_url, sizeof(in_url), out_url, sizeof(out_url));
 
 	ELA_ASSERT_INT_EQ(0, rc);
 	ELA_ASSERT_STR_EQ(
@@ -119,7 +153,7 @@ static void test_build_urls_with_port(void)
 
 	rc = ela_gdb_tunnel_build_urls(
 		"wss://host:9000", "aabbccddeeff00112233445566778899",
-		in_url, sizeof(in_url), out_url, sizeof(out_url));
+		NULL, in_url, sizeof(in_url), out_url, sizeof(out_url));
 
 	ELA_ASSERT_INT_EQ(0, rc);
 	ELA_ASSERT_STR_EQ(
@@ -135,7 +169,7 @@ static void test_build_urls_in_too_small(void)
 
 	rc = ela_gdb_tunnel_build_urls(
 		"wss://host", "aabbccddeeff00112233445566778899",
-		in_url, sizeof(in_url), out_url, sizeof(out_url));
+		NULL, in_url, sizeof(in_url), out_url, sizeof(out_url));
 
 	ELA_ASSERT_INT_EQ(-1, rc);
 }
@@ -147,7 +181,7 @@ static void test_build_urls_out_too_small(void)
 
 	rc = ela_gdb_tunnel_build_urls(
 		"wss://host", "aabbccddeeff00112233445566778899",
-		in_url, sizeof(in_url), out_url, sizeof(out_url));
+		NULL, in_url, sizeof(in_url), out_url, sizeof(out_url));
 
 	ELA_ASSERT_INT_EQ(-1, rc);
 }
@@ -226,6 +260,8 @@ int run_linux_gdbserver_tunnel_util_tests(void)
 		{ "format_hex_key/single_byte",    test_format_hex_key_single_byte },
 		{ "format_hex_key/nul_terminated", test_format_hex_key_nul_terminated },
 		{ "build_urls/basic",              test_build_urls_basic },
+		{ "build_urls/appends_mac",        test_build_urls_appends_mac_to_in_url_only },
+		{ "build_urls/empty_mac",          test_build_urls_empty_mac_omits_query },
 		{ "build_urls/strips_one_slash",   test_build_urls_strips_one_slash },
 		{ "build_urls/strips_many_slashes",test_build_urls_strips_multiple_slashes },
 		{ "build_urls/with_port",          test_build_urls_with_port },

@@ -15,15 +15,19 @@ void ela_gdb_tunnel_format_hex_key(const uint8_t *raw, size_t raw_len,
 				   char *out);
 
 /*
- * Build GDB tunnel URLs from a base URL and a hex session key.
+ * Build GDB tunnel URLs from a base URL, a hex session key, and the device MAC.
  *
  * Trailing slashes are stripped from base_url before appending the paths.
- * On success, in_url receives "<base>/gdb/in/<key>" and out_url receives
- * "<base>/gdb/out/<key>".
+ * On success, in_url receives "<base>/gdb/in/<key>?mac=<mac>" and out_url
+ * receives "<base>/gdb/out/<key>". The MAC is attached to the agent (in) side
+ * only so the bridge can record which device the session belongs to and gate
+ * the operator (out) side to users associated with that device. If mac is NULL
+ * or empty the in URL omits the query string.
  *
  * Returns 0 on success, -1 if either URL would be truncated.
  */
 int ela_gdb_tunnel_build_urls(const char *base_url, const char *hex_key,
+			      const char *mac,
 			      char *in_url,  size_t in_sz,
 			      char *out_url, size_t out_sz);
 

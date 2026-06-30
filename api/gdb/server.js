@@ -7,15 +7,17 @@ const auth = require('../auth');
 const { parseGdbUrl } = require('./urlParser');
 const { createSessionManager } = require('./sessionManager');
 const { initializeDatabase, runMigrations, closeDatabase } = require('../lib/db');
-const { loadApiKeyHashes } = require('../lib/db/deviceRegistry');
+const { loadApiKeyHashes, isUserAssociatedWithDevice } = require('../lib/db/deviceRegistry');
 
 const PORT = parseInt(process.env.ELA_GDB_PORT || '9000', 10);
 const HOST = process.env.ELA_GDB_HOST || '0.0.0.0';
 
 /*
- * Session map: hexkey (32 hex chars) -> { in: WebSocket|null, out: WebSocket|null }
+ * Session map: hexkey (32 hex chars) ->
+ *   { in: WebSocket|null, out: WebSocket|null, deviceMac: string|null }
  *
- * The embedded agent connects to  /gdb/in/<hexkey>  (RSP from gdbserver).
+ * The embedded agent connects to  /gdb/in/<hexkey>?mac=<mac>  (RSP from
+ * gdbserver); the MAC identifies the device the session belongs to.
  * gdb-multiarch connects to       /gdb/out/<hexkey>  via:
  *   target remote wss://HOST/gdb/out/<hexkey>
  *
@@ -33,6 +35,13 @@ const sessions = sm.sessions;
  *     key — the same key used for the client API.
  * Enforcement is dynamic: a direction is gated once at least one key of its
  * scope exists, open otherwise (resolveBearer with enforced=false).
+ *
+ * The out side is additionally gated by device association: when the operator's
+ * client token resolves to a username, that user must be associated (via
+ * user_devices, i.e. have phoned the device into the terminal API) with the
+ * device the agent declared on the in side of the same session. With no client
+ * keys configured (open mode, resolveBearer === true) there is no user to scope
+ * by and the association check is skipped, matching the open-auth posture.
  */
 const httpServer = http.createServer((_req, res) => {
   res.writeHead(404);
@@ -49,7 +58,24 @@ const wss = new WebSocketServer({
     }
     const scope = parsed.direction === 'in' ? 'agent' : 'client';
     auth.resolveBearer(info.req.headers.authorization, () => loadApiKeyHashes(scope), false)
-      .then((ok) => (ok ? done(true) : done(false, 401, 'Unauthorized')))
+      .then(async (authResult) => {
+        if (!authResult) {
+          done(false, 401, 'Unauthorized');
+          return;
+        }
+        // The operator (out) side may only attach to a session whose device the
+        // operator's user is associated with. Skipped in open mode, where there
+        // is no resolved username (authResult === true).
+        if (parsed.direction === 'out' && typeof authResult === 'string') {
+          const session = sessions.get(parsed.hexkey);
+          const deviceMac = session && session.deviceMac;
+          if (!deviceMac || !(await isUserAssociatedWithDevice(authResult, deviceMac))) {
+            done(false, 403, 'Forbidden');
+            return;
+          }
+        }
+        done(true);
+      })
       .catch(() => done(false, 401, 'Unauthorized'));
   },
 });
@@ -63,6 +89,12 @@ wss.on('connection', (ws, req) => {
   const peer      = direction === 'in' ? 'out' : 'in';
 
   const s = sm.getOrCreate(hexkey);
+
+  // The agent (in) side declares the device MAC; record it so the out side's
+  // handshake can verify the operator is associated with this device.
+  if (direction === 'in' && parsed.mac) {
+    s.deviceMac = parsed.mac;
+  }
 
   if (s[direction]) {
     try { s[direction].close(); } catch {}

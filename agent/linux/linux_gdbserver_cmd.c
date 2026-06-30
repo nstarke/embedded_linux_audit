@@ -5678,6 +5678,7 @@ static int linux_gdbserver_tunnel(int argc, char **argv)
 	char              *endptr;
 	const char        *base_url;
 	char               hex_key[33];
+	char               mac[64];
 	char               in_url[600];
 	char               out_url[600];
 	int                insecure  = 0;
@@ -5727,7 +5728,12 @@ static int linux_gdbserver_tunnel(int argc, char **argv)
 		return 1;
 	}
 
-	if (ela_gdb_tunnel_build_urls(base_url, hex_key,
+	/* Attach this device's MAC to the /gdb/in/ URL (same identifier the
+	 * terminal API keys associations on) so the bridge can restrict the
+	 * /gdb/out/ operator side to users associated with this device. */
+	ela_ws_get_primary_mac(mac, sizeof(mac));
+
+	if (ela_gdb_tunnel_build_urls(base_url, hex_key, mac,
 				      in_url,  sizeof(in_url),
 				      out_url, sizeof(out_url)) != 0) {
 		fprintf(stderr, "URL too long\n");

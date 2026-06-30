@@ -59,7 +59,7 @@ Software breakpoints (`Z0`) are handled by writing an `INT3` (`0xcc`) byte into 
 
 Routes the GDB Remote Serial Protocol over WebSocket through the ELA GDB bridge API instead of opening a direct TCP port. This is useful when the target device is not directly reachable from the analyst workstation but can reach the ELA server.
 
-The agent attaches to the process, generates a random 128-bit session key, and connects to `/gdb/in/<32-hex-key>` on the bridge. The analyst's GDB connects to `/gdb/out/<32-hex-key>` and the bridge relays binary frames bidirectionally.
+The agent attaches to the process, generates a random 128-bit session key, and connects to `/gdb/in/<32-hex-key>?mac=<device-mac>` on the bridge — the MAC identifies the device the session belongs to. The analyst's GDB connects to `/gdb/out/<32-hex-key>` and the bridge relays binary frames bidirectionally.
 
 ## `gdbserver tunnel` arguments
 
@@ -97,6 +97,21 @@ Each direction is gated only when keys of its scope exist in the database, so a
 deployment with no keys stays open. When a user is created with
 `tools/add-user-key.js`, both tokens are issued: give the analyst the printed
 `client key` for `wss-remote`/Ghidra.
+
+### Device association on the `out` side
+
+Beyond the scope check, the `/gdb/out/` side is restricted to the **device on
+the in side**. The agent attaches its MAC to the in URL (`?mac=<mac>`); the
+bridge records it on the session, and the operator's client token is accepted
+only if its user is **associated** with that device — i.e. that user has phoned
+the device into the [terminal API](../../api/terminal/index.md), creating a
+`user_devices` link (binaries built with an embedded server URL do this
+automatically on first run). An operator whose user is not associated with the
+device is rejected with `403 Forbidden`, even with a valid client token. The
+agent must connect the in side first (the normal flow, since it prints the out
+URL afterward); until it does, the bridge has no device to check and rejects the
+out side. This check is skipped only in fully open mode, where no client keys
+exist and there is no user to scope by.
 
 ## Connecting with `wss-remote`
 

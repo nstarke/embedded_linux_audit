@@ -104,6 +104,15 @@ against the client API and vice-versa. The gdb bridge is the one service that
 accepts both: it validates `/gdb/in/` against agent keys and `/gdb/out/` against
 client keys (see [gdbserver tunnel](../agent/linux/gdbserver.md)).
 
+The `/gdb/out/` side is additionally gated by **device association**: the agent
+appends its MAC to the in URL (`/gdb/in/<key>?mac=<mac>`), the bridge records it
+on the session, and the operator's client token may only attach if its user is
+associated with that device (the same `user_devices` link the terminal API
+records). An operator whose user has not phoned that device into the terminal
+API is rejected with `403 Forbidden`. As with the rest of the bridge this is
+skipped only in fully open mode (no client keys configured, so there is no user
+to scope by).
+
 When an agent connects to the terminal API with a valid agent token, that
 token's user is associated with the connected device's MAC (`user_devices`).
 The user's client token can then read that device's artifacts — see

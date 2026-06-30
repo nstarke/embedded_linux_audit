@@ -494,6 +494,53 @@ describe('device registry', () => {
     expect(link.save).toHaveBeenCalledWith({ transaction: 'tx1' });
   });
 
+  test('isUserAssociatedWithDevice returns true when the link exists', async () => {
+    const models = {
+      User: { findOne: jest.fn().mockResolvedValue({ id: 7 }) },
+      Device: { findOne: jest.fn().mockResolvedValue({ id: 3 }) },
+      UserDevice: { findOne: jest.fn().mockResolvedValue({ id: 1 }) },
+    };
+    const { registry } = loadDeviceRegistry({ models });
+
+    await expect(registry.isUserAssociatedWithDevice('alice', 'aa:bb')).resolves.toBe(true);
+    expect(models.User.findOne).toHaveBeenCalledWith({ where: { username: 'alice' } });
+    expect(models.Device.findOne).toHaveBeenCalledWith({ where: { macAddress: 'aa:bb' } });
+    expect(models.UserDevice.findOne).toHaveBeenCalledWith({ where: { userId: 7, deviceId: 3 } });
+  });
+
+  test('isUserAssociatedWithDevice returns false when there is no link', async () => {
+    const models = {
+      User: { findOne: jest.fn().mockResolvedValue({ id: 7 }) },
+      Device: { findOne: jest.fn().mockResolvedValue({ id: 3 }) },
+      UserDevice: { findOne: jest.fn().mockResolvedValue(null) },
+    };
+    const { registry } = loadDeviceRegistry({ models });
+    await expect(registry.isUserAssociatedWithDevice('alice', 'aa:bb')).resolves.toBe(false);
+  });
+
+  test('isUserAssociatedWithDevice short-circuits on missing inputs, unknown user, or unknown device', async () => {
+    const models = {
+      User: { findOne: jest.fn().mockResolvedValue(null) },
+      Device: { findOne: jest.fn() },
+      UserDevice: { findOne: jest.fn() },
+    };
+    const { registry } = loadDeviceRegistry({ models });
+
+    await expect(registry.isUserAssociatedWithDevice('', 'aa:bb')).resolves.toBe(false);
+    await expect(registry.isUserAssociatedWithDevice('alice', '')).resolves.toBe(false);
+    expect(models.User.findOne).not.toHaveBeenCalled();
+
+    // unknown user -> false without touching Device
+    await expect(registry.isUserAssociatedWithDevice('ghost', 'aa:bb')).resolves.toBe(false);
+    expect(models.Device.findOne).not.toHaveBeenCalled();
+
+    // known user, unknown device -> false without touching UserDevice
+    models.User.findOne.mockResolvedValueOnce({ id: 7 });
+    models.Device.findOne.mockResolvedValueOnce(null);
+    await expect(registry.isUserAssociatedWithDevice('alice', 'zz:zz')).resolves.toBe(false);
+    expect(models.UserDevice.findOne).not.toHaveBeenCalled();
+  });
+
   test('addBlockedRemote creates a new entry and returns true', async () => {
     const models = {
       BlockedRemote: {
