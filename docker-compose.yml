@@ -51,6 +51,9 @@ services:
       # For tools/add-user-key.js to enqueue builds.
       REDIS_HOST: ${ELA_REDIS_HOST:-redis}
       REDIS_PORT: ${ELA_REDIS_PORT:-6379}
+      # Base terminal-API WS URL baked into per-user binaries so they auto-connect
+      # on a bare run (e.g. wss://ela.example.com). Empty = do not embed.
+      ELA_SERVER_URL: ${ELA_SERVER_URL:-}
     volumes:
       - ${ELA_DATA_DIR:-/data/agent}:/data/agent
     depends_on:

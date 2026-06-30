@@ -51,10 +51,13 @@ const username = getArg('--username');
 const label = getArg('--label') || null;
 const providedKey = getArg('--key');
 const assetsDirArg = getArg('--assets-dir');
+// Base WS URL of the terminal API to bake into the binary so it auto-connects
+// on a bare run. Falls back to ELA_SERVER_URL; empty means "do not embed".
+const serverUrl = getArg('--server-url') || process.env.ELA_SERVER_URL || '';
 const skipBuild = hasFlag('--skip-build');
 
 if (!username) {
-  process.stderr.write('usage: add-user-key.js --username <username> [--label <label>] [--key <plaintext-key>] [--assets-dir <dir>] [--skip-build]\n');
+  process.stderr.write('usage: add-user-key.js --username <username> [--label <label>] [--key <plaintext-key>] [--server-url <wss://host>] [--assets-dir <dir>] [--skip-build]\n');
   process.exit(1);
 }
 
@@ -84,6 +87,7 @@ async function enqueueBuild(plaintextKey, keyHash) {
       username,
       keyHash,
       embeddedKey: plaintextKey,
+      serverUrl,
       outDir,
     }, {
       attempts: 1,

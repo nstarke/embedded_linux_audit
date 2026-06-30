@@ -153,6 +153,10 @@ Build-queue variables (used by `agent-api` to enqueue and `builder` to consume):
 - `ELA_REDIS_PORT` / `REDIS_PORT` (default `6379`)
 - `ELA_REDIS_DATA_DIR` (host path for the redis volume, default `/data/redis`)
 - `ELA_BUILD_SRC_DIR` (host repo mounted into `builder` at `/src`, default `.`)
+- `ELA_SERVER_URL` — base terminal-API WS URL (e.g. `wss://ela.example.com`)
+  baked into each user's binaries so a bare run auto-connects to the terminal
+  API. Empty by default (nothing embedded); `nginx/install.sh` defaults it to
+  `wss://<hostname>`. See [Embedded server URL](#embedded-server-url).
 
 Important terminal API variables:
 
@@ -270,6 +274,17 @@ returns `404` until that user's build completes. The job payload carries the
 plaintext agent token (so the worker can embed it) and stays on the internal
 Docker network only. If enqueuing fails, `add-user-key` prints a one-liner to run
 the build manually in the `builder` container.
+
+#### Embedded server URL
+
+If `ELA_SERVER_URL` is set (a base WS URL such as `wss://ela.example.com`), the
+worker also bakes it into the binaries (`ELA_EMBEDDED_SERVER_URL`). A binary
+built this way, run with **no command**, auto-connects to the terminal API at
+`<ELA_SERVER_URL>/terminal/<mac>` — authenticating with its embedded agent token
+— and serves an interactive session, so the device shows up in the terminal API
+on its own. Running the binary with an explicit command still runs that command;
+an explicit `--remote <host>` still overrides the embedded URL. Override per
+invocation with `add-user-key --server-url <wss://host>`.
 
 The agent then authenticates with zero extra configuration. The download
 endpoint is **unauthenticated** — the token rides in the URL path — so a freshly

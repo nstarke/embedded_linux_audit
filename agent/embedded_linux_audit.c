@@ -183,6 +183,19 @@ int embedded_linux_audit_dispatch(int argc, char **argv)
 	    !opts.output_explicit)
 		opts.remote_target = ela_conf.remote;
 
+#ifdef ELA_EMBEDDED_SERVER_URL
+	/*
+	 * Fall back to the server URL baked in at build time (alongside the
+	 * embedded API key) when the binary is run bare. This makes a dropped
+	 * binary phone home to the terminal API automatically. Precedence:
+	 * explicit --remote > saved conf.remote > embedded URL.
+	 */
+	if (!opts.remote_target &&
+	    opts.cmd_idx >= argc && !opts.script_path &&
+	    !opts.output_explicit)
+		opts.remote_target = ELA_EMBEDDED_SERVER_URL;
+#endif
+
 	if (strcmp(opts.output_format, "txt") &&
 	    strcmp(opts.output_format, "csv") &&
 	    strcmp(opts.output_format, "json")) {

@@ -20,7 +20,7 @@ const DEFAULT_REPO_ROOT = process.env.ELA_BUILD_REPO_ROOT || '/src';
 function runBuild(payload, opts = {}) {
   const spawnImpl = opts.spawn || spawn;
   const repoRoot = opts.repoRoot || DEFAULT_REPO_ROOT;
-  const { embeddedKey, outDir } = payload || {};
+  const { embeddedKey, outDir, serverUrl } = payload || {};
 
   if (!embeddedKey) {
     return Promise.reject(new Error('build job missing embeddedKey'));
@@ -30,6 +30,16 @@ function runBuild(payload, opts = {}) {
   }
 
   const script = path.join(repoRoot, 'tests/compile_release_binaries_locally.sh');
+  const buildEnv = {
+    ...process.env,
+    DEST_RELEASE_DIR: outDir,
+    ELA_EMBEDDED_API_KEY: embeddedKey,
+    ELA_RELEASE_FLAT_OUTPUT: '1',
+  };
+  // Bake the terminal-API URL in only when one was provided.
+  if (serverUrl) {
+    buildEnv.ELA_EMBEDDED_SERVER_URL = serverUrl;
+  }
 
   return new Promise((resolve, reject) => {
     // Invoked via `sh` so the script's file mode does not matter. The build
@@ -38,12 +48,7 @@ function runBuild(payload, opts = {}) {
     const child = spawnImpl('sh', [script], {
       cwd: repoRoot,
       stdio: 'inherit',
-      env: {
-        ...process.env,
-        DEST_RELEASE_DIR: outDir,
-        ELA_EMBEDDED_API_KEY: embeddedKey,
-        ELA_RELEASE_FLAT_OUTPUT: '1',
-      },
+      env: buildEnv,
     });
 
     child.on('error', (err) => {

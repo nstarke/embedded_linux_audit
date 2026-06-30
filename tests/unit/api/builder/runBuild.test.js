@@ -32,6 +32,25 @@ describe('runBuild', () => {
     await expect(promise).resolves.toEqual({ outDir: '/data/agent/release_binaries/users/abc' });
   });
 
+  test('passes ELA_EMBEDDED_SERVER_URL only when serverUrl is present', async () => {
+    const withUrl = fakeChild();
+    const spawnWith = jest.fn(() => withUrl);
+    const p1 = runBuild({ embeddedKey: 't', outDir: '/o', serverUrl: 'wss://h' }, { spawn: spawnWith });
+    expect(spawnWith.mock.calls[0][2].env).toEqual(expect.objectContaining({
+      ELA_EMBEDDED_API_KEY: 't',
+      ELA_EMBEDDED_SERVER_URL: 'wss://h',
+    }));
+    withUrl.emit('close', 0);
+    await p1;
+
+    const noUrl = fakeChild();
+    const spawnNo = jest.fn(() => noUrl);
+    const p2 = runBuild({ embeddedKey: 't', outDir: '/o' }, { spawn: spawnNo });
+    expect(spawnNo.mock.calls[0][2].env).not.toHaveProperty('ELA_EMBEDDED_SERVER_URL');
+    noUrl.emit('close', 0);
+    await p2;
+  });
+
   test('rejects when the build exits non-zero', async () => {
     const child = fakeChild();
     const promise = runBuild({ embeddedKey: 't', outDir: '/o' }, { spawn: () => child });

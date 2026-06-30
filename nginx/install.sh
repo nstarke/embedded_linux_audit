@@ -497,6 +497,13 @@ fi
 sed "s/example\\.com/$HOSTNAME/g" "$NGINX_TLS_TEMPLATE" > "$GENERATED_NGINX_CONF"
 export ELA_NGINX_CONF_PATH="$GENERATED_NGINX_CONF"
 
+# Base terminal-API WS URL baked into per-user agent binaries (via add-user-key)
+# so a dropped binary auto-connects to this server. Defaults to wss://<hostname>;
+# override by exporting ELA_SERVER_URL before running the installer.
+ELA_SERVER_URL="${ELA_SERVER_URL:-wss://$HOSTNAME}"
+export ELA_SERVER_URL
+echo "Per-user binaries will embed terminal-API URL: $ELA_SERVER_URL"
+
 # The installer passes -f explicitly, which suppresses Compose's automatic
 # docker-compose.override.yml merge, so the bundled-DB overlay is listed
 # explicitly. External mode uses the base file only (no postgres service).

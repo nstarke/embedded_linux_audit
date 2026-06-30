@@ -278,16 +278,21 @@ build_with_targets() {
     output_path="$1"
     target_list="$2"
 
-    # When ELA_EMBEDDED_API_KEY is set, compile the agent with the API token
-    # baked in as a string literal (consumed by agent/net/api_key.c via the
-    # ELA_EMBEDDED_API_KEY macro).  The backslash-escaped quotes survive make's
-    # recipe shell so the preprocessor receives "<key>" rather than a bare
-    # identifier.  The token is a single shell word (no spaces), so the variable
-    # is intentionally expanded unquoted in the make invocation below.
-    make_embedded_key_arg=""
+    # Bake build-time values into the binary as string literals:
+    #   ELA_EMBEDDED_API_KEY     -> agent/net/api_key.c
+    #   ELA_EMBEDDED_SERVER_URL  -> agent/embedded_linux_audit.c (auto-connect)
+    # The backslash-escaped quotes survive make's recipe shell so the
+    # preprocessor receives "<value>" rather than a bare identifier. Multiple
+    # -D flags need a space between them, so CFLAGS_APPEND is passed to make via
+    # the environment (a single unquoted make arg cannot contain a space).
+    cflags_append=""
     if [ -n "${ELA_EMBEDDED_API_KEY:-}" ]; then
-        make_embedded_key_arg="CFLAGS_APPEND=-DELA_EMBEDDED_API_KEY=\\\"${ELA_EMBEDDED_API_KEY}\\\""
+        cflags_append="$cflags_append -DELA_EMBEDDED_API_KEY=\\\"${ELA_EMBEDDED_API_KEY}\\\""
     fi
+    if [ -n "${ELA_EMBEDDED_SERVER_URL:-}" ]; then
+        cflags_append="$cflags_append -DELA_EMBEDDED_SERVER_URL=\\\"${ELA_EMBEDDED_SERVER_URL}\\\""
+    fi
+    cflags_append="${cflags_append# }"
 
     old_ifs="$IFS"
     IFS=,
@@ -316,13 +321,12 @@ build_with_targets() {
         rm -rf "$REPO_ROOT"/generated/libefivar-repack-* 2>/dev/null || true
 
         build_ok=1
-        make -C "$REPO_ROOT" static \
+        CFLAGS_APPEND="$cflags_append" make -C "$REPO_ROOT" static \
             JOBS="$jobs_arg" \
             ELA_USE_READLINE=0 \
             CMAKE_C_COMPILER="$(command -v zig)" \
             CMAKE_C_COMPILER_ARG1=cc \
             CMAKE_C_COMPILER_TARGET="$target" \
-            ${make_embedded_key_arg:+$make_embedded_key_arg} \
             CC="zig cc -target $target${zig_extra_cflags:+ $zig_extra_cflags}" || build_ok=0
 
         if [ "$build_ok" -eq 1 ]; then

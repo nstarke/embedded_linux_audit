@@ -20,6 +20,13 @@ the same run.
 > the embedded token is added as an additional candidate after the three
 > sources below. The sources below still override or supplement it for binaries
 > you build yourself.
+>
+> A binary may also have the **server URL** baked in
+> (`ELA_EMBEDDED_SERVER_URL`, set from `ELA_SERVER_URL` at build time). When it
+> does, running the binary with no command auto-connects to the terminal API at
+> `<url>/terminal/<mac>` using the embedded token (precedence: an explicit
+> `--remote` > a saved `/tmp/.ela.conf` remote > the embedded URL). See
+> [docker operations](../../api/docker-operations.md#embedded-server-url).
 
 ### 1. `--api-key` command-line argument
 
