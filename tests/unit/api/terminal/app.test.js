@@ -280,4 +280,251 @@ describe('terminal Express app', () => {
       expect(res.body).toEqual({ error: 'Unauthorized' });
     });
   });
+
+  describe('spawn routes', () => {
+    const mac = 'aa:bb:cc:dd:ee:ff';
+    const now = () => '2026-06-29T12:00:00.000Z';
+
+    describe('POST /terminal/:mac/spawn', () => {
+      test('spawns a process and returns the pid and port', async () => {
+        const entry = { ws: {} };
+        const sessionRegistry = createRegistry([[mac, entry]]);
+        const runSpawnImpl = jest.fn().mockResolvedValue({ pid: 4242, port: 5555 });
+        const app = createTerminalApp({ sessionRegistry, runSpawnImpl, now });
+
+        const res = await request(app, {
+          method: 'POST',
+          path: `/terminal/${mac}/spawn`,
+          body: { command: 'gdbserver', args: [':5555', 'a.out'], port: 5555 },
+        });
+
+        expect(runSpawnImpl).toHaveBeenCalledWith({
+          entry, mac, command: 'gdbserver', args: [':5555', 'a.out'], port: 5555,
+        });
+        expect(res.statusCode).toBe(201);
+        expect(res.body).toEqual({ pid: 4242, port: 5555 });
+        // The spawn is now tracked on the entry.
+        expect([...entry.spawns.values()]).toEqual([
+          { pid: 4242, command: 'gdbserver', args: [':5555', 'a.out'], port: 5555, startedAt: now() },
+        ]);
+      });
+
+      test('omits the port when none is reported', async () => {
+        const entry = { ws: {} };
+        const sessionRegistry = createRegistry([[mac, entry]]);
+        const runSpawnImpl = jest.fn().mockResolvedValue({ pid: 99, port: undefined });
+        const app = createTerminalApp({ sessionRegistry, runSpawnImpl, now });
+
+        const res = await request(app, {
+          method: 'POST',
+          path: `/terminal/${mac}/spawn`,
+          body: { command: 'sleep', args: ['100'] },
+        });
+
+        expect(res.statusCode).toBe(201);
+        expect(res.body).toEqual({ pid: 99 });
+      });
+
+      test('defaults args to an empty array', async () => {
+        const entry = { ws: {} };
+        const sessionRegistry = createRegistry([[mac, entry]]);
+        const runSpawnImpl = jest.fn().mockResolvedValue({ pid: 1 });
+        const app = createTerminalApp({ sessionRegistry, runSpawnImpl, now });
+
+        await request(app, { method: 'POST', path: `/terminal/${mac}/spawn`, body: { command: 'top' } });
+
+        expect(runSpawnImpl).toHaveBeenCalledWith({ entry, mac, command: 'top', args: [], port: undefined });
+      });
+
+      test('rejects a missing command with 400', async () => {
+        const sessionRegistry = createRegistry([[mac, { ws: {} }]]);
+        const app = createTerminalApp({ sessionRegistry, runSpawnImpl: jest.fn() });
+
+        const res = await request(app, { method: 'POST', path: `/terminal/${mac}/spawn`, body: {} });
+
+        expect(res.statusCode).toBe(400);
+        expect(res.body).toEqual({ error: 'command is required' });
+      });
+
+      test('rejects non-string args with 400', async () => {
+        const sessionRegistry = createRegistry([[mac, { ws: {} }]]);
+        const app = createTerminalApp({ sessionRegistry, runSpawnImpl: jest.fn() });
+
+        const res = await request(app, {
+          method: 'POST',
+          path: `/terminal/${mac}/spawn`,
+          body: { command: 'x', args: [1, 2] },
+        });
+
+        expect(res.statusCode).toBe(400);
+        expect(res.body).toEqual({ error: 'args must be an array of strings' });
+      });
+
+      test('rejects an out-of-range port with 400', async () => {
+        const sessionRegistry = createRegistry([[mac, { ws: {} }]]);
+        const app = createTerminalApp({ sessionRegistry, runSpawnImpl: jest.fn() });
+
+        const res = await request(app, {
+          method: 'POST',
+          path: `/terminal/${mac}/spawn`,
+          body: { command: 'x', port: 70000 },
+        });
+
+        expect(res.statusCode).toBe(400);
+        expect(res.body).toEqual({ error: 'port must be an integer between 1 and 65535' });
+      });
+
+      test('returns 404 when there is no session', async () => {
+        const app = createTerminalApp({ sessionRegistry: createRegistry([]), runSpawnImpl: jest.fn() });
+
+        const res = await request(app, { method: 'POST', path: `/terminal/${mac}/spawn`, body: { command: 'x' } });
+
+        expect(res.statusCode).toBe(404);
+        expect(res.body).toEqual({ error: 'no active session for mac' });
+      });
+
+      test('returns 504 when the spawn times out', async () => {
+        const sessionRegistry = createRegistry([[mac, { ws: {} }]]);
+        const runSpawnImpl = jest.fn().mockRejectedValue(Object.assign(new Error('t'), { code: 'TIMEOUT' }));
+        const app = createTerminalApp({ sessionRegistry, runSpawnImpl });
+
+        const res = await request(app, { method: 'POST', path: `/terminal/${mac}/spawn`, body: { command: 'x' } });
+
+        expect(res.statusCode).toBe(504);
+        expect(res.body).toEqual({ error: 'spawn timed out' });
+      });
+
+      test('returns 500 on an unexpected failure', async () => {
+        const sessionRegistry = createRegistry([[mac, { ws: {} }]]);
+        const runSpawnImpl = jest.fn().mockRejectedValue(new Error('boom'));
+        const app = createTerminalApp({ sessionRegistry, runSpawnImpl });
+
+        const res = await request(app, { method: 'POST', path: `/terminal/${mac}/spawn`, body: { command: 'x' } });
+
+        expect(res.statusCode).toBe(500);
+        expect(res.body).toEqual({ error: 'spawn failed' });
+      });
+
+      test('rejects unauthorized requests', async () => {
+        const sessionRegistry = createRegistry([[mac, { ws: {} }]]);
+        const app = createTerminalApp({ sessionRegistry, authMiddleware: unauthorized, runSpawnImpl: jest.fn() });
+
+        const res = await request(app, { method: 'POST', path: `/terminal/${mac}/spawn`, body: { command: 'x' } });
+
+        expect(res.statusCode).toBe(401);
+      });
+    });
+
+    describe('GET /terminal/:mac/spawn', () => {
+      test('lists the tracked spawns', async () => {
+        const entry = {
+          ws: {},
+          spawns: new Map([
+            [7, { pid: 7, command: 'gdbserver', args: [':0'], port: 1234, startedAt: now() }],
+            [8, { pid: 8, command: 'sleep', args: ['1'], port: undefined, startedAt: now() }],
+          ]),
+        };
+        const app = createTerminalApp({ sessionRegistry: createRegistry([[mac, entry]]) });
+
+        const res = await request(app, { path: `/terminal/${mac}/spawn` });
+
+        expect(res.statusCode).toBe(200);
+        expect(res.body).toEqual([
+          { pid: 7, command: 'gdbserver', args: [':0'], port: 1234, startedAt: now() },
+          { pid: 8, command: 'sleep', args: ['1'], startedAt: now() },
+        ]);
+      });
+
+      test('returns an empty array when nothing is tracked', async () => {
+        const app = createTerminalApp({ sessionRegistry: createRegistry([[mac, { ws: {} }]]) });
+
+        const res = await request(app, { path: `/terminal/${mac}/spawn` });
+
+        expect(res.statusCode).toBe(200);
+        expect(res.body).toEqual([]);
+      });
+
+      test('returns 404 when there is no session', async () => {
+        const app = createTerminalApp({ sessionRegistry: createRegistry([]) });
+
+        const res = await request(app, { path: `/terminal/${mac}/spawn` });
+
+        expect(res.statusCode).toBe(404);
+        expect(res.body).toEqual({ error: 'no active session for mac' });
+      });
+    });
+
+    describe('DELETE /terminal/:mac/spawn/:pid', () => {
+      test('kills a tracked spawn and drops it from the registry', async () => {
+        const entry = {
+          ws: {},
+          spawns: new Map([[7, { pid: 7, command: 'gdbserver', args: [], startedAt: now() }]]),
+        };
+        const runExecImpl = jest.fn().mockResolvedValue({ output: '', durationMs: 1 });
+        const app = createTerminalApp({ sessionRegistry: createRegistry([[mac, entry]]), runExecImpl });
+
+        const res = await request(app, { method: 'DELETE', path: `/terminal/${mac}/spawn/7` });
+
+        expect(runExecImpl).toHaveBeenCalledWith({ entry, mac, command: 'kill 7' });
+        expect(res.statusCode).toBe(200);
+        expect(res.body).toEqual({ ok: true });
+        expect(entry.spawns.has(7)).toBe(false);
+      });
+
+      test('rejects an invalid pid with 400', async () => {
+        const app = createTerminalApp({ sessionRegistry: createRegistry([[mac, { ws: {} }]]), runExecImpl: jest.fn() });
+
+        const res = await request(app, { method: 'DELETE', path: `/terminal/${mac}/spawn/0` });
+
+        expect(res.statusCode).toBe(400);
+        expect(res.body).toEqual({ error: 'invalid pid' });
+      });
+
+      test('returns 404 for an untracked pid', async () => {
+        const entry = { ws: {}, spawns: new Map() };
+        const runExecImpl = jest.fn();
+        const app = createTerminalApp({ sessionRegistry: createRegistry([[mac, entry]]), runExecImpl });
+
+        const res = await request(app, { method: 'DELETE', path: `/terminal/${mac}/spawn/123` });
+
+        expect(res.statusCode).toBe(404);
+        expect(res.body).toEqual({ error: 'no such spawn' });
+        expect(runExecImpl).not.toHaveBeenCalled();
+      });
+
+      test('returns 404 when there is no session', async () => {
+        const app = createTerminalApp({ sessionRegistry: createRegistry([]), runExecImpl: jest.fn() });
+
+        const res = await request(app, { method: 'DELETE', path: `/terminal/${mac}/spawn/7` });
+
+        expect(res.statusCode).toBe(404);
+        expect(res.body).toEqual({ error: 'no active session for mac' });
+      });
+
+      test('returns 500 when the kill fails and keeps the spawn tracked', async () => {
+        const entry = { ws: {}, spawns: new Map([[7, { pid: 7, command: 'x', args: [], startedAt: now() }]]) };
+        const runExecImpl = jest.fn().mockRejectedValue(new Error('boom'));
+        const app = createTerminalApp({ sessionRegistry: createRegistry([[mac, entry]]), runExecImpl });
+
+        const res = await request(app, { method: 'DELETE', path: `/terminal/${mac}/spawn/7` });
+
+        expect(res.statusCode).toBe(500);
+        expect(res.body).toEqual({ error: 'kill failed' });
+        expect(entry.spawns.has(7)).toBe(true);
+      });
+
+      test('rejects unauthorized requests', async () => {
+        const entry = { ws: {}, spawns: new Map([[7, { pid: 7 }]]) };
+        const app = createTerminalApp({
+          sessionRegistry: createRegistry([[mac, entry]]),
+          authMiddleware: unauthorized,
+          runExecImpl: jest.fn(),
+        });
+
+        const res = await request(app, { method: 'DELETE', path: `/terminal/${mac}/spawn/7` });
+
+        expect(res.statusCode).toBe(401);
+      });
+    });
+  });
 });

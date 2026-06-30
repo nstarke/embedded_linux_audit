@@ -27,6 +27,7 @@ function createSessionRegistry({
       heartbeatTimer: null,
       outputBuffer: [],
       outputListeners: new Set(),
+      spawns: new Map(),
     };
 
     if (heartbeatIntervalMs) {

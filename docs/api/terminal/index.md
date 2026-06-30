@@ -305,10 +305,19 @@ heartbeat arrives the session entry remains visible until the WebSocket closes.
 
 In addition to the WebSocket interface, the server exposes a small JSON HTTP API
 on the same port for programmatic control of connected sessions.  When the
-server is started with `--validate-key`, the `/terminal/sessions` and
-`/terminal/<mac>/exec` endpoints require the same `Authorization: Bearer
-<token>` header as the WebSocket upgrade.  The `/terminal/healthcheck` endpoint
-is always unauthenticated.
+server is started with `--validate-key`, every endpoint except
+`/terminal/healthcheck` requires the same `Authorization: Bearer <token>`
+header as the WebSocket upgrade.  The `/terminal/healthcheck` endpoint is
+always unauthenticated.
+
+| Method & path | Purpose |
+|---------------|---------|
+| `GET /terminal/healthcheck` | Liveness check (always public) |
+| `GET /terminal/sessions` | List connected sessions |
+| `POST /terminal/<mac>/exec` | Run one command and wait for it to finish |
+| `POST /terminal/<mac>/spawn` | Launch a long-running background process |
+| `GET /terminal/<mac>/spawn` | List the processes spawned on a session |
+| `DELETE /terminal/<mac>/spawn/<pid>` | Kill a spawned process |
 
 ### `GET /terminal/healthcheck`
 
@@ -369,6 +378,79 @@ Responses:
 | `401` | `{ "error": "Unauthorized" }` | Missing/invalid bearer token (when enforced) |
 | `404` | `{ "error": "no active session for mac" }` | No connected session for `<mac>` |
 | `504` | `{ "ok": false, "error": "exec timed out", "output": "...", "durationMs": 15000 }` | Command did not complete before `timeoutMs`; `output` holds whatever was captured so far |
+
+### `POST /terminal/<mac>/spawn`
+
+Launches a **long-running** background process on the agent — for example a
+`gdbserver` instance or an SSH tunnel — and returns immediately with its PID.
+Unlike `exec`, the process is backgrounded on the device, so it keeps running
+after the request completes and is tracked until it is killed (see `DELETE`
+below) or the session disconnects.
+
+Request body:
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `command` | string | yes | The program to launch on the device |
+| `args` | string[] | no | Arguments passed to the program (each is shell-quoted) |
+| `port` | number | no | The TCP port the process binds (1–65535). When supplied it is returned verbatim; otherwise the server watches the process output briefly for a `port <N>` line (e.g. gdbserver's `Listening on port 1234`) |
+
+```sh
+curl -X POST \
+    -H "Authorization: Bearer mysecrettoken" \
+    -H "Content-Type: application/json" \
+    -d '{"command":"gdbserver","args":[":0","/bin/ls"]}' \
+    http://server:8080/terminal/aa:bb:cc:dd:ee:ff/spawn
+```
+
+Responses:
+
+| Status | Body | Meaning |
+|--------|------|---------|
+| `201` | `{ "pid": 4242, "port": 34567 }` | Process started; `port` is omitted when neither supplied nor detected |
+| `400` | `{ "error": "..." }` | Invalid MAC, missing `command`, non-string `args`, or out-of-range `port` |
+| `401` | `{ "error": "Unauthorized" }` | Missing/invalid bearer token (when enforced) |
+| `404` | `{ "error": "no active session for mac" }` | No connected session for `<mac>` |
+| `504` | `{ "error": "spawn timed out" }` | The agent did not report a PID in time |
+
+### `GET /terminal/<mac>/spawn`
+
+Lists the processes currently tracked for the session.
+
+```json
+[
+  {
+    "pid": 4242,
+    "command": "gdbserver",
+    "args": [":0", "/bin/ls"],
+    "port": 34567,
+    "startedAt": "2026-06-29T14:35:10.000Z"
+  }
+]
+```
+
+`port` is omitted for spawns whose bound port was never supplied or detected.
+
+### `DELETE /terminal/<mac>/spawn/<pid>`
+
+Kills a tracked spawn (via `kill <pid>` on the device) and removes it from the
+registry.  Only PIDs returned by a previous `spawn` call are accepted.
+
+```sh
+curl -X DELETE \
+    -H "Authorization: Bearer mysecrettoken" \
+    http://server:8080/terminal/aa:bb:cc:dd:ee:ff/spawn/4242
+```
+
+Responses:
+
+| Status | Body | Meaning |
+|--------|------|---------|
+| `200` | `{ "ok": true }` | Process killed and untracked |
+| `400` | `{ "error": "invalid pid" }` | `<pid>` is not a positive integer |
+| `401` | `{ "error": "Unauthorized" }` | Missing/invalid bearer token (when enforced) |
+| `404` | `{ "error": "no such spawn" }` | No tracked spawn with that PID |
+| `404` | `{ "error": "no active session for mac" }` | No connected session for `<mac>` |
 
 ## nginx reverse proxy
 
