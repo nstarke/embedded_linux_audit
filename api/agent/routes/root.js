@@ -107,8 +107,8 @@ module.exports = function registerRootRoute(app, deps) {
     const scriptEntries = await listScriptEntries(scriptsDir);
 
     const assetItems = binaryEntries.length
-      ? binaryEntries.map(({ fileName, url }) => `      <li><a href="${escapeHtml(url)}">${escapeHtml(fileName)}</a></li>`).join('\n')
-      : '      <li><em>No binaries downloaded.</em></li>';
+      ? binaryEntries.map(({ fileName, isa }) => `      <li>${escapeHtml(fileName)} <code>GET /isa/&lt;token&gt;/${escapeHtml(isa)}</code></li>`).join('\n')
+      : '      <li><em>No binaries built.</em></li>';
 
     const testItems = testEntries.length
       ? testEntries.map(({ pathLabel, url }) => `      <li><a href="${escapeHtml(url)}">${escapeHtml(pathLabel)}</a></li>`).join('\n')

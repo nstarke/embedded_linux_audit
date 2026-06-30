@@ -112,7 +112,7 @@ client key: <for the client API>
 Only the SHA-256 hashes are stored. The agent key is compiled into
 architecture-specific binaries written to
 `<data-dir>/release_binaries/users/<keyHash>/`; when a request to
-`GET /isa/:isa` presents `Authorization: Bearer <agent-token>`, the agent server
+`GET /isa/:token/:isa` is reached (the token in the path), the agent server
 hashes the token and serves the matching user's binary. See
 [docker operations](docker-operations.md) for the full workflow.
 

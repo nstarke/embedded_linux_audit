@@ -10,10 +10,10 @@ the moment that token is created (`tools/add-user-key.js`). The binaries are
 written flat to `<data-dir>/release_binaries/users/<keyHash>/ela-<isa>` where
 `<keyHash>` is the SHA-256 of the token.
 
-`GET /isa/:isa` serves the set matching the bearer token presented on the
-request: the server resolves the token to its hash and reads from that user's
-directory. Requests without a token fall back to the shared
-`<data-dir>/release_binaries` pool (empty by default). See
+`GET /isa/:token/:isa` is **unauthenticated** and serves the binary set for the
+token given in the URL path (the server hashes it to `users/<sha256(token)>/`).
+This lets an unprovisioned host fetch its binary with a plain GET — no
+Authorization header — at the cost of the token appearing in the URL. See
 [token creation and docker operations](../docker-operations.md) and
 [server-side auth](../auth.md).
 
@@ -57,7 +57,7 @@ POST handling notes:
 - `/upload/log` and `/upload/logs` are both accepted and stored under `<data-dir>/<startup_timestamp>/<mac_address>/logs/`.
 - per-user release binaries live under `<data-dir>/release_binaries/users/<keyHash>/` by default.
 - `GET /` returns an HTML index of the authenticated user's release binaries and agent test scripts.
-- `GET /tests/agent/:name` serves `.sh` files from `tests/agent/shell/` (for example `/tests/agent/download_tests.sh`, backed by `tests/agent/shell/download_tests.sh`). `GET /isa/:isa` and `GET /uboot-env/:env_filename` serve ISA binaries and U-Boot environment helper files respectively. `GET /isa/:isa` selects the per-user directory from the presented bearer token.
+- `GET /tests/agent/:name` serves `.sh` files from `tests/agent/shell/` (for example `/tests/agent/download_tests.sh`, backed by `tests/agent/shell/download_tests.sh`). `GET /isa/:token/:isa` (unauthenticated) and `GET /uboot-env/:env_filename` serve ISA binaries and U-Boot environment helper files respectively. `GET /isa/:token/:isa` selects the per-user directory by hashing the token in the URL path.
 
 PCAP WebSocket handling:
 

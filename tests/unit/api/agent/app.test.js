@@ -163,7 +163,9 @@ describe('agent app bootstrap', () => {
     });
 
     expect(app.use).toHaveBeenCalledTimes(4);
-    const verboseMiddleware = app.use.mock.calls[3][0];
+    // Order is now: rateLimit, raw, verbose, auth (the public isa route is
+    // registered between verbose and auth via app.get, not app.use).
+    const verboseMiddleware = app.use.mock.calls[2][0];
 
     let finishHandler = null;
     const req = {

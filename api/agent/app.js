@@ -44,7 +44,6 @@ function createApp({
     legacyHeaders: false,
   }));
   app.use(express.raw({ type: '*/*', limit: '100mb' }));
-  app.use(auth.middleware);
   const envDir = path.join(dataDir, 'env');
   const scriptsDir = path.join(testsDir, 'scripts');
 
@@ -88,11 +87,16 @@ function createApp({
     verboseResponseLog: () => {},
   };
 
+  // Public, token-in-path binary download — registered before auth so an
+  // unprovisioned host can fetch its agent binary without credentials.
+  registerIsaRoute(app, routeDeps);
+
+  // Everything below requires a valid bearer token.
+  app.use(auth.middleware);
   registerRootRoute(app, routeDeps);
   registerScriptsRoute(app, routeDeps);
   registerTestsRoute(app, routeDeps);
   registerUbootEnvRoute(app, routeDeps);
-  registerIsaRoute(app, routeDeps);
   registerUploadRoute(app, routeDeps);
   registerAssetRoute(app, routeDeps);
 

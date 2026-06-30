@@ -1,6 +1,11 @@
 'use strict';
 
 const path = require('path');
+const crypto = require('crypto');
+
+function sha256(value) {
+  return crypto.createHash('sha256').update(value, 'utf8').digest('hex');
+}
 
 function createRes() {
   return {
@@ -53,13 +58,10 @@ describe('isa route', () => {
       assetsDir: '/assets',
       releaseStateFile: '.release_state.json',
       path,
-      fsp: {
-        readdir: jest.fn(),
-      },
+      crypto,
+      fsp: { readdir: jest.fn() },
       isWithinRoot: jest.fn(() => true),
-      mime: {
-        lookup: jest.fn(() => 'application/x-agent'),
-      },
+      mime: { lookup: jest.fn(() => 'application/x-agent') },
       verboseRequestLog: jest.fn(),
       verboseResponseLog: jest.fn(),
       ...deps,
@@ -67,52 +69,47 @@ describe('isa route', () => {
     return app.get.mock.calls[0][1];
   }
 
+  test('registers the token-in-path route', () => {
+    const { registerIsaRoute } = loadRegisterIsaRoute(async () => []);
+    const app = { get: jest.fn() };
+    registerIsaRoute(app, { assetsDir: '/assets', path, crypto, fsp: {}, isWithinRoot: () => true, mime: { lookup: () => '' }, verboseRequestLog: jest.fn(), verboseResponseLog: jest.fn() });
+    expect(app.get).toHaveBeenCalledWith('/isa/:token/:isa', expect.any(Function));
+  });
+
   test('rejects invalid ISA path segments', async () => {
     const handler = register(async () => []);
     const res = createRes();
 
-    await handler({ params: { isa: '../bad' } }, res);
+    await handler({ params: { token: 'tok', isa: '../bad' } }, res);
 
     expect(res.statusCode).toBe(400);
     expect(res.body).toBe('invalid path\n');
   });
 
-  test('returns not found when no release binary matches the ISA', async () => {
+  test('returns not found when no binary matches the ISA', async () => {
     const handler = register(async () => [{ isa: 'x86_64', fileName: 'ela-x86_64' }]);
     const res = createRes();
 
-    await handler({ params: { isa: 'arm64' } }, res);
+    await handler({ params: { token: 'tok', isa: 'arm64' } }, res);
 
     expect(res.statusCode).toBe(404);
     expect(res.body).toBe('not found\n');
   });
 
-  test('returns not found when the matched asset resolves outside the assets directory', async () => {
+  test('returns not found when the matched asset resolves outside the per-user directory', async () => {
     const handler = register(async () => [{ isa: 'x86_64', fileName: 'ela-x86_64' }], {
       isWithinRoot: jest.fn(() => false),
     });
     const res = createRes();
 
-    await handler({ params: { isa: 'x86_64' } }, res);
+    await handler({ params: { token: 'tok', isa: 'x86_64' } }, res);
 
     expect(res.statusCode).toBe(404);
     expect(res.body).toBe('not found\n');
   });
 
-  test('serves the matched release binary with the looked-up mime type', async () => {
+  test('serves the binary from the directory keyed by sha256(token)', async () => {
     const mime = { lookup: jest.fn(() => 'application/x-agent') };
-    const handler = register(async () => [{ isa: 'x86_64', fileName: 'ela-x86_64' }], { mime });
-    const res = createRes();
-
-    await handler({ params: { isa: 'x86_64' } }, res);
-
-    expect(mime.lookup).toHaveBeenCalledWith(path.resolve('/assets', 'ela-x86_64'));
-    expect(res.headers['content-type']).toBe('application/x-agent');
-    expect(res.sentFile).toBe(path.resolve('/assets', 'ela-x86_64'));
-  });
-
-  test('serves the per-user binary directory when the request is authenticated', async () => {
-    const keyHash = 'a'.repeat(64);
     const listBinaryEntries = jest.fn(async () => [{ isa: 'x86_64', fileName: 'ela-x86_64' }]);
     const { registerIsaRoute } = loadRegisterIsaRoute(listBinaryEntries);
     const app = { get: jest.fn() };
@@ -120,42 +117,40 @@ describe('isa route', () => {
       assetsDir: '/assets',
       releaseStateFile: '.release_state.json',
       path,
+      crypto,
       fsp: { readdir: jest.fn() },
       isWithinRoot: jest.fn(() => true),
-      mime: { lookup: jest.fn(() => 'application/x-agent') },
+      mime,
       verboseRequestLog: jest.fn(),
       verboseResponseLog: jest.fn(),
     });
     const handler = app.get.mock.calls[0][1];
     const res = createRes();
 
-    await handler({ params: { isa: 'x86_64' }, authKeyHash: keyHash }, res);
+    await handler({ params: { token: 'my-secret-token', isa: 'x86_64' } }, res);
 
-    const expectedDir = path.join('/assets', 'users', keyHash);
+    const expectedDir = path.join('/assets', 'users', sha256('my-secret-token'));
     expect(listBinaryEntries).toHaveBeenCalledWith(expectedDir, expect.anything(), '.release_state.json');
+    expect(res.headers['content-type']).toBe('application/x-agent');
     expect(res.sentFile).toBe(path.resolve(expectedDir, 'ela-x86_64'));
   });
 
-  test('falls back to the shared assets directory when unauthenticated', async () => {
+  test('a different token maps to a different directory', async () => {
     const listBinaryEntries = jest.fn(async () => [{ isa: 'x86_64', fileName: 'ela-x86_64' }]);
     const { registerIsaRoute } = loadRegisterIsaRoute(listBinaryEntries);
     const app = { get: jest.fn() };
     registerIsaRoute(app, {
-      assetsDir: '/assets',
-      releaseStateFile: '.release_state.json',
-      path,
-      fsp: { readdir: jest.fn() },
-      isWithinRoot: jest.fn(() => true),
+      assetsDir: '/assets', releaseStateFile: '.release_state.json', path, crypto,
+      fsp: { readdir: jest.fn() }, isWithinRoot: jest.fn(() => true),
       mime: { lookup: jest.fn(() => 'application/x-agent') },
-      verboseRequestLog: jest.fn(),
-      verboseResponseLog: jest.fn(),
+      verboseRequestLog: jest.fn(), verboseResponseLog: jest.fn(),
     });
     const handler = app.get.mock.calls[0][1];
-    const res = createRes();
 
-    await handler({ params: { isa: 'x86_64' } }, res);
+    await handler({ params: { token: 'aaa', isa: 'x86_64' } }, createRes());
+    await handler({ params: { token: 'bbb', isa: 'x86_64' } }, createRes());
 
-    expect(listBinaryEntries).toHaveBeenCalledWith('/assets', expect.anything(), '.release_state.json');
-    expect(res.sentFile).toBe(path.resolve('/assets', 'ela-x86_64'));
+    expect(listBinaryEntries).toHaveBeenNthCalledWith(1, path.join('/assets', 'users', sha256('aaa')), expect.anything(), '.release_state.json');
+    expect(listBinaryEntries).toHaveBeenNthCalledWith(2, path.join('/assets', 'users', sha256('bbb')), expect.anything(), '.release_state.json');
   });
 });

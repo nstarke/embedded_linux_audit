@@ -22,6 +22,10 @@ services:
       # --recursive` on the host. Read-write because the cross-compile writes
       # build-* directories under third_party/.
       - ${ELA_THIRD_PARTY_DIR:-./third_party}:/app/third_party
+      # tpm2-tss's bootstrap runs `git describe` to stamp its VERSION, which
+      # needs the repo's git metadata. Mounted read-only; the submodule .git
+      # files resolve into .git/modules/...
+      - ${ELA_GIT_DIR:-./.git}:/app/.git:ro
 
   client-api:
     build:

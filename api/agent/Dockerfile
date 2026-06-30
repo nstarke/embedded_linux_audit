@@ -28,6 +28,12 @@ RUN apt-get update \
     xz-utils \
  && rm -rf /var/lib/apt/lists/*
 
+# Per-user builds run git (tpm2-tss's bootstrap calls `git describe` to stamp
+# VERSION) against the host's .git, which is bind-mounted at runtime and owned
+# by a different uid than the container. Trust it so git does not refuse with
+# "detected dubious ownership".
+RUN git config --system --add safe.directory '*'
+
 # Pre-install Zig so token-creation builds do not need to download it at runtime.
 ENV ZIG_VERSION=0.14.0
 RUN set -eux; \

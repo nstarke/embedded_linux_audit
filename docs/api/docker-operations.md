@@ -244,16 +244,19 @@ Only the SHA-256 hashes are stored. The binaries are written to
 (for example when binaries are built separately), or `--key <token>` to supply a
 specific agent token.
 
-The agent then authenticates with zero extra configuration — download it for the
-target architecture with the agent bearer token:
+The agent then authenticates with zero extra configuration. The download
+endpoint is **unauthenticated** — the token rides in the URL path — so a freshly
+provisioned host with no agent yet can pull its binary with a plain GET:
 
 ```bash
-curl -H "Authorization: Bearer <agent-key>" \
-    http://localhost/isa/x86_64 -o embedded_linux_audit
+curl http://localhost/isa/<agent-key>/x86_64 -o embedded_linux_audit
 ```
 
-`GET /isa/:isa` resolves the bearer token to its hash and serves that user's
-binary; a different or absent token does not receive it.
+`GET /isa/:token/:isa` hashes the path token (`sha256`) to locate that user's
+binary set and serves the matching architecture; an unknown token simply yields
+`404`. Note the agent token therefore appears in the URL (and in any access
+logs/proxies) — the binary it returns embeds that same token, so treat the URL
+as a credential.
 
 ### Reading back artifacts (client API)
 
