@@ -347,6 +347,20 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Redis data directory (build-job queue broker)
+# ---------------------------------------------------------------------------
+ELA_REDIS_DATA_DIR="${ELA_REDIS_DATA_DIR:-/data/redis}"
+if [ ! -d "$ELA_REDIS_DATA_DIR" ]; then
+    echo "Creating Redis data directory $ELA_REDIS_DATA_DIR ..."
+    mkdir -p "$ELA_REDIS_DATA_DIR" || {
+        echo "error: failed to create $ELA_REDIS_DATA_DIR" >&2
+        echo "       Try: sudo mkdir -p $ELA_REDIS_DATA_DIR && sudo chown \$(id -u):\$(id -g) $ELA_REDIS_DATA_DIR" >&2
+        exit 1
+    }
+fi
+export ELA_REDIS_DATA_DIR
+
+# ---------------------------------------------------------------------------
 # Socket UID — used inside the terminal-api container to chown the tmux
 # socket so the invoking user can attach without sudo.
 # ---------------------------------------------------------------------------
@@ -495,7 +509,8 @@ if [ -n "$ENV_FILE" ]; then
 fi
 
 # Services to start before nginx; the bundled postgres only when not external.
-APP_SERVICES="agent-api client-api terminal-api gdb-api"
+# redis (queue broker) and builder (binary build worker) are always started.
+APP_SERVICES="redis builder agent-api client-api terminal-api gdb-api"
 if [ "$EXTERNAL_DB" -eq 0 ]; then
     CORE_SERVICES="postgres $APP_SERVICES"
 else

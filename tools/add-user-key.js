@@ -3,8 +3,8 @@
 'use strict';
 
 /**
- * Add a user and API key to the database, then build per-user agent binaries
- * with that user's API token embedded.
+ * Add a user and API key to the database, then enqueue a per-user agent binary
+ * build (with that user's API token embedded) for the builder worker.
  *
  * Usage:
  *   node tools/add-user-key.js --username <username> [--label <label>] \
@@ -14,16 +14,16 @@
  * The plaintext key is printed once and never stored — only its SHA-256 hash
  * is written to the database.
  *
- * After the key is created the agent binaries are cross-compiled for every
- * supported ISA with the token baked in (via ELA_EMBEDDED_API_KEY) and written
- * flat to <assetsDir>/users/<keyHash>/ela-<isa>, where the agent helper server
- * serves them for requests bearing that token.  Pass --skip-build to only
- * create the database record (e.g. when the binaries are built separately).
+ * The build itself runs asynchronously in the `builder` container: this tool
+ * enqueues a job on the Redis-backed queue and returns immediately. The worker
+ * cross-compiles every supported ISA with the token baked in (via
+ * ELA_EMBEDDED_API_KEY) and writes them flat to
+ * <assetsDir>/users/<keyHash>/ela-<isa>. Check progress with
+ * tools/build-status.js. Pass --skip-build to only create the database records.
  */
 
 const path = require('path');
 const crypto = require('crypto');
-const { spawnSync } = require('child_process');
 
 // Resolve DB modules relative to the repo root so the script can be run
 // from any working directory.
@@ -31,6 +31,7 @@ const repoRoot = path.resolve(__dirname, '..');
 const { initializeDatabase, runMigrations, closeDatabase } = require(path.join(repoRoot, 'api/lib/db'));
 const { createApiKey } = require(path.join(repoRoot, 'api/lib/db/deviceRegistry'));
 const { getAgentServiceConfig } = require(path.join(repoRoot, 'api/lib/config'));
+const { getBuildQueue, closeBuildQueue } = require(path.join(repoRoot, 'api/lib/queue'));
 
 function getArg(flag) {
   const idx = process.argv.indexOf(flag);
@@ -69,32 +70,33 @@ function resolveAssetsDir() {
   return path.join(dataRoot, 'release_binaries');
 }
 
-function buildUserBinaries(plaintextKey, keyHash) {
+async function enqueueBuild(plaintextKey, keyHash) {
   const outDir = path.join(resolveAssetsDir(), 'users', keyHash);
-  const script = path.join(repoRoot, 'tests/compile_release_binaries_locally.sh');
-
-  process.stdout.write(`\nBuilding per-user agent binaries into ${outDir}\n`);
-  // Invoke through `sh` rather than executing the script directly so the build
-  // works regardless of the script's file mode (e.g. when copied into an image
-  // without the execute bit). The script has a POSIX `#!/bin/sh` shebang.
-  const result = spawnSync('sh', [script], {
-    cwd: repoRoot,
-    stdio: 'inherit',
-    env: {
-      ...process.env,
-      DEST_RELEASE_DIR: outDir,
-      ELA_EMBEDDED_API_KEY: plaintextKey,
-      ELA_RELEASE_FLAT_OUTPUT: '1',
-    },
-  });
-
-  if (result.error) {
-    throw new Error(`failed to launch build script: ${result.error.message}`);
+  const queue = getBuildQueue();
+  try {
+    const job = await queue.add('build', {
+      username,
+      keyHash,
+      embeddedKey: plaintextKey,
+      outDir,
+    }, {
+      attempts: 1,
+      removeOnComplete: 100,
+      removeOnFail: 100,
+    });
+    return { outDir, jobId: job.id };
+  } finally {
+    await closeBuildQueue().catch(() => {});
   }
-  if (result.status !== 0) {
-    throw new Error(`build script exited with status ${result.status}`);
-  }
-  return outDir;
+}
+
+function printManualBuildFallback(plaintextKey, outDir) {
+  process.stdout.write('\nThe build was NOT queued. Build it manually in the builder container:\n');
+  process.stdout.write('  docker compose exec \\\n');
+  process.stdout.write('    -e ELA_RELEASE_FLAT_OUTPUT=1 \\\n');
+  process.stdout.write(`    -e ELA_EMBEDDED_API_KEY=${plaintextKey} \\\n`);
+  process.stdout.write(`    -e DEST_RELEASE_DIR=${outDir} \\\n`);
+  process.stdout.write('    builder sh /src/tests/compile_release_binaries_locally.sh\n');
 }
 
 async function main() {
@@ -136,11 +138,19 @@ async function main() {
     return;
   }
 
-  const outDir = buildUserBinaries(plaintextKey, keyHash);
-  process.stdout.write(`\nPer-user agent binaries written to ${outDir}\n`);
+  try {
+    const { outDir, jobId } = await enqueueBuild(plaintextKey, keyHash);
+    process.stdout.write(`\nBuild queued (job ${jobId}) -> ${outDir}\n`);
+    process.stdout.write('The builder is compiling all ISAs in the background (this takes a while).\n');
+    process.stdout.write('Check progress: docker compose exec agent-api node /app/tools/build-status.js\n');
+  } catch (err) {
+    process.stderr.write(`\nwarning: failed to queue the build: ${err.message}\n`);
+    printManualBuildFallback(plaintextKey, path.join(resolveAssetsDir(), 'users', keyHash));
+    process.exit(1);
+  }
 }
 
 main().catch((err) => {
   process.stderr.write(`error: ${err.message}\n`);
-  closeDatabase().catch(() => {}).finally(() => process.exit(1));
+  Promise.allSettled([closeDatabase(), closeBuildQueue()]).finally(() => process.exit(1));
 });

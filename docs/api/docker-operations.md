@@ -5,9 +5,11 @@ This guide covers how to run, inspect, and maintain the containerized
 
 ## Services
 
-A default `docker compose up` starts six containers:
+A default `docker compose up` starts eight containers:
 
 - `postgres` - bundled PostgreSQL database (defined in `docker-compose.override.yml`; see [External PostgreSQL](#external-postgresql))
+- `redis` - queue broker for binary-build jobs (see [Build queue](#build-queue))
+- `builder` - worker that cross-compiles per-user agent binaries off the queue
 - `agent-api` - HTTP upload and asset-serving API
 - `client-api` - read-back API for uploaded artifacts ([client API](client/index.md))
 - `terminal-api` - WebSocket terminal server
@@ -145,6 +147,13 @@ restarts continue writing runtime artifacts into the latest timestamped
 directory already present in the `agent-data` volume instead of creating a new
 timestamp on every boot.
 
+Build-queue variables (used by `agent-api` to enqueue and `builder` to consume):
+
+- `ELA_REDIS_HOST` / `REDIS_HOST` (default `redis`)
+- `ELA_REDIS_PORT` / `REDIS_PORT` (default `6379`)
+- `ELA_REDIS_DATA_DIR` (host path for the redis volume, default `/data/redis`)
+- `ELA_BUILD_SRC_DIR` (host repo mounted into `builder` at `/src`, default `.`)
+
 Important terminal API variables:
 
 - `ELA_TERMINAL_HOST`
@@ -213,36 +222,54 @@ docker compose run --rm agent-api node /app/api/lib/db/migrate.js
 ## Creating users and per-user binaries
 
 Each user downloads agent binaries that are built specifically for them with
-their API token compiled in (via the `ELA_EMBEDDED_API_KEY` macro). Binaries are
-built in the `agent-api` container, which ships with the full cross-compile
-toolchain (Zig, cmake, etc.). Submodules must be initialized on the host before
-building the image:
+their API token compiled in (via the `ELA_EMBEDDED_API_KEY` macro). The compile
+runs **asynchronously** in the `builder` container, off a Redis queue — the API
+containers no longer build anything. The `builder` compiles from the host repo
+mounted at `/src`, so submodules must be initialized on the host first:
 
 ```bash
 git submodule update --init --recursive
-docker compose build agent-api
-docker compose up -d postgres agent-api
+docker compose up -d   # starts postgres, redis, builder, the APIs, nginx
 ```
 
-Create a user and build their per-user binaries (all supported ISAs, token
-embedded):
+Create a user and **enqueue** their build:
 
 ```bash
 docker compose exec agent-api node /app/tools/add-user-key.js --username alice
 ```
 
-This creates two scoped tokens and prints each one once:
+This creates two scoped tokens, prints each one once, queues the build, and
+returns immediately:
 
 ```
 agent key:  <embedded into alice's agent binaries>
 client key: <for the client API>
+
+Build queued (job 1) -> /data/agent/release_binaries/users/<sha256(agent-key)>
 ```
 
-Only the SHA-256 hashes are stored. The binaries are written to
-`<data-dir>/release_binaries/users/<sha256(agent-key)>/ela-<isa>` on the
-`agent-data` volume. Pass `--skip-build` to only create the database records
-(for example when binaries are built separately), or `--key <token>` to supply a
-specific agent token.
+Only the SHA-256 hashes are stored. When the `builder` finishes, the binaries
+are at `<data-dir>/release_binaries/users/<sha256(agent-key)>/ela-<isa>` on the
+shared `agent-data` volume. Pass `--skip-build` to only create the database
+records, or `--key <token>` to supply a specific agent token.
+
+### Build queue
+
+The build is a job on the `ela-binary-builds` queue (BullMQ on Redis), consumed
+by the `builder` worker (concurrency 1, so builds run one at a time). Watch
+progress:
+
+```bash
+docker compose logs -f builder
+docker compose exec agent-api node /app/tools/build-status.js            # counts + recent jobs
+docker compose exec agent-api node /app/tools/build-status.js --username alice
+```
+
+A 15-ISA build takes a while; the agent token download (`/isa/<token>/<isa>`)
+returns `404` until that user's build completes. The job payload carries the
+plaintext agent token (so the worker can embed it) and stays on the internal
+Docker network only. If enqueuing fails, `add-user-key` prints a one-liner to run
+the build manually in the `builder` container.
 
 The agent then authenticates with zero extra configuration. The download
 endpoint is **unauthenticated** — the token rides in the URL path — so a freshly
