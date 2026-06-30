@@ -24,3 +24,4 @@ ela-aliases.json
 .gdb_history
 .claude
 *.o
+ref

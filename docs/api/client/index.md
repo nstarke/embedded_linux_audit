@@ -15,9 +15,10 @@ for trying the API from a browser — both are public (no token needed to view):
   etc.).
 
 Direct (the client-api port): <http://localhost:7000/docs/>. Through the bundled
-nginx proxy: `https://<host>/client/docs/` (keep the trailing slash). In Swagger
-UI's **Servers** dropdown pick `/` for direct access or `/client` when going
-through nginx, so **Try it out** targets the right base path.
+nginx proxy: `https://<host>/client/docs/` (keep the trailing slash). The OpenAPI
+`servers` base is set automatically — nginx sends `X-Forwarded-Prefix: /client`,
+so the spec served behind the proxy uses `/client` and **Try it out** targets
+`/client/uploads…`; reached directly it uses `/`. No dropdown selection needed.
 
 The OpenAPI document's upload-type enum is generated from
 `api/lib/uploadTypes.js`, so it always matches what the service accepts.

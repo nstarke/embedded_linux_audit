@@ -24,9 +24,21 @@ function createApp(deps = {}) {
 
   // API documentation is public so the docs page can load and the user can then
   // enter their client token to try requests. Mounted BEFORE auth.middleware.
-  app.get('/openapi.json', (req, res) => res.json(openapiSpec));
-  app.use('/docs', swaggerUi.serve, swaggerUi.setup(openapiSpec, {
+  //
+  // The OpenAPI `servers[0].url` is derived per-request from X-Forwarded-Prefix
+  // (set by nginx for the /client/ location) so Swagger UI "Try it out" targets
+  // the right base path: `/uploads` when reached directly, `/client/uploads`
+  // through the reverse proxy.
+  app.get('/openapi.json', (req, res) => {
+    const prefix = String(req.headers['x-forwarded-prefix'] || '').replace(/\/+$/, '');
+    res.json({ ...openapiSpec, servers: [{ url: prefix || '/' }] });
+  });
+  // Load the spec by URL (relative to /docs/) rather than embedding it, so the
+  // dynamic servers above are honored. `../openapi.json` resolves to
+  // `/openapi.json` directly and `/client/openapi.json` behind nginx.
+  app.use('/docs', swaggerUi.serve, swaggerUi.setup(null, {
     customSiteTitle: 'ELA Client API',
+    swaggerOptions: { url: '../openapi.json' },
   }));
 
   app.use(auth.middleware);
