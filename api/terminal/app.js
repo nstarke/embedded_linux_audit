@@ -7,6 +7,7 @@ const { runExec } = require('./execCommand');
 
 const MAC_ADDRESS_RE = /^([0-9a-f]{2}:){5}[0-9a-f]{2}$/i;
 const MAX_BODY_BYTES = 1024 * 1024;
+const MAX_EXEC_TIMEOUT_MS = 60000;
 
 /**
  * Build the ExpressJS application that serves the terminal server's HTTP API.
@@ -97,8 +98,8 @@ function createTerminalApp(deps = {}) {
     let timeoutMs;
     if (body.timeoutMs !== undefined && body.timeoutMs !== null) {
       timeoutMs = Number(body.timeoutMs);
-      if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
-        res.status(400).json({ error: 'timeoutMs must be a positive number' });
+      if (!Number.isInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > MAX_EXEC_TIMEOUT_MS) {
+        res.status(400).json({ error: `timeoutMs must be a positive integer <= ${MAX_EXEC_TIMEOUT_MS}` });
         return;
       }
     }
