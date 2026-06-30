@@ -32,8 +32,15 @@ async function persistUpload(input) {
     const apiTimestamp = new Date(input.apiTimestamp);
     const device = await ensureDevice(input.macAddress, transaction, apiTimestamp);
 
+    let userId = null;
+    if (input.username) {
+      const user = await models.User.findOne({ where: { username: input.username }, transaction });
+      userId = user ? user.id : null;
+    }
+
     const upload = await models.Upload.create({
       deviceId: device.id,
+      userId,
       uploadType: input.uploadType,
       contentType: input.contentType,
       srcIp: input.srcIp || null,

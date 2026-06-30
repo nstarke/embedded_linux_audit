@@ -95,25 +95,38 @@ function buildUserBinaries(plaintextKey, keyHash) {
 }
 
 async function main() {
+  // Agent token — embedded into the user's agent binaries.
   const plaintextKey = providedKey || crypto.randomBytes(32).toString('hex');
   const keyHash = crypto.createHash('sha256').update(plaintextKey, 'utf8').digest('hex');
+
+  // Client token — used by the client API to read back this user's artifacts.
+  const clientKey = crypto.randomBytes(32).toString('hex');
+  const clientHash = crypto.createHash('sha256').update(clientKey, 'utf8').digest('hex');
 
   await initializeDatabase();
   await runMigrations();
 
-  const { created } = await createApiKey(username, keyHash, label);
+  const { created } = await createApiKey(username, keyHash, label, 'agent');
+  const clientLabel = label ? `${label} (client)` : 'client';
+  const { created: clientCreated } = await createApiKey(username, clientHash, clientLabel, 'client');
 
   await closeDatabase();
 
   if (!created) {
-    process.stderr.write('error: a key with the same value already exists\n');
+    process.stderr.write('error: an agent key with the same value already exists\n');
+    process.exit(1);
+  }
+  if (!clientCreated) {
+    process.stderr.write('error: a client key with the same value already exists\n');
     process.exit(1);
   }
 
-  process.stdout.write(`username: ${username}\n`);
-  if (label) process.stdout.write(`label:    ${label}\n`);
-  process.stdout.write(`key:      ${plaintextKey}\n`);
-  process.stdout.write('\nStore this key securely — it will not be shown again.\n');
+  process.stdout.write(`username:   ${username}\n`);
+  if (label) process.stdout.write(`label:      ${label}\n`);
+  process.stdout.write(`agent key:  ${plaintextKey}\n`);
+  process.stdout.write(`client key: ${clientKey}\n`);
+  process.stdout.write('\nStore these keys securely — they will not be shown again.\n');
+  process.stdout.write('The agent key is embedded into the agent binaries; the client key is for the client API.\n');
 
   if (skipBuild) {
     process.stdout.write('\nSkipping per-user binary build (--skip-build).\n');

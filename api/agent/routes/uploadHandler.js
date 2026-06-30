@@ -189,6 +189,7 @@ function createUploadHandler(deps) {
 
     await persistUpload({
       macAddress,
+      username: req.authUser || null,
       uploadType,
       contentType: normalizedContentType,
       srcIp,

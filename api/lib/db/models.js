@@ -41,6 +41,11 @@ function defineModels(sequelize) {
       allowNull: false,
       field: 'device_id',
     },
+    userId: {
+      type: DataTypes.BIGINT,
+      allowNull: true,
+      field: 'user_id',
+    },
     uploadType: {
       type: DataTypes.STRING(64),
       allowNull: false,
@@ -625,6 +630,11 @@ function defineModels(sequelize) {
       type: DataTypes.STRING(255),
       allowNull: true,
     },
+    scope: {
+      type: DataTypes.STRING(32),
+      allowNull: false,
+      defaultValue: 'agent',
+    },
   }, {
     tableName: 'api_keys',
     underscored: true,
@@ -638,6 +648,8 @@ function defineModels(sequelize) {
   TerminalConnection.belongsTo(Device, { foreignKey: 'deviceId' });
   User.hasMany(ApiKey, { foreignKey: 'userId' });
   ApiKey.belongsTo(User, { foreignKey: 'userId' });
+  User.hasMany(Upload, { foreignKey: 'userId' });
+  Upload.belongsTo(User, { foreignKey: 'userId' });
 
   return {
     Device,

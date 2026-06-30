@@ -101,6 +101,13 @@ function getAgentServiceConfig() {
   };
 }
 
+function getClientServiceConfig() {
+  return {
+    host: process.env.ELA_CLIENT_HOST || '0.0.0.0',
+    port: parseInteger(process.env.ELA_CLIENT_PORT, 7000),
+  };
+}
+
 function getTerminalServiceConfig() {
   return {
     host: process.env.ELA_TERMINAL_HOST || '0.0.0.0',
@@ -113,5 +120,6 @@ module.exports = {
   currentEnvironment,
   getDatabaseConfig,
   getAgentServiceConfig,
+  getClientServiceConfig,
   getTerminalServiceConfig,
 };

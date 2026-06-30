@@ -197,9 +197,10 @@ async function closeTerminalConnection(connectionId, disconnectedAt = new Date()
   });
 }
 
-async function loadApiKeyHashes() {
+async function loadApiKeyHashes(scope) {
   const { ApiKey, User } = getModels();
-  const keys = await ApiKey.findAll({ include: [{ model: User }] });
+  const where = scope ? { scope } : {};
+  const keys = await ApiKey.findAll({ where, include: [{ model: User }] });
   return keys.map((k) => ({ keyHash: k.keyHash, username: k.User.username }));
 }
 
@@ -212,7 +213,7 @@ async function createUser(username) {
   return { user, created };
 }
 
-async function createApiKey(username, keyHash, label = null) {
+async function createApiKey(username, keyHash, label = null, scope = 'agent') {
   const sequelize = getSequelize();
   const { User, ApiKey } = getModels();
   return sequelize.transaction(async (transaction) => {
@@ -223,7 +224,7 @@ async function createApiKey(username, keyHash, label = null) {
     });
     const [key, created] = await ApiKey.findOrCreate({
       where: { keyHash },
-      defaults: { userId: user.id, keyHash, label },
+      defaults: { userId: user.id, keyHash, label, scope },
       transaction,
     });
     return { key, created };

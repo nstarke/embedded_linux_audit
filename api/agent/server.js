@@ -13,6 +13,7 @@ const { getAgentServiceConfig } = require('../lib/config');
 const { initializeDatabase, runMigrations, closeDatabase } = require('../lib/db');
 const { persistUpload } = require('../lib/db/persistUpload');
 const { loadApiKeyHashes } = require('../lib/db/deviceRegistry');
+const { VALID_UPLOAD_TYPES } = require('../lib/uploadTypes');
 const { createApp } = require('./app');
 const { createPcapWebSocketServer } = require('./pcapWebSocket');
 const {
@@ -33,7 +34,6 @@ const RELEASE_STATE_FILE = '.release_state.json';
 
 const PROJECT_ROOT = findProjectRoot(__dirname);
 const WEB_ROOT = __dirname;
-const VALID_UPLOAD_TYPES = new Set(['arch', 'cmd', 'coredump', 'dmesg', 'efi-vars', 'file', 'file-list', 'grep', 'log', 'logs', 'netstat', 'orom', 'pcap', 'symlink-list', 'tpm2-createprimary', 'tpm2-getcap', 'tpm2-nvreadpublic', 'tpm2-pcrread', 'uboot-image', 'uboot-environment']);
 const VALID_CONTENT_TYPES = {
   'text/plain': 'text_plain',
   'text/csv': 'text_csv',
@@ -161,7 +161,7 @@ async function main() {
     return 1;
   }
 
-  if (!await auth.init(false, loadApiKeyHashes)) {
+  if (!await auth.init(false, () => loadApiKeyHashes('agent'))) {
     console.error('error: no API keys are configured in the database');
     return 1;
   }

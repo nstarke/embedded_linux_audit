@@ -758,7 +758,7 @@ async function main() {
   await initializeDatabase();
   await runMigrations();
 
-  if (!await auth.init(false, loadApiKeyHashes)) {
+  if (!await auth.init(false, () => loadApiKeyHashes('agent'))) {
     process.stderr.write('error: no API keys are configured in the database\n');
     process.exit(1);
   }

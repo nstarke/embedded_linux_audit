@@ -35,6 +35,24 @@ services:
     volumes:
       - ${ELA_DATA_DIR:-/data/agent}:/data/agent
 
+  client-api:
+    build:
+      context: .
+      dockerfile: api/client/Dockerfile
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      ELA_DB_HOST: postgres
+      ELA_DB_PORT: 5432
+      ELA_DB_NAME: embedded_linux_audit
+      ELA_DB_USER: ela
+      ELA_DB_PASSWORD: ela
+      ELA_CLIENT_HOST: 0.0.0.0
+      ELA_CLIENT_PORT: 7000
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   terminal-api:
     build:
       context: .
@@ -71,6 +89,7 @@ services:
     restart: unless-stopped
     depends_on:
       - agent-api
+      - client-api
       - terminal-api
       - gdb-api
     ports:

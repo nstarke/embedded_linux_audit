@@ -77,11 +77,22 @@ for details.
   are rejected with HTTP `401` before the upgrade handshake completes, so no
   WebSocket connection object is created for unauthorised clients.
 
-## Per-user, token-embedded agent binaries
+## Token scopes — agent vs client
 
-The agent helper API serves architecture-specific agent binaries built per user
-with that user's API token compiled in. Create a user (and build their binaries)
-with:
+API keys carry a `scope` (`api_keys.scope`):
+
+- `agent` — used by the agent (uploads), the terminal server, and the gdb
+  bridge. Existing keys default to this scope.
+- `client` — used by the [client API](client/index.md) to read back uploaded
+  artifacts.
+
+Each service loads only the keys for its scope, so an agent token cannot be used
+against the client API and vice-versa.
+
+## Per-user tokens and binaries
+
+`tools/add-user-key.js` creates a user with **both** tokens at once and prints
+each one once:
 
 ```sh
 node tools/add-user-key.js --username alice
@@ -89,9 +100,15 @@ node tools/add-user-key.js --username alice
 docker compose exec agent-api node tools/add-user-key.js --username alice
 ```
 
-This stores only the SHA-256 hash of the token (in the `api_keys` table) and
-writes the binaries to `<data-dir>/release_binaries/users/<keyHash>/`. When a
-request to `GET /isa/:isa` presents `Authorization: Bearer <token>`, the server
+```
+agent key:  <embedded into alice's agent binaries>
+client key: <for the client API>
+```
+
+Only the SHA-256 hashes are stored. The agent key is compiled into
+architecture-specific binaries written to
+`<data-dir>/release_binaries/users/<keyHash>/`; when a request to
+`GET /isa/:isa` presents `Authorization: Bearer <agent-token>`, the agent server
 hashes the token and serves the matching user's binary. See
 [docker operations](docker-operations.md) for the full workflow.
 

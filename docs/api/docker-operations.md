@@ -5,17 +5,19 @@ This guide covers how to run, inspect, and maintain the containerized
 
 ## Services
 
-The default [docker-compose.yml](/home/nick/Documents/git/embedded_linux_audit/docker-compose.yml) starts five containers:
+The default [docker-compose.yml](/home/nick/Documents/git/embedded_linux_audit/docker-compose.yml) starts six containers:
 
 - `postgres` - PostgreSQL database
 - `agent-api` - HTTP upload and asset-serving API
+- `client-api` - read-back API for uploaded artifacts ([client API](client/index.md))
 - `terminal-api` - WebSocket terminal server
 - `gdb-api` - WebSocket GDB RSP bridge
-- `nginx` - frontend reverse proxy for both APIs
+- `nginx` - frontend reverse proxy for the APIs
 
 Traffic flow:
 
 - `http://localhost/` -> `agent-api`
+- `http://localhost/client/...` -> `client-api`
 - `http://localhost/terminal/<mac>` -> `terminal-api`
 - `http://localhost/gdb/...` -> `gdb-api`
 - `http://localhost/pcap/<mac>` -> `agent-api`
@@ -183,21 +185,41 @@ embedded):
 docker compose exec agent-api node tools/add-user-key.js --username alice
 ```
 
-The plaintext key is printed once. The binaries are written to
-`<data-dir>/release_binaries/users/<sha256(key)>/ela-<isa>` on the `agent-data`
-volume. Pass `--skip-build` to only create the database record (for example when
-binaries are built separately), or `--key <token>` to supply a specific token.
+This creates two scoped tokens and prints each one once:
+
+```
+agent key:  <embedded into alice's agent binaries>
+client key: <for the client API>
+```
+
+Only the SHA-256 hashes are stored. The binaries are written to
+`<data-dir>/release_binaries/users/<sha256(agent-key)>/ela-<isa>` on the
+`agent-data` volume. Pass `--skip-build` to only create the database records
+(for example when binaries are built separately), or `--key <token>` to supply a
+specific agent token.
 
 The agent then authenticates with zero extra configuration — download it for the
-target architecture with the bearer token:
+target architecture with the agent bearer token:
 
 ```bash
-curl -H "Authorization: Bearer <printed-key>" \
+curl -H "Authorization: Bearer <agent-key>" \
     http://localhost/isa/x86_64 -o embedded_linux_audit
 ```
 
 `GET /isa/:isa` resolves the bearer token to its hash and serves that user's
 binary; a different or absent token does not receive it.
+
+### Reading back artifacts (client API)
+
+Use the **client key** with the [client API](client/index.md) to read back what
+the agent uploaded for that user:
+
+```bash
+curl -H "Authorization: Bearer <client-key>" http://localhost/client/uploads
+curl -H "Authorization: Bearer <client-key>" http://localhost/client/uploads/dmesg
+```
+
+The client API only returns artifacts uploaded by the same user's agent.
 
 If a migration fails:
 

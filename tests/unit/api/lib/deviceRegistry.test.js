@@ -536,7 +536,25 @@ describe('device registry', () => {
       { keyHash: 'abc123', username: 'alice' },
       { keyHash: 'def456', username: 'bob' },
     ]);
-    expect(models.ApiKey.findAll).toHaveBeenCalledWith({ include: [{ model: User }] });
+    expect(models.ApiKey.findAll).toHaveBeenCalledWith({ where: {}, include: [{ model: User }] });
+  });
+
+  test('loadApiKeyHashes filters by scope when one is provided', async () => {
+    const User = { name: 'User' };
+    const models = {
+      ApiKey: {
+        findAll: jest.fn().mockResolvedValue([
+          { keyHash: 'cli789', User: { username: 'carol' } },
+        ]),
+      },
+      User,
+    };
+    const { registry } = loadDeviceRegistry({ models });
+
+    await expect(registry.loadApiKeyHashes('client')).resolves.toEqual([
+      { keyHash: 'cli789', username: 'carol' },
+    ]);
+    expect(models.ApiKey.findAll).toHaveBeenCalledWith({ where: { scope: 'client' }, include: [{ model: User }] });
   });
 
   test('loadApiKeyHashes returns an empty array when no keys exist', async () => {
@@ -606,7 +624,30 @@ describe('device registry', () => {
     });
     expect(models.ApiKey.findOrCreate).toHaveBeenCalledWith({
       where: { keyHash: 'deadbeef' },
-      defaults: { userId: 7, keyHash: 'deadbeef', label: 'my key' },
+      defaults: { userId: 7, keyHash: 'deadbeef', label: 'my key', scope: 'agent' },
+      transaction: 'tx1',
+    });
+  });
+
+  test('createApiKey threads an explicit scope into the created key', async () => {
+    const user = { id: 7, username: 'bob' };
+    const key = { id: 2, userId: 7, keyHash: 'cafebabe', label: 'client', scope: 'client' };
+    const models = {
+      User: {
+        findOrCreate: jest.fn().mockResolvedValue([user, true]),
+      },
+      ApiKey: {
+        findOrCreate: jest.fn().mockResolvedValue([key, true]),
+      },
+    };
+    const sequelize = { transaction: jest.fn(async (fn) => fn('tx1')) };
+    const { registry } = loadDeviceRegistry({ models, sequelize });
+
+    await registry.createApiKey('bob', 'cafebabe', 'client', 'client');
+
+    expect(models.ApiKey.findOrCreate).toHaveBeenCalledWith({
+      where: { keyHash: 'cafebabe' },
+      defaults: { userId: 7, keyHash: 'cafebabe', label: 'client', scope: 'client' },
       transaction: 'tx1',
     });
   });
