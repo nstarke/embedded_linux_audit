@@ -25,7 +25,7 @@ const { formatPromptOutput } = require('./promptFormatter');
 const { createSessionRegistry } = require('./sessionRegistry');
 const { formatListCommandHelp, formatShellExecution, isAffirmativeResponse, parseListCommand } = require('./listCommands');
 const { executeLocalSessionCommand } = require('./localCommands');
-const { createTerminalHttpHandler } = require('./httpRoutes');
+const { createTerminalApp } = require('./app');
 const { startSessionUpdate, handleUpdateMessage } = require('./updateManager');
 const {
   PASSTHROUGH_EXIT_HINT,
@@ -110,7 +110,14 @@ function exitGracefully() {
     .finally(() => process.exit(0));
 }
 
-const httpServer = http.createServer(createTerminalHttpHandler());
+const app = createTerminalApp({
+  sessionRegistry,
+  blockedCidrs,
+  isBlocked,
+  resolveRemoteAddress: (req) => resolveProxiedAddress(req.socket?.remoteAddress || null, req.headers),
+});
+
+const httpServer = http.createServer(app);
 
 function onUpdateStateTransition(entry, message) {
   const detail = entry.updateError ? `${message}: ${entry.updateError}` : message;
@@ -159,9 +166,9 @@ wss.on('connection', async (ws, req) => {
     sessionRegistry.removeSession(mac);
   }
 
+  const remoteAddress = resolveProxiedAddress(req.socket?.remoteAddress || null, req.headers);
   let registration;
   try {
-    const remoteAddress = resolveProxiedAddress(req.socket?.remoteAddress || null, req.headers);
     registration = await recordTerminalConnection(mac, remoteAddress, req.authenticatedUser || null);
   } catch (err) {
     ws.close(1011, 'database unavailable');
@@ -173,6 +180,8 @@ wss.on('connection', async (ws, req) => {
     alias: registration.alias,
     connectionId: registration.connectionId,
     group: registration.group,
+    remoteAddress,
+    connectedAt: new Date().toISOString(),
   });
   entry.updateCtx = null;
   entry.updateStatus = null;
@@ -199,6 +208,17 @@ wss.on('connection', async (ws, req) => {
       }
     } catch {
       // raw output path
+    }
+
+    // Feed device output to any active HTTP exec captures for this session.
+    if (entry.outputListeners.size > 0) {
+      for (const listener of entry.outputListeners) {
+        try {
+          listener(text);
+        } catch {
+          // a misbehaving listener must not break the output path
+        }
+      }
     }
 
     handleUpdateMessage(entry, rawText, {
@@ -784,6 +804,7 @@ module.exports = {
   ANSI,
   sessionRegistry,
   tui,
+  app,
   httpServer,
   wss,
   blockedCidrs,

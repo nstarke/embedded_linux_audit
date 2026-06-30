@@ -16,7 +16,11 @@ function createFakeWs() {
 }
 
 function flush() {
-  return new Promise((resolve) => setImmediate(resolve));
+  // Yield to the event loop's I/O phase. A real (zero-delay) timer is used
+  // rather than setImmediate so the poll reliably observes write-stream flush
+  // callbacks (`stream.end(cb)`) even when the loop is busy after many prior
+  // test files have run in-band.
+  return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 function loadPcapWebSocket(options = {}) {
