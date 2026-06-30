@@ -3,36 +3,32 @@
 
 const crypto = require('crypto');
 
-let validKeyHashes = []; /* array of { keyHash, username } */
-let authRequired = false;
+/*
+ * Keys are read from the database on every check (no startup cache), so newly
+ * created or revoked keys take effect immediately without restarting a service.
+ * The module holds only the loader + enforcement flag configured by init().
+ */
+let defaultLoader = null; /* () => Promise<Array<{keyHash, username}>> */
+let defaultEnforced = false;
 
 /* -------------------------------------------------------------------------
  * Initialisation
  * ---------------------------------------------------------------------- */
 
 /**
- * Load bearer token hashes from the database and configure enforcement.
+ * Configure the default auth instance.
  *
- * @param {boolean}  [enforced=false]  Pass true when --validate-key is set.
- *   - enforced=false: auth is not required regardless of keys in the database.
- *   - enforced=true:  auth is required; returns false (caller should exit)
- *                     if no keys are found in the database.
- * @param {Function} loadKeys  Async function that returns an array of
- *                             SHA-256 hex hashes of valid bearer tokens.
- * @returns {Promise<boolean>} true on success, false when enforced but no
- *                             keys are configured.
+ * @param {boolean}  [enforced=false]  When true, requests are rejected even if
+ *   no keys exist (hard lockdown, e.g. --validate-key). When false, auth is
+ *   "dynamic": enforced as soon as any key exists for the scope, open otherwise.
+ * @param {Function} loadKeys  Async function returning the current array of
+ *   `{ keyHash, username }` for this service's scope. Invoked on every check.
+ * @returns {Promise<boolean>} Always true (key state is now dynamic; there is
+ *   no startup gate on key count).
  */
 async function init(enforced, loadKeys) {
-  enforced = Boolean(enforced);
-
-  validKeyHashes = await loadKeys();
-
-  if (enforced && validKeyHashes.length === 0) {
-    authRequired = false;
-    return false; /* caller must warn and exit */
-  }
-
-  authRequired = enforced;
+  defaultEnforced = Boolean(enforced);
+  defaultLoader = loadKeys;
   return true;
 }
 
@@ -61,12 +57,9 @@ function constantTimeEqual(a, b) {
 /**
  * Match an Authorization header value against an explicit list of token hashes.
  * Always iterates every entry (no short-circuit) to avoid timing oracles.
- * Stateless — the caller supplies the key set, so different scopes (e.g. agent
- * vs client) can be validated independently against the same comparison logic.
+ * Stateless — the caller supplies the key set.
  *
- * @param {string|undefined} authHeader  Value of the Authorization header.
- * @param {Array<{keyHash:string, username:string}>} keyHashes  Allowed keys.
- * @returns {string|null}  The authenticated username when a key matches, else null.
+ * @returns {string|null} The authenticated username when a key matches, else null.
  */
 function matchBearer(authHeader, keyHashes) {
   if (!authHeader || !authHeader.startsWith('Bearer ')) return null;
@@ -81,16 +74,33 @@ function matchBearer(authHeader, keyHashes) {
 }
 
 /**
- * Check an Authorization header value against all loaded token hashes.
+ * Resolve an Authorization header against the current database key set.
  *
- * @param {string|undefined} authHeader  Value of the Authorization header.
- * @returns {string|true|false}  The authenticated username when a key matches;
- *   true when auth is not required (no specific user); false on rejection.
+ * Reads keys via the loader on every call (per-request DB read). Enforcement is
+ * dynamic: when keys exist for the scope a valid token is required; when no keys
+ * exist (and not hard-enforced) the request is allowed without a user.
+ *
+ * @param {string|undefined} authHeader
+ * @param {Function} [loader]   Defaults to the one set by init() (a specific
+ *   scope's loader can be passed, e.g. for the gdb bridge's two directions).
+ * @param {boolean}  [enforced] Defaults to the flag set by init().
+ * @returns {Promise<string|true|false>} username on match; true when open
+ *   (no keys, not enforced); false on rejection.
  */
-function checkBearer(authHeader) {
-  if (!authRequired) return true;
-  const matchedUser = matchBearer(authHeader, validKeyHashes);
-  return matchedUser !== null ? matchedUser : false;
+async function resolveBearer(authHeader, loader = defaultLoader, enforced = defaultEnforced) {
+  if (!loader) return true; /* uninitialised (e.g. tests) -> open */
+  const keys = (await loader()) || [];
+  if (keys.length === 0 && !enforced) return true;
+  const matched = matchBearer(authHeader, keys);
+  return matched !== null ? matched : false;
+}
+
+/**
+ * Async back-compat wrapper over resolveBearer using the default loader.
+ * @returns {Promise<string|true|false>}
+ */
+async function checkBearer(authHeader) {
+  return resolveBearer(authHeader);
 }
 
 /* -------------------------------------------------------------------------
@@ -98,17 +108,23 @@ function checkBearer(authHeader) {
  * ---------------------------------------------------------------------- */
 
 /**
- * Express middleware that rejects requests without a valid bearer token
- * with HTTP 401.  Passes through when auth is not required.
- *
- * On success, when a bearer token is present, attaches the authenticated
- * identity to the request:
+ * Express (5) async middleware. Rejects requests without a valid bearer token
+ * with HTTP 401; passes through when auth is open. On success, attaches the
+ * authenticated identity:
  *   - req.authUser    the matched username (when a specific user matched)
- *   - req.authKeyHash the SHA-256 hex of the presented token, used to locate
- *                     that user's per-token agent binaries.
+ *   - req.authKeyHash the SHA-256 hex of the presented token
+ * A loader/DB error is treated as a rejection (fail closed) rather than an
+ * unhandled rejection.
  */
-function middleware(req, res, next) {
-  const result = checkBearer(req.headers['authorization']);
+async function middleware(req, res, next) {
+  let result;
+  try {
+    result = await resolveBearer(req.headers['authorization']);
+  } catch {
+    res.status(401).json({ error: 'Unauthorized' });
+    return;
+  }
+
   if (!result) {
     res.status(401).json({ error: 'Unauthorized' });
     return;
@@ -125,4 +141,4 @@ function middleware(req, res, next) {
   return next();
 }
 
-module.exports = { init, checkBearer, matchBearer, middleware };
+module.exports = { init, checkBearer, resolveBearer, matchBearer, middleware };

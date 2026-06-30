@@ -140,15 +140,19 @@ const wss = new WebSocketServer({
       done(false, 403, 'Forbidden');
       return;
     }
-    const authUser = auth.checkBearer(info.req.headers.authorization);
-    if (!authUser) {
-      done(false, 401, 'Unauthorized');
-      return;
-    }
-    // Store the resolved username so the connection handler can initialise the
-    // device group. When auth is not enforced checkBearer returns true (no user).
-    info.req.authenticatedUser = typeof authUser === 'string' ? authUser : null;
-    done(true);
+    auth.resolveBearer(info.req.headers.authorization)
+      .then((authUser) => {
+        if (!authUser) {
+          done(false, 401, 'Unauthorized');
+          return;
+        }
+        // Store the resolved username so the connection handler can initialise
+        // the device group. When auth is open (no keys) resolveBearer returns
+        // true (no specific user).
+        info.req.authenticatedUser = typeof authUser === 'string' ? authUser : null;
+        done(true);
+      })
+      .catch(() => done(false, 401, 'Unauthorized'));
   },
 });
 

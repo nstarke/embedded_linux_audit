@@ -28,11 +28,9 @@ function createPcapWebSocketServer({
         done(false, 404, 'Not Found');
         return;
       }
-      if (!auth.checkBearer(info.req.headers.authorization)) {
-        done(false, 401, 'Unauthorized');
-        return;
-      }
-      done(true);
+      auth.resolveBearer(info.req.headers.authorization)
+        .then((ok) => (ok ? done(true) : done(false, 401, 'Unauthorized')))
+        .catch(() => done(false, 401, 'Unauthorized'));
     },
   });
 

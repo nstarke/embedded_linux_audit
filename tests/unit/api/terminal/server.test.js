@@ -82,7 +82,7 @@ function loadTerminalServer(options = {}) {
   });
   const auth = {
     init: jest.fn(() => true),
-    checkBearer: jest.fn(() => true),
+    resolveBearer: jest.fn().mockResolvedValue(true),
   };
   const initializeDatabase = jest.fn().mockResolvedValue(undefined);
   const runMigrations = jest.fn().mockResolvedValue([]);
@@ -255,7 +255,7 @@ describe('terminal server orchestration', () => {
     jest.restoreAllMocks();
   });
 
-  test('verifyClient enforces terminal path and bearer auth', () => {
+  test('verifyClient enforces terminal path and bearer auth', async () => {
     const { server, auth } = loadTerminalServer();
     const verifyClient = server.wss.options.verifyClient;
     const done = jest.fn();
@@ -263,40 +263,46 @@ describe('terminal server orchestration', () => {
     verifyClient({ req: { url: '/wrong', headers: {} } }, done);
     expect(done).toHaveBeenCalledWith(false, 404, 'Not Found');
 
-    auth.checkBearer.mockReturnValueOnce(false);
+    auth.resolveBearer.mockResolvedValueOnce(false);
     verifyClient({ req: { url: '/terminal/aa:bb', headers: { authorization: 'Bearer nope' } } }, done);
+    await flush();
     expect(done).toHaveBeenCalledWith(false, 401, 'Unauthorized');
 
-    auth.checkBearer.mockReturnValueOnce(true);
+    auth.resolveBearer.mockResolvedValueOnce(true);
     verifyClient({ req: { url: '/terminal/aa:bb', headers: { authorization: 'Bearer ok' } } }, done);
+    await flush();
     expect(done).toHaveBeenCalledWith(true);
   });
 
-  test('verifyClient stores the authenticated username on req when a key is matched', () => {
+  test('verifyClient stores the authenticated username on req when a key is matched', async () => {
     const { server, auth } = loadTerminalServer();
     const verifyClient = server.wss.options.verifyClient;
     const done = jest.fn();
 
-    auth.checkBearer.mockReturnValueOnce('alice');
+    auth.resolveBearer.mockResolvedValueOnce('alice');
     const req = { url: '/terminal/aa:bb', headers: { authorization: 'Bearer ok' } };
     verifyClient({ req }, done);
+    await flush();
     expect(done).toHaveBeenCalledWith(true);
     expect(req.authenticatedUser).toBe('alice');
   });
 
-  test('verifyClient rejects missing auth, malformed auth, and empty terminal mac paths', () => {
+  test('verifyClient rejects missing auth, malformed auth, and empty terminal mac paths', async () => {
     const { server, auth } = loadTerminalServer();
     const verifyClient = server.wss.options.verifyClient;
     const done = jest.fn();
 
-    auth.checkBearer.mockReturnValueOnce(false);
+    auth.resolveBearer.mockResolvedValueOnce(false);
     verifyClient({ req: { url: '/terminal/aa:bb', headers: {} } }, done);
+    await flush();
     expect(done).toHaveBeenCalledWith(false, 401, 'Unauthorized');
 
-    auth.checkBearer.mockReturnValueOnce(false);
+    auth.resolveBearer.mockResolvedValueOnce(false);
     verifyClient({ req: { url: '/terminal/aa:bb', headers: { authorization: 'Basic nope' } } }, done);
+    await flush();
     expect(done).toHaveBeenCalledWith(false, 401, 'Unauthorized');
 
+    // Empty mac path -> 404 synchronously (before any auth).
     verifyClient({ req: { url: '/terminal/', headers: { authorization: 'Bearer ok' } } }, done);
     expect(done).toHaveBeenCalledWith(false, 404, 'Not Found');
   });
@@ -1013,18 +1019,20 @@ describe('terminal server orchestration', () => {
     expect(process.exit).toHaveBeenCalledWith(1);
   });
 
-  test('verifyClient rejects connections from blocked IPs with 403', () => {
+  test('verifyClient rejects connections from blocked IPs with 403', async () => {
     const { server } = loadTerminalServer();
     const verifyClient = server.wss.options.verifyClient;
     const done = jest.fn();
 
     server.blockedCidrs.push({ network: (10 << 24) | 1, mask: 0xffffffff, cidr: '10.0.0.1/32' });
 
+    // Blocked IP -> 403 synchronously (before auth).
     verifyClient({ req: { url: '/terminal/aa:bb', headers: { authorization: 'Bearer ok' }, socket: { remoteAddress: '10.0.0.1' } } }, done);
     expect(done).toHaveBeenCalledWith(false, 403, 'Forbidden');
 
     done.mockClear();
     verifyClient({ req: { url: '/terminal/aa:bb', headers: { authorization: 'Bearer ok' }, socket: { remoteAddress: '10.0.0.2' } } }, done);
+    await flush();
     expect(done).toHaveBeenCalledWith(true);
   });
 

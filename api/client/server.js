@@ -18,15 +18,11 @@ async function main() {
     return 1;
   }
 
-  // Load client-scoped keys once at startup.  Enforce auth only when at least
-  // one client key exists so the service still starts on a fresh stack; the
-  // app additionally requires a resolved user on every route, so when no keys
-  // exist (no enforcement) every request is rejected for lack of a user.
-  const clientKeys = await loadApiKeyHashes('client');
-  await auth.init(clientKeys.length > 0, async () => clientKeys);
-  if (clientKeys.length === 0) {
-    console.warn('warning: no client API keys configured; create one with tools/add-user-key.js');
-  }
+  // Client keys are read from the database per request; enforcement is dynamic
+  // (any client key existing -> a valid client token is required). The app also
+  // requires a resolved user on every route, so with no client keys configured
+  // every request is rejected for lack of a user.
+  await auth.init(false, () => loadApiKeyHashes('client'));
 
   const { host, port } = getClientServiceConfig();
   const app = createApp();

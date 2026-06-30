@@ -26,17 +26,14 @@ const sm = createSessionManager();
 const sessions = sm.sessions;
 
 /*
- * The two ends of a GDB tunnel authenticate with different token scopes:
+ * The two ends of a GDB tunnel authenticate with different token scopes, read
+ * from the database per connection:
  *   - /gdb/in/<key>  (agent pushing the gdbserver RSP) uses an AGENT key.
  *   - /gdb/out/<key> (operator running the remote gdb session) uses a CLIENT
  *     key — the same key used for the client API.
- * Both sets are loaded once at startup (in main); enforcement for a direction
- * is opt-in: a direction is only gated once at least one key of its scope
- * exists, matching the other services.
+ * Enforcement is dynamic: a direction is gated once at least one key of its
+ * scope exists, open otherwise (resolveBearer with enforced=false).
  */
-let agentKeyHashes = [];
-let clientKeyHashes = [];
-
 const httpServer = http.createServer((_req, res) => {
   res.writeHead(404);
   res.end('Not Found');
@@ -50,12 +47,10 @@ const wss = new WebSocketServer({
       done(false, 404, 'Not Found');
       return;
     }
-    const keyHashes = parsed.direction === 'in' ? agentKeyHashes : clientKeyHashes;
-    if (keyHashes.length === 0 || auth.matchBearer(info.req.headers.authorization, keyHashes) !== null) {
-      done(true);
-    } else {
-      done(false, 401, 'Unauthorized');
-    }
+    const scope = parsed.direction === 'in' ? 'agent' : 'client';
+    auth.resolveBearer(info.req.headers.authorization, () => loadApiKeyHashes(scope), false)
+      .then((ok) => (ok ? done(true) : done(false, 401, 'Unauthorized')))
+      .catch(() => done(false, 401, 'Unauthorized'));
   },
 });
 
@@ -116,11 +111,8 @@ async function main() {
     return;
   }
 
-  // 'in' (agent gdbserver) is gated by agent-scoped keys; 'out' (operator gdb
-  // remote session) is gated by client-scoped keys. Read once at startup.
-  agentKeyHashes = await loadApiKeyHashes('agent');
-  clientKeyHashes = await loadApiKeyHashes('client');
-
+  // Keys are read from the database per connection (see verifyClient above), so
+  // nothing is loaded here.
   httpServer.listen(PORT, HOST, () => {
     process.stderr.write(`ELA GDB bridge API listening on ws://${HOST}:${PORT}\n`);
   });

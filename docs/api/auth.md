@@ -1,9 +1,16 @@
 # API Key Authentication — Server Side
 
-Both web API servers (`api/agent` and `api/terminal`) share the same
-authentication module (`api/auth.js`).  Authentication is **opt-in**:
-by default neither server enforces tokens, so existing deployments are
-unaffected.
+All API services (`api/agent`, `api/client`, `api/terminal`, `api/gdb`) share the
+same authentication module (`api/auth.js`).
+
+Bearer keys live in the database (`api_keys`, created by `tools/add-user-key.js`)
+and are **read on every request** via `loadApiKeyHashes(scope)` — a key that is
+created or revoked takes effect immediately, with **no service restart**.
+
+Enforcement is **dynamic**: as soon as any key exists for a service's scope, that
+service requires a valid token and resolves the request's user
+(`req.authUser`); with no keys configured for the scope it stays open. The
+`--validate-key` flag forces the closed case (reject even when no keys exist).
 
 ## Key file format — `ela.key`
 
@@ -17,8 +24,12 @@ anothertoken
 - Blank lines and lines containing only whitespace are ignored.
 - There is no maximum number of tokens; all listed tokens are valid
   simultaneously.
-- The file is read once at server startup.  Restart the server to pick up
-  changes.
+
+> Note: the servers read keys from the **database** (`api_keys`), not from
+> `ela.key`, and re-read them on every request — so creating or revoking a key
+> takes effect immediately without restarting any service. The `ela.key` file
+> remains the **agent-side** token source (see
+> [agent-side auth](../agent/features/api-key-authentication.md)).
 
 ## Enabling enforcement — `--validate-key`
 
