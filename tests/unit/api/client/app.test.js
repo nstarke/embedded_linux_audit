@@ -44,7 +44,7 @@ describe('client app bootstrap', () => {
   test('serves the OpenAPI spec and Swagger UI before auth, then the upload routes', () => {
     const {
       app, createApp, authMiddleware, registerUploadsRoutes, rateLimiter,
-      swaggerUi, swaggerServe, swaggerSetupHandler, openapiSpec,
+      swaggerUi, swaggerServe, swaggerSetupHandler,
     } = loadCreateApp();
 
     const created = createApp();
