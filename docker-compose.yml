@@ -16,6 +16,12 @@ services:
       ELA_AGENT_DATA_DIR: /data/agent
     volumes:
       - ${ELA_DATA_DIR:-/data/agent}:/data/agent
+      # Per-user binary builds (tools/add-user-key.js) compile from third_party.
+      # Bind-mount the host's submodule sources so the build always sees them
+      # without rebaking the image. Requires `git submodule update --init
+      # --recursive` on the host. Read-write because the cross-compile writes
+      # build-* directories under third_party/.
+      - ${ELA_THIRD_PARTY_DIR:-./third_party}:/app/third_party
 
   client-api:
     build:

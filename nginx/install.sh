@@ -30,7 +30,6 @@ Positional arguments:
 Options:
   --cert PATH           TLS certificate file (PEM); auto-generated self-signed if omitted
   --key  PATH           TLS private key file  (PEM); required when --cert is given
-  --github-token TOKEN  GitHub token for downloading release binaries (or set GITHUB_TOKEN env var)
   --env-file PATH       Pass an env file to docker compose
   --db-host HOST        Use an EXTERNAL PostgreSQL at HOST instead of the bundled
                         container (the bundled postgres container is not started)
@@ -39,7 +38,7 @@ Options:
   --db-user USER        Database user (default ela)
   --db-password PASS    Database password (default ela)
   --no-build            Skip image builds and start with existing images
-  --compile-locally     Build release binaries in a Docker builder container and disable GitHub release fetch
+  --compile-locally     Pre-build the shared release-binary pool in a Docker builder container
   --jobs N              Set release-binary compiler job count (only valid with --compile-locally)
   --foreground          Run docker compose up in the foreground
   --pull                Pull newer base images before starting
@@ -71,7 +70,6 @@ DB_PORT=""
 DB_NAME=""
 DB_USER=""
 DB_PASSWORD=""
-GITHUB_TOKEN="${GITHUB_TOKEN:-}"
 RELEASE_BUILDER_IMAGE="ela-release-builder:local"
 RELEASE_BUILDER_DOCKERFILE="$REPO_ROOT/tests/release-builder.Dockerfile"
 DOCKER_RUN_UID="$(id -u)"
@@ -97,14 +95,6 @@ copy_compiled_release_binaries() {
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
-        --github-token)
-            shift
-            if [ "$#" -eq 0 ]; then
-                echo "error: --github-token requires a value" >&2
-                exit 1
-            fi
-            GITHUB_TOKEN="$1"
-            ;;
         --cert)
             shift
             if [ "$#" -eq 0 ]; then
@@ -433,10 +423,8 @@ fi
 
 export ELA_TLS_CERT="$TLS_CERT"
 export ELA_TLS_KEY="$TLS_KEY"
-export GITHUB_TOKEN
 
 if [ "$COMPILE_LOCALLY" -eq 1 ]; then
-    export ELA_AGENT_SKIP_ASSET_SYNC=true
     if [ -z "$COMPILE_JOBS" ]; then
         COMPILE_JOBS="$(nproc)"
     fi
@@ -488,8 +476,7 @@ if [ "$COMPILE_LOCALLY" -eq 1 ]; then
     # directory, while the local compiler writes /out/<isa>/ela-<isa>.
     copy_compiled_release_binaries "$ELA_RELEASE_BINARIES_DIR"
 else
-    export ELA_AGENT_SKIP_ASSET_SYNC=false
-    echo "Using GitHub release asset fetch for agent binaries."
+    echo "Per-user agent binaries are built when you create a user (tools/add-user-key.js)."
 fi
 
 # Generate nginx config with hostname substituted
