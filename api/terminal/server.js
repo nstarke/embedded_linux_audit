@@ -25,7 +25,7 @@ const { formatPromptOutput } = require('./promptFormatter');
 const { createSessionRegistry } = require('./sessionRegistry');
 const { formatListCommandHelp, formatShellExecution, isAffirmativeResponse, parseListCommand } = require('./listCommands');
 const { executeLocalSessionCommand } = require('./localCommands');
-const { createTerminalHttpHandler } = require('./httpRoutes');
+const { createTerminalApp } = require('./app');
 const { startSessionUpdate, handleUpdateMessage } = require('./updateManager');
 const {
   PASSTHROUGH_EXIT_HINT,
@@ -110,13 +110,14 @@ function exitGracefully() {
     .finally(() => process.exit(0));
 }
 
-const httpServer = http.createServer(createTerminalHttpHandler({
+const app = createTerminalApp({
   sessionRegistry,
-  auth,
   blockedCidrs,
   isBlocked,
   resolveRemoteAddress: (req) => resolveProxiedAddress(req.socket?.remoteAddress || null, req.headers),
-}));
+});
+
+const httpServer = http.createServer(app);
 
 function onUpdateStateTransition(entry, message) {
   const detail = entry.updateError ? `${message}: ${entry.updateError}` : message;
@@ -803,6 +804,7 @@ module.exports = {
   ANSI,
   sessionRegistry,
   tui,
+  app,
   httpServer,
   wss,
   blockedCidrs,

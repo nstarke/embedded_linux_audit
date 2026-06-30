@@ -107,7 +107,7 @@ function loadTerminalServer(options = {}) {
   const formatShellExecution = jest.fn((command) => `shell ${command}`);
   const isAffirmativeResponse = jest.fn((value) => /^y/i.test(value));
   const executeLocalSessionCommand = jest.fn().mockResolvedValue(false);
-  const createTerminalHttpHandler = jest.fn(() => jest.fn());
+  const createTerminalApp = jest.fn(() => jest.fn());
   const startSessionUpdate = jest.fn(() => false);
   const handleUpdateMessage = jest.fn();
   const sessionInput = {
@@ -207,8 +207,8 @@ function loadTerminalServer(options = {}) {
   jest.doMock('../../../../api/terminal/localCommands', () => ({
     executeLocalSessionCommand,
   }));
-  jest.doMock('../../../../api/terminal/httpRoutes', () => ({
-    createTerminalHttpHandler,
+  jest.doMock('../../../../api/terminal/app', () => ({
+    createTerminalApp,
   }));
   jest.doMock('../../../../api/terminal/updateManager', () => ({
     startSessionUpdate,

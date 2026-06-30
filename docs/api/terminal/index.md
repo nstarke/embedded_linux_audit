@@ -9,7 +9,7 @@ the server.
 ## Requirements
 
 - Node.js ≥ 18
-- `ws` npm package (`npm install` inside `api/terminal/`)
+- `express` and `ws` npm packages (`npm install` inside `api/terminal/`)
 
 ## Starting the server
 

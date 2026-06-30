@@ -9,6 +9,7 @@
     "test:unit": "node ../../node_modules/jest/bin/jest.js --runInBand ../../tests/unit/api/terminal"
   },
   "dependencies": {
+    "express": "^5.0.0",
     "pg": "^8.13.3",
     "sequelize": "^6.37.5",
     "umzug": "^3.8.2",
