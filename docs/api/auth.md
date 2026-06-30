@@ -77,6 +77,24 @@ for details.
   are rejected with HTTP `401` before the upgrade handshake completes, so no
   WebSocket connection object is created for unauthorised clients.
 
+## Per-user, token-embedded agent binaries
+
+The agent helper API serves architecture-specific agent binaries built per user
+with that user's API token compiled in. Create a user (and build their binaries)
+with:
+
+```sh
+node tools/add-user-key.js --username alice
+# or inside the container:
+docker compose exec agent-api node tools/add-user-key.js --username alice
+```
+
+This stores only the SHA-256 hash of the token (in the `api_keys` table) and
+writes the binaries to `<data-dir>/release_binaries/users/<keyHash>/`. When a
+request to `GET /isa/:isa` presents `Authorization: Bearer <token>`, the server
+hashes the token and serves the matching user's binary. See
+[docker operations](docker-operations.md) for the full workflow.
+
 ## nginx and TLS
 
 When using the nginx reverse proxy (`nginx/ela.conf`) the `Authorization`

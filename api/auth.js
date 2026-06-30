@@ -86,10 +86,29 @@ function checkBearer(authHeader) {
 /**
  * Express middleware that rejects requests without a valid bearer token
  * with HTTP 401.  Passes through when auth is not required.
+ *
+ * On success, when a bearer token is present, attaches the authenticated
+ * identity to the request:
+ *   - req.authUser    the matched username (when a specific user matched)
+ *   - req.authKeyHash the SHA-256 hex of the presented token, used to locate
+ *                     that user's per-token agent binaries.
  */
 function middleware(req, res, next) {
-  if (checkBearer(req.headers['authorization'])) return next();
-  res.status(401).json({ error: 'Unauthorized' });
+  const result = checkBearer(req.headers['authorization']);
+  if (!result) {
+    res.status(401).json({ error: 'Unauthorized' });
+    return;
+  }
+
+  const authHeader = req.headers['authorization'];
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    const token = authHeader.slice(7);
+    req.authKeyHash = crypto.createHash('sha256').update(token, 'utf8').digest('hex');
+  }
+  if (typeof result === 'string') {
+    req.authUser = result;
+  }
+  return next();
 }
 
 module.exports = { init, checkBearer, middleware };

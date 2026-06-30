@@ -1,6 +1,21 @@
 # API Helper Server
 
-Use the Node.js helper in `api/agent/` as the local helper for testing HTTP/HTTPS POST output and serving downloaded release binaries/test scripts.
+Use the Node.js helper in `api/agent/` as the local helper for testing HTTP/HTTPS POST output and serving per-user agent binaries/test scripts.
+
+## Per-user, token-embedded agent binaries
+
+Agent binaries are no longer downloaded from GitHub. Instead they are
+cross-compiled in the helper container with each user's API token baked in, at
+the moment that token is created (`tools/add-user-key.js`). The binaries are
+written flat to `<data-dir>/release_binaries/users/<keyHash>/ela-<isa>` where
+`<keyHash>` is the SHA-256 of the token.
+
+`GET /isa/:isa` serves the set matching the bearer token presented on the
+request: the server resolves the token to its hash and reads from that user's
+directory. Requests without a token fall back to the shared
+`<data-dir>/release_binaries` pool (empty by default). See
+[token creation and docker operations](../docker-operations.md) and
+[server-side auth](../auth.md).
 
 Example:
 
@@ -25,8 +40,7 @@ Additional server options:
 - `--data-dir` changes the base directory used for helper-server data storage. By default this is `api/agent/data`.
 - `--reuse-last-data-dir` reuses the latest existing timestamped runtime data directory under `--data-dir`; if none exists, startup creates and uses the current timestamp directory.
 - `--https` enables HTTPS with a self-signed localhost certificate.
-- `--clean` deletes runtime upload data under the configured data directory before startup, but preserves cached release binaries in `<data-dir>/release_binaries`.
-- `--force-download` refreshes the cached release binaries in `<data-dir>/release_binaries`.
+- `--clean` deletes runtime upload data under the configured data directory before startup, but preserves the per-user release binaries in `<data-dir>/release_binaries`.
 
 POST handling notes:
 
@@ -41,10 +55,9 @@ POST handling notes:
 - upload metadata and normalized records are persisted in PostgreSQL.
 - runtime upload data may also be stored under `<data-dir>/<startup_timestamp>/<mac_address>/...` for `fs`, `file-list`, `env`, `logs`, `dmesg`, `coredump`, `orom`, `pcap`, `uboot/image`, and `uboot/env`.
 - `/upload/log` and `/upload/logs` are both accepted and stored under `<data-dir>/<startup_timestamp>/<mac_address>/logs/`.
-- downloaded release binaries are cached separately under `<data-dir>/release_binaries` by default.
-- `GET /` returns an HTML index of release binaries and agent test scripts.
-- `GET /tests/agent/:name` serves `.sh` files from `tests/agent/shell/` (for example `/tests/agent/download_tests.sh`, backed by `tests/agent/shell/download_tests.sh`). `GET /isa/:isa` and `GET /uboot-env/:env_filename` serve ISA binaries and U-Boot environment helper files respectively.
-- set `ELA_AGENT_SKIP_ASSET_SYNC=true` or pass `--skip-asset-sync` to skip GitHub release refresh during startup, which is useful for container deployments.
+- per-user release binaries live under `<data-dir>/release_binaries/users/<keyHash>/` by default.
+- `GET /` returns an HTML index of the authenticated user's release binaries and agent test scripts.
+- `GET /tests/agent/:name` serves `.sh` files from `tests/agent/shell/` (for example `/tests/agent/download_tests.sh`, backed by `tests/agent/shell/download_tests.sh`). `GET /isa/:isa` and `GET /uboot-env/:env_filename` serve ISA binaries and U-Boot environment helper files respectively. `GET /isa/:isa` selects the per-user directory from the presented bearer token.
 
 PCAP WebSocket handling:
 

@@ -39,7 +39,11 @@ clean_outputs() {
     fi
 
     for isa in "$@"; do
-        rm -rf "$DEST_RELEASE_DIR/$isa"
+        if [ "${ELA_RELEASE_FLAT_OUTPUT:-}" = "1" ]; then
+            rm -f "$DEST_RELEASE_DIR/ela-$isa"
+        else
+            rm -rf "$DEST_RELEASE_DIR/$isa"
+        fi
     done
 }
 
@@ -274,6 +278,17 @@ build_with_targets() {
     output_path="$1"
     target_list="$2"
 
+    # When ELA_EMBEDDED_API_KEY is set, compile the agent with the API token
+    # baked in as a string literal (consumed by agent/net/api_key.c via the
+    # ELA_EMBEDDED_API_KEY macro).  The backslash-escaped quotes survive make's
+    # recipe shell so the preprocessor receives "<key>" rather than a bare
+    # identifier.  The token is a single shell word (no spaces), so the variable
+    # is intentionally expanded unquoted in the make invocation below.
+    make_embedded_key_arg=""
+    if [ -n "${ELA_EMBEDDED_API_KEY:-}" ]; then
+        make_embedded_key_arg="CFLAGS_APPEND=-DELA_EMBEDDED_API_KEY=\\\"${ELA_EMBEDDED_API_KEY}\\\""
+    fi
+
     old_ifs="$IFS"
     IFS=,
     set -- $target_list
@@ -296,6 +311,7 @@ build_with_targets() {
             CMAKE_C_COMPILER="$(command -v zig)" \
             CMAKE_C_COMPILER_ARG1=cc \
             CMAKE_C_COMPILER_TARGET="$target" \
+            ${make_embedded_key_arg:+$make_embedded_key_arg} \
             CC="zig cc -target $target${zig_extra_cflags:+ $zig_extra_cflags}" || build_ok=0
 
         if [ "$build_ok" -eq 1 ]; then
@@ -311,7 +327,11 @@ build_with_targets() {
 
 build_release_binary() {
     isa="$1"
-    dest_dir="$DEST_RELEASE_DIR/$isa"
+    if [ "${ELA_RELEASE_FLAT_OUTPUT:-}" = "1" ]; then
+        dest_dir="$DEST_RELEASE_DIR"
+    else
+        dest_dir="$DEST_RELEASE_DIR/$isa"
+    fi
     dest="$dest_dir/ela-$isa"
 
     set_isa_config "$isa"

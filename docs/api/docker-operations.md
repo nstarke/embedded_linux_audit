@@ -48,19 +48,6 @@ than the default `example.com`, use the installer instead:
 ./nginx/install.sh ela.example.com
 ```
 
-To compile release binaries locally in Docker and disable GitHub release
-downloads for the agent API:
-
-```bash
-./nginx/install.sh ela.example.com --compile-locally
-```
-
-To set the local release build parallelism explicitly:
-
-```bash
-./nginx/install.sh ela.example.com --compile-locally --jobs 8
-```
-
 Expected behavior on first boot:
 
 1. `postgres` initializes the `embedded_linux_audit` database.
@@ -139,8 +126,12 @@ Important agent API variables:
 - `ELA_AGENT_HOST`
 - `ELA_AGENT_PORT`
 - `ELA_AGENT_DATA_DIR`
-- `ELA_AGENT_SKIP_ASSET_SYNC`
-- `ELA_AGENT_REPO`
+- `ELA_AGENT_ASSETS_DIR` (overrides the default `<data-dir>/release_binaries`)
+
+> Agent binaries are no longer fetched from GitHub releases, so the former
+> `ELA_AGENT_SKIP_ASSET_SYNC`, `ELA_AGENT_REPO`, and `GITHUB_TOKEN` variables and
+> the `--repo`/`--github-token`/`--force-download`/`--skip-asset-sync` flags have
+> been removed. See [Creating users and per-user binaries](#creating-users-and-per-user-binaries).
 
 The bundled agent container starts with `--reuse-last-data-dir`, so container
 restarts continue writing runtime artifacts into the latest timestamped
@@ -170,6 +161,43 @@ If you need to run migrations manually inside the `agent-api` container:
 ```bash
 docker compose run --rm agent-api node /app/api/lib/db/migrate.js
 ```
+
+## Creating users and per-user binaries
+
+Each user downloads agent binaries that are built specifically for them with
+their API token compiled in (via the `ELA_EMBEDDED_API_KEY` macro). Binaries are
+built in the `agent-api` container, which ships with the full cross-compile
+toolchain (Zig, cmake, etc.). Submodules must be initialized on the host before
+building the image:
+
+```bash
+git submodule update --init --recursive
+docker compose build agent-api
+docker compose up -d postgres agent-api
+```
+
+Create a user and build their per-user binaries (all supported ISAs, token
+embedded):
+
+```bash
+docker compose exec agent-api node tools/add-user-key.js --username alice
+```
+
+The plaintext key is printed once. The binaries are written to
+`<data-dir>/release_binaries/users/<sha256(key)>/ela-<isa>` on the `agent-data`
+volume. Pass `--skip-build` to only create the database record (for example when
+binaries are built separately), or `--key <token>` to supply a specific token.
+
+The agent then authenticates with zero extra configuration — download it for the
+target architecture with the bearer token:
+
+```bash
+curl -H "Authorization: Bearer <printed-key>" \
+    http://localhost/isa/x86_64 -o embedded_linux_audit
+```
+
+`GET /isa/:isa` resolves the bearer token to its hash and serves that user's
+binary; a different or absent token does not receive it.
 
 If a migration fails:
 

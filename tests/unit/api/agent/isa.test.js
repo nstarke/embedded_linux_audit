@@ -110,4 +110,52 @@ describe('isa route', () => {
     expect(res.headers['content-type']).toBe('application/x-agent');
     expect(res.sentFile).toBe(path.resolve('/assets', 'ela-x86_64'));
   });
+
+  test('serves the per-user binary directory when the request is authenticated', async () => {
+    const keyHash = 'a'.repeat(64);
+    const listBinaryEntries = jest.fn(async () => [{ isa: 'x86_64', fileName: 'ela-x86_64' }]);
+    const { registerIsaRoute } = loadRegisterIsaRoute(listBinaryEntries);
+    const app = { get: jest.fn() };
+    registerIsaRoute(app, {
+      assetsDir: '/assets',
+      releaseStateFile: '.release_state.json',
+      path,
+      fsp: { readdir: jest.fn() },
+      isWithinRoot: jest.fn(() => true),
+      mime: { lookup: jest.fn(() => 'application/x-agent') },
+      verboseRequestLog: jest.fn(),
+      verboseResponseLog: jest.fn(),
+    });
+    const handler = app.get.mock.calls[0][1];
+    const res = createRes();
+
+    await handler({ params: { isa: 'x86_64' }, authKeyHash: keyHash }, res);
+
+    const expectedDir = path.join('/assets', 'users', keyHash);
+    expect(listBinaryEntries).toHaveBeenCalledWith(expectedDir, expect.anything(), '.release_state.json');
+    expect(res.sentFile).toBe(path.resolve(expectedDir, 'ela-x86_64'));
+  });
+
+  test('falls back to the shared assets directory when unauthenticated', async () => {
+    const listBinaryEntries = jest.fn(async () => [{ isa: 'x86_64', fileName: 'ela-x86_64' }]);
+    const { registerIsaRoute } = loadRegisterIsaRoute(listBinaryEntries);
+    const app = { get: jest.fn() };
+    registerIsaRoute(app, {
+      assetsDir: '/assets',
+      releaseStateFile: '.release_state.json',
+      path,
+      fsp: { readdir: jest.fn() },
+      isWithinRoot: jest.fn(() => true),
+      mime: { lookup: jest.fn(() => 'application/x-agent') },
+      verboseRequestLog: jest.fn(),
+      verboseResponseLog: jest.fn(),
+    });
+    const handler = app.get.mock.calls[0][1];
+    const res = createRes();
+
+    await handler({ params: { isa: 'x86_64' } }, res);
+
+    expect(listBinaryEntries).toHaveBeenCalledWith('/assets', expect.anything(), '.release_state.json');
+    expect(res.sentFile).toBe(path.resolve('/assets', 'ela-x86_64'));
+  });
 });

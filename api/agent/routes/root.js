@@ -98,7 +98,10 @@ module.exports = function registerRootRoute(app, deps) {
 
   app.get('/', async (req, res) => {
     verboseRequestLog(req);
-    const binaryEntries = await listBinaryEntries(deps.assetsDir, fsp, deps.releaseStateFile);
+    const assetsBaseDir = req.authKeyHash
+      ? deps.path.join(deps.assetsDir, 'users', req.authKeyHash)
+      : deps.assetsDir;
+    const binaryEntries = await listBinaryEntries(assetsBaseDir, fsp, deps.releaseStateFile);
     const agentTestDirs = Object.keys(agentTestTypeMeta).flatMap((type) => getAgentTestDirs(type));
     const testEntries = await listAgentTestEntries();
     const scriptEntries = await listScriptEntries(scriptsDir);
@@ -123,7 +126,7 @@ module.exports = function registerRootRoute(app, deps) {
   </head>
   <body>
     <h1>Release Binaries</h1>
-    <p>Serving files from: ${escapeHtml(deps.assetsDir)}</p>
+    <p>Serving files from: ${escapeHtml(assetsBaseDir)}</p>
     <ul>
 ${assetItems}
     </ul>

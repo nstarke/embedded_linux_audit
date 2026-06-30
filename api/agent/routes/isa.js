@@ -10,7 +10,12 @@ module.exports = function registerIsaRoute(app, deps) {
       verboseResponseLog(req, 400, 13);
       return;
     }
-    const binaryEntries = await listBinaryEntries(assetsDir, fsp, deps.releaseStateFile);
+    // Serve the per-user binaries built for the presented token when the
+    // request is authenticated; otherwise fall back to the shared pool.
+    const baseDir = req.authKeyHash
+      ? deps.path.join(assetsDir, 'users', req.authKeyHash)
+      : assetsDir;
+    const binaryEntries = await listBinaryEntries(baseDir, fsp, deps.releaseStateFile);
     const match = binaryEntries.find((entry) => entry.isa === req.params.isa);
     if (!match) {
       res.status(404).type('text').send('not found\n');
@@ -18,8 +23,8 @@ module.exports = function registerIsaRoute(app, deps) {
       return;
     }
 
-    const candidate = deps.path.resolve(assetsDir, match.fileName);
-    if (!isWithinRoot(candidate, assetsDir)) {
+    const candidate = deps.path.resolve(baseDir, match.fileName);
+    if (!isWithinRoot(candidate, baseDir)) {
       res.status(404).type('text').send('not found\n');
       verboseResponseLog(req, 404, 10);
       return;

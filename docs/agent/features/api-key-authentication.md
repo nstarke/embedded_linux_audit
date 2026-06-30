@@ -8,9 +8,18 @@ was started with `--validate-key`.
 
 ## Providing a token
 
-Three sources are accepted, tried in the order listed below.  The first
+Up to four sources are accepted, tried in the order listed below.  The first
 source that the server accepts is locked in for all subsequent requests in
 the same run.
+
+> **Embedded token.** Binaries downloaded from the agent helper API
+> (`GET /isa/:isa`) are compiled per-user with the downloader's token baked in
+> at build time (the `ELA_EMBEDDED_API_KEY` macro; see
+> [docker operations](../../api/docker-operations.md)). Such a binary
+> authenticates with no `--api-key`, `ELA_API_KEY`, or `/tmp/ela.key` needed —
+> the embedded token is added as an additional candidate after the three
+> sources below. The sources below still override or supplement it for binaries
+> you build yourself.
 
 ### 1. `--api-key` command-line argument
 

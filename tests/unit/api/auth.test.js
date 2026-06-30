@@ -91,4 +91,41 @@ describe('api auth', () => {
     expect(res.status).not.toHaveBeenCalled();
     expect(res.json).not.toHaveBeenCalled();
   });
+
+  test('middleware attaches the token hash and username for per-user asset serving', async () => {
+    const auth = loadAuth();
+    await auth.init(true, async () => [{ keyHash: hashKey('secret'), username: 'alice' }]);
+
+    const req = { headers: { authorization: 'Bearer secret' } };
+    const res = {
+      status: jest.fn().mockReturnThis(),
+      json: jest.fn().mockReturnThis(),
+    };
+    const next = jest.fn();
+
+    auth.middleware(req, res, next);
+
+    expect(next).toHaveBeenCalledTimes(1);
+    expect(req.authKeyHash).toBe(hashKey('secret'));
+    expect(req.authUser).toBe('alice');
+  });
+
+  test('middleware attaches the token hash even when enforcement is off', async () => {
+    const auth = loadAuth();
+    await auth.init(false, async () => []);
+
+    const req = { headers: { authorization: 'Bearer anytoken' } };
+    const res = {
+      status: jest.fn().mockReturnThis(),
+      json: jest.fn().mockReturnThis(),
+    };
+    const next = jest.fn();
+
+    auth.middleware(req, res, next);
+
+    expect(next).toHaveBeenCalledTimes(1);
+    expect(req.authKeyHash).toBe(hashKey('anytoken'));
+    // No specific user matched (enforcement off), so authUser stays unset.
+    expect(req.authUser).toBeUndefined();
+  });
 });

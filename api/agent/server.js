@@ -7,8 +7,6 @@ const fsp = require('fs/promises');
 const http = require('http');
 const https = require('https');
 const path = require('path');
-const crypto = require('crypto');
-const mime = require('mime-types');
 const { execFileSync } = require('child_process');
 const auth = require('../auth');
 const { getAgentServiceConfig } = require('../lib/config');
@@ -44,147 +42,6 @@ const VALID_CONTENT_TYPES = {
   'application/octet-stream': 'application_octet_stream'
 };
 
-function githubJsonGet(url, token) {
-  return new Promise((resolve, reject) => {
-    const headers = {
-      'User-Agent': 'embedded_linux_audit-web_server_helper',
-      'Accept': 'application/vnd.github+json'
-    };
-    if (token) {
-      headers.Authorization = `Bearer ${token}`;
-    }
-
-    https.get(url, { headers }, (res) => {
-      let data = '';
-      res.setEncoding('utf8');
-      res.on('data', (chunk) => {
-        data += chunk;
-      });
-      res.on('end', () => {
-        if (res.statusCode && res.statusCode >= 400) {
-          const error = new Error(`HTTP ${res.statusCode}`);
-          error.statusCode = res.statusCode;
-          return reject(error);
-        }
-        try {
-          resolve(JSON.parse(data));
-        } catch (err) {
-          reject(err);
-        }
-      });
-    }).on('error', reject);
-  });
-}
-
-function requestUrl(url, headers) {
-  return new Promise((resolve, reject) => {
-    const client = url.startsWith('https:') ? https : http;
-    const req = client.get(url, { headers }, (res) => {
-      resolve(res);
-    });
-    req.on('error', reject);
-  });
-}
-
-async function downloadFile(url, destPath, token, redirectCount = 0) {
-  if (redirectCount > 5) {
-    throw new Error('Too many redirects');
-  }
-
-  return new Promise((resolve, reject) => {
-    const headers = {
-      'User-Agent': 'embedded_linux_audit-web_server_helper'
-    };
-    if (token) {
-      headers.Authorization = `Bearer ${token}`;
-    }
-
-    const file = fs.createWriteStream(destPath);
-    const client = url.startsWith('https:') ? https : http;
-    client.get(url, { headers }, (res) => {
-      if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        const redirectUrl = new URL(res.headers.location, url).toString();
-        res.resume();
-        file.close(async () => {
-          fs.rm(destPath, { force: true }, async () => {
-            try {
-              await downloadFile(redirectUrl, destPath, token, redirectCount + 1);
-              resolve();
-            } catch (err) {
-              reject(err);
-            }
-          });
-        });
-        return;
-      }
-
-      if (res.statusCode && res.statusCode >= 400) {
-        res.resume();
-        file.close(() => fs.rm(destPath, { force: true }, () => {}));
-        return reject(new Error(`HTTP ${res.statusCode}`));
-      }
-
-      res.pipe(file);
-      file.on('finish', () => file.close(resolve));
-    }).on('error', (err) => {
-      file.close(() => fs.rm(destPath, { force: true }, () => {}));
-      reject(err);
-    });
-  });
-}
-
-async function getLatestRelease(repo, token) {
-  return githubJsonGet(`https://api.github.com/repos/${repo}/releases/latest`, token);
-}
-
-function releaseIdentity(release) {
-  if (release.tag_name) {
-    return String(release.tag_name);
-  }
-  if (release.id !== undefined && release.id !== null) {
-    return String(release.id);
-  }
-  return '';
-}
-
-async function loadCachedReleaseIdentity(outDir) {
-  const statePath = path.join(outDir, RELEASE_STATE_FILE);
-  try {
-    const state = JSON.parse(await fsp.readFile(statePath, 'utf8'));
-    return typeof state.release === 'string' && state.release ? state.release : null;
-  } catch {
-    return null;
-  }
-}
-
-async function saveCachedReleaseIdentity(outDir, release) {
-  const statePath = path.join(outDir, RELEASE_STATE_FILE);
-  const state = {
-    release,
-    updated_at: new Date().toISOString()
-  };
-  await fsp.mkdir(outDir, { recursive: true });
-  await fsp.writeFile(statePath, `${JSON.stringify(state, null, 2)}\n`, 'utf8');
-}
-
-async function clearDownloadedAssets(outDir) {
-  try {
-    const entries = await fsp.readdir(outDir, { withFileTypes: true });
-    for (const entry of entries) {
-      if (entry.name === RELEASE_STATE_FILE) {
-        continue;
-      }
-      if (entry.isFile() || entry.isSymbolicLink()) {
-        await fsp.unlink(path.join(outDir, entry.name));
-      }
-    }
-  } catch (err) {
-    if (err.code !== 'ENOENT') {
-      throw err;
-    }
-  }
-}
-
 async function removeDirectoryContents(dirPath, preservedNames = new Set()) {
   try {
     const entries = await fsp.readdir(dirPath, { withFileTypes: true });
@@ -200,37 +57,6 @@ async function removeDirectoryContents(dirPath, preservedNames = new Set()) {
       throw err;
     }
   }
-}
-
-async function downloadReleaseAssets(release, outDir, token, forceDownload) {
-  await fsp.mkdir(outDir, { recursive: true });
-  const assets = Array.isArray(release.assets) ? release.assets : [];
-  const downloaded = [];
-  const skippedExisting = [];
-
-  for (const asset of assets) {
-    const name = asset.name;
-    const downloadUrl = asset.browser_download_url;
-    if (!name || !downloadUrl) {
-      continue;
-    }
-
-    const dest = path.join(outDir, name);
-    if (!forceDownload) {
-      try {
-        await fsp.access(dest, fs.constants.F_OK);
-        skippedExisting.push(dest);
-        continue;
-      } catch {
-        // continue to download
-      }
-    }
-
-    await downloadFile(downloadUrl, dest, token);
-    downloaded.push(dest);
-  }
-
-  return { downloaded, skippedExisting };
 }
 
 function ensureSelfSignedCert(certPath, keyPath) {
@@ -266,24 +92,19 @@ function parseArgs(argv) {
   const npmLogLevel = String(process.env.npm_config_loglevel || '').toLowerCase();
   const defaultVerbose = ['verbose', 'silly'].includes(npmLogLevel);
   const defaultClean = npmBoolean('npm_config_clean');
-  const defaultForceDownload = npmBoolean('npm_config_force_download');
   const serviceDefaults = getAgentServiceConfig();
   const defaults = {
     host: serviceDefaults.host,
     port: serviceDefaults.port,
     logPrefix: serviceDefaults.logPrefix,
     dataDir: serviceDefaults.dataDir,
-    repo: serviceDefaults.repo,
     assetsDir: serviceDefaults.assetsDir,
     testsDir: serviceDefaults.testsDir,
-    githubToken: process.env.GITHUB_TOKEN || '',
-    forceDownload: defaultForceDownload,
     clean: defaultClean,
     https: false,
     verbose: defaultVerbose,
     cert: 'tools/certs/localhost.crt',
     key: 'tools/certs/localhost.key',
-    skipAssetSync: String(process.env.ELA_AGENT_SKIP_ASSET_SYNC || '').toLowerCase() === 'true',
   };
 
   const args = { ...defaults };
@@ -294,17 +115,13 @@ function parseArgs(argv) {
       case '--port': args.port = Number(argv[++i]); break;
       case '--log-prefix': args.logPrefix = argv[++i]; break;
       case '--data-dir': args.dataDir = argv[++i]; break;
-      case '--repo': args.repo = argv[++i]; break;
       case '--assets-dir': args.assetsDir = argv[++i]; break;
       case '--tests-dir': args.testsDir = argv[++i]; break;
-      case '--github-token': args.githubToken = argv[++i]; break;
-      case '--force-download': args.forceDownload = true; break;
       case '--clean': args.clean = true; break;
       case '--https': args.https = true; break;
       case '--verbose': args.verbose = true; break;
       case '--cert': args.cert = argv[++i]; break;
       case '--key': args.key = argv[++i]; break;
-      case '--skip-asset-sync': args.skipAssetSync = true; break;
       case '--reuse-last-data-dir': args.reuseLastDataDir = true; break;
       case '--help':
         printHelp();
@@ -323,7 +140,7 @@ function parseArgs(argv) {
 }
 
 function printHelp() {
-  console.log(`Usage: node server.js [options]\n\nOptions:\n  --host HOST\n  --port PORT\n  --log-prefix PREFIX\n  --data-dir DIR\n  --repo OWNER/NAME\n  --assets-dir DIR\n  --tests-dir DIR\n  --github-token TOKEN\n  --force-download\n  --clean\n  --https\n  --verbose\n  --cert PATH\n  --key PATH\n  --skip-asset-sync  Skip GitHub release asset refresh during startup\n  --reuse-last-data-dir  Reuse the latest timestamped data directory instead of creating a new one\n  --help`);
+  console.log(`Usage: node server.js [options]\n\nOptions:\n  --host HOST\n  --port PORT\n  --log-prefix PREFIX\n  --data-dir DIR\n  --assets-dir DIR\n  --tests-dir DIR\n  --clean\n  --https\n  --verbose\n  --cert PATH\n  --key PATH\n  --reuse-last-data-dir  Reuse the latest timestamped data directory instead of creating a new one\n  --help`);
 }
   
 async function main() {
@@ -362,7 +179,7 @@ async function main() {
       : path.resolve(dataDir, args.assetsDir))
     : defaultAssetsDir;
   const testsDir = resolveProjectPath(PROJECT_ROOT, args.testsDir);
-  const token = args.githubToken || null;
+  const usersAssetsDir = path.join(assetsDir, 'users');
 
   if (args.clean) {
     await removeDirectoryContents(dataRootDir, new Set(['release_binaries']));
@@ -371,7 +188,8 @@ async function main() {
   await Promise.all([
     fsp.mkdir(dataRootDir, { recursive: true }),
     fsp.mkdir(dataDir, { recursive: true }),
-    fsp.mkdir(defaultAssetsDir, { recursive: true })
+    fsp.mkdir(defaultAssetsDir, { recursive: true }),
+    fsp.mkdir(usersAssetsDir, { recursive: true })
   ]);
 
   if (args.reuseLastDataDir) {
@@ -379,45 +197,8 @@ async function main() {
     console.log(`${action} startup data directory ${dataDir}`);
   }
 
-  if (args.skipAssetSync) {
-    console.log(`Skipping release asset sync; serving assets from ${assetsDir}`);
-  } else {
-    try {
-      const latestRelease = await getLatestRelease(args.repo, token);
-      const latestReleaseId = releaseIdentity(latestRelease);
-      const cachedReleaseId = await loadCachedReleaseIdentity(assetsDir);
-      const isNewRelease = Boolean(latestReleaseId) && latestReleaseId !== cachedReleaseId;
-
-      let result;
-      if (args.forceDownload) {
-        console.log('Force download enabled; refreshing release binaries');
-        await clearDownloadedAssets(assetsDir);
-        result = await downloadReleaseAssets(latestRelease, assetsDir, token, true);
-        if (latestReleaseId) {
-          await saveCachedReleaseIdentity(assetsDir, latestReleaseId);
-        }
-      } else if (isNewRelease) {
-        console.log(`New release detected (${cachedReleaseId || '<none>'} -> ${latestReleaseId}); refreshing binaries`);
-        await clearDownloadedAssets(assetsDir);
-        result = await downloadReleaseAssets(latestRelease, assetsDir, token, true);
-        await saveCachedReleaseIdentity(assetsDir, latestReleaseId);
-      } else {
-        console.log('No new release detected; keeping existing binaries');
-        result = await downloadReleaseAssets(latestRelease, assetsDir, token, false);
-        if (latestReleaseId && cachedReleaseId !== latestReleaseId) {
-          await saveCachedReleaseIdentity(assetsDir, latestReleaseId);
-        }
-      }
-
-      console.log(`Downloaded ${result.downloaded.length} release asset(s) from ${args.repo} into ${assetsDir}`);
-      if (result.skippedExisting.length) {
-        console.log(`Skipped ${result.skippedExisting.length} existing release asset(s) in ${assetsDir} (use --force-download to replace them)`);
-      }
-    } catch (err) {
-      console.error(`Failed to fetch/download release assets from ${args.repo}: ${err.message}`);
-      return 1;
-    }
-  }
+  console.log(`Serving per-user agent binaries from ${usersAssetsDir}/<keyHash>; shared fallback ${assetsDir}`);
+  console.log('Build per-user binaries with: node tools/add-user-key.js --username <name>');
 
   const app = createApp({
     logPrefix,
@@ -462,7 +243,7 @@ async function main() {
   console.log(`PCAP WebSocket listening on ${scheme === 'https' ? 'wss' : 'ws'}://${args.host}:${args.port}/pcap/<mac>`);
   console.log(`Logging POST requests with prefix: ${logPrefix}`);
   console.log('Per-type logs: <prefix>.text_plain.log, <prefix>.text_csv.log, <prefix>.application_octet_stream.log');
-  console.log('GET / shows index of downloaded release binaries, test shell scripts, and command scripts');
+  console.log('GET / shows index of per-user release binaries, test shell scripts, and command scripts');
 
   process.on('SIGINT', () => {
     server.close(async () => {
@@ -480,15 +261,6 @@ module.exports = {
   WEB_ROOT,
   VALID_UPLOAD_TYPES,
   VALID_CONTENT_TYPES,
-  githubJsonGet,
-  requestUrl,
-  downloadFile,
-  getLatestRelease,
-  releaseIdentity,
-  loadCachedReleaseIdentity,
-  saveCachedReleaseIdentity,
-  clearDownloadedAssets,
-  downloadReleaseAssets,
   ensureSelfSignedCert,
   isValidMacAddress,
   normalizeContentType,
