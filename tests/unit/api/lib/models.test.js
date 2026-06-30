@@ -52,6 +52,7 @@ describe('db models', () => {
       'UbootEnvVariable',
       'Upload',
       'User',
+      'UserDevice',
     ]);
 
     expect(models.Device.options).toEqual(expect.objectContaining({

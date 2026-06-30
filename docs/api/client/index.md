@@ -53,13 +53,19 @@ Send the token on every request:
 Authorization: Bearer <client-key>
 ```
 
-## Per-user isolation
+## Visibility by device association
 
-Each upload records the `user_id` of the agent token that produced it (the agent
-API stamps `req.authUser` onto the row). The client API resolves the client
-token to its user and returns **only that user's artifacts**. Uploads with no
-owner (legacy ingests, or ingests made without an authenticated agent token) are
-not visible to any client token.
+The client API returns artifacts from the **devices you've associated** — not
+just the ones your token uploaded. A user is associated with a device when that
+user's agent (authenticating with its agent token) connects to the
+[terminal API](../terminal/index.md) for the device's MAC; binaries built with
+an embedded server URL do this automatically on first run. The association is
+recorded in `user_devices`.
+
+So a client token sees an artifact iff its user is associated with that
+artifact's device. A device can be associated with **multiple** users (each user
+whose agent has registered it via the terminal API) — all of them see its
+artifacts. A user who has not associated any devices sees nothing.
 
 ## Routes
 

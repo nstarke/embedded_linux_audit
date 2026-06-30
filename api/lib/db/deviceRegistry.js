@@ -138,9 +138,25 @@ async function deleteDeviceAliasByGroupAndName(group, name) {
   return true;
 }
 
+// Link a user to a device (idempotent). The client API uses these associations
+// to decide which devices' artifacts a user may see.
+async function associateUserDevice(userId, deviceId, transaction = undefined) {
+  const { UserDevice } = getModels();
+  const [link, created] = await UserDevice.findOrCreate({
+    where: { userId, deviceId },
+    defaults: { userId, deviceId },
+    transaction,
+  });
+  if (!created) {
+    link.changed('updatedAt', true); // touch last-associated time
+    await link.save({ transaction });
+  }
+  return { link, created };
+}
+
 async function recordTerminalConnection(macAddress, remoteAddress, authenticatedUser = null) {
   const sequelize = getSequelize();
-  const { DeviceAlias, TerminalConnection } = getModels();
+  const { DeviceAlias, TerminalConnection, User } = getModels();
 
   return sequelize.transaction(async (transaction) => {
     const device = await ensureDevice(macAddress, transaction, new Date());
@@ -162,6 +178,16 @@ async function recordTerminalConnection(macAddress, remoteAddress, authenticated
           deviceId: device.id,
           group: initialGroup,
         }, { transaction });
+      }
+    }
+
+    // Associate the authenticated user (from the agent's API key) with this
+    // device, so the user's client token can later read its artifacts. Skipped
+    // when auth is open (no resolved user) or the username is unknown.
+    if (authenticatedUser) {
+      const user = await User.findOne({ where: { username: authenticatedUser }, transaction });
+      if (user) {
+        await associateUserDevice(user.id, device.id, transaction);
       }
     }
 
@@ -268,6 +294,7 @@ module.exports = {
   createApiKey,
   getUserWithKeys,
   deleteUserByUsername,
+  associateUserDevice,
   recordTerminalConnection,
   touchTerminalHeartbeat,
   closeTerminalConnection,

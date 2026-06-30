@@ -22,6 +22,7 @@ const migration0005 = require('../../../../api/lib/db/migrations/0005-alias-grou
 const migration0006 = require('../../../../api/lib/db/migrations/0006-blocked-remotes');
 const migration0007 = require('../../../../api/lib/db/migrations/0007-users');
 const migration0008 = require('../../../../api/lib/db/migrations/0008-api-keys');
+const migration0011 = require('../../../../api/lib/db/migrations/0011-user-devices');
 
 function createQueryInterface() {
   return {
@@ -32,6 +33,8 @@ function createQueryInterface() {
     addColumn: jest.fn().mockResolvedValue(undefined),
     removeColumn: jest.fn().mockResolvedValue(undefined),
     changeColumn: jest.fn().mockResolvedValue(undefined),
+    addConstraint: jest.fn().mockResolvedValue(undefined),
+    removeConstraint: jest.fn().mockResolvedValue(undefined),
   };
 }
 
@@ -209,5 +212,30 @@ describe('db migrations', () => {
 
     await migration0008.down({ context: queryInterface });
     expect(queryInterface.dropTable).toHaveBeenCalledWith('api_keys');
+  });
+
+  test('0011 creates user_devices with FK cascades and a composite-unique pair', async () => {
+    const queryInterface = createQueryInterface();
+
+    await migration0011.up({ context: queryInterface });
+    expect(queryInterface.createTable).toHaveBeenCalledWith('user_devices', expect.objectContaining({
+      user_id: expect.objectContaining({
+        references: { model: 'users', key: 'id' },
+        onDelete: 'CASCADE',
+      }),
+      device_id: expect.objectContaining({
+        references: { model: 'devices', key: 'id' },
+        onDelete: 'CASCADE',
+      }),
+    }));
+    // Unique is on the (user_id, device_id) PAIR, so a device can be associated
+    // with more than one user.
+    expect(queryInterface.addConstraint).toHaveBeenCalledWith('user_devices', expect.objectContaining({
+      fields: ['user_id', 'device_id'],
+      type: 'unique',
+    }));
+
+    await migration0011.down({ context: queryInterface });
+    expect(queryInterface.dropTable).toHaveBeenCalledWith('user_devices');
   });
 });

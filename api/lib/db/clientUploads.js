@@ -3,11 +3,11 @@
 const { getModels, getSequelize } = require('./index');
 
 /*
- * Read-side queries for the client API.  Every query is scoped to a single
- * user (resolved from the client bearer token's username) so a client token
- * only ever sees artifacts uploaded by that same user's agent.  Uploads with a
- * null user_id (legacy or unauthenticated ingests) belong to no user and are
- * therefore invisible here.
+ * Read-side queries for the client API.  Visibility is scoped by device
+ * association: a user sees an artifact only when its device has been associated
+ * with that user (recorded when the user's agent phones into the terminal API;
+ * see associateUserDevice in deviceRegistry). A user with no associated devices
+ * sees nothing.
  */
 
 const METADATA_ATTRIBUTES = [
@@ -33,6 +33,18 @@ async function resolveUserId(username) {
   return user ? user.id : null;
 }
 
+// Device ids associated with the user (via the terminal phone-home). Returns []
+// when there is no such user or the user has not associated any devices.
+async function resolveUserDeviceIds(username) {
+  const userId = await resolveUserId(username);
+  if (userId === null) {
+    return [];
+  }
+  const { UserDevice } = getModels();
+  const links = await UserDevice.findAll({ where: { userId }, attributes: ['deviceId'] });
+  return links.map((l) => l.deviceId);
+}
+
 function metadataFromUpload(upload) {
   return {
     id: String(upload.id),
@@ -51,15 +63,15 @@ function metadataFromUpload(upload) {
 }
 
 async function listUploadTypesForUser(username) {
-  const userId = await resolveUserId(username);
-  if (userId === null) {
+  const deviceIds = await resolveUserDeviceIds(username);
+  if (deviceIds.length === 0) {
     return [];
   }
   const sequelize = getSequelize();
   const { Upload } = getModels();
   const rows = await Upload.findAll({
     attributes: ['uploadType', [sequelize.fn('COUNT', sequelize.col('id')), 'count']],
-    where: { userId },
+    where: { deviceId: deviceIds },
     group: ['uploadType'],
     order: [['uploadType', 'ASC']],
     raw: true,
@@ -68,14 +80,14 @@ async function listUploadTypesForUser(username) {
 }
 
 async function listUploadsForUser(uploadType, username, { limit = 100, offset = 0 } = {}) {
-  const userId = await resolveUserId(username);
-  if (userId === null) {
+  const deviceIds = await resolveUserDeviceIds(username);
+  if (deviceIds.length === 0) {
     return [];
   }
   const { Upload, Device } = getModels();
   const rows = await Upload.findAll({
     attributes: METADATA_ATTRIBUTES,
-    where: { userId, uploadType },
+    where: { deviceId: deviceIds, uploadType },
     include: [{ model: Device, attributes: ['macAddress'] }],
     order: [['apiTimestamp', 'DESC'], ['id', 'DESC']],
     limit,
@@ -85,8 +97,8 @@ async function listUploadsForUser(uploadType, username, { limit = 100, offset = 
 }
 
 async function getUploadForUser(uploadType, id, username, { includeBinary = false } = {}) {
-  const userId = await resolveUserId(username);
-  if (userId === null) {
+  const deviceIds = await resolveUserDeviceIds(username);
+  if (deviceIds.length === 0) {
     return null;
   }
   const { Upload, Device } = getModels();
@@ -95,7 +107,7 @@ async function getUploadForUser(uploadType, id, username, { includeBinary = fals
     attributes.push('payloadBinary');
   }
   const upload = await Upload.findOne({
-    where: { id, userId, uploadType },
+    where: { id, deviceId: deviceIds, uploadType },
     attributes,
     include: [{ model: Device, attributes: ['macAddress'] }],
   });

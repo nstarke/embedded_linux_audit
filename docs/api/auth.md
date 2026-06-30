@@ -104,6 +104,12 @@ against the client API and vice-versa. The gdb bridge is the one service that
 accepts both: it validates `/gdb/in/` against agent keys and `/gdb/out/` against
 client keys (see [gdbserver tunnel](../agent/linux/gdbserver.md)).
 
+When an agent connects to the terminal API with a valid agent token, that
+token's user is associated with the connected device's MAC (`user_devices`).
+The user's client token can then read that device's artifacts — see
+[client API visibility](client/index.md#visibility-by-device-association). A
+device may be associated with several users.
+
 ## Per-user tokens and binaries
 
 `tools/add-user-key.js` creates a user with **both** tokens at once and prints

@@ -642,8 +642,33 @@ function defineModels(sequelize) {
     createdAt: 'created_at',
   });
 
+  const UserDevice = sequelize.define('UserDevice', {
+    id: {
+      type: DataTypes.BIGINT,
+      autoIncrement: true,
+      primaryKey: true,
+    },
+    userId: {
+      type: DataTypes.BIGINT,
+      allowNull: false,
+      field: 'user_id',
+    },
+    deviceId: {
+      type: DataTypes.BIGINT,
+      allowNull: false,
+      field: 'device_id',
+    },
+  }, {
+    tableName: 'user_devices',
+    underscored: true,
+  });
+
   Device.hasOne(DeviceAlias, { foreignKey: 'deviceId' });
   DeviceAlias.belongsTo(Device, { foreignKey: 'deviceId' });
+  User.hasMany(UserDevice, { foreignKey: 'userId' });
+  UserDevice.belongsTo(User, { foreignKey: 'userId' });
+  Device.hasMany(UserDevice, { foreignKey: 'deviceId' });
+  UserDevice.belongsTo(Device, { foreignKey: 'deviceId' });
   Device.hasMany(TerminalConnection, { foreignKey: 'deviceId' });
   TerminalConnection.belongsTo(Device, { foreignKey: 'deviceId' });
   User.hasMany(ApiKey, { foreignKey: 'userId' });
@@ -668,6 +693,7 @@ function defineModels(sequelize) {
     BlockedRemote,
     User,
     ApiKey,
+    UserDevice,
   };
 }
 

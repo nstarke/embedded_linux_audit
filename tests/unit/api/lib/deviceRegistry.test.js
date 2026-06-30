@@ -416,7 +416,7 @@ describe('device registry', () => {
     }, { transaction: 'tx1' });
   });
 
-  test('recordTerminalConnection uses authenticatedUser as initial group in preference to remoteAddress', async () => {
+  test('recordTerminalConnection uses authenticatedUser as group and associates the user with the device', async () => {
     const aliasRecord = {
       alias: null,
       group: null,
@@ -436,6 +436,8 @@ describe('device registry', () => {
       TerminalConnection: {
         create: jest.fn().mockResolvedValue({ id: 55 }),
       },
+      User: { findOne: jest.fn().mockResolvedValue({ id: 99 }) },
+      UserDevice: { findOrCreate: jest.fn().mockResolvedValue([{}, true]) },
     };
     const sequelize = { transaction: jest.fn(async (fn) => fn('tx1')) };
     const { registry } = loadDeviceRegistry({ models, sequelize });
@@ -447,6 +449,49 @@ describe('device registry', () => {
     });
     expect(aliasRecord.group).toBe('alice');
     expect(aliasRecord.save).toHaveBeenCalledWith({ transaction: 'tx1' });
+    expect(models.User.findOne).toHaveBeenCalledWith({ where: { username: 'alice' }, transaction: 'tx1' });
+    expect(models.UserDevice.findOrCreate).toHaveBeenCalledWith({
+      where: { userId: 99, deviceId: 12 },
+      defaults: { userId: 99, deviceId: 12 },
+      transaction: 'tx1',
+    });
+  });
+
+  test('recordTerminalConnection does not associate when the username is unknown', async () => {
+    const models = {
+      Device: {
+        findOrCreate: jest.fn().mockResolvedValue([{
+          id: 12,
+          lastSeenAt: new Date('2026-01-01T00:00:00Z'),
+          save: jest.fn().mockResolvedValue(undefined),
+        }]),
+      },
+      DeviceAlias: { findOne: jest.fn().mockResolvedValue(null), create: jest.fn().mockResolvedValue({ alias: null, group: 'ghost' }) },
+      TerminalConnection: { create: jest.fn().mockResolvedValue({ id: 56 }) },
+      User: { findOne: jest.fn().mockResolvedValue(null) },
+      UserDevice: { findOrCreate: jest.fn() },
+    };
+    const sequelize = { transaction: jest.fn(async (fn) => fn('tx1')) };
+    const { registry } = loadDeviceRegistry({ models, sequelize });
+
+    await registry.recordTerminalConnection('aa:bb', '10.0.0.9', 'ghost');
+    expect(models.UserDevice.findOrCreate).not.toHaveBeenCalled();
+  });
+
+  test('associateUserDevice creates the link and touches an existing one', async () => {
+    const link = { changed: jest.fn(), save: jest.fn().mockResolvedValue(undefined) };
+    const models = { UserDevice: { findOrCreate: jest.fn().mockResolvedValue([link, false]) } };
+    const { registry } = loadDeviceRegistry({ models });
+
+    await registry.associateUserDevice(99, 12, 'tx1');
+    expect(models.UserDevice.findOrCreate).toHaveBeenCalledWith({
+      where: { userId: 99, deviceId: 12 },
+      defaults: { userId: 99, deviceId: 12 },
+      transaction: 'tx1',
+    });
+    // existing link is touched
+    expect(link.changed).toHaveBeenCalledWith('updatedAt', true);
+    expect(link.save).toHaveBeenCalledWith({ transaction: 'tx1' });
   });
 
   test('addBlockedRemote creates a new entry and returns true', async () => {
