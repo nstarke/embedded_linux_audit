@@ -32,6 +32,12 @@ Options:
   --key  PATH           TLS private key file  (PEM); required when --cert is given
   --github-token TOKEN  GitHub token for downloading release binaries (or set GITHUB_TOKEN env var)
   --env-file PATH       Pass an env file to docker compose
+  --db-host HOST        Use an EXTERNAL PostgreSQL at HOST instead of the bundled
+                        container (the bundled postgres container is not started)
+  --db-port PORT        External PostgreSQL port (default 5432)
+  --db-name NAME        Database name (default embedded_linux_audit)
+  --db-user USER        Database user (default ela)
+  --db-password PASS    Database password (default ela)
   --no-build            Skip image builds and start with existing images
   --compile-locally     Build release binaries in a Docker builder container and disable GitHub release fetch
   --jobs N              Set release-binary compiler job count (only valid with --compile-locally)
@@ -47,6 +53,7 @@ EOF
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)"
 COMPOSE_FILE="$REPO_ROOT/docker-compose.yml"
+COMPOSE_BUNDLED_DB_FILE="$REPO_ROOT/docker-compose.override.yml"
 NGINX_TLS_TEMPLATE="$REPO_ROOT/nginx/docker-tls.conf"
 GENERATED_NGINX_CONF="$REPO_ROOT/nginx/docker.generated.conf"
 SSL_DIR="$REPO_ROOT/nginx/ssl"
@@ -59,6 +66,11 @@ ENV_FILE=""
 HOSTNAME=""
 TLS_CERT=""
 TLS_KEY=""
+DB_HOST=""
+DB_PORT=""
+DB_NAME=""
+DB_USER=""
+DB_PASSWORD=""
 GITHUB_TOKEN="${GITHUB_TOKEN:-}"
 RELEASE_BUILDER_IMAGE="ela-release-builder:local"
 RELEASE_BUILDER_DOCKERFILE="$REPO_ROOT/tests/release-builder.Dockerfile"
@@ -116,6 +128,46 @@ while [ "$#" -gt 0 ]; do
                 exit 1
             fi
             ENV_FILE="$1"
+            ;;
+        --db-host)
+            shift
+            if [ "$#" -eq 0 ]; then
+                echo "error: --db-host requires a value" >&2
+                exit 1
+            fi
+            DB_HOST="$1"
+            ;;
+        --db-port)
+            shift
+            if [ "$#" -eq 0 ]; then
+                echo "error: --db-port requires a value" >&2
+                exit 1
+            fi
+            DB_PORT="$1"
+            ;;
+        --db-name)
+            shift
+            if [ "$#" -eq 0 ]; then
+                echo "error: --db-name requires a value" >&2
+                exit 1
+            fi
+            DB_NAME="$1"
+            ;;
+        --db-user)
+            shift
+            if [ "$#" -eq 0 ]; then
+                echo "error: --db-user requires a value" >&2
+                exit 1
+            fi
+            DB_USER="$1"
+            ;;
+        --db-password)
+            shift
+            if [ "$#" -eq 0 ]; then
+                echo "error: --db-password requires a value" >&2
+                exit 1
+            fi
+            DB_PASSWORD="$1"
             ;;
         --no-build)
             BUILD=0
@@ -178,6 +230,28 @@ fi
 
 if [ ! -f "$COMPOSE_FILE" ]; then
     echo "error: $COMPOSE_FILE not found" >&2
+    exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# Database target: bundled PostgreSQL container (default) vs external host.
+# Passing --db-host selects an external server; the bundled postgres container
+# is then not defined or started.  The other --db-* flags customize the
+# connection (and the bundled container's credentials when bundled).
+# ---------------------------------------------------------------------------
+if [ -n "$DB_HOST" ]; then
+    EXTERNAL_DB=1
+    export ELA_DB_HOST="$DB_HOST"
+else
+    EXTERNAL_DB=0
+fi
+[ -n "$DB_PORT" ] && export ELA_DB_PORT="$DB_PORT"
+[ -n "$DB_NAME" ] && export ELA_DB_NAME="$DB_NAME"
+[ -n "$DB_USER" ] && export ELA_DB_USER="$DB_USER"
+[ -n "$DB_PASSWORD" ] && export ELA_DB_PASSWORD="$DB_PASSWORD"
+
+if [ "$EXTERNAL_DB" -eq 0 ] && [ ! -f "$COMPOSE_BUNDLED_DB_FILE" ]; then
+    echo "error: $COMPOSE_BUNDLED_DB_FILE not found (needed for the bundled database)" >&2
     exit 1
 fi
 
@@ -265,18 +339,22 @@ mkdir -p "$ELA_RELEASE_BINARIES_DIR"
 export ELA_RELEASE_BINARIES_DIR
 
 # ---------------------------------------------------------------------------
-# PostgreSQL data directory
+# PostgreSQL data directory (bundled database only)
 # ---------------------------------------------------------------------------
-ELA_POSTGRES_DATA_DIR="${ELA_POSTGRES_DATA_DIR:-/data/postgres}"
-if [ ! -d "$ELA_POSTGRES_DATA_DIR" ]; then
-    echo "Creating PostgreSQL data directory $ELA_POSTGRES_DATA_DIR ..."
-    mkdir -p "$ELA_POSTGRES_DATA_DIR" || {
-        echo "error: failed to create $ELA_POSTGRES_DATA_DIR" >&2
-        echo "       Try: sudo mkdir -p $ELA_POSTGRES_DATA_DIR && sudo chown \$(id -u):\$(id -g) $ELA_POSTGRES_DATA_DIR" >&2
-        exit 1
-    }
+if [ "$EXTERNAL_DB" -eq 0 ]; then
+    ELA_POSTGRES_DATA_DIR="${ELA_POSTGRES_DATA_DIR:-/data/postgres}"
+    if [ ! -d "$ELA_POSTGRES_DATA_DIR" ]; then
+        echo "Creating PostgreSQL data directory $ELA_POSTGRES_DATA_DIR ..."
+        mkdir -p "$ELA_POSTGRES_DATA_DIR" || {
+            echo "error: failed to create $ELA_POSTGRES_DATA_DIR" >&2
+            echo "       Try: sudo mkdir -p $ELA_POSTGRES_DATA_DIR && sudo chown \$(id -u):\$(id -g) $ELA_POSTGRES_DATA_DIR" >&2
+            exit 1
+        }
+    fi
+    export ELA_POSTGRES_DATA_DIR
+else
+    echo "Using external PostgreSQL at $ELA_DB_HOST; bundled database container will not be started."
 fi
-export ELA_POSTGRES_DATA_DIR
 
 # ---------------------------------------------------------------------------
 # Socket UID — used inside the terminal-api container to chown the tmux
@@ -418,9 +496,23 @@ fi
 sed "s/example\\.com/$HOSTNAME/g" "$NGINX_TLS_TEMPLATE" > "$GENERATED_NGINX_CONF"
 export ELA_NGINX_CONF_PATH="$GENERATED_NGINX_CONF"
 
+# The installer passes -f explicitly, which suppresses Compose's automatic
+# docker-compose.override.yml merge, so the bundled-DB overlay is listed
+# explicitly. External mode uses the base file only (no postgres service).
 set -- docker compose -f "$COMPOSE_FILE"
+if [ "$EXTERNAL_DB" -eq 0 ]; then
+    set -- "$@" -f "$COMPOSE_BUNDLED_DB_FILE"
+fi
 if [ -n "$ENV_FILE" ]; then
     set -- "$@" --env-file "$ENV_FILE"
+fi
+
+# Services to start before nginx; the bundled postgres only when not external.
+APP_SERVICES="agent-api client-api terminal-api gdb-api"
+if [ "$EXTERNAL_DB" -eq 0 ]; then
+    CORE_SERVICES="postgres $APP_SERVICES"
+else
+    CORE_SERVICES="$APP_SERVICES"
 fi
 
 if [ "$PULL" -eq 1 ]; then
@@ -430,9 +522,9 @@ fi
 
 echo "Starting database and API containers before nginx..."
 if [ "$BUILD" -eq 1 ]; then
-    "$@" up -d --build postgres agent-api terminal-api gdb-api
+    "$@" up -d --build $CORE_SERVICES
 else
-    "$@" up -d postgres agent-api terminal-api gdb-api
+    "$@" up -d $CORE_SERVICES
 fi
 
 if [ "$DETACH" -eq 1 ]; then
@@ -486,5 +578,5 @@ if [ "$DETACH" -eq 1 ]; then
     echo "PCAP capture stream:  wss://$HOSTNAME/pcap/<mac>"
     echo "GDB tunnel (agent):   linux gdbserver tunnel [--insecure] <PID> wss://$HOSTNAME"
     echo "GDB tunnel (GDB):     wss-remote [--insecure] wss://$HOSTNAME/gdb/out/<key>"
-    echo "Follow logs with: docker compose -f $COMPOSE_FILE logs -f"
+    echo "Follow logs with: $* logs -f"
 fi

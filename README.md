@@ -154,7 +154,9 @@ The default stack exposes:
 - `http://localhost/terminal/<mac>` → terminal WebSocket endpoint
 - `http://localhost/pcap/<mac>` → pcap capture WebSocket endpoint
 
-The agent API container runs database migrations automatically on startup. Compose defaults target the bundled PostgreSQL container using the `ela`/`ela` credentials defined in `docker-compose.yml`.
+The agent API container runs database migrations automatically on startup. Compose defaults target the bundled PostgreSQL container (defined in `docker-compose.override.yml`) using the `ela`/`ela` credentials.
+
+To use an existing PostgreSQL server instead of the bundled container, set `ELA_DB_HOST` (and the other `ELA_DB_*` variables) and start the base file only — `ELA_DB_HOST=db.example.com docker compose -f docker-compose.yml up -d` — or pass `--db-host` to `nginx/install.sh`. See [docs/api/docker-operations.md](docs/api/docker-operations.md#external-postgresql).
 
 For operational details, see [docs/api/docker-operations.md](/home/nick/Documents/git/embedded_linux_audit/docs/api/docker-operations.md).
 

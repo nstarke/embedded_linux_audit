@@ -5,14 +5,18 @@ This guide covers how to run, inspect, and maintain the containerized
 
 ## Services
 
-The default [docker-compose.yml](/home/nick/Documents/git/embedded_linux_audit/docker-compose.yml) starts six containers:
+A default `docker compose up` starts six containers:
 
-- `postgres` - PostgreSQL database
+- `postgres` - bundled PostgreSQL database (defined in `docker-compose.override.yml`; see [External PostgreSQL](#external-postgresql))
 - `agent-api` - HTTP upload and asset-serving API
 - `client-api` - read-back API for uploaded artifacts ([client API](client/index.md))
 - `terminal-api` - WebSocket terminal server
 - `gdb-api` - WebSocket GDB RSP bridge
 - `nginx` - frontend reverse proxy for the APIs
+
+The API services live in
+[docker-compose.yml](/home/nick/Documents/git/embedded_linux_audit/docker-compose.yml);
+the bundled database is an overlay so it can be swapped for an external server.
 
 Traffic flow:
 
@@ -114,7 +118,8 @@ These volumes survive `docker compose down` unless `-v` is used.
 The compose file defines default values for the APIs and database. You can
 override them with shell environment variables or by editing the compose file.
 
-Important database variables used by the APIs:
+Important database variables used by the APIs (see
+[External PostgreSQL](#external-postgresql)):
 
 - `ELA_DB_HOST`
 - `ELA_DB_PORT`
@@ -151,6 +156,47 @@ Example override at launch time:
 ```bash
 ELA_DB_PASSWORD=strongpassword docker compose up -d --build
 ```
+
+## External PostgreSQL
+
+By default the stack runs a bundled `postgres` container. The bundled database
+is defined in `docker-compose.override.yml`, which Compose automatically merges
+into `docker-compose.yml` for plain `docker compose` commands — so
+`docker compose up` runs the full stack with a local database, unchanged.
+
+To point the APIs at an **existing** PostgreSQL server and **not** run a second
+database container, start Compose with the base file only and set the
+connection variables:
+
+```bash
+ELA_DB_HOST=db.example.com \
+ELA_DB_USER=ela \
+ELA_DB_PASSWORD=secret \
+ELA_DB_NAME=embedded_linux_audit \
+docker compose -f docker-compose.yml up -d
+```
+
+Using `-f docker-compose.yml` excludes the override file, so the `postgres`
+service is not defined or started. The database must be reachable from the
+containers and already exist; the APIs create their tables via migrations on
+startup. `ELA_DATABASE_URL` may be used instead of the discrete fields.
+
+The installer wraps this:
+
+```bash
+# bundled database (default)
+./nginx/install.sh ela.example.com
+
+# external database
+./nginx/install.sh ela.example.com \
+    --db-host db.example.com --db-user ela --db-password secret
+```
+
+`--db-host` switches the installer to external mode: it omits the bundled
+`postgres` container, skips creating the PostgreSQL data directory, and starts
+only the API services. `--db-port`, `--db-name`, `--db-user`, and
+`--db-password` customize the connection (and the bundled container's
+credentials when no `--db-host` is given).
 
 ## Migrations
 
