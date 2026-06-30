@@ -110,7 +110,13 @@ function exitGracefully() {
     .finally(() => process.exit(0));
 }
 
-const httpServer = http.createServer(createTerminalHttpHandler());
+const httpServer = http.createServer(createTerminalHttpHandler({
+  sessionRegistry,
+  auth,
+  blockedCidrs,
+  isBlocked,
+  resolveRemoteAddress: (req) => resolveProxiedAddress(req.socket?.remoteAddress || null, req.headers),
+}));
 
 function onUpdateStateTransition(entry, message) {
   const detail = entry.updateError ? `${message}: ${entry.updateError}` : message;
@@ -159,9 +165,9 @@ wss.on('connection', async (ws, req) => {
     sessionRegistry.removeSession(mac);
   }
 
+  const remoteAddress = resolveProxiedAddress(req.socket?.remoteAddress || null, req.headers);
   let registration;
   try {
-    const remoteAddress = resolveProxiedAddress(req.socket?.remoteAddress || null, req.headers);
     registration = await recordTerminalConnection(mac, remoteAddress, req.authenticatedUser || null);
   } catch (err) {
     ws.close(1011, 'database unavailable');
@@ -173,6 +179,8 @@ wss.on('connection', async (ws, req) => {
     alias: registration.alias,
     connectionId: registration.connectionId,
     group: registration.group,
+    remoteAddress,
+    connectedAt: new Date().toISOString(),
   });
   entry.updateCtx = null;
   entry.updateStatus = null;
@@ -199,6 +207,17 @@ wss.on('connection', async (ws, req) => {
       }
     } catch {
       // raw output path
+    }
+
+    // Feed device output to any active HTTP exec captures for this session.
+    if (entry.outputListeners.size > 0) {
+      for (const listener of entry.outputListeners) {
+        try {
+          listener(text);
+        } catch {
+          // a misbehaving listener must not break the output path
+        }
+      }
     }
 
     handleUpdateMessage(entry, rawText, {

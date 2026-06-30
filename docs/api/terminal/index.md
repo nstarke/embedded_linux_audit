@@ -301,6 +301,75 @@ The agent responds with `{"_type":"heartbeat_ack","date":"<timestamp>"}`.  The
 last acknowledged heartbeat time is shown in the session list.  If no
 heartbeat arrives the session entry remains visible until the WebSocket closes.
 
+## HTTP API
+
+In addition to the WebSocket interface, the server exposes a small JSON HTTP API
+on the same port for programmatic control of connected sessions.  When the
+server is started with `--validate-key`, the `/terminal/sessions` and
+`/terminal/<mac>/exec` endpoints require the same `Authorization: Bearer
+<token>` header as the WebSocket upgrade.  The `/terminal/healthcheck` endpoint
+is always unauthenticated.
+
+### `GET /terminal/healthcheck`
+
+Returns `200 ok` (plain text) while the server is running.
+
+### `GET /terminal/sessions`
+
+Lists the currently connected sessions.
+
+```sh
+curl -H "Authorization: Bearer mysecrettoken" \
+    http://server:8080/terminal/sessions
+```
+
+```json
+[
+  {
+    "mac": "aa:bb:cc:dd:ee:ff",
+    "alias": "router1",
+    "group": "factory-floor",
+    "remoteAddress": "10.0.0.5",
+    "connectedAt": "2026-06-29T14:32:01.000Z",
+    "lastHeartbeat": "2026-06-29T14:32:31.000Z"
+  }
+]
+```
+
+Any field that is not yet known is `null` (for example `lastHeartbeat` before the
+first heartbeat acknowledgement).
+
+### `POST /terminal/<mac>/exec`
+
+Runs a single command on the agent identified by `<mac>` and waits for it to
+complete.  The command is executed via the agent's `linux execute-command`
+primitive; completion is detected when the agent re-emits its prompt.
+
+Request body:
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `command` | string | yes | The shell command to run on the device |
+| `timeoutMs` | number | no | Max time to wait for completion (default 15000) |
+
+```sh
+curl -X POST \
+    -H "Authorization: Bearer mysecrettoken" \
+    -H "Content-Type: application/json" \
+    -d '{"command":"uname -a","timeoutMs":10000}' \
+    http://server:8080/terminal/aa:bb:cc:dd:ee:ff/exec
+```
+
+Responses:
+
+| Status | Body | Meaning |
+|--------|------|---------|
+| `200` | `{ "ok": true, "output": "...", "durationMs": 123 }` | Command completed |
+| `400` | `{ "error": "..." }` | Invalid MAC, missing `command`, or bad `timeoutMs` |
+| `401` | `{ "error": "Unauthorized" }` | Missing/invalid bearer token (when enforced) |
+| `404` | `{ "error": "no active session for mac" }` | No connected session for `<mac>` |
+| `504` | `{ "ok": false, "error": "exec timed out", "output": "...", "durationMs": 15000 }` | Command did not complete before `timeoutMs`; `output` holds whatever was captured so far |
+
 ## nginx reverse proxy
 
 To expose the terminal server over HTTPS alongside the agent helper API, use

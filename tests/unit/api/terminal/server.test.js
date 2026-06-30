@@ -3,16 +3,20 @@
 function createFakeSessionRegistry() {
   const sessions = new Map();
   return {
-    addSession(mac, ws, { alias = null, connectionId = null } = {}) {
+    addSession(mac, ws, { alias = null, connectionId = null, group = null, remoteAddress = null, connectedAt = null } = {}) {
       const entry = {
         ws,
         mac,
         alias,
         connectionId,
+        group,
+        remoteAddress,
+        connectedAt,
         inputMode: 'line',
         lastHeartbeat: null,
         outputBuffer: [],
         heartbeatTimer: null,
+        outputListeners: new Set(),
       };
       sessions.set(mac, entry);
       return entry;
