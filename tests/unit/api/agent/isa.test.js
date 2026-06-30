@@ -25,8 +25,9 @@ function createRes() {
       this.body = value;
       return this;
     },
-    sendFile(value) {
+    sendFile(value, options) {
       this.sentFile = value;
+      this.sentFileOptions = options;
       return this;
     },
   };
@@ -132,7 +133,9 @@ describe('isa route', () => {
     const expectedDir = path.join('/assets', 'users', sha256('my-secret-token'));
     expect(listBinaryEntries).toHaveBeenCalledWith(expectedDir, expect.anything(), '.release_state.json');
     expect(res.headers['content-type']).toBe('application/x-agent');
-    expect(res.sentFile).toBe(path.resolve(expectedDir, 'ela-x86_64'));
+    // Sent as a path relative to the validated baseDir, scoped by `root`.
+    expect(res.sentFile).toBe('ela-x86_64');
+    expect(res.sentFileOptions).toEqual({ root: expectedDir });
   });
 
   test('a different token maps to a different directory', async () => {

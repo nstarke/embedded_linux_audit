@@ -34,6 +34,10 @@ module.exports = function registerIsaRoute(app, deps) {
     }
 
     res.type(mime.lookup(candidate) || 'application/octet-stream');
-    res.sendFile(candidate);
+    // Send via a path relative to the validated baseDir with the `root` option
+    // (the convention the other static routes use): Express re-resolves against
+    // root and rejects any traversal, so the sink never receives a raw
+    // user-controlled absolute path.
+    res.sendFile(path.relative(baseDir, candidate), { root: baseDir });
   });
 };
