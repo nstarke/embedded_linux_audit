@@ -6,6 +6,13 @@ const auth = require('../auth');
 const { runExec } = require('./execCommand');
 const { runSpawn } = require('./spawnCommand');
 
+// The DB layer is required lazily (only when an authenticated user is actually
+// resolved) so that merely importing this module does not pull in db/index and
+// the real sequelize — keeping the app importable in isolation and in tests.
+function deviceRegistry() {
+  return require('../lib/db/deviceRegistry');
+}
+
 const MAC_ADDRESS_RE = /^([0-9a-f]{2}:){5}[0-9a-f]{2}$/i;
 const MAX_BODY_BYTES = 1024 * 1024;
 const MAX_EXEC_TIMEOUT_MS = 60000;
@@ -22,6 +29,11 @@ const MAX_EXEC_TIMEOUT_MS = 60000;
  *   GET    /terminal/:mac/spawn         (auth required when enforced)
  *   DELETE /terminal/:mac/spawn/:pid    (auth required when enforced)
  *
+ * When auth resolves a user, the per-device routes and the sessions listing are
+ * restricted to devices that user is associated with (user_devices). Devices the
+ * user is not associated with are treated as not connected (404), so the API
+ * never exposes other users' devices.
+ *
  * @param {object} deps
  * @param {object} deps.sessionRegistry  Live session registry.
  * @param {Array}  [deps.blockedCidrs]   Parsed blocked CIDR list.
@@ -31,6 +43,8 @@ const MAX_EXEC_TIMEOUT_MS = 60000;
  * @param {Function} [deps.runSpawnImpl] Override for runSpawn (tests).
  * @param {Function} [deps.now]          Clock returning the spawn start time.
  * @param {Function} [deps.authMiddleware] Override for auth.middleware (tests).
+ * @param {Function} [deps.isUserAssociatedWithDevice] (username, mac) => Promise<boolean>.
+ * @param {Function} [deps.listUserDeviceMacs] (username) => Promise<string[]>.
  * @returns {import('express').Express}
  */
 function createTerminalApp(deps = {}) {
@@ -43,6 +57,8 @@ function createTerminalApp(deps = {}) {
     runSpawnImpl = runSpawn,
     now = () => new Date().toISOString(),
     authMiddleware = auth.middleware,
+    isUserAssociatedWithDevice = (username, mac) => deviceRegistry().isUserAssociatedWithDevice(username, mac),
+    listUserDeviceMacs = (username) => deviceRegistry().listUserDeviceMacs(username),
   } = deps;
 
   const app = express();
@@ -63,8 +79,24 @@ function createTerminalApp(deps = {}) {
     next();
   });
 
-  app.get('/terminal/sessions', authMiddleware, (req, res) => {
-    const sessions = sessionRegistry.entries().map(([mac, entry]) => ({
+  app.get('/terminal/sessions', authMiddleware, async (req, res) => {
+    let entries = sessionRegistry.entries();
+
+    // Expose only devices the authenticated user is associated with (via
+    // user_devices). When auth is open (no resolved user) the API stays open
+    // and lists every live session, matching the rest of the auth posture.
+    if (req.authUser) {
+      let allowed;
+      try {
+        allowed = new Set(await listUserDeviceMacs(req.authUser));
+      } catch {
+        res.status(500).json({ error: 'internal error' });
+        return;
+      }
+      entries = entries.filter(([mac]) => allowed.has(mac));
+    }
+
+    const sessions = entries.map(([mac, entry]) => ({
       mac,
       alias: entry.alias || null,
       group: entry.group || null,
@@ -88,12 +120,36 @@ function createTerminalApp(deps = {}) {
     next();
   }
 
+  // Restrict the per-device routes to devices the authenticated user is
+  // associated with. A device the user is not associated with is treated as if
+  // it were not connected (404, same body as a missing session) so the API does
+  // not expose or enumerate other users' devices. Skipped in open mode (no
+  // resolved user), matching the rest of the auth posture.
+  async function requireDeviceAssociation(req, res, next) {
+    if (!req.authUser) {
+      next();
+      return;
+    }
+    let associated;
+    try {
+      associated = await isUserAssociatedWithDevice(req.authUser, req.normalizedMac);
+    } catch {
+      res.status(500).json({ error: 'internal error' });
+      return;
+    }
+    if (!associated) {
+      res.status(404).json({ error: 'no active session for mac' });
+      return;
+    }
+    next();
+  }
+
   // Parse the JSON body regardless of Content-Type, capping it at 1 MiB to
   // mirror the old manual reader.  Body-parser failures are translated to the
   // legacy error shapes by the error handler at the bottom of the stack.
   const parseExecBody = express.json({ limit: MAX_BODY_BYTES, type: () => true });
 
-  app.post('/terminal/:mac/exec', authMiddleware, validateMac, parseExecBody, async (req, res) => {
+  app.post('/terminal/:mac/exec', authMiddleware, validateMac, requireDeviceAssociation, parseExecBody, async (req, res) => {
     const mac = req.normalizedMac;
     const body = req.body || {};
 
@@ -164,7 +220,7 @@ function createTerminalApp(deps = {}) {
 
   // Launch a long-running process (e.g. gdbserver, an SSH tunnel) on the agent
   // and track it so it can be listed and killed later.
-  app.post('/terminal/:mac/spawn', authMiddleware, validateMac, parseExecBody, async (req, res) => {
+  app.post('/terminal/:mac/spawn', authMiddleware, validateMac, requireDeviceAssociation, parseExecBody, async (req, res) => {
     const mac = req.normalizedMac;
     const body = req.body || {};
 
@@ -228,7 +284,7 @@ function createTerminalApp(deps = {}) {
   });
 
   // List the live spawns tracked for a session.
-  app.get('/terminal/:mac/spawn', authMiddleware, validateMac, (req, res) => {
+  app.get('/terminal/:mac/spawn', authMiddleware, validateMac, requireDeviceAssociation, (req, res) => {
     const entry = sessionRegistry.getSession(req.normalizedMac);
     if (!entry) {
       res.status(404).json({ error: 'no active session for mac' });
@@ -239,7 +295,7 @@ function createTerminalApp(deps = {}) {
   });
 
   // Kill a tracked spawn and drop it from the registry.
-  app.delete('/terminal/:mac/spawn/:pid', authMiddleware, validateMac, async (req, res) => {
+  app.delete('/terminal/:mac/spawn/:pid', authMiddleware, validateMac, requireDeviceAssociation, async (req, res) => {
     const pid = Number(req.params.pid);
     if (!Number.isInteger(pid) || pid <= 0) {
       res.status(400).json({ error: 'invalid pid' });

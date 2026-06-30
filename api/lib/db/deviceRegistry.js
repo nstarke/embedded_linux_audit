@@ -171,6 +171,23 @@ async function isUserAssociatedWithDevice(username, macAddress) {
   return link !== null;
 }
 
+// Return the MAC addresses of every device `username` is associated with (via
+// user_devices). Used by the terminal API to expose only a user's own devices.
+// Returns [] for a missing/unknown user.
+async function listUserDeviceMacs(username) {
+  if (!username) return [];
+  const { User, Device, UserDevice } = getModels();
+  const user = await User.findOne({ where: { username } });
+  if (!user) return [];
+  const links = await UserDevice.findAll({
+    where: { userId: user.id },
+    include: [{ model: Device, attributes: ['macAddress'] }],
+  });
+  return links
+    .map((link) => link.Device && link.Device.macAddress)
+    .filter((mac) => typeof mac === 'string' && mac.length > 0);
+}
+
 async function recordTerminalConnection(macAddress, remoteAddress, authenticatedUser = null) {
   const sequelize = getSequelize();
   const { DeviceAlias, TerminalConnection, User } = getModels();
@@ -313,6 +330,7 @@ module.exports = {
   deleteUserByUsername,
   associateUserDevice,
   isUserAssociatedWithDevice,
+  listUserDeviceMacs,
   recordTerminalConnection,
   touchTerminalHeartbeat,
   closeTerminalConnection,

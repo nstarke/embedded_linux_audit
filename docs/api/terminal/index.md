@@ -310,6 +310,17 @@ server is started with `--validate-key`, every endpoint except
 header as the WebSocket upgrade.  The `/terminal/healthcheck` endpoint is
 always unauthenticated.
 
+**Device-association scoping.** When a request's token resolves to a user, the
+HTTP API exposes only the devices that user is **associated** with — the same
+`user_devices` links the server records when a device phones in with that user's
+agent token (see [server-side auth](../auth.md#token-scopes--agent-vs-client)).
+`GET /terminal/sessions` lists only the user's own devices, and the per-device
+routes (`exec`/`spawn`) treat any device the user is not associated with exactly
+like one that is not connected — `404 {"error":"no active session for mac"}` —
+so the API never exposes or lets you enumerate other users' devices. With no
+keys configured (open mode) there is no user to scope by and every live session
+is listed, matching the rest of the auth posture.
+
 | Method & path | Purpose |
 |---------------|---------|
 | `GET /terminal/healthcheck` | Liveness check (always public) |

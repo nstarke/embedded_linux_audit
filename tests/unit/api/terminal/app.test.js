@@ -527,4 +527,102 @@ describe('terminal Express app', () => {
       });
     });
   });
+
+  describe('device-association scoping', () => {
+    // An auth middleware that resolves a specific user, mirroring auth.middleware
+    // attaching req.authUser when a token matches a known user.
+    const authAs = (username) => (req, res, next) => { req.authUser = username; next(); };
+    const mine = 'aa:bb:cc:dd:ee:ff';
+    const theirs = '11:22:33:44:55:66';
+
+    test('GET /terminal/sessions lists only the user\'s associated devices', async () => {
+      const sessionRegistry = createRegistry([
+        [mine, { alias: 'mine', group: 'alice' }],
+        [theirs, { alias: 'theirs', group: 'bob' }],
+      ]);
+      const listUserDeviceMacs = jest.fn().mockResolvedValue([mine]);
+      const app = createTerminalApp({
+        sessionRegistry,
+        authMiddleware: authAs('alice'),
+        listUserDeviceMacs,
+      });
+
+      const res = await request(app, { path: '/terminal/sessions' });
+
+      expect(res.statusCode).toBe(200);
+      expect(listUserDeviceMacs).toHaveBeenCalledWith('alice');
+      expect(res.body.map((s) => s.mac)).toEqual([mine]);
+    });
+
+    test('GET /terminal/sessions returns 500 when the association lookup fails', async () => {
+      const app = createTerminalApp({
+        sessionRegistry: createRegistry([[mine, {}]]),
+        authMiddleware: authAs('alice'),
+        listUserDeviceMacs: jest.fn().mockRejectedValue(new Error('db down')),
+      });
+
+      const res = await request(app, { path: '/terminal/sessions' });
+
+      expect(res.statusCode).toBe(500);
+      expect(res.body).toEqual({ error: 'internal error' });
+    });
+
+    test('per-device routes 404 for a device the user is not associated with', async () => {
+      const runExecImpl = jest.fn();
+      const runSpawnImpl = jest.fn();
+      const isUserAssociatedWithDevice = jest.fn().mockResolvedValue(false);
+      const app = createTerminalApp({
+        sessionRegistry: createRegistry([[theirs, { ws: {}, spawns: new Map([[7, { pid: 7 }]]) }]]),
+        authMiddleware: authAs('alice'),
+        isUserAssociatedWithDevice,
+        runExecImpl,
+        runSpawnImpl,
+      });
+
+      const exec = await request(app, { method: 'POST', path: `/terminal/${theirs}/exec`, body: { command: 'id' } });
+      const spawn = await request(app, { method: 'POST', path: `/terminal/${theirs}/spawn`, body: { command: 'gdbserver' } });
+      const listSpawns = await request(app, { path: `/terminal/${theirs}/spawn` });
+      const killSpawn = await request(app, { method: 'DELETE', path: `/terminal/${theirs}/spawn/7` });
+
+      for (const res of [exec, spawn, listSpawns, killSpawn]) {
+        expect(res.statusCode).toBe(404);
+        expect(res.body).toEqual({ error: 'no active session for mac' });
+      }
+      // The unauthorized device is never acted upon.
+      expect(runExecImpl).not.toHaveBeenCalled();
+      expect(runSpawnImpl).not.toHaveBeenCalled();
+      expect(isUserAssociatedWithDevice).toHaveBeenCalledWith('alice', theirs);
+    });
+
+    test('per-device routes succeed for an associated device', async () => {
+      const entry = { ws: {}, spawns: new Map() };
+      const runExecImpl = jest.fn().mockResolvedValue({ output: 'uid=0', durationMs: 5 });
+      const app = createTerminalApp({
+        sessionRegistry: createRegistry([[mine, entry]]),
+        authMiddleware: authAs('alice'),
+        isUserAssociatedWithDevice: jest.fn().mockResolvedValue(true),
+        runExecImpl,
+      });
+
+      const res = await request(app, { method: 'POST', path: `/terminal/${mine}/exec`, body: { command: 'id' } });
+
+      expect(res.statusCode).toBe(200);
+      expect(res.body).toEqual({ ok: true, output: 'uid=0', durationMs: 5 });
+      expect(runExecImpl).toHaveBeenCalled();
+    });
+
+    test('per-device routes return 500 when the association lookup fails', async () => {
+      const app = createTerminalApp({
+        sessionRegistry: createRegistry([[mine, { ws: {} }]]),
+        authMiddleware: authAs('alice'),
+        isUserAssociatedWithDevice: jest.fn().mockRejectedValue(new Error('db down')),
+        runExecImpl: jest.fn(),
+      });
+
+      const res = await request(app, { method: 'POST', path: `/terminal/${mine}/exec`, body: { command: 'id' } });
+
+      expect(res.statusCode).toBe(500);
+      expect(res.body).toEqual({ error: 'internal error' });
+    });
+  });
 });

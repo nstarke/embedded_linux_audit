@@ -541,6 +541,43 @@ describe('device registry', () => {
     expect(models.UserDevice.findOne).not.toHaveBeenCalled();
   });
 
+  test('listUserDeviceMacs returns the MACs of the user\'s associated devices', async () => {
+    const models = {
+      User: { findOne: jest.fn().mockResolvedValue({ id: 7 }) },
+      Device: { name: 'Device' },
+      UserDevice: {
+        findAll: jest.fn().mockResolvedValue([
+          { Device: { macAddress: 'aa:bb' } },
+          { Device: { macAddress: 'cc:dd' } },
+          { Device: null }, // a link whose device row is missing is skipped
+        ]),
+      },
+    };
+    const { registry } = loadDeviceRegistry({ models });
+
+    await expect(registry.listUserDeviceMacs('alice')).resolves.toEqual(['aa:bb', 'cc:dd']);
+    expect(models.User.findOne).toHaveBeenCalledWith({ where: { username: 'alice' } });
+    expect(models.UserDevice.findAll).toHaveBeenCalledWith({
+      where: { userId: 7 },
+      include: [{ model: models.Device, attributes: ['macAddress'] }],
+    });
+  });
+
+  test('listUserDeviceMacs returns [] for a missing or unknown user', async () => {
+    const models = {
+      User: { findOne: jest.fn().mockResolvedValue(null) },
+      Device: {},
+      UserDevice: { findAll: jest.fn() },
+    };
+    const { registry } = loadDeviceRegistry({ models });
+
+    await expect(registry.listUserDeviceMacs('')).resolves.toEqual([]);
+    expect(models.User.findOne).not.toHaveBeenCalled();
+
+    await expect(registry.listUserDeviceMacs('ghost')).resolves.toEqual([]);
+    expect(models.UserDevice.findAll).not.toHaveBeenCalled();
+  });
+
   test('addBlockedRemote creates a new entry and returns true', async () => {
     const models = {
       BlockedRemote: {
