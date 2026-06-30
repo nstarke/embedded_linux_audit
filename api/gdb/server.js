@@ -25,6 +25,18 @@ const HOST = process.env.ELA_GDB_HOST || '0.0.0.0';
 const sm = createSessionManager();
 const sessions = sm.sessions;
 
+/*
+ * The two ends of a GDB tunnel authenticate with different token scopes:
+ *   - /gdb/in/<key>  (agent pushing the gdbserver RSP) uses an AGENT key.
+ *   - /gdb/out/<key> (operator running the remote gdb session) uses a CLIENT
+ *     key — the same key used for the client API.
+ * Both sets are loaded once at startup (in main); enforcement for a direction
+ * is opt-in: a direction is only gated once at least one key of its scope
+ * exists, matching the other services.
+ */
+let agentKeyHashes = [];
+let clientKeyHashes = [];
+
 const httpServer = http.createServer((_req, res) => {
   res.writeHead(404);
   res.end('Not Found');
@@ -38,7 +50,8 @@ const wss = new WebSocketServer({
       done(false, 404, 'Not Found');
       return;
     }
-    if (auth.checkBearer(info.req.headers.authorization)) {
+    const keyHashes = parsed.direction === 'in' ? agentKeyHashes : clientKeyHashes;
+    if (keyHashes.length === 0 || auth.matchBearer(info.req.headers.authorization, keyHashes) !== null) {
       done(true);
     } else {
       done(false, 401, 'Unauthorized');
@@ -103,11 +116,10 @@ async function main() {
     return;
   }
 
-  if (!await auth.init(false, () => loadApiKeyHashes('agent'))) {
-    process.stderr.write('error: no API keys are configured in the database\n');
-    process.exit(1);
-    return;
-  }
+  // 'in' (agent gdbserver) is gated by agent-scoped keys; 'out' (operator gdb
+  // remote session) is gated by client-scoped keys. Read once at startup.
+  agentKeyHashes = await loadApiKeyHashes('agent');
+  clientKeyHashes = await loadApiKeyHashes('client');
 
   httpServer.listen(PORT, HOST, () => {
     process.stderr.write(`ELA GDB bridge API listening on ws://${HOST}:${PORT}\n`);

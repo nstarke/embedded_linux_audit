@@ -81,13 +81,17 @@ for details.
 
 API keys carry a `scope` (`api_keys.scope`):
 
-- `agent` — used by the agent (uploads), the terminal server, and the gdb
-  bridge. Existing keys default to this scope.
+- `agent` — used by the agent for uploads, the terminal server, and the
+  **agent side** of the gdb bridge (`/gdb/in/<key>`, the gdbserver RSP push).
+  Existing keys default to this scope.
 - `client` — used by the [client API](client/index.md) to read back uploaded
-  artifacts.
+  artifacts, and by the **operator side** of the gdb bridge
+  (`/gdb/out/<key>`, the `gdb-multiarch` remote session).
 
 Each service loads only the keys for its scope, so an agent token cannot be used
-against the client API and vice-versa.
+against the client API and vice-versa. The gdb bridge is the one service that
+accepts both: it validates `/gdb/in/` against agent keys and `/gdb/out/` against
+client keys (see [gdbserver tunnel](../agent/linux/gdbserver.md)).
 
 ## Per-user tokens and binaries
 

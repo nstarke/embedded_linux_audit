@@ -3,6 +3,9 @@
 function loadGdbServer(options = {}) {
   jest.resetModules();
 
+  const agentKeys = options.agentKeys || [];
+  const clientKeys = options.clientKeys || [];
+
   const httpServer = {
     listen: jest.fn((_port, _host, cb) => cb && cb()),
     close: jest.fn((cb) => cb && cb()),
@@ -15,13 +18,12 @@ function loadGdbServer(options = {}) {
     });
   });
   const auth = {
-    init: jest.fn().mockResolvedValue(true),
-    checkBearer: jest.fn(() => true),
+    matchBearer: jest.fn(() => null),
   };
   const initializeDatabase = jest.fn().mockResolvedValue(undefined);
   const runMigrations = jest.fn().mockResolvedValue([]);
   const closeDatabase = jest.fn().mockResolvedValue(undefined);
-  const loadApiKeyHashes = jest.fn().mockResolvedValue([]);
+  const loadApiKeyHashes = jest.fn((scope) => Promise.resolve(scope === 'client' ? clientKeys : agentKeys));
   const parseGdbUrl = jest.fn(() => null);
   const sm = {
     sessions: new Map(),
@@ -92,50 +94,79 @@ describe('gdb server', () => {
     expect(done).toHaveBeenCalledWith(false, 404, 'Not Found');
   });
 
-  test('verifyClient rejects unauthenticated connections with 401', () => {
-    const { server, auth, parseGdbUrl } = loadGdbServer();
+  test('verifyClient rejects unauthenticated connections with 401 when keys exist', async () => {
+    const { server, auth, parseGdbUrl } = loadGdbServer({
+      agentKeys: [{ keyHash: 'a', username: 'alice' }],
+    });
+    await server.main();
     const verifyClient = server.wss.options.verifyClient;
     const done = jest.fn();
 
     parseGdbUrl.mockReturnValueOnce({ direction: 'in', hexkey: 'abc' });
-    auth.checkBearer.mockReturnValueOnce(false);
+    auth.matchBearer.mockReturnValueOnce(null);
 
     verifyClient({ req: { url: '/gdb/in/abc', headers: {} } }, done);
     expect(done).toHaveBeenCalledWith(false, 401, 'Unauthorized');
   });
 
-  test('verifyClient accepts authenticated connections on valid paths', () => {
-    const { server, parseGdbUrl } = loadGdbServer();
+  test('verifyClient accepts a connection whose token matches the scope', async () => {
+    const { server, auth, parseGdbUrl } = loadGdbServer({
+      agentKeys: [{ keyHash: 'a', username: 'alice' }],
+    });
+    await server.main();
     const verifyClient = server.wss.options.verifyClient;
     const done = jest.fn();
 
     parseGdbUrl.mockReturnValueOnce({ direction: 'in', hexkey: 'abc' });
+    auth.matchBearer.mockReturnValueOnce('alice');
 
     verifyClient({ req: { url: '/gdb/in/abc', headers: { authorization: 'Bearer token' } } }, done);
     expect(done).toHaveBeenCalledWith(true);
   });
 
-  test('main initializes the database and auth before listening', async () => {
-    const { server, initializeDatabase, runMigrations, auth, httpServer } = loadGdbServer();
+  test('verifyClient validates the in direction against agent keys and out against client keys', async () => {
+    const agentKeys = [{ keyHash: 'agent-hash', username: 'alice' }];
+    const clientKeys = [{ keyHash: 'client-hash', username: 'alice' }];
+    const { server, auth, parseGdbUrl } = loadGdbServer({ agentKeys, clientKeys });
+    await server.main();
+    const verifyClient = server.wss.options.verifyClient;
+
+    parseGdbUrl.mockReturnValueOnce({ direction: 'in', hexkey: 'abc' });
+    auth.matchBearer.mockReturnValueOnce('alice');
+    verifyClient({ req: { url: '/gdb/in/abc', headers: { authorization: 'Bearer agent' } } }, jest.fn());
+    expect(auth.matchBearer).toHaveBeenLastCalledWith('Bearer agent', agentKeys);
+
+    parseGdbUrl.mockReturnValueOnce({ direction: 'out', hexkey: 'abc' });
+    auth.matchBearer.mockReturnValueOnce('alice');
+    verifyClient({ req: { url: '/gdb/out/abc', headers: { authorization: 'Bearer client' } } }, jest.fn());
+    expect(auth.matchBearer).toHaveBeenLastCalledWith('Bearer client', clientKeys);
+  });
+
+  test('verifyClient allows a direction with no configured keys (opt-in enforcement)', async () => {
+    const { server, parseGdbUrl } = loadGdbServer({
+      agentKeys: [{ keyHash: 'a', username: 'alice' }],
+      clientKeys: [],
+    });
+    await server.main();
+    const verifyClient = server.wss.options.verifyClient;
+    const done = jest.fn();
+
+    // No client keys configured -> the out direction is not gated.
+    parseGdbUrl.mockReturnValueOnce({ direction: 'out', hexkey: 'abc' });
+    verifyClient({ req: { url: '/gdb/out/abc', headers: {} } }, done);
+    expect(done).toHaveBeenCalledWith(true);
+  });
+
+  test('main initializes the database and loads both key scopes before listening', async () => {
+    const { server, initializeDatabase, runMigrations, loadApiKeyHashes, httpServer } = loadGdbServer();
 
     await server.main();
 
     expect(initializeDatabase).toHaveBeenCalledTimes(1);
     expect(runMigrations).toHaveBeenCalledTimes(1);
-    expect(auth.init).toHaveBeenCalledWith(false, expect.any(Function));
+    expect(loadApiKeyHashes).toHaveBeenCalledWith('agent');
+    expect(loadApiKeyHashes).toHaveBeenCalledWith('client');
     expect(httpServer.listen).toHaveBeenCalledTimes(1);
-  });
-
-  test('main exits when no API keys are configured in the database', async () => {
-    const { server, httpServer } = loadGdbServer({
-      auth: { init: jest.fn().mockResolvedValue(false) },
-    });
-
-    await server.main();
-
-    expect(process.stderr.write).toHaveBeenCalledWith('error: no API keys are configured in the database\n');
-    expect(process.exit).toHaveBeenCalledWith(1);
-    expect(httpServer.listen).not.toHaveBeenCalled();
   });
 
   test('main exits when database initialization fails', async () => {

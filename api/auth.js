@@ -59,8 +59,29 @@ function constantTimeEqual(a, b) {
  * ---------------------------------------------------------------------- */
 
 /**
- * Check an Authorization header value against all loaded token hashes.
+ * Match an Authorization header value against an explicit list of token hashes.
  * Always iterates every entry (no short-circuit) to avoid timing oracles.
+ * Stateless — the caller supplies the key set, so different scopes (e.g. agent
+ * vs client) can be validated independently against the same comparison logic.
+ *
+ * @param {string|undefined} authHeader  Value of the Authorization header.
+ * @param {Array<{keyHash:string, username:string}>} keyHashes  Allowed keys.
+ * @returns {string|null}  The authenticated username when a key matches, else null.
+ */
+function matchBearer(authHeader, keyHashes) {
+  if (!authHeader || !authHeader.startsWith('Bearer ')) return null;
+
+  const token = authHeader.slice(7);
+  const tokenHash = crypto.createHash('sha256').update(token, 'utf8').digest('hex');
+  let matchedUser = null;
+  for (const entry of keyHashes) {
+    if (constantTimeEqual(tokenHash, entry.keyHash)) matchedUser = entry.username; /* no break — constant time */
+  }
+  return matchedUser;
+}
+
+/**
+ * Check an Authorization header value against all loaded token hashes.
  *
  * @param {string|undefined} authHeader  Value of the Authorization header.
  * @returns {string|true|false}  The authenticated username when a key matches;
@@ -68,14 +89,7 @@ function constantTimeEqual(a, b) {
  */
 function checkBearer(authHeader) {
   if (!authRequired) return true;
-  if (!authHeader || !authHeader.startsWith('Bearer ')) return false;
-
-  const token = authHeader.slice(7);
-  const tokenHash = crypto.createHash('sha256').update(token, 'utf8').digest('hex');
-  let matchedUser = null;
-  for (const entry of validKeyHashes) {
-    if (constantTimeEqual(tokenHash, entry.keyHash)) matchedUser = entry.username; /* no break — constant time */
-  }
+  const matchedUser = matchBearer(authHeader, validKeyHashes);
   return matchedUser !== null ? matchedUser : false;
 }
 
@@ -111,4 +125,4 @@ function middleware(req, res, next) {
   return next();
 }
 
-module.exports = { init, checkBearer, middleware };
+module.exports = { init, checkBearer, matchBearer, middleware };

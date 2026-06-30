@@ -37,6 +37,22 @@ describe('api auth', () => {
     expect(await auth.init(true, async () => [])).toBe(false);
   });
 
+  test('matchBearer matches against an explicit key set, independent of enforcement', () => {
+    const auth = loadAuth();
+    const keys = [
+      { keyHash: hashKey('agenttok'), username: 'alice' },
+      { keyHash: hashKey('clienttok'), username: 'bob' },
+    ];
+
+    // No init() call — matchBearer is stateless.
+    expect(auth.matchBearer('Bearer agenttok', keys)).toBe('alice');
+    expect(auth.matchBearer('Bearer clienttok', keys)).toBe('bob');
+    expect(auth.matchBearer('Bearer nope', keys)).toBeNull();
+    expect(auth.matchBearer(undefined, keys)).toBeNull();
+    expect(auth.matchBearer('Basic agenttok', keys)).toBeNull();
+    expect(auth.matchBearer('Bearer agenttok', [])).toBeNull();
+  });
+
   test('auth is disabled when enforcement is off — checkBearer returns true for any header', async () => {
     const auth = loadAuth();
 

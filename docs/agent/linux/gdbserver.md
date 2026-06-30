@@ -81,6 +81,23 @@ Connect GDB with:
 
 Copy the `out` URL and use it in `gdb-multiarch` on the analyst workstation.
 
+## Authentication — which token each end uses
+
+The two ends of the tunnel authenticate with **different** token scopes
+(see [server-side auth](../../api/auth.md)):
+
+- `/gdb/in/<key>` — the **agent** pushing the gdbserver RSP. It authenticates
+  with the **agent** token it is already configured with (`--api-key`,
+  `ELA_API_KEY`, `/tmp/ela.key`, or the token compiled into a per-user binary).
+- `/gdb/out/<key>` — the analyst's `gdb-multiarch` running the remote session.
+  It authenticates with the **client** token — the same token used for the
+  [client API](../../api/client/index.md).
+
+Each direction is gated only when keys of its scope exist in the database, so a
+deployment with no keys stays open. When a user is created with
+`tools/add-user-key.js`, both tokens are issued: give the analyst the printed
+`client key` for `wss-remote`/Ghidra.
+
 ## Connecting with `wss-remote`
 
 `wss-remote` is a GDB Python command registered by `tools/gdb-ws-insecure.py`. It wraps `target remote` with WebSocket support and optional `Authorization` header injection.
@@ -115,7 +132,7 @@ wss-remote [--insecure] [--token TOKEN] wss://HOST/gdb/out/<32-hex-key>
 
 - Without `--insecure`: uses GDB's native WebSocket transport (requires GDB 14+ built with WebSocket support).
 - With `--insecure`: falls back to the `tools/gdb-ws-proxy.py` stdin/stdout pipe with TLS verification disabled. Works with any GDB version that supports `target remote | command`.
-- `--token TOKEN`: override the API bearer token. If omitted, `ELA_API_KEY` from the environment is used.
+- `--token TOKEN`: override the API bearer token. If omitted, `ELA_API_KEY` from the environment is used. For the `/gdb/out/` endpoint this must be the **client** token (see [Authentication](#authentication--which-token-each-end-uses)).
 
 ## Example workflow
 
@@ -130,7 +147,7 @@ wss-remote [--insecure] [--token TOKEN] wss://HOST/gdb/out/<32-hex-key>
 #     wss-remote wss://ela.example.com/gdb/out/aabbccddeeff00112233445566778899
 
 # --- On the analyst workstation ---
-export ELA_API_KEY=<your-api-key>
+export ELA_API_KEY=<your-client-key>   # the client-scoped token
 gdb-multiarch ./firmware.elf
 (gdb) wss-remote --insecure wss://ela.example.com/gdb/out/aabbccddeeff00112233445566778899
 ```
@@ -177,7 +194,7 @@ The same `websockets` package used by `gdb-ws-proxy.py`.
 #     out: wss://ela.example.com/gdb/out/aabbccddeeff00112233445566778899
 
 # --- On the analyst workstation ---
-export ELA_API_KEY=<your-api-key>
+export ELA_API_KEY=<your-client-key>   # the client-scoped token
 
 # Start the bridge
 python3 tools/ghidra_bridge.py \
