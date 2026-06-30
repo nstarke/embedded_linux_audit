@@ -30,7 +30,7 @@ agent token. Both tokens are created for a user by `tools/add-user-key.js`:
 ```sh
 node tools/add-user-key.js --username alice
 # or inside the container:
-docker compose exec agent-api node tools/add-user-key.js --username alice
+docker compose exec agent-api node /app/tools/add-user-key.js --username alice
 ```
 
 This prints two keys, each shown once:

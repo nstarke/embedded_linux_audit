@@ -74,7 +74,10 @@ function buildUserBinaries(plaintextKey, keyHash) {
   const script = path.join(repoRoot, 'tests/compile_release_binaries_locally.sh');
 
   process.stdout.write(`\nBuilding per-user agent binaries into ${outDir}\n`);
-  const result = spawnSync(script, [], {
+  // Invoke through `sh` rather than executing the script directly so the build
+  // works regardless of the script's file mode (e.g. when copied into an image
+  // without the execute bit). The script has a POSIX `#!/bin/sh` shebang.
+  const result = spawnSync('sh', [script], {
     cwd: repoRoot,
     stdio: 'inherit',
     env: {

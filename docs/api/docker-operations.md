@@ -228,7 +228,7 @@ Create a user and build their per-user binaries (all supported ISAs, token
 embedded):
 
 ```bash
-docker compose exec agent-api node tools/add-user-key.js --username alice
+docker compose exec agent-api node /app/tools/add-user-key.js --username alice
 ```
 
 This creates two scoped tokens and prints each one once:

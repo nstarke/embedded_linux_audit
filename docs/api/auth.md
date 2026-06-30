@@ -101,7 +101,7 @@ each one once:
 ```sh
 node tools/add-user-key.js --username alice
 # or inside the container:
-docker compose exec agent-api node tools/add-user-key.js --username alice
+docker compose exec agent-api node /app/tools/add-user-key.js --username alice
 ```
 
 ```
