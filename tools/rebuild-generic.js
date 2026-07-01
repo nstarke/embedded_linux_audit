@@ -5,28 +5,30 @@
 /**
  * Force a rebuild of the one-time GENERIC (unembedded) agent binaries.
  *
- * The builder worker only auto-compiles the generic binaries when the generic
- * dir is empty (see api/builder/worker.js bootstrapGenericBuild). After changing
- * the agent sources, use this to recompile them on demand: it enqueues a
- * `generic` build job onto the same queue the builder worker consumes, so the
- * cross-compile runs inside the builder container (with its toolchain) and
- * overwrites <assetsDir>/generic/ela-<isa>.
+ * The builder worker only auto-compiles them when the generic dir is empty (see
+ * api/builder/worker.js bootstrapGenericBuild), so after changing the agent
+ * sources there is otherwise no way to recompile without wiping that dir. This
+ * runs the SAME compile the worker runs (api/builder/runBuild -> the release
+ * build script), synchronously, overwriting <assetsDir>/generic/ela-<isa>.
+ *
+ * It deliberately does NOT touch the build queue, so it depends only on Node
+ * builtins (no bullmq / node_modules) and runs straight from the /src bind-mount
+ * inside the builder container — the one place with the cross-compile toolchain:
+ *
+ *   docker compose exec builder node /src/tools/rebuild-generic.js
  *
  * This does NOT re-wrap per-user launchers — run tools/rebuild-launchers.js
  * afterwards to fold the fresh generic binaries into each user's launcher.
  *
- * Usage (run inside the stack so it can reach Redis + the assets volume):
- *   docker compose exec builder node /app/tools/rebuild-generic.js [--assets-dir <dir>]
- *
- * The job is consumed by the builder container regardless of which service you
- * run this from; any service sharing the Redis connection works.
+ * Usage:
+ *   node tools/rebuild-generic.js [--assets-dir <dir>]
  */
 
 const path = require('path');
 
 const repoRoot = path.resolve(__dirname, '..');
 const { resolveAssetsDir, genericDir } = require(path.join(repoRoot, 'api/lib/agentAssets'));
-const { getBuildQueue, closeBuildQueue, QUEUE_NAME } = require(path.join(repoRoot, 'api/lib/queue'));
+const { runBuild } = require(path.join(repoRoot, 'api/builder/runBuild'));
 
 function getArg(flag) {
   const idx = process.argv.indexOf(flag);
@@ -38,28 +40,20 @@ const assetsDirArg = getArg('--assets-dir');
 async function main() {
   const assetsDir = resolveAssetsDir({ assetsDirArg, repoRoot });
   const outDir = genericDir(assetsDir);
-  const queue = getBuildQueue();
 
-  // Fixed jobId so repeated invocations coalesce into a single pending rebuild
-  // rather than stacking up. removeOnComplete/Fail clears the record afterward
-  // so the next rebuild is never blocked by a lingering job of the same id.
-  const job = await queue.add('generic', { outDir }, {
-    jobId: 'generic-rebuild',
-    attempts: 1,
-    removeOnComplete: true,
-    removeOnFail: true,
-  });
+  process.stdout.write(`recompiling generic agent binaries -> ${outDir}\n`);
+  process.stdout.write('(cross-compiling every ISA; this takes several minutes)\n\n');
 
-  process.stdout.write(`enqueued generic rebuild on "${QUEUE_NAME}" (job ${job.id}) -> ${outDir}\n`);
-  process.stdout.write('The builder worker compiles every ISA; watch it with:\n');
-  process.stdout.write('  docker compose logs -f builder\n');
-  process.stdout.write('  node tools/build-status.js\n');
-  process.stdout.write('When it finishes, run tools/rebuild-launchers.js to update user launchers.\n');
+  // Same code path as the builder worker: spawns the release build script with
+  // RELEASE_BINARIES_DIR=outDir and flat output, streaming its logs here. A
+  // generic build bakes in no token/URL (no embeddedKey/serverUrl passed).
+  await runBuild({ outDir });
 
-  await closeBuildQueue();
+  process.stdout.write(`\ndone: generic binaries written to ${outDir}\n`);
+  process.stdout.write('Next: node tools/rebuild-launchers.js --server-url <wss://host> to update user launchers.\n');
 }
 
 main().catch((err) => {
   process.stderr.write(`error: ${err.message}\n`);
-  closeBuildQueue().catch(() => {}).finally(() => process.exit(1));
+  process.exit(1);
 });
