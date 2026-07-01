@@ -9,6 +9,7 @@ const {
   PAYLOAD_MARKER,
   shSingleQuote,
   shUnquote,
+  deriveOutputHttpUrl,
   parseLauncherHeader,
   buildWrapperHeader,
   assembleWrapper,
@@ -30,6 +31,25 @@ describe('selfExtract', () => {
       expect(shSingleQuote("a'b")).toBe("a'\\''b");
       expect(shSingleQuote('plain')).toBe('plain');
       expect(shSingleQuote(null)).toBe('');
+    });
+  });
+
+  describe('deriveOutputHttpUrl', () => {
+    test('maps WebSocket schemes to HTTP schemes', () => {
+      expect(deriveOutputHttpUrl('wss://ela.example.com')).toBe('https://ela.example.com');
+      expect(deriveOutputHttpUrl('ws://host:8080')).toBe('http://host:8080');
+    });
+
+    test('keeps an HTTP(S) URL as-is and defaults a bare host to http', () => {
+      expect(deriveOutputHttpUrl('https://h/x')).toBe('https://h/x');
+      expect(deriveOutputHttpUrl('http://h')).toBe('http://h');
+      expect(deriveOutputHttpUrl('host:9000')).toBe('http://host:9000');
+    });
+
+    test('returns empty string for an empty/missing URL', () => {
+      expect(deriveOutputHttpUrl('')).toBe('');
+      expect(deriveOutputHttpUrl(null)).toBe('');
+      expect(deriveOutputHttpUrl(undefined)).toBe('');
     });
   });
 
@@ -86,6 +106,16 @@ describe('selfExtract', () => {
       const noUrl = buildWrapperHeader({ token: 't', cacheKey: 'k' });
       expect(noUrl).toMatch(/ELA_REMOTE=''/);
       expect(noUrl).toMatch(/ELA_INSECURE='false'/);
+    });
+
+    test('derives ELA_OUTPUT_HTTP from the terminal URL and exports it', () => {
+      const withUrl = buildWrapperHeader({ token: 't', serverUrl: 'wss://h:9000', cacheKey: 'k' });
+      expect(withUrl).toMatch(/ELA_OUTPUT_HTTP='https:\/\/h:9000'/);
+      expect(withUrl).toMatch(/export ELA_OUTPUT_HTTP/);
+
+      // With no baked URL the variable is empty and never exported.
+      const noUrl = buildWrapperHeader({ token: 't', cacheKey: 'k' });
+      expect(noUrl).toMatch(/ELA_OUTPUT_HTTP=''/);
     });
 
     test('quotes a token containing a single quote safely', () => {
@@ -154,6 +184,31 @@ describe('selfExtract', () => {
         'ARG=--remote',
         'ARG=wss://ela.example.com',
       ]);
+    });
+
+    test('exports ELA_OUTPUT_HTTP to the payload for both bare and command runs', () => {
+      const payload = Buffer.from('#!/bin/sh\necho "OUT=$ELA_OUTPUT_HTTP"\n', 'utf8');
+      const wrapper = assembleWrapper(payload, { token: 't', serverUrl: 'wss://ela.example.com', isa: 'out' });
+      const wrapperPath = path.join(tmpDir, 'ela-out');
+      fs.writeFileSync(wrapperPath, wrapper);
+
+      // A run with a command (so --remote is not injected) still gets the env var.
+      const out = execFileSync('sh', [wrapperPath, 'linux', 'dmesg'], {
+        env: { ...process.env, TMPDIR: tmpDir }, encoding: 'utf8',
+      });
+      expect(out.trim()).toBe('OUT=https://ela.example.com');
+    });
+
+    test('leaves ELA_OUTPUT_HTTP unset when no URL is baked in', () => {
+      const payload = Buffer.from('#!/bin/sh\necho "OUT=[${ELA_OUTPUT_HTTP:-unset}]"\n', 'utf8');
+      const wrapper = assembleWrapper(payload, { token: 't', serverUrl: '', isa: 'noout' });
+      const wrapperPath = path.join(tmpDir, 'ela-noout');
+      fs.writeFileSync(wrapperPath, wrapper);
+
+      const out = execFileSync('sh', [wrapperPath, 'linux', 'dmesg'], {
+        env: { ...process.env, TMPDIR: tmpDir }, encoding: 'utf8',
+      });
+      expect(out.trim()).toBe('OUT=[unset]');
     });
 
     test('a run with arguments passes them through unchanged (no --remote)', () => {

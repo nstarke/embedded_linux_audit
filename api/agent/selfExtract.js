@@ -40,6 +40,29 @@ function shUnquote(s) {
 }
 
 /**
+ * Derive the HTTP(S) base URL for command output uploads from the terminal-API
+ * URL baked into the launcher. Command outputs are POSTed to the agent API's
+ * `/<mac>/upload/<type>` endpoint (the agent appends that path itself), which
+ * makes them retrievable through the client `/uploads` routes.
+ *
+ * The terminal API and the agent API sit behind the same host:port (see
+ * nginx/ela.conf), so we only need to translate the scheme: the WebSocket
+ * `wss://`/`ws://` schemes map to `https://`/`http://`. A URL that already uses
+ * an HTTP scheme is kept as-is; a bare `host[:port]` defaults to plaintext HTTP.
+ * An empty/missing URL yields '' (no output routing).
+ * @param {string} serverUrl
+ * @returns {string}
+ */
+function deriveOutputHttpUrl(serverUrl) {
+  const url = String(serverUrl == null ? '' : serverUrl).trim();
+  if (!url) return '';
+  if (url.startsWith('wss://')) return `https://${url.slice('wss://'.length)}`;
+  if (url.startsWith('ws://')) return `http://${url.slice('ws://'.length)}`;
+  if (url.startsWith('https://') || url.startsWith('http://')) return url;
+  return `http://${url}`;
+}
+
+/**
  * Parse the launcher header text (everything before the payload marker) back
  * into the values it was built with. Returns null if no token line is found.
  * @param {string} text
@@ -69,6 +92,9 @@ function parseLauncherHeader(text) {
  *      bare invocation auto-connects to the terminal API — reproducing the old
  *      compile-time ELA_EMBEDDED_SERVER_URL behavior, including the duality
  *      (`launcher` phones home; `launcher linux dmesg` runs locally),
+ *   2b. exports ELA_OUTPUT_HTTP (derived from the terminal-API URL) so every
+ *      command's output is uploaded to the agent API and retrievable via the
+ *      client `/uploads` routes,
  *   3. extracts the appended binary to a stable per-payload cache path and
  *      execs it, forwarding all arguments.
  *
@@ -89,6 +115,7 @@ function buildWrapperHeader({ token, serverUrl = '', insecure = false, cacheKey 
 
   const qToken = shSingleQuote(token);
   const qRemote = shSingleQuote(serverUrl);
+  const qOutputHttp = shSingleQuote(deriveOutputHttpUrl(serverUrl));
   const qInsecure = insecure ? 'true' : 'false';
   const qCache = shSingleQuote(`.ela-agent-${cacheKey}`);
 
@@ -101,9 +128,18 @@ set -eu
 
 ELA_TOKEN='${qToken}'
 ELA_REMOTE='${qRemote}'
+ELA_OUTPUT_HTTP='${qOutputHttp}'
 ELA_INSECURE='${qInsecure}'
 
 export ELA_API_KEY="$ELA_TOKEN"
+
+# Route every command's output (dmesg, netstat, exec, …) to the agent API's
+# upload endpoint so results are retrievable via the client /uploads routes.
+# The agent maps the scheme and appends /<mac>/upload/<type> itself; this applies
+# to both a bare phone-home run and \`launcher linux <cmd>\` invocations.
+if [ -n "$ELA_OUTPUT_HTTP" ]; then
+    export ELA_OUTPUT_HTTP
+fi
 
 # Extract the appended binary to a stable cache path (the agent may daemonize,
 # so the file must persist) and exec it.
@@ -169,6 +205,7 @@ module.exports = {
   PAYLOAD_MARKER,
   shSingleQuote,
   shUnquote,
+  deriveOutputHttpUrl,
   parseLauncherHeader,
   buildWrapperHeader,
   assembleWrapper,

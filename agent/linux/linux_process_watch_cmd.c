@@ -485,7 +485,8 @@ static void poll_loop(const char *fmt)
 static int daemon_start(const char *fmt,
 			 const char *tcp_target,
 			 const char *http_uri,
-			 bool insecure)
+			 bool insecure,
+			 pid_t *out_pid)
 {
 	pid_t pid = fork();
 
@@ -497,6 +498,8 @@ static int daemon_start(const char *fmt,
 			fprintf(stderr,
 				"process watch: warning: failed to write PID file %s\n",
 				ELA_PROCESS_WATCH_PID_FILE);
+		if (out_pid)
+			*out_pid = pid;
 		return 0;
 	}
 
@@ -615,13 +618,15 @@ static int cmd_watch_on(const char *needle,
 	lock_release(lock_fd);
 
 	if (!daemon_is_running()) {
-		if (daemon_start(fmt, tcp_target, http_uri, insecure) != 0) {
+		pid_t watch_pid = -1;
+
+		if (daemon_start(fmt, tcp_target, http_uri, insecure, &watch_pid) != 0) {
 			fprintf(stderr,
 				"process watch: failed to start daemon: %s\n",
 				strerror(errno));
 			return 1;
 		}
-		fprintf(stdout, "process watch started\n");
+		fprintf(stdout, "process watch started (pid=%ld)\n", (long)watch_pid);
 	}
 
 	fprintf(stdout, "process watch: now watching '%s'\n", needle);

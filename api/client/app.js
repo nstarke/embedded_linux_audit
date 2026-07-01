@@ -39,7 +39,10 @@ function createApp(deps = {}) {
   // `/openapi.json` directly and `/client/openapi.json` behind nginx.
   app.use('/docs', swaggerUi.serve, swaggerUi.setup(null, {
     customSiteTitle: 'ELA Client API',
-    swaggerOptions: { url: '../openapi.json' },
+    // tryItOutEnabled makes the request-body editors (e.g. the `command` field
+    // on the exec/spawn endpoints) editable by default, instead of showing a
+    // read-only example until "Try it out" is clicked.
+    swaggerOptions: { url: '../openapi.json', tryItOutEnabled: true },
   }));
 
   app.use(auth.middleware);
