@@ -3,6 +3,36 @@ const { listBinaryEntries, isSafeSinglePathSegment } = require('./shared');
 module.exports = function registerIsaRoute(app, deps) {
   const { assetsDir, fsp, isWithinRoot, mime, crypto, path, verboseRequestLog, verboseResponseLog } = deps;
 
+  // List the launchers available for a token. Unauthenticated like the download
+  // route: the token is in the path and hashed to locate its launcher set. A
+  // token with no launcher directory (unknown/unprovisioned) yields 404, so this
+  // doubles as a validity check. Matches `/isa/:token` and `/isa/:token/`.
+  app.get('/isa/:token', async (req, res) => {
+    verboseRequestLog(req);
+
+    const keyHash = crypto.createHash('sha256').update(req.params.token, 'utf8').digest('hex');
+    const baseDir = path.join(assetsDir, 'users', keyHash);
+    const binaryEntries = await listBinaryEntries(baseDir, fsp, deps.releaseStateFile);
+    if (binaryEntries.length === 0) {
+      res.status(404).type('text').send('not found\n');
+      verboseResponseLog(req, 404, 10);
+      return;
+    }
+
+    // The token is already in the request path, so echoing it into ready-to-use
+    // download paths discloses nothing new.
+    const token = encodeURIComponent(req.params.token);
+    const body = {
+      isas: binaryEntries.map((entry) => entry.isa),
+      downloads: binaryEntries.map((entry) => ({
+        isa: entry.isa,
+        path: `/isa/${token}/${entry.isa}`,
+      })),
+    };
+    res.status(200).json(body);
+    verboseResponseLog(req, 200, JSON.stringify(body).length);
+  });
+
   // Unauthenticated by design: a freshly provisioned host has no agent and no
   // way to send an Authorization header, so the per-user token is supplied in
   // the URL path instead. The token is hashed to locate that user's launcher set

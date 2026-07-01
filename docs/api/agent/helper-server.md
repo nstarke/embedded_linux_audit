@@ -20,6 +20,11 @@ The launchers are written flat to
 `<data-dir>/release_binaries/users/<keyHash>/ela-<isa>` where `<keyHash>` is the
 SHA-256 of the token.
 
+`GET /isa/:token` (and `/isa/:token/`) is **unauthenticated** and returns JSON
+listing the launchers available for that token — `{ isas: [...], downloads:
+[{ isa, path }] }` — or `404` if the token is unknown/unprovisioned, so it
+doubles as a token-validity check.
+
 `GET /isa/:token/:isa` is **unauthenticated** and serves the launcher for the
 token given in the URL path (the server hashes it to `users/<sha256(token)>/`).
 Save it, `chmod +x`, and run it: `./ela-<isa>` phones home on a bare run, while
@@ -69,7 +74,7 @@ POST handling notes:
 - `/upload/log` and `/upload/logs` are both accepted and stored under `<data-dir>/<startup_timestamp>/<mac_address>/logs/`.
 - the one-time generic binaries live under `<data-dir>/release_binaries/generic/ela-<isa>`; per-user launchers live under `<data-dir>/release_binaries/users/<keyHash>/` by default.
 - `GET /` returns an HTML index of the authenticated user's release binaries and agent test scripts.
-- `GET /tests/agent/:name` serves `.sh` files from `tests/agent/shell/` (for example `/tests/agent/download_tests.sh`, backed by `tests/agent/shell/download_tests.sh`). `GET /isa/:token/:isa` (unauthenticated) and `GET /uboot-env/:env_filename` serve ISA binaries and U-Boot environment helper files respectively. `GET /isa/:token/:isa` selects the per-user directory by hashing the token in the URL path.
+- `GET /tests/agent/:name` serves `.sh` files from `tests/agent/shell/` (for example `/tests/agent/download_tests.sh`, backed by `tests/agent/shell/download_tests.sh`). `GET /isa/:token` (unauthenticated) lists a token's available launchers as JSON; `GET /isa/:token/:isa` (unauthenticated) and `GET /uboot-env/:env_filename` serve ISA launchers and U-Boot environment helper files respectively. Both `/isa/` routes select the per-user directory by hashing the token in the URL path.
 
 PCAP WebSocket handling:
 

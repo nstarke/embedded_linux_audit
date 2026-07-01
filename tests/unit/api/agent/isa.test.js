@@ -29,6 +29,11 @@ function createRes() {
       this.body = value;
       return this;
     },
+    json(value) {
+      this.jsonBody = value;
+      this.headers['content-type'] = 'application/json';
+      return this;
+    },
     sendFile(value, options) {
       this.sentFile = value;
       this.sentFileOptions = options;
@@ -50,13 +55,20 @@ function loadRegisterIsaRoute(listBinaryEntriesImpl) {
   return { registerIsaRoute, listBinaryEntries };
 }
 
+// Select a route handler by its registered path (order-independent).
+function handlerFor(app, routePath) {
+  const call = app.get.mock.calls.find(([p]) => p === routePath);
+  return call && call[1];
+}
+
 describe('isa route', () => {
   afterEach(() => {
     jest.resetModules();
     jest.restoreAllMocks();
   });
 
-  function register(listBinaryEntriesImpl, deps = {}) {
+  // Build the app and return handlers for both routes plus the raw app.
+  function registerApp(listBinaryEntriesImpl, deps = {}) {
     const { registerIsaRoute } = loadRegisterIsaRoute(listBinaryEntriesImpl);
     const app = { get: jest.fn() };
     registerIsaRoute(app, {
@@ -71,13 +83,23 @@ describe('isa route', () => {
       verboseResponseLog: jest.fn(),
       ...deps,
     });
-    return app.get.mock.calls[0][1];
+    return {
+      app,
+      download: handlerFor(app, '/isa/:token/:isa'),
+      list: handlerFor(app, '/isa/:token'),
+    };
   }
 
-  test('registers the token-in-path route', () => {
+  // Back-compat: existing tests drive the download handler.
+  function register(listBinaryEntriesImpl, deps = {}) {
+    return registerApp(listBinaryEntriesImpl, deps).download;
+  }
+
+  test('registers both the list and download token-in-path routes', () => {
     const { registerIsaRoute } = loadRegisterIsaRoute(async () => []);
     const app = { get: jest.fn() };
     registerIsaRoute(app, { assetsDir: '/assets', path, crypto, fsp: {}, isWithinRoot: () => true, mime: { lookup: () => '' }, verboseRequestLog: jest.fn(), verboseResponseLog: jest.fn() });
+    expect(app.get).toHaveBeenCalledWith('/isa/:token', expect.any(Function));
     expect(app.get).toHaveBeenCalledWith('/isa/:token/:isa', expect.any(Function));
   });
 
@@ -129,7 +151,7 @@ describe('isa route', () => {
       verboseRequestLog: jest.fn(),
       verboseResponseLog: jest.fn(),
     });
-    const handler = app.get.mock.calls[0][1];
+    const handler = handlerFor(app, '/isa/:token/:isa');
     const res = createRes();
 
     await handler({ params: { token: 'my-secret-token', isa: 'x86_64' } }, res);
@@ -153,12 +175,67 @@ describe('isa route', () => {
       mime: { lookup: jest.fn(() => 'application/x-agent') },
       verboseRequestLog: jest.fn(), verboseResponseLog: jest.fn(),
     });
-    const handler = app.get.mock.calls[0][1];
+    const handler = handlerFor(app, '/isa/:token/:isa');
 
     await handler({ params: { token: 'aaa', isa: 'x86_64' } }, createRes());
     await handler({ params: { token: 'bbb', isa: 'x86_64' } }, createRes());
 
     expect(listBinaryEntries).toHaveBeenNthCalledWith(1, path.join('/assets', 'users', sha256('aaa')), expect.anything(), '.release_state.json');
     expect(listBinaryEntries).toHaveBeenNthCalledWith(2, path.join('/assets', 'users', sha256('bbb')), expect.anything(), '.release_state.json');
+  });
+
+  describe('GET /isa/:token (list)', () => {
+    test('returns the available downloads for a valid token', async () => {
+      const entries = [
+        { isa: 'aarch64-le', fileName: 'ela-aarch64-le' },
+        { isa: 'x86_64', fileName: 'ela-x86_64' },
+      ];
+      const { list, app } = registerApp(async () => entries);
+      void app;
+      const res = createRes();
+
+      await list({ params: { token: 'my-secret-token' } }, res);
+
+      expect(res.statusCode).toBe(200);
+      expect(res.jsonBody).toEqual({
+        isas: ['aarch64-le', 'x86_64'],
+        downloads: [
+          { isa: 'aarch64-le', path: '/isa/my-secret-token/aarch64-le' },
+          { isa: 'x86_64', path: '/isa/my-secret-token/x86_64' },
+        ],
+      });
+    });
+
+    test('looks up the launcher set by sha256(token)', async () => {
+      const listBinaryEntries = jest.fn(async () => [{ isa: 'x86_64', fileName: 'ela-x86_64' }]);
+      const { list } = registerApp(listBinaryEntries);
+
+      await list({ params: { token: 'tok' } }, createRes());
+
+      expect(listBinaryEntries).toHaveBeenCalledWith(
+        path.join('/assets', 'users', sha256('tok')),
+        expect.anything(),
+        '.release_state.json',
+      );
+    });
+
+    test('returns 404 for an unknown/unprovisioned token (empty set)', async () => {
+      const { list } = registerApp(async () => []);
+      const res = createRes();
+
+      await list({ params: { token: 'nope' } }, res);
+
+      expect(res.statusCode).toBe(404);
+      expect(res.body).toBe('not found\n');
+    });
+
+    test('url-encodes the token in the returned download paths', async () => {
+      const { list } = registerApp(async () => [{ isa: 'x86_64', fileName: 'ela-x86_64' }]);
+      const res = createRes();
+
+      await list({ params: { token: 'a b/c' } }, res);
+
+      expect(res.jsonBody.downloads[0].path).toBe('/isa/a%20b%2Fc/x86_64');
+    });
   });
 });
