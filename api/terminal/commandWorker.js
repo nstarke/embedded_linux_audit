@@ -1,0 +1,141 @@
+// SPDX-License-Identifier: MIT - Copyright (c) 2026 Nicholas Starke
+'use strict';
+
+const { runExec } = require('./execCommand');
+const { runSpawn } = require('./spawnCommand');
+
+// Process one operator command received over the `ela-terminal-commands` queue
+// (produced by the client API) against the live agent WebSocket sessions this
+// process holds. The return value becomes the BullMQ job's result, which the
+// client API awaits and relays to the caller.
+//
+// Every outcome is returned as `{ status, body }` (an HTTP status + JSON body)
+// so the client route is a thin proxy — it never has to re-map error codes. The
+// client API is the ACL boundary (device association); by the time a command
+// reaches here the caller is already authorised for `mac`.
+
+const NO_SESSION = { status: 404, body: { error: 'no active session for mac' } };
+
+function spawnsFor(entry) {
+  if (!entry.spawns) {
+    entry.spawns = new Map();
+  }
+  return entry.spawns;
+}
+
+function serializeSpawn(record) {
+  const out = {
+    pid: record.pid,
+    command: record.command,
+    args: record.args,
+    startedAt: record.startedAt,
+  };
+  if (record.port !== undefined) {
+    out.port = record.port;
+  }
+  return out;
+}
+
+function listSessions(sessionRegistry) {
+  const sessions = sessionRegistry.entries().map(([mac, entry]) => ({
+    mac,
+    alias: entry.alias || null,
+    group: entry.group || null,
+    remoteAddress: entry.remoteAddress || null,
+    connectedAt: entry.connectedAt || null,
+    lastHeartbeat: entry.lastHeartbeat || null,
+  }));
+  return { status: 200, body: { sessions } };
+}
+
+async function execOnSession(sessionRegistry, runExecImpl, { mac, command, timeoutMs }) {
+  const entry = sessionRegistry.getSession(mac);
+  if (!entry) return NO_SESSION;
+  try {
+    const result = await runExecImpl({ entry, mac, command, timeoutMs });
+    return { status: 200, body: { ok: true, output: result.output, durationMs: result.durationMs } };
+  } catch (err) {
+    if (err.code === 'TIMEOUT') {
+      return {
+        status: 504,
+        body: { ok: false, error: 'exec timed out', output: err.output || '', durationMs: err.durationMs },
+      };
+    }
+    if (err.code === 'NOT_CONNECTED') return NO_SESSION;
+    return { status: 500, body: { error: 'exec failed' } };
+  }
+}
+
+async function spawnOnSession(sessionRegistry, runSpawnImpl, now, { mac, command, args = [], port }) {
+  const entry = sessionRegistry.getSession(mac);
+  if (!entry) return NO_SESSION;
+  try {
+    const result = await runSpawnImpl({ entry, mac, command, args, port });
+    const record = { pid: result.pid, command, args, port: result.port, startedAt: now() };
+    spawnsFor(entry).set(result.pid, record);
+    const body = { pid: result.pid };
+    if (result.port !== undefined) body.port = result.port;
+    return { status: 201, body };
+  } catch (err) {
+    if (err.code === 'TIMEOUT') return { status: 504, body: { error: 'spawn timed out' } };
+    if (err.code === 'NOT_CONNECTED') return NO_SESSION;
+    return { status: 500, body: { error: 'spawn failed' } };
+  }
+}
+
+function listSpawns(sessionRegistry, { mac }) {
+  const entry = sessionRegistry.getSession(mac);
+  if (!entry) return NO_SESSION;
+  return { status: 200, body: { spawns: [...spawnsFor(entry).values()].map(serializeSpawn) } };
+}
+
+async function killSpawn(sessionRegistry, runExecImpl, { mac, pid }) {
+  const entry = sessionRegistry.getSession(mac);
+  if (!entry) return NO_SESSION;
+  const spawns = spawnsFor(entry);
+  if (!spawns.has(pid)) return { status: 404, body: { error: 'no such spawn' } };
+  try {
+    await runExecImpl({ entry, mac, command: `kill ${pid}` });
+    spawns.delete(pid);
+    return { status: 200, body: { ok: true } };
+  } catch (err) {
+    if (err.code === 'NOT_CONNECTED') return NO_SESSION;
+    return { status: 500, body: { error: 'kill failed' } };
+  }
+}
+
+/**
+ * Dispatch one queued command. Returns `{ status, body }`.
+ *
+ * @param {object} opts
+ * @param {object} opts.job              BullMQ job; job.data = { type, mac, ... }.
+ * @param {object} opts.sessionRegistry  Live agent session registry.
+ * @param {Function} [opts.runExecImpl]  Override for runExec (tests).
+ * @param {Function} [opts.runSpawnImpl] Override for runSpawn (tests).
+ * @param {Function} [opts.now]          Clock for spawn start time.
+ */
+async function processCommand({
+  job,
+  sessionRegistry,
+  runExecImpl = runExec,
+  runSpawnImpl = runSpawn,
+  now = () => new Date().toISOString(),
+}) {
+  const data = (job && job.data) || {};
+  switch (data.type) {
+    case 'sessions':
+      return listSessions(sessionRegistry);
+    case 'exec':
+      return execOnSession(sessionRegistry, runExecImpl, data);
+    case 'spawn':
+      return spawnOnSession(sessionRegistry, runSpawnImpl, now, data);
+    case 'listSpawns':
+      return listSpawns(sessionRegistry, data);
+    case 'killSpawn':
+      return killSpawn(sessionRegistry, runExecImpl, data);
+    default:
+      return { status: 400, body: { error: `unknown command type: ${String(data.type)}` } };
+  }
+}
+
+module.exports = { processCommand, serializeSpawn };

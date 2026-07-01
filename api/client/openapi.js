@@ -13,17 +13,24 @@ const openapiSpec = {
     title: 'ELA Client API',
     version: '1.0.0',
     description:
-      'Read-back API for artifacts uploaded by the embedded_linux_audit agent. '
-      + 'Authenticate with your **client** bearer token (printed by '
-      + '`tools/add-user-key.js`). Every route returns only the artifacts '
-      + 'uploaded by your own agent.',
+      'Read-back API for artifacts uploaded by the embedded_linux_audit agent, '
+      + 'plus live terminal control of connected devices. Authenticate with your '
+      + '**client** bearer token (printed by `tools/add-user-key.js`). Every '
+      + 'route is scoped to **devices you are associated with** (i.e. devices '
+      + 'that have connected to the terminal API with your token); a device you '
+      + 'are not associated with is treated as not connected (404). Terminal '
+      + 'commands are relayed to the terminal API over an internal queue and the '
+      + 'result is returned.',
   },
   servers: [
     { url: '/', description: 'Direct to client-api (e.g. http://localhost:7000)' },
     { url: '/client', description: 'Through the nginx reverse proxy' },
   ],
   security: [{ bearerAuth: [] }],
-  tags: [{ name: 'uploads', description: 'Uploaded artifacts' }],
+  tags: [
+    { name: 'uploads', description: 'Uploaded artifacts' },
+    { name: 'terminal', description: 'Live control of associated devices' },
+  ],
   paths: {
     '/uploads': {
       get: {
@@ -127,6 +134,101 @@ const openapiSpec = {
         },
       },
     },
+    '/terminal/sessions': {
+      get: {
+        tags: ['terminal'],
+        summary: 'List connected devices you are associated with',
+        operationId: 'listTerminalSessions',
+        responses: {
+          200: {
+            description: 'Live sessions for your associated devices',
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/SessionsResponse' } } },
+          },
+          401: { $ref: '#/components/responses/Unauthorized' },
+          504: { $ref: '#/components/responses/TerminalUnavailable' },
+        },
+      },
+    },
+    '/terminal/{mac}/exec': {
+      post: {
+        tags: ['terminal'],
+        summary: 'Run a command on a device and wait for its output',
+        operationId: 'terminalExec',
+        parameters: [{ $ref: '#/components/parameters/Mac' }],
+        requestBody: {
+          required: true,
+          content: { 'application/json': { schema: { $ref: '#/components/schemas/ExecRequest' } } },
+        },
+        responses: {
+          200: {
+            description: 'Captured command output',
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/ExecResponse' } } },
+          },
+          400: { $ref: '#/components/responses/BadRequest' },
+          401: { $ref: '#/components/responses/Unauthorized' },
+          404: { $ref: '#/components/responses/NoSession' },
+          504: { $ref: '#/components/responses/TerminalUnavailable' },
+        },
+      },
+    },
+    '/terminal/{mac}/spawn': {
+      post: {
+        tags: ['terminal'],
+        summary: 'Launch a long-running background process on a device',
+        operationId: 'terminalSpawn',
+        parameters: [{ $ref: '#/components/parameters/Mac' }],
+        requestBody: {
+          required: true,
+          content: { 'application/json': { schema: { $ref: '#/components/schemas/SpawnRequest' } } },
+        },
+        responses: {
+          201: {
+            description: 'The spawned process',
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/SpawnResponse' } } },
+          },
+          400: { $ref: '#/components/responses/BadRequest' },
+          401: { $ref: '#/components/responses/Unauthorized' },
+          404: { $ref: '#/components/responses/NoSession' },
+          504: { $ref: '#/components/responses/TerminalUnavailable' },
+        },
+      },
+      get: {
+        tags: ['terminal'],
+        summary: 'List the processes spawned on a device',
+        operationId: 'listTerminalSpawns',
+        parameters: [{ $ref: '#/components/parameters/Mac' }],
+        responses: {
+          200: {
+            description: 'Tracked spawns for the device',
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/SpawnListResponse' } } },
+          },
+          401: { $ref: '#/components/responses/Unauthorized' },
+          404: { $ref: '#/components/responses/NoSession' },
+          504: { $ref: '#/components/responses/TerminalUnavailable' },
+        },
+      },
+    },
+    '/terminal/{mac}/spawn/{pid}': {
+      delete: {
+        tags: ['terminal'],
+        summary: 'Kill a spawned process on a device',
+        operationId: 'killTerminalSpawn',
+        parameters: [
+          { $ref: '#/components/parameters/Mac' },
+          { $ref: '#/components/parameters/Pid' },
+        ],
+        responses: {
+          200: {
+            description: 'The process was killed',
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/OkResponse' } } },
+          },
+          400: { $ref: '#/components/responses/BadRequest' },
+          401: { $ref: '#/components/responses/Unauthorized' },
+          404: { $ref: '#/components/responses/NoSession' },
+          504: { $ref: '#/components/responses/TerminalUnavailable' },
+        },
+      },
+    },
   },
   components: {
     securitySchemes: {
@@ -151,6 +253,20 @@ const openapiSpec = {
         description: 'Numeric upload id.',
         schema: { type: 'string', pattern: '^[0-9]+$' },
       },
+      Mac: {
+        name: 'mac',
+        in: 'path',
+        required: true,
+        description: 'Device MAC address (aa:bb:cc:dd:ee:ff). Must be a device you are associated with.',
+        schema: { type: 'string', pattern: '^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$' },
+      },
+      Pid: {
+        name: 'pid',
+        in: 'path',
+        required: true,
+        description: 'PID of a tracked spawn.',
+        schema: { type: 'string', pattern: '^[0-9]+$' },
+      },
     },
     responses: {
       Unauthorized: {
@@ -161,6 +277,24 @@ const openapiSpec = {
       },
       NotFound: {
         description: 'Unknown upload type, or artifact not found / not owned',
+        content: {
+          'application/json': { schema: { $ref: '#/components/schemas/Error' } },
+        },
+      },
+      BadRequest: {
+        description: 'Invalid MAC, PID, or request body',
+        content: {
+          'application/json': { schema: { $ref: '#/components/schemas/Error' } },
+        },
+      },
+      NoSession: {
+        description: 'No connected device for this MAC, or you are not associated with it',
+        content: {
+          'application/json': { schema: { $ref: '#/components/schemas/Error' } },
+        },
+      },
+      TerminalUnavailable: {
+        description: 'The command timed out or the terminal API is unavailable',
         content: {
           'application/json': { schema: { $ref: '#/components/schemas/Error' } },
         },
@@ -231,6 +365,85 @@ const openapiSpec = {
             },
           },
         ],
+      },
+      Session: {
+        type: 'object',
+        properties: {
+          mac: { type: 'string', example: 'aa:bb:cc:dd:ee:ff' },
+          alias: { type: 'string', nullable: true },
+          group: { type: 'string', nullable: true },
+          remoteAddress: { type: 'string', nullable: true },
+          connectedAt: { type: 'string', format: 'date-time', nullable: true },
+          lastHeartbeat: { type: 'string', format: 'date-time', nullable: true },
+        },
+        required: ['mac'],
+      },
+      SessionsResponse: {
+        type: 'object',
+        properties: {
+          sessions: { type: 'array', items: { $ref: '#/components/schemas/Session' } },
+        },
+        required: ['sessions'],
+      },
+      ExecRequest: {
+        type: 'object',
+        properties: {
+          command: { type: 'string', example: 'uname -a' },
+          timeoutMs: {
+            type: 'integer', minimum: 1, maximum: 60000, default: 15000,
+            description: 'Per-command timeout in milliseconds (<= 60000).',
+          },
+        },
+        required: ['command'],
+      },
+      ExecResponse: {
+        type: 'object',
+        properties: {
+          ok: { type: 'boolean', example: true },
+          output: { type: 'string' },
+          durationMs: { type: 'integer' },
+        },
+        required: ['ok', 'output'],
+      },
+      SpawnRequest: {
+        type: 'object',
+        properties: {
+          command: { type: 'string', example: 'gdbserver' },
+          args: { type: 'array', items: { type: 'string' }, default: [] },
+          port: { type: 'integer', minimum: 1, maximum: 65535, nullable: true },
+        },
+        required: ['command'],
+      },
+      SpawnResponse: {
+        type: 'object',
+        properties: {
+          pid: { type: 'integer', example: 4242 },
+          port: { type: 'integer', nullable: true },
+        },
+        required: ['pid'],
+      },
+      Spawn: {
+        type: 'object',
+        properties: {
+          pid: { type: 'integer' },
+          command: { type: 'string' },
+          args: { type: 'array', items: { type: 'string' } },
+          startedAt: { type: 'string', format: 'date-time' },
+          port: { type: 'integer', nullable: true },
+        },
+        required: ['pid', 'command', 'args', 'startedAt'],
+      },
+      SpawnListResponse: {
+        type: 'object',
+        properties: {
+          spawns: { type: 'array', items: { $ref: '#/components/schemas/Spawn' } },
+        },
+        required: ['spawns'],
+      },
+      OkResponse: {
+        type: 'object',
+        properties: { ok: { type: 'boolean', example: true } },
+        required: ['ok'],
       },
     },
   },

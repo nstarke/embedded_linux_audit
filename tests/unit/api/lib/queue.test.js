@@ -3,14 +3,28 @@
 function loadQueue(env = {}) {
   jest.resetModules();
   const instances = [];
+  const eventsInstances = [];
   const Queue = jest.fn(function Queue(name, opts) {
     this.name = name;
     this.opts = opts;
-    this.add = jest.fn();
+    this.add = jest.fn(async (jobName, data, jobOpts) => ({
+      id: '1',
+      name: jobName,
+      data,
+      opts: jobOpts,
+      waitUntilFinished: jest.fn().mockResolvedValue({ status: 200, body: { ok: true } }),
+    }));
     this.close = jest.fn().mockResolvedValue(undefined);
     instances.push(this);
   });
-  jest.doMock('bullmq', () => ({ Queue }), { virtual: true });
+  const QueueEvents = jest.fn(function QueueEvents(name, opts) {
+    this.name = name;
+    this.opts = opts;
+    this.waitUntilReady = jest.fn().mockResolvedValue(undefined);
+    this.close = jest.fn().mockResolvedValue(undefined);
+    eventsInstances.push(this);
+  });
+  jest.doMock('bullmq', () => ({ Queue, QueueEvents }), { virtual: true });
 
   const prev = {};
   for (const [k, v] of Object.entries(env)) {
@@ -19,7 +33,7 @@ function loadQueue(env = {}) {
   }
 
   const mod = require('../../../../api/lib/queue');
-  return { mod, Queue, instances, restore: () => {
+  return { mod, Queue, QueueEvents, instances, eventsInstances, restore: () => {
     for (const [k] of Object.entries(env)) {
       if (prev[k] === undefined) delete process.env[k]; else process.env[k] = prev[k];
     }
@@ -105,6 +119,54 @@ describe('build queue', () => {
     const q2 = mod.getBuildQueue();
     expect(q2).not.toBe(q1);
     expect(Queue).toHaveBeenCalledTimes(2);
+    restore();
+  });
+
+  test('getCommandQueue creates one command Queue (separate from the build queue)', () => {
+    const { mod, Queue, instances, restore } = loadQueue();
+    const c1 = mod.getCommandQueue();
+    const c2 = mod.getCommandQueue();
+    expect(c1).toBe(c2);
+    expect(Queue).toHaveBeenCalledTimes(1);
+    expect(instances[0].name).toBe('ela-terminal-commands');
+    restore();
+  });
+
+  test('getCommandWorkerOptions defaults concurrency to 1 and honours the env override', () => {
+    let { mod, restore } = loadQueue();
+    expect(mod.getCommandWorkerOptions()).toEqual({ connection: { host: 'redis', port: 6379 }, concurrency: 1 });
+    restore();
+
+    ({ mod, restore } = loadQueue({ ELA_TERMINAL_CONCURRENCY: '4' }));
+    expect(mod.getCommandWorkerOptions().concurrency).toBe(4);
+    restore();
+  });
+
+  test('sendTerminalCommand enqueues the payload and resolves with the worker result', async () => {
+    const { mod, instances, eventsInstances, restore } = loadQueue();
+
+    const result = await mod.sendTerminalCommand({ type: 'exec', mac: 'aa:bb', command: 'id' }, { waitMs: 5000 });
+
+    // Queue + QueueEvents created for the command queue.
+    expect(instances[0].name).toBe('ela-terminal-commands');
+    expect(eventsInstances[0].name).toBe('ela-terminal-commands');
+    expect(eventsInstances[0].waitUntilReady).toHaveBeenCalled();
+
+    const addCall = instances[0].add.mock.calls[0];
+    expect(addCall[0]).toBe('exec');
+    expect(addCall[1]).toEqual({ type: 'exec', mac: 'aa:bb', command: 'id' });
+    expect(addCall[2]).toEqual({ removeOnComplete: true, removeOnFail: true });
+    expect(result).toEqual({ status: 200, body: { ok: true } });
+    restore();
+  });
+
+  test('closeCommandQueue closes both the queue and its events stream', async () => {
+    const { mod, instances, eventsInstances, restore } = loadQueue();
+    mod.getCommandQueue();
+    mod.getCommandQueueEvents();
+    await mod.closeCommandQueue();
+    expect(instances[0].close).toHaveBeenCalledTimes(1);
+    expect(eventsInstances[0].close).toHaveBeenCalledTimes(1);
     restore();
   });
 });

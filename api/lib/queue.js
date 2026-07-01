@@ -1,11 +1,17 @@
 'use strict';
 
-const { Queue } = require('bullmq');
+const { Queue, QueueEvents } = require('bullmq');
 
 // Shared BullMQ definition used by the producer (tools/add-user-key.js) and the
 // builder worker (api/builder/worker.js). Per-user binary builds are enqueued
 // here so the API never has to compile anything itself.
 const QUEUE_NAME = process.env.ELA_BUILD_QUEUE_NAME || 'ela-binary-builds';
+
+// Operator-command request/reply queue: the client API enqueues a command and
+// awaits its result; the terminal API worker executes it against the live agent
+// session and returns the result (BullMQ job return value). This is how the
+// client API reaches agents without the terminal API exposing any client REST.
+const COMMAND_QUEUE_NAME = process.env.ELA_COMMAND_QUEUE_NAME || 'ela-terminal-commands';
 
 function getConnection() {
   return {
@@ -65,10 +71,80 @@ async function closeBuildQueue() {
   }
 }
 
+/* -------------------------------------------------------------------------
+ * Terminal command request/reply queue
+ * ---------------------------------------------------------------------- */
+
+let commandQueue = null;
+let commandQueueEvents = null;
+
+function getCommandQueue() {
+  if (!commandQueue) {
+    commandQueue = new Queue(COMMAND_QUEUE_NAME, { connection: getConnection() });
+  }
+  return commandQueue;
+}
+
+// Shared QueueEvents stream used to await a job's completion (request/reply).
+function getCommandQueueEvents() {
+  if (!commandQueueEvents) {
+    commandQueueEvents = new QueueEvents(COMMAND_QUEUE_NAME, { connection: getConnection() });
+  }
+  return commandQueueEvents;
+}
+
+// BullMQ Worker options for the terminal command worker. Concurrency defaults
+// to 1: `runExec` detects completion by watching a session's shared output
+// stream, so two commands running against the SAME device would corrupt each
+// other. Serialising globally is the safe default; raise only with per-device
+// isolation. Env-overridable.
+function getCommandWorkerOptions() {
+  return {
+    connection: getConnection(),
+    concurrency: intFromEnv('ELA_TERMINAL_CONCURRENCY', 1),
+  };
+}
+
+/**
+ * Enqueue an operator command and wait for the terminal worker's result.
+ * Returns the worker's return value (`{ status, body }`). Rejects if the wait
+ * exceeds `waitMs` (e.g. the terminal worker is down) or the job fails.
+ *
+ * @param {object} payload  { type, mac, ... } — see api/terminal/commandWorker.js.
+ * @param {{waitMs?: number}} [opts]
+ */
+async function sendTerminalCommand(payload, { waitMs = 30000 } = {}) {
+  const q = getCommandQueue();
+  const events = getCommandQueueEvents();
+  await events.waitUntilReady();
+  const job = await q.add(payload.type || 'command', payload, {
+    removeOnComplete: true,
+    removeOnFail: true,
+  });
+  return job.waitUntilFinished(events, waitMs);
+}
+
+async function closeCommandQueue() {
+  if (commandQueueEvents) {
+    await commandQueueEvents.close();
+    commandQueueEvents = null;
+  }
+  if (commandQueue) {
+    await commandQueue.close();
+    commandQueue = null;
+  }
+}
+
 module.exports = {
   QUEUE_NAME,
+  COMMAND_QUEUE_NAME,
   getConnection,
   getWorkerOptions,
   getBuildQueue,
   closeBuildQueue,
+  getCommandQueue,
+  getCommandQueueEvents,
+  getCommandWorkerOptions,
+  sendTerminalCommand,
+  closeCommandQueue,
 };

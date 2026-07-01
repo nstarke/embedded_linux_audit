@@ -5,6 +5,7 @@ const rateLimit = require('express-rate-limit');
 const swaggerUi = require('swagger-ui-express');
 const auth = require('../auth');
 const registerUploadsRoutes = require('./routes/uploads');
+const registerTerminalRoutes = require('./routes/terminal');
 const { openapiSpec } = require('./openapi');
 
 /**
@@ -51,6 +52,24 @@ function createApp(deps = {}) {
   });
 
   registerUploadsRoutes(app, deps);
+  // Operator terminal-control routes: enqueue commands to the terminal API over
+  // the queue and relay the result. ACL'd to the caller's associated devices.
+  registerTerminalRoutes(app, deps.terminal || {});
+
+  // Translate JSON body-parser failures on the terminal POST routes into the
+  // same error shapes the routes use.
+  // eslint-disable-next-line no-unused-vars
+  app.use((err, req, res, next) => {
+    if (err && err.type === 'entity.too.large') {
+      res.status(413).json({ error: 'payload too large' });
+      return;
+    }
+    if (err && (err.type === 'entity.parse.failed' || err instanceof SyntaxError)) {
+      res.status(400).json({ error: 'invalid JSON body' });
+      return;
+    }
+    res.status(500).json({ error: 'internal error' });
+  });
 
   return app;
 }

@@ -164,6 +164,17 @@ function loadTerminalServer(options = {}) {
   }), { virtual: true });
   jest.doMock('readline', () => readlineMock, { virtual: true });
   jest.doMock('ws', () => ({ WebSocketServer }), { virtual: true });
+  // Mock the command worker + its queue so main() does not open a Redis
+  // connection. The BullMQ Worker instance records handler/close calls.
+  const commandWorkerInstance = { on: jest.fn(), close: jest.fn().mockResolvedValue(undefined) };
+  const Worker = jest.fn(() => commandWorkerInstance);
+  jest.doMock('bullmq', () => ({ Worker }), { virtual: true });
+  const processCommand = jest.fn();
+  jest.doMock('../../../../api/terminal/commandWorker', () => ({ processCommand }));
+  jest.doMock('../../../../api/lib/queue', () => ({
+    COMMAND_QUEUE_NAME: 'ela-terminal-commands',
+    getCommandWorkerOptions: jest.fn(() => ({ connection: {}, concurrency: 1 })),
+  }));
   jest.doMock('../../../../api/auth', () => auth);
   jest.doMock('../../../../api/lib/config', () => ({
     getTerminalServiceConfig: jest.fn(() => terminalConfig),
@@ -224,6 +235,9 @@ function loadTerminalServer(options = {}) {
     readlineMock,
     httpServer,
     WebSocketServer,
+    Worker,
+    commandWorkerInstance,
+    processCommand,
     wssClose: server.wss.close,
     auth,
     initializeDatabase,

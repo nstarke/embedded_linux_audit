@@ -12,14 +12,22 @@ describe('client OpenAPI spec', () => {
 
   test('documents every client API route', () => {
     expect(Object.keys(openapiSpec.paths).sort()).toEqual([
+      '/terminal/sessions',
+      '/terminal/{mac}/exec',
+      '/terminal/{mac}/spawn',
+      '/terminal/{mac}/spawn/{pid}',
       '/uploads',
       '/uploads/{type}',
       '/uploads/{type}/{id}',
       '/uploads/{type}/{id}/raw',
     ]);
+    // Every operation on every path requires auth (401 documented).
     for (const path of Object.values(openapiSpec.paths)) {
-      expect(path.get).toBeDefined();
-      expect(path.get.responses['401']).toBeDefined();
+      const ops = ['get', 'post', 'delete'].map((m) => path[m]).filter(Boolean);
+      expect(ops.length).toBeGreaterThan(0);
+      for (const op of ops) {
+        expect(op.responses['401']).toBeDefined();
+      }
     }
   });
 

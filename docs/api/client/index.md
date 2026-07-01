@@ -1,8 +1,10 @@
 # Client API
 
 The client API (`api/client/`) exposes the artifacts uploaded by the agent as
-JSON, so an operator's own tooling can read back what was collected. It is a
-read-only service, separate from the ingest-side agent helper API.
+JSON, so an operator's own tooling can read back what was collected, and provides
+**live terminal control** of connected devices (sessions/exec/spawn) by relaying
+commands to the agent-only terminal server over an internal queue. It is the
+single operator-facing API, separate from the ingest-side agent helper API.
 
 ## Interactive docs (Swagger UI)
 
@@ -83,6 +85,29 @@ All routes are mounted at the service root (behind nginx they are reached under
 `:type` must be one of the known upload types (`api/lib/uploadTypes.js`); unknown
 types return `404`. `:id` must be numeric.
 
+### Terminal control
+
+Live control of connected devices also lives on the client API. These commands
+are **not** executed here: the client API enqueues them on the internal
+`ela-terminal-commands` Redis queue, the terminal server runs them against the
+live agent WebSocket session and queues the result back, and the client API
+relays it to you. The terminal server exposes no operator HTTP surface.
+
+| Method & path | Description |
+| --- | --- |
+| `GET /terminal/sessions` | List connected devices you are associated with: `{ "sessions": [{ mac, alias, group, remoteAddress, connectedAt, lastHeartbeat }] }`. |
+| `POST /terminal/:mac/exec` | Run one command and wait for its output. Body `{ "command": "uname -a", "timeoutMs"?: <=60000 }` → `{ ok, output, durationMs }`. |
+| `POST /terminal/:mac/spawn` | Launch a long-running process. Body `{ "command", "args"?: [...], "port"?: 1-65535 }` → `201 { pid, port? }`. |
+| `GET /terminal/:mac/spawn` | List tracked spawns for the device: `{ "spawns": [...] }`. |
+| `DELETE /terminal/:mac/spawn/:pid` | Kill a tracked spawn → `{ "ok": true }`. |
+
+**MAC ACLs.** Every terminal route is restricted to devices you are
+**associated** with (the same `user_devices` links used for artifact
+visibility). A device you are not associated with — or one that is not
+connected — returns `404 {"error":"no active session for mac"}`, so you cannot
+issue commands to, or enumerate, other users' devices. If the terminal server is
+unavailable or a command does not complete in time, the route returns `504`.
+
 ### Artifact metadata fields
 
 `id`, `uploadType`, `contentType`, `macAddress` (of the uploading device),
@@ -99,4 +124,9 @@ curl -H "Authorization: Bearer $KEY" "$BASE/uploads"
 curl -H "Authorization: Bearer $KEY" "$BASE/uploads/dmesg?limit=20"
 curl -H "Authorization: Bearer $KEY" "$BASE/uploads/dmesg/42"
 curl -H "Authorization: Bearer $KEY" "$BASE/uploads/dmesg/42/raw"
+
+# terminal control (only for devices you are associated with)
+curl -H "Authorization: Bearer $KEY" "$BASE/terminal/sessions"
+curl -X POST -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
+    -d '{"command":"uname -a"}' "$BASE/terminal/aa:bb:cc:dd:ee:ff/exec"
 ```

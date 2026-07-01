@@ -4,8 +4,11 @@
 const http = require('http');
 const readline = require('readline');
 const { WebSocketServer } = require('ws');
+const { Worker } = require('bullmq');
 const auth = require('../auth');
 const { getTerminalServiceConfig } = require('../lib/config');
+const { COMMAND_QUEUE_NAME, getCommandWorkerOptions } = require('../lib/queue');
+const { processCommand } = require('./commandWorker');
 const { initializeDatabase, runMigrations, closeDatabase } = require('../lib/db');
 const {
   recordTerminalConnection,
@@ -56,6 +59,10 @@ async function importLegacyAliases() {
 
 const sessionRegistry = createSessionRegistry({ heartbeatIntervalMs: HEARTBEAT_INTERVAL_MS });
 
+// BullMQ worker consuming operator commands from the client API. Created in
+// main() (so requiring this module in tests does not open a Redis connection).
+let commandWorker = null;
+
 const blockedCidrs = [];
 
 async function addBlock(cidr) {
@@ -83,6 +90,9 @@ async function cleanup() {
         resolve();
       }
     }));
+  }
+  if (commandWorker) {
+    closeOps.push(commandWorker.close().catch(() => {}));
   }
   if (typeof httpServer.close === 'function') {
     closeOps.push(new Promise((resolve) => {
@@ -774,6 +784,18 @@ async function main() {
     const parsed = parseCidr(record.cidr);
     if (parsed) blockedCidrs.push(parsed);
   }
+
+  // Consume operator commands from the client API and run them against the live
+  // agent sessions this process holds. This is the only non-agent path into the
+  // terminal API, and it never exposes an HTTP surface.
+  commandWorker = new Worker(
+    COMMAND_QUEUE_NAME,
+    (job) => processCommand({ job, sessionRegistry }),
+    getCommandWorkerOptions(),
+  );
+  commandWorker.on('error', (err) => {
+    process.stderr.write(`terminal command worker error: ${err && err.message}\n`);
+  });
 
   httpServer.listen(PORT, HOST, () => {
     setupInput();

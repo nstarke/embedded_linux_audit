@@ -7,6 +7,7 @@ const auth = require('../auth');
 const { getClientServiceConfig } = require('../lib/config');
 const { initializeDatabase, runMigrations, closeDatabase } = require('../lib/db');
 const { loadApiKeyHashes } = require('../lib/db/deviceRegistry');
+const { closeCommandQueue } = require('../lib/queue');
 const { createApp } = require('./app');
 
 async function main() {
@@ -34,10 +35,11 @@ async function main() {
   });
 
   console.log(`ELA client API listening on http://${host}:${port}/`);
-  console.log('Routes: GET /uploads, /uploads/:type, /uploads/:type/:id, /uploads/:type/:id/raw');
+  console.log('Routes: GET /uploads[...]; GET /terminal/sessions; POST /terminal/:mac/exec|spawn; GET|DELETE /terminal/:mac/spawn[/:pid]');
 
   process.on('SIGINT', () => {
     server.close(async () => {
+      await closeCommandQueue().catch(() => {});
       await closeDatabase().catch(() => {});
       process.exit(0);
     });
