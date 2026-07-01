@@ -203,7 +203,16 @@ const openapiSpec = {
         parameters: [{ $ref: '#/components/parameters/Mac' }],
         requestBody: {
           required: true,
-          content: { 'application/json': { schema: { $ref: '#/components/schemas/ExecRequest' } } },
+          // Override the shared ExecRequest example: this endpoint runs a raw
+          // ELA command (not a shell command), so the default must be a valid
+          // ELA command like `linux netstat` — `uname -a` is a shell command and
+          // is not understood by the agent here.
+          content: {
+            'application/json': {
+              schema: { $ref: '#/components/schemas/ExecRequest' },
+              example: { command: 'linux netstat' },
+            },
+          },
         },
         responses: {
           200: {

@@ -35,6 +35,20 @@ describe('client OpenAPI spec', () => {
     }
   });
 
+  test('ela/exec defaults to a valid ELA command, not a shell command', () => {
+    // uname -a is a shell command (valid for linux/exec) but is not understood
+    // by the agent as a raw ELA command, so ela/exec must default to a real one.
+    const elaBody = openapiSpec.paths['/terminal/{mac}/ela/exec'].post
+      .requestBody.content['application/json'];
+    expect(elaBody.example).toEqual({ command: 'linux netstat' });
+
+    // linux/exec still uses the shared shell-command example.
+    const linuxBody = openapiSpec.paths['/terminal/{mac}/linux/exec'].post
+      .requestBody.content['application/json'];
+    expect(linuxBody.example).toBeUndefined();
+    expect(openapiSpec.components.schemas.ExecRequest.properties.command.example).toBe('uname -a');
+  });
+
   test('requires bearer auth globally', () => {
     expect(openapiSpec.security).toEqual([{ bearerAuth: [] }]);
     expect(openapiSpec.components.securitySchemes.bearerAuth).toMatchObject({
