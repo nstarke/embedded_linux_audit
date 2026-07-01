@@ -74,6 +74,38 @@ describe('runExec', () => {
     expect(result.output).toBe('Linux host 5.10.0 #1 SMP x86_64');
   });
 
+  test('strips the execute-command record echo of the command from linux/exec output', async () => {
+    // The agent's `linux execute-command` txt record is `<command>\n<output>`,
+    // so after the REPL input echo is dropped the output still starts with a
+    // second echo of the shell command. That leading line must be removed.
+    const entry = createEntry();
+    const promise = runExec({ entry, mac, command: 'uname -a', now: () => 0 });
+
+    entry.emit(`\r\x1b[2K(${mac})> linux execute-command "uname -a"`);
+    entry.emit('\r\n'); // end of the REPL input-echo line
+    entry.emit('uname -a\r\n'); // execute-command record: the command echo
+    entry.emit('Linux 192.168.120.50 3.12.19-rt30 #95415 SMP armv7l unknown\r\n');
+    entry.emit(`(${mac})> `); // completion prompt
+
+    const result = await promise;
+    expect(result.output).toBe('Linux 192.168.120.50 3.12.19-rt30 #95415 SMP armv7l unknown');
+  });
+
+  test('leaves ela/exec (wrapShell=false) output untouched — no record echo to strip', async () => {
+    const entry = createEntry();
+    // A raw ELA command whose real output happens to begin with a line equal to
+    // the command must NOT have that line stripped (no execute-command wrapper).
+    const promise = runExec({ entry, mac, command: 'linux netstat', wrapShell: false, now: () => 0 });
+
+    entry.emit(`(${mac})> linux netstat\r\n`);
+    entry.emit('linux netstat\r\n'); // real first line of output, not an echo
+    entry.emit('tcp 0 0 0.0.0.0:22\r\n');
+    entry.emit(`(${mac})> `);
+
+    const result = await promise;
+    expect(result.output).toBe('linux netstat\ntcp 0 0 0.0.0.0:22');
+  });
+
   test('sends the raw command when wrapShell is false (ELA agent command)', () => {
     const entry = createEntry();
     // Stub the timer so the un-awaited promise does not schedule a real timeout.

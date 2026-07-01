@@ -34,11 +34,26 @@ function findCompletionIndex(buffer, promptToken) {
   }
 }
 
+// When a command is run via `linux execute-command`, the agent's txt record
+// formats output as `<command>\n<output>` (see record_formatter.c), so the
+// captured output begins with a second echo of the command itself — distinct
+// from the REPL input echo dropped above. Strip that leading echo line when it
+// matches the command we sent. `commandEcho` is falsy for raw ELA commands
+// (`ela/exec`/`ela` spawn), whose output has no such wrapper.
+function stripCommandEcho(output, commandEcho) {
+  const echo = String(commandEcho || '');
+  if (!echo) return output;
+  if (output === echo) return '';
+  if (output.startsWith(`${echo}\n`)) return output.slice(echo.length + 1);
+  return output;
+}
+
 // Extract just the command's output from the raw buffer, given the completion
 // prompt index. The output sits between the last echoed-command prompt (the
 // input line the REPL echoed back) and the completion prompt; the echoed
-// command line itself is dropped, then ANSI/carriage-returns are stripped.
-function extractExecOutput(buffer, completionIndex, promptToken) {
+// command line itself is dropped, then ANSI/carriage-returns are stripped, and
+// finally the `execute-command` record's own command echo (if any) is removed.
+function extractExecOutput(buffer, completionIndex, promptToken, commandEcho) {
   const region = buffer.slice(0, completionIndex);
   const lastPrompt = region.lastIndexOf(promptToken);
   let out;
@@ -51,7 +66,8 @@ function extractExecOutput(buffer, completionIndex, promptToken) {
     out = region;
   }
   out = stripAnsi(out).replace(/\r/g, '');
-  return out.replace(/\n+$/, '');
+  out = out.replace(/\n+$/, '');
+  return stripCommandEcho(out, commandEcho);
 }
 
 /**
@@ -92,6 +108,9 @@ function runExec({
     }
 
     const promptToken = promptTokenForMac(mac);
+    // For a shell command the agent echoes it back inside the execute-command
+    // record; strip that. A raw ELA command has no such echo.
+    const commandEcho = wrapShell ? String(command || '') : null;
     const startedAt = now();
     let buffer = '';
     let settled = false;
@@ -119,7 +138,7 @@ function runExec({
         cleanup();
         resolve({
           ok: true,
-          output: extractExecOutput(buffer, completionIndex, promptToken),
+          output: extractExecOutput(buffer, completionIndex, promptToken, commandEcho),
           durationMs: now() - startedAt,
         });
       }
@@ -135,7 +154,7 @@ function runExec({
       cleanup();
       reject(Object.assign(new Error('exec timed out'), {
         code: 'TIMEOUT',
-        output: extractExecOutput(buffer, buffer.length, promptToken),
+        output: extractExecOutput(buffer, buffer.length, promptToken, commandEcho),
         durationMs: now() - startedAt,
       }));
     }, timeoutMs);
@@ -156,6 +175,7 @@ function runExec({
 module.exports = {
   runExec,
   stripAnsi,
+  stripCommandEcho,
   findCompletionIndex,
   extractExecOutput,
   DEFAULT_EXEC_TIMEOUT_MS,
