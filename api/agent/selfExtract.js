@@ -115,7 +115,12 @@ function buildWrapperHeader({ token, serverUrl = '', insecure = false, cacheKey 
 
   const qToken = shSingleQuote(token);
   const qRemote = shSingleQuote(serverUrl);
-  const qOutputHttp = shSingleQuote(deriveOutputHttpUrl(serverUrl));
+  // The agent validates that ELA_OUTPUT_HTTP holds an http:// URL and
+  // ELA_OUTPUT_HTTPS holds an https:// one — a mismatched scheme is rejected and
+  // the agent prints usage instead of running. Pick the variable by scheme.
+  const outputUrl = deriveOutputHttpUrl(serverUrl);
+  const qOutputUrl = shSingleQuote(outputUrl);
+  const outputVar = outputUrl.startsWith('https://') ? 'ELA_OUTPUT_HTTPS' : 'ELA_OUTPUT_HTTP';
   const qInsecure = insecure ? 'true' : 'false';
   const qCache = shSingleQuote(`.ela-agent-${cacheKey}`);
 
@@ -128,17 +133,20 @@ set -eu
 
 ELA_TOKEN='${qToken}'
 ELA_REMOTE='${qRemote}'
-ELA_OUTPUT_HTTP='${qOutputHttp}'
+ELA_OUTPUT_URL='${qOutputUrl}'
 ELA_INSECURE='${qInsecure}'
 
 export ELA_API_KEY="$ELA_TOKEN"
 
 # Route every command's output (dmesg, netstat, exec, …) to the agent API's
 # upload endpoint so results are retrievable via the client /uploads routes.
-# The agent maps the scheme and appends /<mac>/upload/<type> itself; this applies
-# to both a bare phone-home run and \`launcher linux <cmd>\` invocations.
-if [ -n "$ELA_OUTPUT_HTTP" ]; then
-    export ELA_OUTPUT_HTTP
+# The agent requires an http:// URL in ELA_OUTPUT_HTTP and an https:// URL in
+# ELA_OUTPUT_HTTPS (a scheme mismatch makes it print usage and exit), so the
+# right variable is chosen by scheme at build time. The agent appends
+# /<mac>/upload/<type> itself; this applies to both a bare phone-home run and
+# \`launcher linux <cmd>\` invocations.
+if [ -n "$ELA_OUTPUT_URL" ]; then
+    export ${outputVar}="$ELA_OUTPUT_URL"
 fi
 
 # Extract the appended binary to a stable cache path (the agent may daemonize,
