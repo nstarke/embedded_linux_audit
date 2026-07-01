@@ -21,9 +21,12 @@ services:
       REDIS_HOST: ${ELA_REDIS_HOST:-redis}
       REDIS_PORT: ${ELA_REDIS_PORT:-6379}
       ELA_BUILD_REPO_ROOT: /src
+      # Must match agent-api so the generic binaries land where the helper server
+      # serves from and add-user-key assembles launchers (<data>/release_binaries).
+      ELA_AGENT_DATA_DIR: /data/agent
     volumes:
-      # Output: the per-user binaries land on the shared agent-data volume that
-      # agent-api serves from.
+      # Output: the one-time generic binaries land on the shared agent-data
+      # volume that agent-api serves from and add-user-key wraps into launchers.
       - ${ELA_DATA_DIR:-/data/agent}:/data/agent
       # Sources: the host repo (third_party, .git, Makefile, agent/, tests/...).
       # Read-write because the cross-compile writes build-* dirs under it.

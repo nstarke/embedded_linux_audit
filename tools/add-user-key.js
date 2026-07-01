@@ -3,23 +3,25 @@
 'use strict';
 
 /**
- * Add a user and API key to the database, then enqueue a per-user agent binary
- * build (with that user's API token embedded) for the builder worker.
+ * Add a user and API key to the database, then assemble that user's agent
+ * launchers from the one-time generic binaries.
  *
  * Usage:
  *   node tools/add-user-key.js --username <username> [--label <label>] \
- *       [--key <plaintext-key>] [--assets-dir <dir>] [--skip-build]
+ *       [--key <plaintext-key>] [--server-url <wss://host>] \
+ *       [--assets-dir <dir>] [--insecure] [--skip-build]
  *
  * If --key is omitted a cryptographically random 32-byte hex key is generated.
  * The plaintext key is printed once and never stored — only its SHA-256 hash
  * is written to the database.
  *
- * The build itself runs asynchronously in the `builder` container: this tool
- * enqueues a job on the Redis-backed queue and returns immediately. The worker
- * cross-compiles every supported ISA with the token baked in (via
- * ELA_EMBEDDED_API_KEY) and writes them flat to
- * <assetsDir>/users/<keyHash>/ela-<isa>. Check progress with
- * tools/build-status.js. Pass --skip-build to only create the database records.
+ * No compilation happens here. The agent is cross-compiled ONCE into generic
+ * (unembedded) binaries at <assetsDir>/generic/ela-<isa> (see the builder
+ * worker). This tool wraps each generic binary in a self-extracting shell
+ * launcher that sets the user's token (ELA_API_KEY) and the terminal-API URL at
+ * runtime, writing them to <assetsDir>/users/<keyHash>/ela-<isa>. That is pure
+ * file I/O and completes instantly. Pass --skip-build to only create the DB
+ * records (no launchers written).
  */
 
 const path = require('path');
@@ -30,13 +32,8 @@ const crypto = require('crypto');
 const repoRoot = path.resolve(__dirname, '..');
 const { initializeDatabase, runMigrations, closeDatabase } = require(path.join(repoRoot, 'api/lib/db'));
 const { createApiKey } = require(path.join(repoRoot, 'api/lib/db/deviceRegistry'));
-const { getAgentServiceConfig } = require(path.join(repoRoot, 'api/lib/config'));
-
-// The queue (and its bullmq/redis deps) is only loaded when a build is actually
-// enqueued, so --skip-build and usage errors don't require it.
-function loadQueue() {
-  return require(path.join(repoRoot, 'api/lib/queue'));
-}
+const { resolveAssetsDir: resolveAssets, genericDir, userDir } = require(path.join(repoRoot, 'api/lib/agentAssets'));
+const { assembleUserWrappers } = require(path.join(repoRoot, 'api/agent/provisionWrappers'));
 
 function getArg(flag) {
   const idx = process.argv.indexOf(flag);
@@ -51,62 +48,42 @@ const username = getArg('--username');
 const label = getArg('--label') || null;
 const providedKey = getArg('--key');
 const assetsDirArg = getArg('--assets-dir');
-// Base WS URL of the terminal API to bake into the binary so it auto-connects
-// on a bare run. Falls back to ELA_SERVER_URL; empty means "do not embed".
+// Base WS URL of the terminal API to seed into the launcher so a bare run
+// auto-connects. Falls back to ELA_SERVER_URL; empty means "no phone-home".
 const serverUrl = getArg('--server-url') || process.env.ELA_SERVER_URL || '';
+const insecure = hasFlag('--insecure');
 const skipBuild = hasFlag('--skip-build');
 
 if (!username) {
-  process.stderr.write('usage: add-user-key.js --username <username> [--label <label>] [--key <plaintext-key>] [--server-url <wss://host>] [--assets-dir <dir>] [--skip-build]\n');
+  process.stderr.write('usage: add-user-key.js --username <username> [--label <label>] [--key <plaintext-key>] [--server-url <wss://host>] [--assets-dir <dir>] [--insecure] [--skip-build]\n');
   process.exit(1);
 }
 
-/**
- * Resolve the assets directory the agent helper server serves from, mirroring
- * api/agent/server.js: ELA_AGENT_ASSETS_DIR when set, otherwise
- * <dataRoot>/release_binaries.
- */
 function resolveAssetsDir() {
-  if (assetsDirArg) {
-    return path.isAbsolute(assetsDirArg) ? assetsDirArg : path.resolve(repoRoot, assetsDirArg);
-  }
-  const svc = getAgentServiceConfig();
-  if (svc.assetsDir) {
-    return path.isAbsolute(svc.assetsDir) ? svc.assetsDir : path.resolve(repoRoot, svc.assetsDir);
-  }
-  const dataRoot = path.isAbsolute(svc.dataDir) ? svc.dataDir : path.resolve(repoRoot, svc.dataDir);
-  return path.join(dataRoot, 'release_binaries');
+  return resolveAssets({ assetsDirArg, repoRoot });
 }
 
-async function enqueueBuild(plaintextKey, keyHash) {
-  const { getBuildQueue, closeBuildQueue } = loadQueue();
-  const outDir = path.join(resolveAssetsDir(), 'users', keyHash);
-  const queue = getBuildQueue();
-  try {
-    const job = await queue.add('build', {
-      username,
-      keyHash,
-      embeddedKey: plaintextKey,
-      serverUrl,
-      outDir,
-    }, {
-      attempts: 1,
-      removeOnComplete: 100,
-      removeOnFail: 100,
-    });
-    return { outDir, jobId: job.id };
-  } finally {
-    await closeBuildQueue().catch(() => {});
-  }
+// Wrap each generic binary in a per-user self-extracting launcher. Instant
+// (pure file I/O) — no compilation. Requires the one-time generic build to have
+// produced <assetsDir>/generic/ela-<isa> first.
+async function assembleLaunchers(plaintextKey, keyHash) {
+  const assetsDir = resolveAssetsDir();
+  const dest = userDir(assetsDir, keyHash);
+  const { written } = await assembleUserWrappers({
+    genericDir: genericDir(assetsDir),
+    userDir: dest,
+    token: plaintextKey,
+    serverUrl,
+    insecure,
+  });
+  return { outDir: dest, isas: written.map((w) => w.isa) };
 }
 
-function printManualBuildFallback(plaintextKey, outDir) {
-  process.stdout.write('\nThe build was NOT queued. Build it manually in the builder container:\n');
-  process.stdout.write('  docker compose exec \\\n');
-  process.stdout.write('    -e ELA_RELEASE_FLAT_OUTPUT=1 \\\n');
-  process.stdout.write(`    -e ELA_EMBEDDED_API_KEY=${plaintextKey} \\\n`);
-  process.stdout.write(`    -e DEST_RELEASE_DIR=${outDir} \\\n`);
-  process.stdout.write('    builder sh /src/tests/compile_release_binaries_locally.sh\n');
+function printGenericBuildHint(assetsDir) {
+  process.stdout.write('\nNo generic binaries found — the one-time build has not run yet.\n');
+  process.stdout.write(`Expected them at ${genericDir(assetsDir)}/ela-<isa>.\n`);
+  process.stdout.write('The builder produces them automatically on first start; wait for it to\n');
+  process.stdout.write('finish (docker compose logs -f builder), then re-run this command.\n');
 }
 
 async function main() {
@@ -141,21 +118,22 @@ async function main() {
   process.stdout.write(`agent key:  ${plaintextKey}\n`);
   process.stdout.write(`client key: ${clientKey}\n`);
   process.stdout.write('\nStore these keys securely — they will not be shown again.\n');
-  process.stdout.write('The agent key is embedded into the agent binaries; the client key is for the client API.\n');
+  process.stdout.write('The agent key is set at runtime by the launcher (ELA_API_KEY); the client key is for the client API.\n');
 
   if (skipBuild) {
-    process.stdout.write('\nSkipping per-user binary build (--skip-build).\n');
+    process.stdout.write('\nSkipping launcher assembly (--skip-build).\n');
     return;
   }
 
   try {
-    const { outDir, jobId } = await enqueueBuild(plaintextKey, keyHash);
-    process.stdout.write(`\nBuild queued (job ${jobId}) -> ${outDir}\n`);
-    process.stdout.write('The builder is compiling all ISAs in the background (this takes a while).\n');
-    process.stdout.write('Check progress: docker compose exec agent-api node /app/tools/build-status.js\n');
+    const { outDir, isas } = await assembleLaunchers(plaintextKey, keyHash);
+    process.stdout.write(`\nLaunchers written (${isas.length} ISAs) -> ${outDir}\n`);
+    process.stdout.write(`Download one with: GET /isa/${plaintextKey}/<isa>  (e.g. ${isas[0] || 'x86_64'})\n`);
+    process.stdout.write('Save it, `chmod +x`, and run it on the target — it sets the token and (if\n');
+    process.stdout.write('a server URL was configured) phones home to the terminal API on a bare run.\n');
   } catch (err) {
-    process.stderr.write(`\nwarning: failed to queue the build: ${err.message}\n`);
-    printManualBuildFallback(plaintextKey, path.join(resolveAssetsDir(), 'users', keyHash));
+    process.stderr.write(`\nwarning: failed to assemble launchers: ${err.message}\n`);
+    printGenericBuildHint(resolveAssetsDir());
     process.exit(1);
   }
 }

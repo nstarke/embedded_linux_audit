@@ -22,6 +22,7 @@ describe('runBuild', () => {
       cwd: '/src',
       stdio: 'inherit',
       env: expect.objectContaining({
+        RELEASE_BINARIES_DIR: '/data/agent/release_binaries/users/abc',
         DEST_RELEASE_DIR: '/data/agent/release_binaries/users/abc',
         ELA_EMBEDDED_API_KEY: 'tok123',
         ELA_RELEASE_FLAT_OUTPUT: '1',
@@ -30,6 +31,25 @@ describe('runBuild', () => {
 
     child.emit('close', 0);
     await expect(promise).resolves.toEqual({ outDir: '/data/agent/release_binaries/users/abc' });
+  });
+
+  test('generic build (no embeddedKey) steers output via RELEASE_BINARIES_DIR and embeds nothing', async () => {
+    const child = fakeChild();
+    const spawn = jest.fn(() => child);
+
+    const promise = runBuild({ outDir: '/data/agent/release_binaries/generic' }, { spawn, repoRoot: '/src' });
+
+    const env = spawn.mock.calls[0][2].env;
+    expect(env).toEqual(expect.objectContaining({
+      RELEASE_BINARIES_DIR: '/data/agent/release_binaries/generic',
+      DEST_RELEASE_DIR: '/data/agent/release_binaries/generic',
+      ELA_RELEASE_FLAT_OUTPUT: '1',
+    }));
+    expect(env).not.toHaveProperty('ELA_EMBEDDED_API_KEY');
+    expect(env).not.toHaveProperty('ELA_EMBEDDED_SERVER_URL');
+
+    child.emit('close', 0);
+    await expect(promise).resolves.toEqual({ outDir: '/data/agent/release_binaries/generic' });
   });
 
   test('passes ELA_EMBEDDED_SERVER_URL only when serverUrl is present', async () => {
@@ -65,10 +85,10 @@ describe('runBuild', () => {
     await expect(promise).rejects.toThrow('failed to launch build script: ENOENT');
   });
 
-  test('rejects (without spawning) when required job fields are missing', async () => {
+  test('rejects (without spawning) when outDir is missing', async () => {
     const spawn = jest.fn();
-    await expect(runBuild({ outDir: '/o' }, { spawn })).rejects.toThrow('missing embeddedKey');
     await expect(runBuild({ embeddedKey: 't' }, { spawn })).rejects.toThrow('missing outDir');
+    await expect(runBuild({}, { spawn })).rejects.toThrow('missing outDir');
     expect(spawn).not.toHaveBeenCalled();
   });
 });

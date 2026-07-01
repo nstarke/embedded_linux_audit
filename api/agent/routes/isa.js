@@ -5,9 +5,11 @@ module.exports = function registerIsaRoute(app, deps) {
 
   // Unauthenticated by design: a freshly provisioned host has no agent and no
   // way to send an Authorization header, so the per-user token is supplied in
-  // the URL path instead. The token is hashed to locate that user's binary set
+  // the URL path instead. The token is hashed to locate that user's launcher set
   // (the dir name is sha256(token), never the raw token, so there is no path
-  // traversal). This route is registered BEFORE auth.middleware in app.js.
+  // traversal). Each file is a self-extracting shell launcher that sets the
+  // token/URL and runs the embedded generic binary. Registered BEFORE
+  // auth.middleware in app.js.
   app.get('/isa/:token/:isa', async (req, res) => {
     verboseRequestLog(req);
     if (!isSafeSinglePathSegment(req.params.isa)) {
@@ -34,6 +36,8 @@ module.exports = function registerIsaRoute(app, deps) {
     }
 
     res.type(mime.lookup(candidate) || 'application/octet-stream');
+    // Suggest a sensible filename so the download saves as the launcher name.
+    res.setHeader('Content-Disposition', `attachment; filename="ela-${req.params.isa}"`);
     // Send via a path relative to the validated baseDir with the `root` option
     // (the convention the other static routes use): Express re-resolves against
     // root and rejects any traversal, so the sink never receives a raw

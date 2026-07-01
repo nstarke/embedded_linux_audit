@@ -2,18 +2,30 @@
 
 Use the Node.js helper in `api/agent/` as the local helper for testing HTTP/HTTPS POST output and serving per-user agent binaries/test scripts.
 
-## Per-user, token-embedded agent binaries
+## Per-user agent launchers (generic build + self-extracting wrapper)
 
-Agent binaries are no longer downloaded from GitHub. Instead they are
-cross-compiled in the helper container with each user's API token baked in, at
-the moment that token is created (`tools/add-user-key.js`). The binaries are
-written flat to `<data-dir>/release_binaries/users/<keyHash>/ela-<isa>` where
-`<keyHash>` is the SHA-256 of the token.
+Agent binaries are no longer downloaded from GitHub, and they are **no longer
+cross-compiled per user**. The agent is compiled **once** into generic
+(unembedded) binaries — one per ISA — at `<data-dir>/release_binaries/generic/ela-<isa>`.
+The `builder` worker produces these automatically on first start (a one-time
+job), so there is no per-user compile and nothing to wait on when creating a
+user.
 
-`GET /isa/:token/:isa` is **unauthenticated** and serves the binary set for the
+When a token is created (`tools/add-user-key.js`), each generic binary is
+wrapped in a small **self-extracting POSIX-sh launcher** that, at runtime, sets
+`ELA_API_KEY=<token>` and (on a bare run) seeds `/tmp/.ela.conf` with the
+terminal-API URL so the agent phones home — then extracts and execs the embedded
+binary, forwarding all arguments. This is pure file I/O and completes instantly.
+The launchers are written flat to
+`<data-dir>/release_binaries/users/<keyHash>/ela-<isa>` where `<keyHash>` is the
+SHA-256 of the token.
+
+`GET /isa/:token/:isa` is **unauthenticated** and serves the launcher for the
 token given in the URL path (the server hashes it to `users/<sha256(token)>/`).
-This lets an unprovisioned host fetch its binary with a plain GET — no
-Authorization header — at the cost of the token appearing in the URL. See
+Save it, `chmod +x`, and run it: `./ela-<isa>` phones home on a bare run, while
+`./ela-<isa> linux dmesg` runs a command locally (the same duality an
+embedded-URL binary had). The token is present in the launcher file in
+cleartext, so treat the downloaded file as a credential. See
 [token creation and docker operations](../docker-operations.md) and
 [server-side auth](../auth.md).
 
@@ -40,7 +52,7 @@ Additional server options:
 - `--data-dir` changes the base directory used for helper-server data storage. By default this is `api/agent/data`.
 - `--reuse-last-data-dir` reuses the latest existing timestamped runtime data directory under `--data-dir`; if none exists, startup creates and uses the current timestamp directory.
 - `--https` enables HTTPS with a self-signed localhost certificate.
-- `--clean` deletes runtime upload data under the configured data directory before startup, but preserves the per-user release binaries in `<data-dir>/release_binaries`.
+- `--clean` deletes runtime upload data under the configured data directory before startup, but preserves the generic binaries and per-user launchers in `<data-dir>/release_binaries`.
 
 POST handling notes:
 
@@ -55,7 +67,7 @@ POST handling notes:
 - upload metadata and normalized records are persisted in PostgreSQL.
 - runtime upload data may also be stored under `<data-dir>/<startup_timestamp>/<mac_address>/...` for `fs`, `file-list`, `env`, `logs`, `dmesg`, `coredump`, `orom`, `pcap`, `uboot/image`, and `uboot/env`.
 - `/upload/log` and `/upload/logs` are both accepted and stored under `<data-dir>/<startup_timestamp>/<mac_address>/logs/`.
-- per-user release binaries live under `<data-dir>/release_binaries/users/<keyHash>/` by default.
+- the one-time generic binaries live under `<data-dir>/release_binaries/generic/ela-<isa>`; per-user launchers live under `<data-dir>/release_binaries/users/<keyHash>/` by default.
 - `GET /` returns an HTML index of the authenticated user's release binaries and agent test scripts.
 - `GET /tests/agent/:name` serves `.sh` files from `tests/agent/shell/` (for example `/tests/agent/download_tests.sh`, backed by `tests/agent/shell/download_tests.sh`). `GET /isa/:token/:isa` (unauthenticated) and `GET /uboot-env/:env_filename` serve ISA binaries and U-Boot environment helper files respectively. `GET /isa/:token/:isa` selects the per-user directory by hashing the token in the URL path.
 

@@ -233,82 +233,79 @@ If you need to run migrations manually inside the `agent-api` container:
 docker compose run --rm agent-api node /app/api/lib/db/migrate.js
 ```
 
-## Creating users and per-user binaries
+## Creating users and per-user launchers
 
-Each user downloads agent binaries that are built specifically for them with
-their API token compiled in (via the `ELA_EMBEDDED_API_KEY` macro). The compile
-runs **asynchronously** in the `builder` container, off a Redis queue — the API
-containers no longer build anything. The `builder` compiles from the host repo
-mounted at `/src`, so submodules must be initialized on the host first:
+The agent is cross-compiled **once** into generic (unembedded) binaries — one
+per ISA — that carry no token or URL. Each user then downloads a small
+**self-extracting launcher** that wraps a generic binary and sets their token
+and the terminal-API URL at runtime. There is **no per-user compile**, so
+creating a user is instant.
+
+The one-time generic build runs in the `builder` container (off the same Redis
+queue), which compiles from the host repo mounted at `/src`, so submodules must
+be initialized on the host first:
 
 ```bash
 git submodule update --init --recursive
 docker compose up -d   # starts postgres, redis, builder, the APIs, nginx
 ```
 
-Create a user and **enqueue** their build:
+On first start the `builder` notices `<data-dir>/release_binaries/generic/` is
+empty and enqueues the one-time generic build automatically. Watch it finish:
+
+```bash
+docker compose logs -f builder
+docker compose exec agent-api node /app/tools/build-status.js   # counts + recent jobs
+```
+
+Then create a user (this needs the generic binaries to exist):
 
 ```bash
 docker compose exec agent-api node /app/tools/add-user-key.js --username alice
 ```
 
-This creates two scoped tokens, prints each one once, queues the build, and
+This creates two scoped tokens, prints each once, assembles the launchers, and
 returns immediately:
 
 ```
-agent key:  <embedded into alice's agent binaries>
+agent key:  <set at runtime by alice's launcher via ELA_API_KEY>
 client key: <for the client API>
 
-Build queued (job 1) -> /data/agent/release_binaries/users/<sha256(agent-key)>
+Launchers written (15 ISAs) -> /data/agent/release_binaries/users/<sha256(agent-key)>
 ```
 
-Only the SHA-256 hashes are stored. When the `builder` finishes, the binaries
-are at `<data-dir>/release_binaries/users/<sha256(agent-key)>/ela-<isa>` on the
-shared `agent-data` volume. Pass `--skip-build` to only create the database
-records, or `--key <token>` to supply a specific agent token.
+Only the SHA-256 hashes are stored. The launchers are at
+`<data-dir>/release_binaries/users/<sha256(agent-key)>/ela-<isa>` on the shared
+`agent-data` volume. Pass `--skip-build` to only create the database records,
+`--key <token>` to supply a specific agent token, or `--insecure` to have the
+launcher skip TLS verification when phoning home. If the generic binaries do not
+exist yet, `add-user-key` prints a hint to wait for the builder and re-run.
 
-### Build queue
+### Server URL / phone-home
 
-The build is a job on the `ela-binary-builds` queue (BullMQ on Redis), consumed
-by the `builder` worker (concurrency 1, so builds run one at a time). Watch
-progress:
+If `ELA_SERVER_URL` is set (a base WS URL such as `wss://ela.example.com`) — or
+`add-user-key --server-url <wss://host>` is passed — the launcher seeds
+`/tmp/.ela.conf` with `remote=<url>` on first run. A launcher run with **no
+command** then auto-connects to the terminal API at `<url>/terminal/<mac>`,
+authenticating with the user's token, so the device shows up in the terminal API
+on its own. Running the launcher with an explicit command (`./ela-<isa> linux
+dmesg`) runs that command locally instead; an explicit `--remote <host>` still
+overrides. With no server URL configured the launcher just sets the token and
+does not phone home.
 
-```bash
-docker compose logs -f builder
-docker compose exec agent-api node /app/tools/build-status.js            # counts + recent jobs
-docker compose exec agent-api node /app/tools/build-status.js --username alice
-```
-
-A 15-ISA build takes a while; the agent token download (`/isa/<token>/<isa>`)
-returns `404` until that user's build completes. The job payload carries the
-plaintext agent token (so the worker can embed it) and stays on the internal
-Docker network only. If enqueuing fails, `add-user-key` prints a one-liner to run
-the build manually in the `builder` container.
-
-#### Embedded server URL
-
-If `ELA_SERVER_URL` is set (a base WS URL such as `wss://ela.example.com`), the
-worker also bakes it into the binaries (`ELA_EMBEDDED_SERVER_URL`). A binary
-built this way, run with **no command**, auto-connects to the terminal API at
-`<ELA_SERVER_URL>/terminal/<mac>` — authenticating with its embedded agent token
-— and serves an interactive session, so the device shows up in the terminal API
-on its own. Running the binary with an explicit command still runs that command;
-an explicit `--remote <host>` still overrides the embedded URL. Override per
-invocation with `add-user-key --server-url <wss://host>`.
-
-The agent then authenticates with zero extra configuration. The download
-endpoint is **unauthenticated** — the token rides in the URL path — so a freshly
-provisioned host with no agent yet can pull its binary with a plain GET:
+The download endpoint is **unauthenticated** — the token rides in the URL path —
+so a freshly provisioned host with no agent yet can pull its launcher with a
+plain GET, then run it:
 
 ```bash
-curl http://localhost/isa/<agent-key>/x86_64 -o embedded_linux_audit
+curl http://localhost/isa/<agent-key>/x86_64 -o ela-x86_64
+chmod +x ela-x86_64 && ./ela-x86_64        # bare run -> phones home
 ```
 
 `GET /isa/:token/:isa` hashes the path token (`sha256`) to locate that user's
-binary set and serves the matching architecture; an unknown token simply yields
-`404`. Note the agent token therefore appears in the URL (and in any access
-logs/proxies) — the binary it returns embeds that same token, so treat the URL
-as a credential.
+launcher set and serves the matching architecture; an unknown token yields
+`404`. The agent token appears in the URL (and in any access logs/proxies) **and**
+inside the launcher file itself, so treat both as credentials.
 
 ### Removing a user
 
@@ -318,13 +315,11 @@ as a credential.
 docker compose exec agent-api node /app/tools/remove-user-key.js --username alice
 ```
 
-It deletes the user row (its `api_keys` cascade-delete), removes that user's
-pending build jobs from the queue, and deletes the per-user binary directories
-`users/<keyHash>/`. Uploaded artifacts are **retained** but unlinked from the
-user (`uploads.user_id` → NULL), so they no longer appear in the client API.
-Flags: `--keep-binaries`, `--keep-queue`, `--assets-dir <dir>`. An already-running
-build for that user can't be cancelled mid-flight — re-run the command after it
-finishes if it recreated the directory.
+It deletes the user row (its `api_keys` cascade-delete) and the per-user launcher
+directories `users/<keyHash>/`. Uploaded artifacts are **retained** but unlinked
+from the user (`uploads.user_id` → NULL), so they no longer appear in the client
+API. Flags: `--keep-binaries`, `--keep-queue`, `--assets-dir <dir>`. (Per-user
+builds no longer exist, so there is normally nothing in the queue to remove.)
 
 ### Reading back artifacts (client API)
 

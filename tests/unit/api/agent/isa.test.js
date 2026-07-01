@@ -21,6 +21,10 @@ function createRes() {
       this.headers['content-type'] = value;
       return this;
     },
+    setHeader(name, value) {
+      this.headers[name.toLowerCase()] = value;
+      return this;
+    },
     send(value) {
       this.body = value;
       return this;
@@ -136,6 +140,7 @@ describe('isa route', () => {
     // Sent as a path relative to the validated baseDir, scoped by `root`.
     expect(res.sentFile).toBe('ela-x86_64');
     expect(res.sentFileOptions).toEqual({ root: expectedDir });
+    expect(res.headers['content-disposition']).toBe('attachment; filename="ela-x86_64"');
   });
 
   test('a different token maps to a different directory', async () => {

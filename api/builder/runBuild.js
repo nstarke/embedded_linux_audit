@@ -7,13 +7,18 @@ const { spawn } = require('child_process');
 const DEFAULT_REPO_ROOT = process.env.ELA_BUILD_REPO_ROOT || '/src';
 
 /**
- * Run a per-user binary build for one queue job.
+ * Run a binary build for one queue job.
+ *
+ * The default (and only) job in the new model is a GENERIC build: no token or
+ * URL is baked in — those are injected at runtime by the per-user self-extracting
+ * launcher (see api/agent/selfExtract.js). If `embeddedKey` is present the legacy
+ * embed path still works (token compiled in), for back-compat.
  *
  * Asynchronous on purpose: the compile takes many minutes, so it must not block
  * the worker's event loop (BullMQ needs to keep renewing the job lock). The
  * child is spawned and we resolve/reject on its exit.
  *
- * @param {{embeddedKey:string, outDir:string, username?:string, keyHash?:string}} payload
+ * @param {{outDir:string, embeddedKey?:string, serverUrl?:string, username?:string, keyHash?:string}} payload
  * @param {{spawn?:Function, repoRoot?:string}} [opts]  Injection point for tests.
  * @returns {Promise<{outDir:string}>}
  */
@@ -22,9 +27,6 @@ function runBuild(payload, opts = {}) {
   const repoRoot = opts.repoRoot || DEFAULT_REPO_ROOT;
   const { embeddedKey, outDir, serverUrl } = payload || {};
 
-  if (!embeddedKey) {
-    return Promise.reject(new Error('build job missing embeddedKey'));
-  }
   if (!outDir) {
     return Promise.reject(new Error('build job missing outDir'));
   }
@@ -32,11 +34,17 @@ function runBuild(payload, opts = {}) {
   const script = path.join(repoRoot, 'tests/compile_release_binaries_locally.sh');
   const buildEnv = {
     ...process.env,
+    // The compile script derives its output dir from RELEASE_BINARIES_DIR
+    // (DEST_RELEASE_DIR is set for readability but the script reassigns it).
+    RELEASE_BINARIES_DIR: outDir,
     DEST_RELEASE_DIR: outDir,
-    ELA_EMBEDDED_API_KEY: embeddedKey,
     ELA_RELEASE_FLAT_OUTPUT: '1',
   };
-  // Bake the terminal-API URL in only when one was provided.
+  // Legacy embed path: bake the token / URL in only when provided. Generic
+  // builds omit both.
+  if (embeddedKey) {
+    buildEnv.ELA_EMBEDDED_API_KEY = embeddedKey;
+  }
   if (serverUrl) {
     buildEnv.ELA_EMBEDDED_SERVER_URL = serverUrl;
   }
