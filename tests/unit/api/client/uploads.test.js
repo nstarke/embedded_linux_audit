@@ -60,7 +60,7 @@ describe('client uploads routes', () => {
 
     await handlers['/uploads']({ authUser: 'alice', query: {} }, res);
 
-    expect(listUploadTypesForUser).toHaveBeenCalledWith('alice');
+    expect(listUploadTypesForUser).toHaveBeenCalledWith('alice', { mac: null });
     expect(res.jsonBody).toEqual({ uploadTypes: [{ uploadType: 'dmesg', count: 3 }] });
   });
 
@@ -85,8 +85,42 @@ describe('client uploads routes', () => {
       res,
     );
 
-    expect(listUploadsForUser).toHaveBeenCalledWith('dmesg', 'alice', { limit: 1000, offset: 10 });
+    expect(listUploadsForUser).toHaveBeenCalledWith('dmesg', 'alice', { limit: 1000, offset: 10, mac: null });
     expect(res.jsonBody).toEqual({ uploadType: 'dmesg', limit: 1000, offset: 10, uploads: [{ id: '1' }] });
+  });
+
+  test('GET /uploads passes a mac filter through and 400s an invalid one', async () => {
+    const listUploadTypesForUser = jest.fn().mockResolvedValue([]);
+    const handlers = register({ listUploadTypesForUser });
+
+    // Valid mac (any separator) is forwarded verbatim; the query layer canonicalizes.
+    const okRes = createRes();
+    await handlers['/uploads']({ authUser: 'alice', query: { mac: 'AA-BB-CC-DD-EE-FF' } }, okRes);
+    expect(listUploadTypesForUser).toHaveBeenCalledWith('alice', { mac: 'AA-BB-CC-DD-EE-FF' });
+    expect(okRes.statusCode).toBe(200);
+
+    // Malformed mac -> 400, query not run.
+    listUploadTypesForUser.mockClear();
+    const badRes = createRes();
+    await handlers['/uploads']({ authUser: 'alice', query: { mac: 'nope' } }, badRes);
+    expect(badRes.statusCode).toBe(400);
+    expect(listUploadTypesForUser).not.toHaveBeenCalled();
+  });
+
+  test('GET /uploads/:type forwards the mac filter and echoes it in the body', async () => {
+    const listUploadsForUser = jest.fn().mockResolvedValue([{ id: '1' }]);
+    const handlers = register({ listUploadsForUser });
+    const res = createRes();
+
+    await handlers['/uploads/:type'](
+      { authUser: 'alice', params: { type: 'dmesg' }, query: { mac: '20:4c:03:32:75:5c' } },
+      res,
+    );
+
+    expect(listUploadsForUser).toHaveBeenCalledWith('dmesg', 'alice', { limit: 100, offset: 0, mac: '20:4c:03:32:75:5c' });
+    expect(res.jsonBody).toEqual({
+      uploadType: 'dmesg', limit: 100, offset: 0, mac: '20:4c:03:32:75:5c', uploads: [{ id: '1' }],
+    });
   });
 
   test('GET /uploads/:type/:id returns 404 for non-numeric id', async () => {
@@ -161,7 +195,7 @@ describe('client uploads routes', () => {
 
     await handlers['/uploads/:type']({ authUser: 'alice', params: { type: 'dmesg' }, query: {} }, res);
 
-    expect(listUploadsForUser).toHaveBeenCalledWith('dmesg', 'alice', { limit: 100, offset: 0 });
+    expect(listUploadsForUser).toHaveBeenCalledWith('dmesg', 'alice', { limit: 100, offset: 0, mac: null });
     expect(res.jsonBody).toEqual({ uploadType: 'dmesg', limit: 100, offset: 0, uploads: [] });
   });
 

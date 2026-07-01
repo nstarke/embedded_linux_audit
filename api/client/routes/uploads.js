@@ -24,6 +24,21 @@ function isValidId(id) {
   return typeof id === 'string' && /^[0-9]+$/.test(id);
 }
 
+// Optional `?mac=<addr>` filter. Accepts any separator style (`:`/`-`/none);
+// the query layer canonicalizes it. Returns { valid, mac }: `mac` is the raw
+// caller value (or null when absent), `valid` is false only when a value is
+// present but is not a 12-hex-digit MAC.
+function parseMacFilter(value) {
+  if (value === undefined) {
+    return { valid: true, mac: null };
+  }
+  const hex = String(value).toLowerCase().replace(/[^0-9a-f]/g, '');
+  if (hex.length !== 12) {
+    return { valid: false, mac: null };
+  }
+  return { valid: true, mac: value };
+}
+
 module.exports = function registerUploadsRoutes(app, deps = {}) {
   const queries = {
     listUploadTypesForUser,
@@ -33,7 +48,12 @@ module.exports = function registerUploadsRoutes(app, deps = {}) {
   };
 
   app.get('/uploads', async (req, res) => {
-    const types = await queries.listUploadTypesForUser(req.authUser);
+    const { valid, mac } = parseMacFilter(req.query.mac);
+    if (!valid) {
+      res.status(400).json({ error: 'invalid mac address' });
+      return;
+    }
+    const types = await queries.listUploadTypesForUser(req.authUser, { mac });
     res.json({ uploadTypes: types });
   });
 
@@ -43,10 +63,19 @@ module.exports = function registerUploadsRoutes(app, deps = {}) {
       res.status(404).json({ error: 'unknown upload type' });
       return;
     }
+    const { valid, mac } = parseMacFilter(req.query.mac);
+    if (!valid) {
+      res.status(400).json({ error: 'invalid mac address' });
+      return;
+    }
     const limit = Math.min(parseNonNegativeInt(req.query.limit, 100), 1000);
     const offset = parseNonNegativeInt(req.query.offset, 0);
-    const uploads = await queries.listUploadsForUser(type, req.authUser, { limit, offset });
-    res.json({ uploadType: type, limit, offset, uploads });
+    const uploads = await queries.listUploadsForUser(type, req.authUser, { limit, offset, mac });
+    const body = { uploadType: type, limit, offset, uploads };
+    if (mac) {
+      body.mac = mac;
+    }
+    res.json(body);
   });
 
   app.get('/uploads/:type/:id', async (req, res) => {

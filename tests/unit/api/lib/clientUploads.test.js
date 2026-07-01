@@ -106,6 +106,40 @@ describe('clientUploads', () => {
     ]);
   });
 
+  test('mac filter narrows to the matching associated device (canonicalized)', async () => {
+    const Upload = { findAll: jest.fn().mockResolvedValue([]) };
+    const Device = { name: 'Device' };
+    // With the MAC filter, only device 5 comes back from the join.
+    const UserDevice = { findAll: jest.fn().mockResolvedValue([{ deviceId: 5 }]) };
+    const models = { User: { findOne: jest.fn().mockResolvedValue({ id: 7 }) }, UserDevice, Device, Upload };
+    const lib = loadClientUploads({ models });
+
+    await lib.listUploadsForUser('dmesg', 'alice', { limit: 10, offset: 0, mac: 'AA:BB:CC:DD:EE:FF' });
+
+    // UserDevice query joins Device and filters by the canonical (dash) MAC,
+    // still scoped to this user's links.
+    const udArg = UserDevice.findAll.mock.calls[0][0];
+    expect(udArg.where).toEqual({ userId: 7 });
+    expect(udArg.include[0].model).toBe(Device);
+    expect(udArg.include[0].where).toEqual({ macAddress: 'aa-bb-cc-dd-ee-ff' });
+    expect(udArg.include[0].required).toBe(true);
+    // Uploads scoped to the single matched device.
+    expect(Upload.findAll.mock.calls[0][0].where).toEqual({ deviceId: [5], uploadType: 'dmesg' });
+  });
+
+  test('listUploadTypesForUser passes the mac filter through', async () => {
+    const Upload = { findAll: jest.fn().mockResolvedValue([]) };
+    const Device = { name: 'Device' };
+    const UserDevice = { findAll: jest.fn().mockResolvedValue([{ deviceId: 5 }]) };
+    const models = { User: { findOne: jest.fn().mockResolvedValue({ id: 7 }) }, UserDevice, Device, Upload };
+    const sequelize = { fn: jest.fn(() => 'COUNT_FN'), col: jest.fn(() => 'id') };
+    const lib = loadClientUploads({ models, sequelize });
+
+    await lib.listUploadTypesForUser('alice', { mac: '20-4c-03-32-75-5c' });
+    expect(UserDevice.findAll.mock.calls[0][0].include[0].where).toEqual({ macAddress: '20-4c-03-32-75-5c' });
+    expect(Upload.findAll.mock.calls[0][0].where).toEqual({ deviceId: [5] });
+  });
+
   test('getUploadForUser returns null when not found among associated devices', async () => {
     const Upload = { findOne: jest.fn().mockResolvedValue(null) };
     const models = modelsWithDevices({ Upload, Device: {} });

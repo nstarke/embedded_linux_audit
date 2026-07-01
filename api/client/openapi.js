@@ -38,6 +38,7 @@ const openapiSpec = {
         tags: ['uploads'],
         summary: 'List upload types and counts',
         operationId: 'listUploadTypes',
+        parameters: [{ $ref: '#/components/parameters/MacFilter' }],
         responses: {
           200: {
             description: 'Upload types available to the authenticated user',
@@ -47,6 +48,7 @@ const openapiSpec = {
               },
             },
           },
+          400: { $ref: '#/components/responses/BadRequest' },
           401: { $ref: '#/components/responses/Unauthorized' },
         },
       },
@@ -58,6 +60,7 @@ const openapiSpec = {
         operationId: 'listUploads',
         parameters: [
           { $ref: '#/components/parameters/UploadType' },
+          { $ref: '#/components/parameters/MacFilter' },
           {
             name: 'limit',
             in: 'query',
@@ -82,6 +85,7 @@ const openapiSpec = {
               },
             },
           },
+          400: { $ref: '#/components/responses/BadRequest' },
           401: { $ref: '#/components/responses/Unauthorized' },
           404: { $ref: '#/components/responses/NotFound' },
         },
@@ -357,6 +361,13 @@ const openapiSpec = {
         required: true,
         description: 'Device MAC address, either separator (aa:bb:cc:dd:ee:ff or aa-bb-cc-dd-ee-ff), any case. Must be a device you are associated with.',
         schema: { type: 'string', pattern: '^([0-9a-fA-F]{2}[:-]){5}[0-9a-fA-F]{2}$' },
+      },
+      MacFilter: {
+        name: 'mac',
+        in: 'query',
+        required: false,
+        description: 'Optional device MAC filter (any separator or none, any case). Restricts results to that device; unknown or unassociated MACs return no results.',
+        schema: { type: 'string', example: 'aa:bb:cc:dd:ee:ff' },
       },
       Pid: {
         name: 'pid',

@@ -1,6 +1,7 @@
 'use strict';
 
 const { getModels, getSequelize } = require('./index');
+const { normalizeMac } = require('./deviceRegistry');
 
 /*
  * Read-side queries for the client API.  Visibility is scoped by device
@@ -35,13 +36,27 @@ async function resolveUserId(username) {
 
 // Device ids associated with the user (via the terminal phone-home). Returns []
 // when there is no such user or the user has not associated any devices.
-async function resolveUserDeviceIds(username) {
+//
+// An optional `mac` narrows the result to the single associated device with
+// that MAC (canonicalized, so any separator style matches). The filter stays
+// within the user's own devices, so a MAC the user is not associated with (or
+// an unknown one) yields [] — no cross-user leakage and no enumeration.
+async function resolveUserDeviceIds(username, { mac = null } = {}) {
   const userId = await resolveUserId(username);
   if (userId === null) {
     return [];
   }
-  const { UserDevice } = getModels();
-  const links = await UserDevice.findAll({ where: { userId }, attributes: ['deviceId'] });
+  const { UserDevice, Device } = getModels();
+  const query = { where: { userId }, attributes: ['deviceId'] };
+  if (mac) {
+    query.include = [{
+      model: Device,
+      attributes: [],
+      where: { macAddress: normalizeMac(mac) },
+      required: true,
+    }];
+  }
+  const links = await UserDevice.findAll(query);
   return links.map((l) => l.deviceId);
 }
 
@@ -62,8 +77,8 @@ function metadataFromUpload(upload) {
   };
 }
 
-async function listUploadTypesForUser(username) {
-  const deviceIds = await resolveUserDeviceIds(username);
+async function listUploadTypesForUser(username, { mac = null } = {}) {
+  const deviceIds = await resolveUserDeviceIds(username, { mac });
   if (deviceIds.length === 0) {
     return [];
   }
@@ -79,8 +94,8 @@ async function listUploadTypesForUser(username) {
   return rows.map((row) => ({ uploadType: row.uploadType, count: Number(row.count) }));
 }
 
-async function listUploadsForUser(uploadType, username, { limit = 100, offset = 0 } = {}) {
-  const deviceIds = await resolveUserDeviceIds(username);
+async function listUploadsForUser(uploadType, username, { limit = 100, offset = 0, mac = null } = {}) {
+  const deviceIds = await resolveUserDeviceIds(username, { mac });
   if (deviceIds.length === 0) {
     return [];
   }
