@@ -95,21 +95,29 @@ copy_compiled_release_binaries() {
 
 # Upsert NAME=VALUE into an env file (create it if missing), replacing any
 # existing NAME= line. Docker Compose reads this file, so a value persisted here
-# survives fresh shells and container recreates.
+# survives fresh shells and container recreates. Best-effort: returns non-zero
+# (without side effects) if the file cannot be written — callers must guard the
+# call (e.g. with `if`) so this never aborts the installer under `set -e`.
 persist_env_var() {
     _pev_name="$1"
     _pev_value="$2"
     _pev_file="$3"
+    _pev_tmp="${_pev_file}.tmp.$$"
 
-    [ -f "$_pev_file" ] || : > "$_pev_file"
-    if grep -q "^${_pev_name}=" "$_pev_file" 2>/dev/null; then
-        _pev_tmp="${_pev_file}.tmp.$$"
-        grep -v "^${_pev_name}=" "$_pev_file" > "$_pev_tmp"
-        printf '%s=%s\n' "$_pev_name" "$_pev_value" >> "$_pev_tmp"
-        mv "$_pev_tmp" "$_pev_file"
-    else
-        printf '%s=%s\n' "$_pev_name" "$_pev_value" >> "$_pev_file"
+    # Subshell with stderr silenced so a failed redirection (unwritable dir)
+    # produces no shell error text — callers report a clearer warning instead.
+    if (
+        {
+            if [ -f "$_pev_file" ]; then
+                grep -v "^${_pev_name}=" "$_pev_file" 2>/dev/null || true
+            fi
+            printf '%s=%s\n' "$_pev_name" "$_pev_value"
+        } > "$_pev_tmp"
+    ) 2>/dev/null && mv "$_pev_tmp" "$_pev_file" 2>/dev/null; then
+        return 0
     fi
+    rm -f "$_pev_tmp" 2>/dev/null || true
+    return 1
 }
 
 while [ "$#" -gt 0 ]; do
@@ -527,10 +535,16 @@ echo "Per-user launchers will embed terminal-API URL: $ELA_SERVER_URL"
 # Persist ELA_SERVER_URL into the env file Compose reads, so `add-user-key` (run
 # later — possibly from a fresh shell or after a container recreate) still sees
 # the URL and bakes it into each user's launcher. Default to <repo>/.env when no
-# --env-file was given, and always hand that file to Compose below.
+# --env-file was given. This is best-effort: the value is already exported for
+# this run, so a write failure must not abort the install.
 ENV_FILE="${ENV_FILE:-$REPO_ROOT/.env}"
-persist_env_var ELA_SERVER_URL "$ELA_SERVER_URL" "$ENV_FILE"
-echo "Persisted ELA_SERVER_URL to $ENV_FILE"
+if persist_env_var ELA_SERVER_URL "$ELA_SERVER_URL" "$ENV_FILE"; then
+    echo "Persisted ELA_SERVER_URL to $ENV_FILE"
+else
+    echo "warning: could not write $ENV_FILE — ELA_SERVER_URL is set for this run"
+    echo "         only. Later 'add-user-key' runs may need ELA_SERVER_URL exported,"
+    echo "         or use tools/rebuild-launchers.js to apply it to existing users."
+fi
 
 # The installer passes -f explicitly, which suppresses Compose's automatic
 # docker-compose.override.yml merge, so the bundled-DB overlay is listed
@@ -539,7 +553,11 @@ set -- docker compose -f "$COMPOSE_FILE"
 if [ "$EXTERNAL_DB" -eq 0 ]; then
     set -- "$@" -f "$COMPOSE_BUNDLED_DB_FILE"
 fi
-set -- "$@" --env-file "$ENV_FILE"
+# Only hand Compose the env file when it actually exists, so a failed/absent
+# persist above doesn't turn into a "env file not found" error.
+if [ -f "$ENV_FILE" ]; then
+    set -- "$@" --env-file "$ENV_FILE"
+fi
 
 # Services to start before nginx; the bundled postgres only when not external.
 # redis (queue broker) and builder (binary build worker) are always started.
