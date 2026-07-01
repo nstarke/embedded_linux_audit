@@ -14,6 +14,37 @@ function getConnection() {
   };
 }
 
+function intFromEnv(name, fallback) {
+  const raw = process.env[name];
+  if (raw === undefined || raw === '') return fallback;
+  const n = Number.parseInt(raw, 10);
+  return Number.isInteger(n) && n > 0 ? n : fallback;
+}
+
+/**
+ * Build the BullMQ Worker options for the binary builder.
+ *
+ * A per-user cross-compile runs for many minutes, so the defaults here are far
+ * larger than BullMQ's (lockDuration 30s, maxStalledCount 1) to keep a slow but
+ * healthy build from being declared "stalled" and failed. The worker renews the
+ * job lock every `lockDuration / 2` while the build child runs, so lockDuration
+ * is effectively the ceiling on how long the worker may go without renewing
+ * (e.g. a brief event-loop or Redis hiccup) before the job is considered lost.
+ * All three are overridable by env var.
+ */
+function getWorkerOptions() {
+  return {
+    connection: getConnection(),
+    concurrency: intFromEnv('ELA_BUILD_CONCURRENCY', 1),
+    // 30 minutes: comfortably longer than a full multi-arch build.
+    lockDuration: intFromEnv('ELA_BUILD_LOCK_DURATION_MS', 30 * 60 * 1000),
+    // How often the worker scans for stalled jobs (locks that truly expired).
+    stalledInterval: intFromEnv('ELA_BUILD_STALLED_INTERVAL_MS', 30 * 1000),
+    // Recover a stalled job a few times before failing it outright.
+    maxStalledCount: intFromEnv('ELA_BUILD_MAX_STALLED_COUNT', 3),
+  };
+}
+
 let queue = null;
 
 /**
@@ -37,6 +68,7 @@ async function closeBuildQueue() {
 module.exports = {
   QUEUE_NAME,
   getConnection,
+  getWorkerOptions,
   getBuildQueue,
   closeBuildQueue,
 };

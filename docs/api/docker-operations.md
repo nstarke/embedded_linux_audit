@@ -153,6 +153,16 @@ Build-queue variables (used by `agent-api` to enqueue and `builder` to consume):
 - `ELA_REDIS_PORT` / `REDIS_PORT` (default `6379`)
 - `ELA_REDIS_DATA_DIR` (host path for the redis volume, default `/data/redis`)
 - `ELA_BUILD_SRC_DIR` (host repo mounted into `builder` at `/src`, default `.`)
+- `ELA_BUILD_CONCURRENCY` — number of builds the `builder` runs at once
+  (default `1`; keep at 1 unless builds no longer share `generated/`/`third_party`)
+- `ELA_BUILD_LOCK_DURATION_MS` — how long a build may hold its BullMQ job lock
+  before the job is considered stalled (default `1800000` = 30 min). Raise this
+  if long builds fail with `job stalled more than allowable limit`; the worker
+  renews the lock every `lockDuration / 2` while a build runs.
+- `ELA_BUILD_STALLED_INTERVAL_MS` — how often the worker scans for stalled jobs
+  (default `30000`)
+- `ELA_BUILD_MAX_STALLED_COUNT` — times a stalled job is recovered before being
+  failed (default `3`)
 - `ELA_SERVER_URL` — base terminal-API WS URL (e.g. `wss://ela.example.com`)
   baked into each user's binaries so a bare run auto-connects to the terminal
   API. Empty by default (nothing embedded); `nginx/install.sh` defaults it to

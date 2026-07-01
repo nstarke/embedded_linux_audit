@@ -3,22 +3,29 @@
 'use strict';
 
 const { Worker } = require('bullmq');
-const { QUEUE_NAME, getConnection } = require('../lib/queue');
+const { QUEUE_NAME, getWorkerOptions } = require('../lib/queue');
 const { runBuild } = require('./runBuild');
 
 // Long-running worker: consumes per-user binary build jobs and runs the
-// cross-compile. Concurrency 1 because builds share repoRoot/generated and
-// third_party build directories, so they must be serialized.
+// cross-compile. Concurrency defaults to 1 because builds share
+// repoRoot/generated and third_party build directories, so they must be
+// serialized. lockDuration/maxStalledCount are raised well above BullMQ's
+// defaults so a slow-but-healthy build is not declared stalled (see
+// getWorkerOptions); all are env-overridable.
+const workerOptions = getWorkerOptions();
+console.log(
+  `[builder] worker options: concurrency=${workerOptions.concurrency} `
+  + `lockDuration=${workerOptions.lockDuration}ms `
+  + `stalledInterval=${workerOptions.stalledInterval}ms `
+  + `maxStalledCount=${workerOptions.maxStalledCount}`,
+);
 const worker = new Worker(QUEUE_NAME, async (job) => {
   const { username, keyHash, outDir } = job.data || {};
   console.log(`[builder] build start  job=${job.id} user=${username} keyHash=${keyHash} -> ${outDir}`);
   const result = await runBuild(job.data);
   console.log(`[builder] build done   job=${job.id} user=${username} -> ${result.outDir}`);
   return result;
-}, {
-  connection: getConnection(),
-  concurrency: 1,
-});
+}, workerOptions);
 
 worker.on('failed', (job, err) => {
   console.error(`[builder] build FAILED job=${job && job.id} user=${job && job.data && job.data.username}: ${err && err.message}`);

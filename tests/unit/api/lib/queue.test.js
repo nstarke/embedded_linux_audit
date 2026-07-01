@@ -42,6 +42,48 @@ describe('build queue', () => {
     restore();
   });
 
+  test('getWorkerOptions uses build-appropriate defaults', () => {
+    const { mod, restore } = loadQueue();
+    expect(mod.getWorkerOptions()).toEqual({
+      connection: { host: 'redis', port: 6379 },
+      concurrency: 1,
+      lockDuration: 30 * 60 * 1000,
+      stalledInterval: 30 * 1000,
+      maxStalledCount: 3,
+    });
+    restore();
+  });
+
+  test('getWorkerOptions honours env overrides', () => {
+    const { mod, restore } = loadQueue({
+      ELA_BUILD_CONCURRENCY: '2',
+      ELA_BUILD_LOCK_DURATION_MS: '600000',
+      ELA_BUILD_STALLED_INTERVAL_MS: '45000',
+      ELA_BUILD_MAX_STALLED_COUNT: '5',
+    });
+    expect(mod.getWorkerOptions()).toMatchObject({
+      concurrency: 2,
+      lockDuration: 600000,
+      stalledInterval: 45000,
+      maxStalledCount: 5,
+    });
+    restore();
+  });
+
+  test('getWorkerOptions falls back to defaults for invalid/non-positive values', () => {
+    const { mod, restore } = loadQueue({
+      ELA_BUILD_CONCURRENCY: '0',
+      ELA_BUILD_LOCK_DURATION_MS: 'abc',
+      ELA_BUILD_MAX_STALLED_COUNT: '-3',
+    });
+    expect(mod.getWorkerOptions()).toMatchObject({
+      concurrency: 1,
+      lockDuration: 30 * 60 * 1000,
+      maxStalledCount: 3,
+    });
+    restore();
+  });
+
   test('getBuildQueue creates one Queue with the configured name and connection', () => {
     const { mod, Queue, instances, restore } = loadQueue();
     const q1 = mod.getBuildQueue();
