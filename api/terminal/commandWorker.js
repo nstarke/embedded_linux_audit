@@ -83,6 +83,33 @@ async function spawnOnSession(sessionRegistry, runSpawnImpl, now, { mac, command
   }
 }
 
+// Set a device's alias and/or group. `alias`/`group` are optional — undefined
+// means "leave unchanged"; a string sets it; null clears it. The value is
+// persisted to the DB and, if the device is connected, mirrored onto the live
+// session entry so the sessions listing reflects it immediately.
+async function setMeta(sessionRegistry, setDeviceAliasImpl, setDeviceGroupImpl, { mac, alias, group }) {
+  const entry = sessionRegistry.getSession(mac);
+  const out = { mac };
+
+  if (alias !== undefined) {
+    const value = await setDeviceAliasImpl(mac, alias);
+    out.alias = value || null;
+    if (entry) entry.alias = out.alias;
+  } else {
+    out.alias = entry ? (entry.alias || null) : null;
+  }
+
+  if (group !== undefined) {
+    const value = await setDeviceGroupImpl(mac, group);
+    out.group = value || null;
+    if (entry) entry.group = out.group;
+  } else {
+    out.group = entry ? (entry.group || null) : null;
+  }
+
+  return { status: 200, body: out };
+}
+
 function listSpawns(sessionRegistry, { mac }) {
   const entry = sessionRegistry.getSession(mac);
   if (!entry) return NO_SESSION;
@@ -120,6 +147,9 @@ async function processCommand({
   runExecImpl = runExec,
   runSpawnImpl = runSpawn,
   now = () => new Date().toISOString(),
+  // Lazily resolved so importing this module (tests) does not pull in the DB.
+  setDeviceAliasImpl = (mac, alias) => require('../lib/db/deviceRegistry').setDeviceAlias(mac, alias, 'client_api'),
+  setDeviceGroupImpl = (mac, group) => require('../lib/db/deviceRegistry').setDeviceGroup(mac, group),
 }) {
   const data = (job && job.data) || {};
   switch (data.type) {
@@ -133,6 +163,8 @@ async function processCommand({
       return listSpawns(sessionRegistry, data);
     case 'killSpawn':
       return killSpawn(sessionRegistry, runExecImpl, data);
+    case 'setMeta':
+      return setMeta(sessionRegistry, setDeviceAliasImpl, setDeviceGroupImpl, data);
     default:
       return { status: 400, body: { error: `unknown command type: ${String(data.type)}` } };
   }

@@ -87,6 +87,65 @@ describe('processCommand', () => {
     });
   });
 
+  describe('setMeta', () => {
+    test('persists alias and group and mirrors them onto a connected entry', async () => {
+      const entry = { ws: {}, alias: 'old', group: 'oldg' };
+      const sessionRegistry = registry([['aa:bb', entry]]);
+      const setDeviceAliasImpl = jest.fn().mockResolvedValue('router');
+      const setDeviceGroupImpl = jest.fn().mockResolvedValue('field');
+
+      const res = await run(
+        { type: 'setMeta', mac: 'aa:bb', alias: 'router', group: 'field' },
+        { sessionRegistry, setDeviceAliasImpl, setDeviceGroupImpl },
+      );
+
+      expect(setDeviceAliasImpl).toHaveBeenCalledWith('aa:bb', 'router');
+      expect(setDeviceGroupImpl).toHaveBeenCalledWith('aa:bb', 'field');
+      expect(res).toEqual({ status: 200, body: { mac: 'aa:bb', alias: 'router', group: 'field' } });
+      // Live entry updated so the sessions listing reflects it immediately.
+      expect(entry.alias).toBe('router');
+      expect(entry.group).toBe('field');
+    });
+
+    test('only updates the field that was provided (undefined = leave unchanged)', async () => {
+      const entry = { ws: {}, alias: 'keep', group: 'keepg' };
+      const sessionRegistry = registry([['aa:bb', entry]]);
+      const setDeviceAliasImpl = jest.fn().mockResolvedValue('newalias');
+      const setDeviceGroupImpl = jest.fn();
+
+      const res = await run(
+        { type: 'setMeta', mac: 'aa:bb', alias: 'newalias' },
+        { sessionRegistry, setDeviceAliasImpl, setDeviceGroupImpl },
+      );
+
+      expect(setDeviceGroupImpl).not.toHaveBeenCalled();
+      expect(res.body).toEqual({ mac: 'aa:bb', alias: 'newalias', group: 'keepg' });
+      expect(entry.group).toBe('keepg');
+    });
+
+    test('works without a live session (persists to the DB only)', async () => {
+      const sessionRegistry = registry();
+      const setDeviceGroupImpl = jest.fn().mockResolvedValue('g');
+      const res = await run(
+        { type: 'setMeta', mac: 'aa:bb', group: 'g' },
+        { sessionRegistry, setDeviceGroupImpl, setDeviceAliasImpl: jest.fn() },
+      );
+      expect(setDeviceGroupImpl).toHaveBeenCalledWith('aa:bb', 'g');
+      expect(res).toEqual({ status: 200, body: { mac: 'aa:bb', alias: null, group: 'g' } });
+    });
+
+    test('a null value clears the field', async () => {
+      const sessionRegistry = registry([['aa:bb', { ws: {}, alias: 'x' }]]);
+      const setDeviceAliasImpl = jest.fn().mockResolvedValue(null);
+      const res = await run(
+        { type: 'setMeta', mac: 'aa:bb', alias: null },
+        { sessionRegistry, setDeviceAliasImpl, setDeviceGroupImpl: jest.fn() },
+      );
+      expect(setDeviceAliasImpl).toHaveBeenCalledWith('aa:bb', null);
+      expect(res.body.alias).toBeNull();
+    });
+  });
+
   describe('listSpawns / killSpawn', () => {
     test('listSpawns serializes the tracked spawns', async () => {
       const entry = { ws: {}, spawns: new Map([[7, { pid: 7, command: 'c', args: [], startedAt: 't', port: 9 }]]) };

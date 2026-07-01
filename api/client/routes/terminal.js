@@ -3,8 +3,17 @@
 
 const express = require('express');
 
-const MAC_ADDRESS_RE = /^([0-9a-f]{2}:){5}[0-9a-f]{2}$/i;
+// Accept either separator (aa:bb:.. or aa-bb-..), any case. Devices are stored
+// with whatever separator the agent used in its terminal URL (some use `-`), so
+// we normalise for comparison and resolve to the actual stored form.
+const MAC_ADDRESS_RE = /^([0-9a-fA-F]{2}[:-]){5}[0-9a-fA-F]{2}$/;
 const MAX_BODY_BYTES = 1024 * 1024;
+
+// Reduce a MAC to its 12 lowercase hex digits for separator-insensitive
+// comparison (`AA-BB-..`, `aa:bb:..`, and `aabb..` all compare equal).
+function macKey(mac) {
+  return String(mac || '').toLowerCase().replace(/[^0-9a-f]/g, '');
+}
 const MAX_EXEC_TIMEOUT_MS = 60000;
 const DEFAULT_EXEC_TIMEOUT_MS = 15000;
 // How long to wait for the terminal worker's reply beyond the command's own
@@ -35,42 +44,48 @@ function defaultSendCommand(payload, opts) {
  * @param {object} app
  * @param {object} deps
  * @param {Function} [deps.sendCommand]  (payload, {waitMs}) => Promise<{status, body}>.
- * @param {Function} [deps.isUserAssociatedWithDevice]
- * @param {Function} [deps.listUserDeviceMacs]
+ * @param {Function} [deps.listUserDeviceMacs] (username) => Promise<string[]> — the
+ *   caller's associated device MACs, in their stored form. Used for the ACL and
+ *   to resolve a request's MAC to the stored form regardless of separator.
  */
 function registerTerminalRoutes(app, deps = {}) {
   const {
     sendCommand = defaultSendCommand,
-    isUserAssociatedWithDevice = (username, mac) => deviceRegistry().isUserAssociatedWithDevice(username, mac),
     listUserDeviceMacs = (username) => deviceRegistry().listUserDeviceMacs(username),
   } = deps;
 
   const parseBody = express.json({ limit: MAX_BODY_BYTES, type: () => true });
 
   function validateMac(req, res, next) {
-    const mac = String(req.params.mac || '').toLowerCase();
+    const mac = String(req.params.mac || '');
     if (!MAC_ADDRESS_RE.test(mac)) {
       res.status(400).json({ error: 'invalid mac address' });
       return;
     }
-    req.normalizedMac = mac;
+    req.macKey = macKey(mac);
     next();
   }
 
-  // ACL: the caller must be associated with the target device. Not associated
-  // is reported exactly like "no session" so devices cannot be enumerated.
+  // ACL: the caller must be associated with the target device. We match the
+  // requested MAC against the caller's associated devices by normalised key
+  // (separator-insensitive) and resolve `req.deviceMac` to the *actual stored*
+  // form, so downstream lookups (Device row, live session key) match regardless
+  // of whether the agent registered with `:` or `-`. A device the caller is not
+  // associated with is reported exactly like "no session" (no enumeration).
   async function requireDeviceAssociation(req, res, next) {
-    let associated;
+    let macs;
     try {
-      associated = await isUserAssociatedWithDevice(req.authUser, req.normalizedMac);
+      macs = await listUserDeviceMacs(req.authUser);
     } catch {
       res.status(500).json({ error: 'internal error' });
       return;
     }
-    if (!associated) {
+    const match = (macs || []).find((m) => macKey(m) === req.macKey);
+    if (!match) {
       res.status(404).json({ error: 'no active session for mac' });
       return;
     }
+    req.deviceMac = match;
     next();
   }
 
@@ -91,7 +106,7 @@ function registerTerminalRoutes(app, deps = {}) {
   app.get('/terminal/sessions', async (req, res) => {
     let allowed;
     try {
-      allowed = new Set(await listUserDeviceMacs(req.authUser));
+      allowed = new Set((await listUserDeviceMacs(req.authUser)).map(macKey));
     } catch {
       res.status(500).json({ error: 'internal error' });
       return;
@@ -108,8 +123,37 @@ function registerTerminalRoutes(app, deps = {}) {
       res.status(result.status).json(result.body);
       return;
     }
-    const sessions = (result.body.sessions || []).filter((s) => allowed.has(s.mac));
+    const sessions = (result.body.sessions || []).filter((s) => allowed.has(macKey(s.mac)));
     res.status(200).json({ sessions });
+  });
+
+  // POST /terminal/sessions/:mac — set the device's alias and/or group.
+  app.post('/terminal/sessions/:mac', validateMac, requireDeviceAssociation, parseBody, async (req, res) => {
+    const body = req.body || {};
+    const hasAlias = Object.prototype.hasOwnProperty.call(body, 'alias');
+    const hasGroup = Object.prototype.hasOwnProperty.call(body, 'group');
+    if (!hasAlias && !hasGroup) {
+      res.status(400).json({ error: 'alias or group is required' });
+      return;
+    }
+
+    const payload = { type: 'setMeta', mac: req.deviceMac };
+    if (hasAlias) {
+      if (body.alias !== null && typeof body.alias !== 'string') {
+        res.status(400).json({ error: 'alias must be a string or null' });
+        return;
+      }
+      payload.alias = body.alias;
+    }
+    if (hasGroup) {
+      if (body.group !== null && typeof body.group !== 'string') {
+        res.status(400).json({ error: 'group must be a string or null' });
+        return;
+      }
+      payload.group = body.group;
+    }
+
+    await dispatch(res, payload, DEFAULT_WAIT_MS);
   });
 
   app.post('/terminal/:mac/exec', validateMac, requireDeviceAssociation, parseBody, async (req, res) => {
@@ -130,7 +174,7 @@ function registerTerminalRoutes(app, deps = {}) {
     }
 
     const waitMs = (timeoutMs || DEFAULT_EXEC_TIMEOUT_MS) + WAIT_MARGIN_MS;
-    await dispatch(res, { type: 'exec', mac: req.normalizedMac, command, timeoutMs }, waitMs);
+    await dispatch(res, { type: 'exec', mac: req.deviceMac, command, timeoutMs }, waitMs);
   });
 
   app.post('/terminal/:mac/spawn', validateMac, requireDeviceAssociation, parseBody, async (req, res) => {
@@ -159,11 +203,11 @@ function registerTerminalRoutes(app, deps = {}) {
       }
     }
 
-    await dispatch(res, { type: 'spawn', mac: req.normalizedMac, command, args, port }, DEFAULT_WAIT_MS);
+    await dispatch(res, { type: 'spawn', mac: req.deviceMac, command, args, port }, DEFAULT_WAIT_MS);
   });
 
   app.get('/terminal/:mac/spawn', validateMac, requireDeviceAssociation, async (req, res) => {
-    await dispatch(res, { type: 'listSpawns', mac: req.normalizedMac }, DEFAULT_WAIT_MS);
+    await dispatch(res, { type: 'listSpawns', mac: req.deviceMac }, DEFAULT_WAIT_MS);
   });
 
   app.delete('/terminal/:mac/spawn/:pid', validateMac, requireDeviceAssociation, async (req, res) => {
@@ -172,7 +216,7 @@ function registerTerminalRoutes(app, deps = {}) {
       res.status(400).json({ error: 'invalid pid' });
       return;
     }
-    await dispatch(res, { type: 'killSpawn', mac: req.normalizedMac, pid }, DEFAULT_WAIT_MS);
+    await dispatch(res, { type: 'killSpawn', mac: req.deviceMac, pid }, DEFAULT_WAIT_MS);
   });
 }
 

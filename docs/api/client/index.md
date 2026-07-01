@@ -96,17 +96,25 @@ relays it to you. The terminal server exposes no operator HTTP surface.
 | Method & path | Description |
 | --- | --- |
 | `GET /terminal/sessions` | List connected devices you are associated with: `{ "sessions": [{ mac, alias, group, remoteAddress, connectedAt, lastHeartbeat }] }`. |
+| `POST /terminal/sessions/:mac` | Set the device's `alias` and/or `group`. Body `{ "alias"?: string\|null, "group"?: string\|null }` (at least one; a string sets, `null` clears) → `{ mac, alias, group }`. Persists to the DB and updates the live session immediately. |
 | `POST /terminal/:mac/exec` | Run one command and wait for its output. Body `{ "command": "uname -a", "timeoutMs"?: <=60000 }` → `{ ok, output, durationMs }`. |
 | `POST /terminal/:mac/spawn` | Launch a long-running process. Body `{ "command", "args"?: [...], "port"?: 1-65535 }` → `201 { pid, port? }`. |
 | `GET /terminal/:mac/spawn` | List tracked spawns for the device: `{ "spawns": [...] }`. |
 | `DELETE /terminal/:mac/spawn/:pid` | Kill a tracked spawn → `{ "ok": true }`. |
 
+**MAC format.** `:mac` accepts either separator and any case —
+`aa:bb:cc:dd:ee:ff` or `aa-bb-cc-dd-ee-ff` — and is matched against your devices
+separator-insensitively, so it works regardless of the form the agent registered
+with.
+
 **MAC ACLs.** Every terminal route is restricted to devices you are
 **associated** with (the same `user_devices` links used for artifact
 visibility). A device you are not associated with — or one that is not
 connected — returns `404 {"error":"no active session for mac"}`, so you cannot
-issue commands to, or enumerate, other users' devices. If the terminal server is
-unavailable or a command does not complete in time, the route returns `504`.
+issue commands to, or enumerate, other users' devices. (Setting alias/group
+works even when the device is offline, since it is device metadata.) If the
+terminal server is unavailable or a command does not complete in time, the route
+returns `504`.
 
 ### Artifact metadata fields
 

@@ -149,6 +149,28 @@ const openapiSpec = {
         },
       },
     },
+    '/terminal/sessions/{mac}': {
+      post: {
+        tags: ['terminal'],
+        summary: 'Set a device\'s alias and/or group',
+        operationId: 'setTerminalSessionMeta',
+        parameters: [{ $ref: '#/components/parameters/Mac' }],
+        requestBody: {
+          required: true,
+          content: { 'application/json': { schema: { $ref: '#/components/schemas/SetSessionMetaRequest' } } },
+        },
+        responses: {
+          200: {
+            description: 'The updated alias/group',
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/SessionMeta' } } },
+          },
+          400: { $ref: '#/components/responses/BadRequest' },
+          401: { $ref: '#/components/responses/Unauthorized' },
+          404: { $ref: '#/components/responses/NoSession' },
+          504: { $ref: '#/components/responses/TerminalUnavailable' },
+        },
+      },
+    },
     '/terminal/{mac}/exec': {
       post: {
         tags: ['terminal'],
@@ -257,8 +279,8 @@ const openapiSpec = {
         name: 'mac',
         in: 'path',
         required: true,
-        description: 'Device MAC address (aa:bb:cc:dd:ee:ff). Must be a device you are associated with.',
-        schema: { type: 'string', pattern: '^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$' },
+        description: 'Device MAC address, either separator (aa:bb:cc:dd:ee:ff or aa-bb-cc-dd-ee-ff), any case. Must be a device you are associated with.',
+        schema: { type: 'string', pattern: '^([0-9a-fA-F]{2}[:-]){5}[0-9a-fA-F]{2}$' },
       },
       Pid: {
         name: 'pid',
@@ -384,6 +406,23 @@ const openapiSpec = {
           sessions: { type: 'array', items: { $ref: '#/components/schemas/Session' } },
         },
         required: ['sessions'],
+      },
+      SetSessionMetaRequest: {
+        type: 'object',
+        description: 'Provide `alias`, `group`, or both. A string sets the value; null clears it. At least one is required.',
+        properties: {
+          alias: { type: 'string', nullable: true, example: 'lab-router' },
+          group: { type: 'string', nullable: true, example: 'field-team' },
+        },
+      },
+      SessionMeta: {
+        type: 'object',
+        properties: {
+          mac: { type: 'string', example: 'aa:bb:cc:dd:ee:ff' },
+          alias: { type: 'string', nullable: true },
+          group: { type: 'string', nullable: true },
+        },
+        required: ['mac'],
       },
       ExecRequest: {
         type: 'object',

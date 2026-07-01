@@ -42,19 +42,19 @@ async function invoke(route, req, res) {
   }
 }
 
+const MAC = 'aa:bb:cc:dd:ee:ff';
+
 function setup(overrides = {}) {
   const app = createApp();
   const deps = {
     sendCommand: jest.fn().mockResolvedValue({ status: 200, body: { ok: true } }),
-    isUserAssociatedWithDevice: jest.fn().mockResolvedValue(true),
-    listUserDeviceMacs: jest.fn().mockResolvedValue([]),
+    // By default the caller is associated with MAC (its stored form).
+    listUserDeviceMacs: jest.fn().mockResolvedValue([MAC]),
     ...overrides,
   };
   registerTerminalRoutes(app, deps);
   return { app, deps };
 }
-
-const MAC = 'aa:bb:cc:dd:ee:ff';
 
 describe('client terminal routes', () => {
   describe('GET /terminal/sessions', () => {
@@ -87,11 +87,11 @@ describe('client terminal routes', () => {
 
   describe('ACL on per-device routes', () => {
     test('a non-associated device is 404 and never enqueues a command', async () => {
-      const { app, deps } = setup({ isUserAssociatedWithDevice: jest.fn().mockResolvedValue(false) });
+      const { app, deps } = setup({ listUserDeviceMacs: jest.fn().mockResolvedValue([]) });
       const res = createRes();
       await invoke(app.find('post', '/terminal/:mac/exec'), { authUser: 'mallory', params: { mac: MAC }, body: { command: 'id' } }, res);
 
-      expect(deps.isUserAssociatedWithDevice).toHaveBeenCalledWith('mallory', MAC);
+      expect(deps.listUserDeviceMacs).toHaveBeenCalledWith('mallory');
       expect(res.statusCode).toBe(404);
       expect(res.body).toEqual({ error: 'no active session for mac' });
       expect(deps.sendCommand).not.toHaveBeenCalled();
@@ -102,14 +102,79 @@ describe('client terminal routes', () => {
       const res = createRes();
       await invoke(app.find('post', '/terminal/:mac/exec'), { authUser: 'alice', params: { mac: 'not-a-mac' }, body: { command: 'id' } }, res);
       expect(res.statusCode).toBe(400);
-      expect(deps.isUserAssociatedWithDevice).not.toHaveBeenCalled();
+      expect(deps.listUserDeviceMacs).not.toHaveBeenCalled();
     });
 
     test('a 500 from the association lookup surfaces as 500', async () => {
-      const { app } = setup({ isUserAssociatedWithDevice: jest.fn().mockRejectedValue(new Error('db down')) });
+      const { app } = setup({ listUserDeviceMacs: jest.fn().mockRejectedValue(new Error('db down')) });
       const res = createRes();
       await invoke(app.find('get', '/terminal/:mac/spawn'), { authUser: 'alice', params: { mac: MAC } }, res);
       expect(res.statusCode).toBe(500);
+    });
+
+    test('accepts either MAC separator and resolves to the stored form', async () => {
+      // Device is stored hyphen-separated; caller requests it colon-separated.
+      const stored = '20-4c-03-32-75-5c';
+      const { app, deps } = setup({
+        listUserDeviceMacs: jest.fn().mockResolvedValue([stored]),
+        sendCommand: jest.fn().mockResolvedValue({ status: 200, body: { ok: true } }),
+      });
+      const res = createRes();
+      await invoke(
+        app.find('post', '/terminal/:mac/exec'),
+        { authUser: 'nick', params: { mac: '20:4C:03:32:75:5C' }, body: { command: 'id' } },
+        res,
+      );
+      // The enqueued command carries the *stored* (hyphen) MAC so the session lookup matches.
+      expect(deps.sendCommand).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'exec', mac: stored, command: 'id' }),
+        expect.any(Object),
+      );
+      expect(res.statusCode).toBe(200);
+    });
+  });
+
+  describe('POST /terminal/sessions/:mac (set alias/group)', () => {
+    test('requires at least one of alias or group', async () => {
+      const { app, deps } = setup();
+      const res = createRes();
+      await invoke(app.find('post', '/terminal/sessions/:mac'), { authUser: 'alice', params: { mac: MAC }, body: {} }, res);
+      expect(res.statusCode).toBe(400);
+      expect(deps.sendCommand).not.toHaveBeenCalled();
+    });
+
+    test('rejects a non-string, non-null alias/group', async () => {
+      const { app } = setup();
+      const res = createRes();
+      await invoke(app.find('post', '/terminal/sessions/:mac'), { authUser: 'alice', params: { mac: MAC }, body: { alias: 42 } }, res);
+      expect(res.statusCode).toBe(400);
+    });
+
+    test('sets alias and group (only provided fields) via a setMeta command', async () => {
+      const { app, deps } = setup({
+        sendCommand: jest.fn().mockResolvedValue({ status: 200, body: { mac: MAC, alias: 'router', group: null } }),
+      });
+      const res = createRes();
+      await invoke(app.find('post', '/terminal/sessions/:mac'), { authUser: 'alice', params: { mac: MAC }, body: { alias: 'router' } }, res);
+
+      expect(deps.sendCommand).toHaveBeenCalledWith({ type: 'setMeta', mac: MAC, alias: 'router' }, expect.any(Object));
+      expect(res.statusCode).toBe(200);
+      expect(res.body).toEqual({ mac: MAC, alias: 'router', group: null });
+    });
+
+    test('a null value (to clear) is forwarded', async () => {
+      const { app, deps } = setup();
+      const res = createRes();
+      await invoke(app.find('post', '/terminal/sessions/:mac'), { authUser: 'alice', params: { mac: MAC }, body: { group: null } }, res);
+      expect(deps.sendCommand).toHaveBeenCalledWith({ type: 'setMeta', mac: MAC, group: null }, expect.any(Object));
+    });
+
+    test('is ACL-gated like the other routes (404 when not associated)', async () => {
+      const { app, deps } = setup({ listUserDeviceMacs: jest.fn().mockResolvedValue([]) });
+      const res = createRes();
+      await invoke(app.find('post', '/terminal/sessions/:mac'), { authUser: 'mallory', params: { mac: MAC }, body: { alias: 'x' } }, res);
+      expect(res.statusCode).toBe(404);
+      expect(deps.sendCommand).not.toHaveBeenCalled();
     });
   });
 
