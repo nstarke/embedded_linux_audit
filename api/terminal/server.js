@@ -173,7 +173,10 @@ wss.on('connection', async (ws, req) => {
   const existing = sessionRegistry.getSession(mac);
   if (existing) {
     try {
-      existing.ws.close();
+      // Close code 4000 (ELA_WS_CLOSE_SUPERSEDED) tells the displaced agent it
+      // was replaced by a newer connection so it exits instead of reconnecting;
+      // otherwise duplicate daemons flap, each kicking the other in turn.
+      existing.ws.close(4000, 'session superseded');
     } catch (err) {
       process.stderr.write(`Warning: failed to close existing terminal session for ${mac}: ${err.message}\n`);
     }

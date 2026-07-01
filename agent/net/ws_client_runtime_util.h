@@ -13,6 +13,15 @@ struct ela_ws_runtime_dispatch_ops {
 	int (*send_heartbeat_ack_fn)(void *ctx);
 };
 
+/*
+ * Return values of ela_ws_dispatch_incoming_frame. Both TERMINATE values are
+ * non-zero so existing `!= 0` break checks still end the relay loop; the
+ * NO_RECONNECT variant additionally tells the caller not to reconnect.
+ */
+#define ELA_WS_DISPATCH_CONTINUE               0
+#define ELA_WS_DISPATCH_TERMINATE              1
+#define ELA_WS_DISPATCH_TERMINATE_NO_RECONNECT 2
+
 int ela_ws_format_handshake_error(const char *response,
 				  char *errbuf,
 				  size_t errbuf_len);

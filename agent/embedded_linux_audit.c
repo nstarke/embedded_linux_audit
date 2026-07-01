@@ -14,6 +14,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <signal.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -700,6 +701,15 @@ done:
 int main(int argc, char **argv)
 {
 	struct ela_conf boot_conf = {0};
+
+	/*
+	 * Ignore SIGPIPE process-wide: this is a network daemon, and a write to a
+	 * socket or pipe whose peer has gone away must surface as EPIPE for the
+	 * caller to handle, not kill the process. The disposition is inherited
+	 * across every fork() (the --remote daemon, the WS session child, upload
+	 * POSTs), so setting it once here covers them all.
+	 */
+	signal(SIGPIPE, SIG_IGN);
 
 	ela_conf_load(&boot_conf);
 	/* Sanitize output_format by replacing the tainted buffer with a known-safe

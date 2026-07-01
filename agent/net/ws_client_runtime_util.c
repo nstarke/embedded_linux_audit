@@ -47,7 +47,8 @@ int ela_ws_dispatch_incoming_frame(uint8_t opcode,
 
 	ela_ws_classify_incoming_frame(opcode, payload, payload_len, &action);
 	if (action.terminate_session)
-		return 1;
+		return action.no_reconnect ? ELA_WS_DISPATCH_TERMINATE_NO_RECONNECT
+					   : ELA_WS_DISPATCH_TERMINATE;
 	if (action.send_pong)
 		return ops->send_pong_fn ? ops->send_pong_fn(ctx) : -1;
 	if (action.send_heartbeat_ack)

@@ -79,6 +79,17 @@ void ela_ws_classify_incoming_frame(uint8_t opcode,
 	memset(out, 0, sizeof(*out));
 	if (opcode == ELA_WS_OPCODE_CLOSE) {
 		out->terminate_session = 1;
+		/*
+		 * A CLOSE frame's payload is a 2-byte big-endian status code
+		 * followed by an optional reason. When the server signals that
+		 * this session was superseded, do not reconnect.
+		 */
+		if (payload && payload_len >= 2) {
+			unsigned code = ((unsigned char)payload[0] << 8) |
+					(unsigned char)payload[1];
+			if (code == ELA_WS_CLOSE_SUPERSEDED)
+				out->no_reconnect = 1;
+		}
 		return;
 	}
 	if (opcode == ELA_WS_OPCODE_PING) {

@@ -8,8 +8,19 @@
 #include <stdint.h>
 #include <sys/types.h>
 
+/*
+ * Application close code (RFC 6455 private range, 4000-4999) the terminal API
+ * sends when it displaces this MAC's session with a newer connection. On
+ * receipt the agent exits its --remote loop instead of reconnecting, so
+ * duplicate daemons do not fight over the single per-MAC session slot.
+ */
+#define ELA_WS_CLOSE_SUPERSEDED 4000
+
 struct ela_ws_frame_action {
 	int terminate_session;
+	/* Set with terminate_session when the peer's CLOSE carried a code that
+	 * means "do not reconnect" (see ELA_WS_CLOSE_SUPERSEDED). */
+	int no_reconnect;
 	int send_pong;
 	int send_heartbeat_ack;
 	int forward_to_repl;

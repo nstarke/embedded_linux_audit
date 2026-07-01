@@ -348,6 +348,8 @@ describe('terminal server orchestration', () => {
     await onConnection(secondWs, { url: '/terminal/aa:bb', socket: { remoteAddress: '10.0.0.2' } });
 
     expect(firstWs.close).toHaveBeenCalledTimes(1);
+    // Displaced with the superseded close code so the old agent stops reconnecting.
+    expect(firstWs.close).toHaveBeenCalledWith(4000, 'session superseded');
     expect(sessionRegistry.getSession('aa:bb').ws).toBe(secondWs);
     expect(sessionRegistry.getSession('aa:bb').connectionId).toBe(202);
   });
