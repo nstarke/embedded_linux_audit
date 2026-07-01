@@ -11,9 +11,11 @@
  *       [--key <plaintext-key>] [--server-url <wss://host>] \
  *       [--assets-dir <dir>] [--insecure] [--skip-build]
  *
- * If --key is omitted a cryptographically random 32-byte hex key is generated.
- * The plaintext key is printed once and never stored — only its SHA-256 hash
- * is written to the database.
+ * If --key is omitted a cryptographically random 32-byte hex agent key is
+ * generated. Only SHA-256 hashes are stored. The **agent** token is an
+ * agent-only credential — it is baked into the launchers and is NOT printed;
+ * only the **client** token (the operator's credential for the client API) is
+ * shown, once.
  *
  * No compilation happens here. The agent is cross-compiled ONCE into generic
  * (unembedded) binaries at <assetsDir>/generic/ela-<isa> (see the builder
@@ -115,10 +117,10 @@ async function main() {
 
   process.stdout.write(`username:   ${username}\n`);
   if (label) process.stdout.write(`label:      ${label}\n`);
-  process.stdout.write(`agent key:  ${plaintextKey}\n`);
   process.stdout.write(`client key: ${clientKey}\n`);
-  process.stdout.write('\nStore these keys securely — they will not be shown again.\n');
-  process.stdout.write('The agent key is set at runtime by the launcher (ELA_API_KEY); the client key is for the client API.\n');
+  process.stdout.write('\nStore the client key securely — it will not be shown again. It is your\n');
+  process.stdout.write('operator credential for the client API. The agent token is an agent-only\n');
+  process.stdout.write('credential baked into the launchers below, so it is not printed.\n');
 
   if (skipBuild) {
     process.stdout.write('\nSkipping launcher assembly (--skip-build).\n');
@@ -128,9 +130,9 @@ async function main() {
   try {
     const { outDir, isas } = await assembleLaunchers(plaintextKey, keyHash);
     process.stdout.write(`\nLaunchers written (${isas.length} ISAs) -> ${outDir}\n`);
-    process.stdout.write(`Download one with: GET /isa/${plaintextKey}/<isa>  (e.g. ${isas[0] || 'x86_64'})\n`);
-    process.stdout.write('Save it, `chmod +x`, and run it on the target — it sets the token and (if\n');
-    process.stdout.write('a server URL was configured) phones home to the terminal API on a bare run.\n');
+    process.stdout.write(`Distribute the launcher for the target's ISA (e.g. ela-${isas[0] || 'x86_64'}) from that\n`);
+    process.stdout.write('directory, `chmod +x`, and run it on the target — it sets the agent token and\n');
+    process.stdout.write('(if a server URL was configured) phones home to the terminal API on a bare run.\n');
   } catch (err) {
     process.stderr.write(`\nwarning: failed to assemble launchers: ${err.message}\n`);
     printGenericBuildHint(resolveAssetsDir());

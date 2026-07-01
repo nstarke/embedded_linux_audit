@@ -36,10 +36,10 @@ node tools/add-user-key.js --username alice
 docker compose exec agent-api node /app/tools/add-user-key.js --username alice
 ```
 
-This prints two keys, each shown once:
+This creates both tokens but prints only the **client** token (the agent token
+is baked into the launchers and is not shown):
 
 ```
-agent key:  <token embedded into alice's agent binaries>
 client key: <token for the client API>
 ```
 

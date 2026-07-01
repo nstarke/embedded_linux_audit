@@ -266,11 +266,11 @@ Then create a user (this needs the generic binaries to exist):
 docker compose exec agent-api node /app/tools/add-user-key.js --username alice
 ```
 
-This creates two scoped tokens, prints each once, assembles the launchers, and
-returns immediately:
+This creates two scoped tokens, prints only the **client** token (the agent
+token is baked into the launchers and is not shown), assembles the launchers,
+and returns immediately:
 
 ```
-agent key:  <set at runtime by alice's launcher via ELA_API_KEY>
 client key: <for the client API>
 
 Launchers written (15 ISAs) -> /data/agent/release_binaries/users/<sha256(agent-key)>
@@ -317,19 +317,21 @@ stores only the hash), then re-wraps the current generic binaries with the
 configured URL. `--insecure`/`--no-insecure` force the TLS-verification flag;
 otherwise each launcher's current setting is kept. Needs no database.
 
-The download endpoint is **unauthenticated** — the token rides in the URL path —
-so a freshly provisioned host with no agent yet can pull its launcher with a
-plain GET, then run it:
+Distribute the launcher by copying it off the shared volume (the directory
+printed above) to the target, then `chmod +x` and run it:
 
 ```bash
-curl http://localhost/isa/<agent-key>/x86_64 -o ela-x86_64
+# from the launcher directory on the agent-data volume:
+cp .../users/<sha256(agent-key)>/ela-x86_64 ela-x86_64
 chmod +x ela-x86_64 && ./ela-x86_64        # bare run -> phones home
 ```
 
-`GET /isa/:token/:isa` hashes the path token (`sha256`) to locate that user's
-launcher set and serves the matching architecture; an unknown token yields
-`404`. The agent token appears in the URL (and in any access logs/proxies) **and**
-inside the launcher file itself, so treat both as credentials.
+There is also an **unauthenticated** self-fetch endpoint, `GET /isa/:token/:isa`,
+which hashes the path token (`sha256`) to locate the user's launcher set — handy
+for a freshly provisioned host that already has its agent token. Because the
+agent token is agent-only, `add-user-key` no longer prints it, so this URL is not
+shown; the agent token still lives inside the launcher file itself (`ELA_TOKEN`),
+so treat launcher files as credentials.
 
 ### Removing a user
 

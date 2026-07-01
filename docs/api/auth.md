@@ -121,8 +121,9 @@ device may be associated with several users.
 
 ## Per-user tokens and binaries
 
-`tools/add-user-key.js` creates a user with **both** tokens at once and prints
-each one once:
+`tools/add-user-key.js` creates a user with **both** tokens at once, but only
+prints the **client** token — the agent token is an agent-only credential baked
+into the user's launchers, so it is never shown:
 
 ```sh
 node tools/add-user-key.js --username alice
@@ -131,7 +132,6 @@ docker compose exec agent-api node /app/tools/add-user-key.js --username alice
 ```
 
 ```
-agent key:  <embedded into alice's agent binaries>
 client key: <for the client API>
 ```
 
