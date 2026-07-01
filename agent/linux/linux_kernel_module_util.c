@@ -11,6 +11,16 @@ static void set_err(char *errbuf, size_t errbuf_len, const char *msg)
 		snprintf(errbuf, errbuf_len, "%s", msg ? msg : "");
 }
 
+bool ela_kernel_module_has_ko_suffix(const char *name)
+{
+	size_t len;
+
+	if (!name)
+		return false;
+	len = strlen(name);
+	return len > 3 && !strcmp(name + len - 3, ".ko");
+}
+
 static int append_param(char *buf, size_t buf_len, const char *param)
 {
 	size_t cur;
@@ -143,8 +153,13 @@ int ela_kernel_module_prepare_request(int argc, char **argv,
 			request->show_help = true;
 			return 0;
 		}
+		if (argc == 2) {
+			/* No path given: leave module_path NULL so the caller
+			 * discovers the first .ko under the module tree. */
+			return 0;
+		}
 		if (argc != 3) {
-			set_err(errbuf, errbuf_len, "modules vermagic requires exactly one module path");
+			set_err(errbuf, errbuf_len, "modules vermagic accepts at most one module path");
 			return 2;
 		}
 		request->module_path = argv[2];

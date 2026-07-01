@@ -49,6 +49,7 @@ static void test_prepare_list_load_unload_requests(void)
 	};
 	char *unload_argv[] = { "modules", "unload", "demo" };
 	char *vermagic_argv[] = { "modules", "vermagic", "/tmp/demo.ko" };
+	char *vermagic_search_argv[] = { "modules", "vermagic" };
 
 	ELA_ASSERT_INT_EQ(0, ela_kernel_module_prepare_request(
 		2, list_argv, &req, errbuf, sizeof(errbuf)));
@@ -72,6 +73,13 @@ static void test_prepare_list_load_unload_requests(void)
 		3, vermagic_argv, &req, errbuf, sizeof(errbuf)));
 	ELA_ASSERT_INT_EQ(ELA_KERNEL_MODULE_ACTION_VERMAGIC, req.action);
 	ELA_ASSERT_STR_EQ("/tmp/demo.ko", req.module_path);
+
+	/* vermagic with no path is valid: module_path stays NULL so the command
+	 * discovers a .ko under the module tree at runtime. */
+	ELA_ASSERT_INT_EQ(0, ela_kernel_module_prepare_request(
+		2, vermagic_search_argv, &req, errbuf, sizeof(errbuf)));
+	ELA_ASSERT_INT_EQ(ELA_KERNEL_MODULE_ACTION_VERMAGIC, req.action);
+	ELA_ASSERT_TRUE(req.module_path == NULL);
 }
 
 static void test_prepare_rejects_invalid_requests(void)
@@ -81,7 +89,6 @@ static void test_prepare_rejects_invalid_requests(void)
 	char *load_missing[] = { "modules", "load" };
 	char *unload_missing[] = { "modules", "unload" };
 	char *unload_extra[] = { "modules", "unload", "demo", "extra" };
-	char *vermagic_missing[] = { "modules", "vermagic" };
 	char *vermagic_extra[] = { "modules", "vermagic", "/tmp/demo.ko", "extra" };
 	char *unknown[] = { "modules", "reload", "demo" };
 
@@ -98,12 +105,8 @@ static void test_prepare_rejects_invalid_requests(void)
 	ELA_ASSERT_TRUE(strstr(errbuf, "exactly one module name") != NULL);
 
 	ELA_ASSERT_INT_EQ(2, ela_kernel_module_prepare_request(
-		2, vermagic_missing, &req, errbuf, sizeof(errbuf)));
-	ELA_ASSERT_TRUE(strstr(errbuf, "exactly one module path") != NULL);
-
-	ELA_ASSERT_INT_EQ(2, ela_kernel_module_prepare_request(
 		4, vermagic_extra, &req, errbuf, sizeof(errbuf)));
-	ELA_ASSERT_TRUE(strstr(errbuf, "exactly one module path") != NULL);
+	ELA_ASSERT_TRUE(strstr(errbuf, "at most one module path") != NULL);
 
 	ELA_ASSERT_INT_EQ(2, ela_kernel_module_prepare_request(
 		3, unknown, &req, errbuf, sizeof(errbuf)));
@@ -160,6 +163,18 @@ static void test_extract_vermagic_rejects_invalid_inputs(void)
 		(const unsigned char *)"vermagic=too-long\0", 18, out, sizeof(out)));
 }
 
+static void test_has_ko_suffix(void)
+{
+	ELA_ASSERT_TRUE(ela_kernel_module_has_ko_suffix("demo.ko"));
+	ELA_ASSERT_TRUE(ela_kernel_module_has_ko_suffix("/lib/modules/6.1.0/kernel/foo.ko"));
+	ELA_ASSERT_TRUE(!ela_kernel_module_has_ko_suffix("demo.ko.xz"));
+	ELA_ASSERT_TRUE(!ela_kernel_module_has_ko_suffix("demo.o"));
+	ELA_ASSERT_TRUE(!ela_kernel_module_has_ko_suffix(".ko"));
+	ELA_ASSERT_TRUE(!ela_kernel_module_has_ko_suffix("ko"));
+	ELA_ASSERT_TRUE(!ela_kernel_module_has_ko_suffix(""));
+	ELA_ASSERT_TRUE(!ela_kernel_module_has_ko_suffix(NULL));
+}
+
 int run_linux_kernel_module_util_tests(void)
 {
 	static const struct ela_test_case cases[] = {
@@ -171,6 +186,7 @@ int run_linux_kernel_module_util_tests(void)
 		{ "prepare/help", test_prepare_help },
 		{ "extract/vermagic", test_extract_vermagic },
 		{ "extract/invalid", test_extract_vermagic_rejects_invalid_inputs },
+		{ "vermagic/ko_suffix", test_has_ko_suffix },
 	};
 
 	return ela_run_test_suite("linux_kernel_module_util", cases,

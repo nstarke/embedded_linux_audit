@@ -43,5 +43,7 @@ int ela_kernel_module_prepare_request(int argc, char **argv,
 unsigned int ela_kernel_module_load_flags(const struct ela_kernel_module_request *request);
 int ela_kernel_module_extract_vermagic(const unsigned char *data, size_t data_len,
 				       char *out, size_t out_len);
+/* True when `name` ends in ".ko" (an uncompressed kernel module file). */
+bool ela_kernel_module_has_ko_suffix(const char *name);
 
 #endif
