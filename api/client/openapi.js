@@ -30,6 +30,7 @@ const openapiSpec = {
   tags: [
     { name: 'uploads', description: 'Uploaded artifacts' },
     { name: 'terminal', description: 'Live control of associated devices' },
+    { name: 'gdb', description: 'Active gdbserver debug sessions on associated devices' },
   ],
   paths: {
     '/uploads': {
@@ -146,6 +147,22 @@ const openapiSpec = {
           },
           401: { $ref: '#/components/responses/Unauthorized' },
           504: { $ref: '#/components/responses/TerminalUnavailable' },
+        },
+      },
+    },
+    '/gdb/sessions': {
+      get: {
+        tags: ['gdb'],
+        summary: 'List active gdbserver sessions on your associated devices',
+        description: 'Lists every live gdbserver session on the devices you are associated with. A device may have multiple concurrent sessions; each is returned separately with its attach handle (`hexkey`) and whether a gdb client is currently attached (`operatorConnected`). Attach with `target remote wss://<host>/gdb/out/<hexkey>` using your client token.',
+        operationId: 'listGdbSessions',
+        responses: {
+          200: {
+            description: 'Active gdbserver sessions for your associated devices',
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/GdbSessionsResponse' } } },
+          },
+          401: { $ref: '#/components/responses/Unauthorized' },
+          504: { $ref: '#/components/responses/GdbUnavailable' },
         },
       },
     },
@@ -380,6 +397,12 @@ const openapiSpec = {
           'application/json': { schema: { $ref: '#/components/schemas/Error' } },
         },
       },
+      GdbUnavailable: {
+        description: 'The query timed out or the GDB bridge API is unavailable',
+        content: {
+          'application/json': { schema: { $ref: '#/components/schemas/Error' } },
+        },
+      },
     },
     schemas: {
       Error: {
@@ -463,6 +486,30 @@ const openapiSpec = {
         type: 'object',
         properties: {
           sessions: { type: 'array', items: { $ref: '#/components/schemas/Session' } },
+        },
+        required: ['sessions'],
+      },
+      GdbSession: {
+        type: 'object',
+        properties: {
+          mac: { type: 'string', example: 'aa:bb:cc:dd:ee:ff' },
+          hexkey: {
+            type: 'string',
+            example: '0123456789abcdef0123456789abcdef',
+            description: 'Session handle. Attach with `target remote wss://<host>/gdb/out/<hexkey>`.',
+          },
+          operatorConnected: {
+            type: 'boolean',
+            example: false,
+            description: 'Whether a gdb client is currently attached to this session.',
+          },
+        },
+        required: ['mac', 'hexkey', 'operatorConnected'],
+      },
+      GdbSessionsResponse: {
+        type: 'object',
+        properties: {
+          sessions: { type: 'array', items: { $ref: '#/components/schemas/GdbSession' } },
         },
         required: ['sessions'],
       },

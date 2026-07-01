@@ -47,6 +47,15 @@ function loadGdbServer(options = {}) {
     createServer: jest.fn(() => httpServer),
   }), { virtual: true });
   jest.doMock('ws', () => ({ WebSocketServer }), { virtual: true });
+  // BullMQ Worker that answers client-API queries; record handler/close calls.
+  const commandWorkerInstance = { on: jest.fn(), close: jest.fn().mockResolvedValue(undefined) };
+  const Worker = jest.fn(() => commandWorkerInstance);
+  jest.doMock('bullmq', () => ({ Worker }), { virtual: true });
+  jest.doMock('../../../../api/lib/queue', () => ({
+    GDB_COMMAND_QUEUE_NAME: 'ela-gdb-commands',
+    getGdbCommandWorkerOptions: jest.fn(() => ({ connection: {}, concurrency: 4 })),
+  }));
+  jest.doMock('../../../../api/gdb/commandWorker', () => ({ processGdbCommand: jest.fn() }));
   jest.doMock('../../../../api/auth', () => auth);
   jest.doMock('../../../../api/lib/db', () => ({
     initializeDatabase,
@@ -70,6 +79,7 @@ function loadGdbServer(options = {}) {
     server, httpServer, WebSocketServer, auth, sm,
     initializeDatabase, runMigrations, closeDatabase, loadApiKeyHashes,
     isUserAssociatedWithDevice, parseGdbUrl, processOn,
+    Worker, commandWorkerInstance,
   };
 }
 
@@ -301,14 +311,18 @@ describe('gdb server', () => {
     expect(session.in).toBeNull();
   });
 
-  test('SIGTERM purges all sessions and closes the server; SIGINT exits', () => {
-    const { httpServer, sm, processOn } = loadGdbServer();
+  test('SIGTERM purges all sessions, closes the command worker and server; SIGINT exits', async () => {
+    const { server, httpServer, sm, processOn, Worker, commandWorkerInstance } = loadGdbServer();
+    await server.main();
+    // main() spins up the client-query worker on the shared GDB queue.
+    expect(Worker).toHaveBeenCalledWith('ela-gdb-commands', expect.any(Function), expect.any(Object));
     sm.keys.mockReturnValue(['k1', 'k2']);
 
     const sigterm = processOn.mock.calls.find(([e]) => e === 'SIGTERM')[1];
     sigterm();
     expect(sm.purge).toHaveBeenCalledWith('k1');
     expect(sm.purge).toHaveBeenCalledWith('k2');
+    expect(commandWorkerInstance.close).toHaveBeenCalled();
     expect(httpServer.close).toHaveBeenCalled();
 
     const sigint = processOn.mock.calls.find(([e]) => e === 'SIGINT')[1];

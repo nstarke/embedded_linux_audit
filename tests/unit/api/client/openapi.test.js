@@ -12,6 +12,7 @@ describe('client OpenAPI spec', () => {
 
   test('documents every client API route', () => {
     expect(Object.keys(openapiSpec.paths).sort()).toEqual([
+      '/gdb/sessions',
       '/terminal/sessions',
       '/terminal/sessions/{mac}',
       '/terminal/{mac}/ela/exec',

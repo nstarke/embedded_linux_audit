@@ -3,9 +3,12 @@
 
 const http = require('http');
 const { WebSocketServer } = require('ws');
+const { Worker } = require('bullmq');
 const auth = require('../auth');
 const { parseGdbUrl } = require('./urlParser');
 const { createSessionManager } = require('./sessionManager');
+const { GDB_COMMAND_QUEUE_NAME, getGdbCommandWorkerOptions } = require('../lib/queue');
+const { processGdbCommand } = require('./commandWorker');
 const { initializeDatabase, runMigrations, closeDatabase } = require('../lib/db');
 const { loadApiKeyHashes, isUserAssociatedWithDevice } = require('../lib/db/deviceRegistry');
 
@@ -26,6 +29,10 @@ const HOST = process.env.ELA_GDB_HOST || '0.0.0.0';
  */
 const sm = createSessionManager();
 const sessions = sm.sessions;
+
+// Answers client-API queries (e.g. list active sessions) from the in-memory
+// session map above, over the shared BullMQ queue. Assigned in main().
+let commandWorker = null;
 
 /*
  * The two ends of a GDB tunnel authenticate with different token scopes, read
@@ -128,6 +135,9 @@ process.on('SIGTERM', () => {
   for (const key of sm.keys()) {
     sm.purge(key);
   }
+  if (commandWorker) {
+    commandWorker.close().catch(() => {});
+  }
   httpServer.close(() => process.exit(0));
 });
 
@@ -142,6 +152,16 @@ async function main() {
     process.exit(1);
     return;
   }
+
+  // Answer client-API queries (list sessions) against the live session map.
+  commandWorker = new Worker(
+    GDB_COMMAND_QUEUE_NAME,
+    (job) => processGdbCommand({ job, sessions }),
+    getGdbCommandWorkerOptions(),
+  );
+  commandWorker.on('error', (err) => {
+    process.stderr.write(`gdb command worker error: ${err && err.message}\n`);
+  });
 
   // Keys are read from the database per connection (see verifyClient above), so
   // nothing is loaded here.

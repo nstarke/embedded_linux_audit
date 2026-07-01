@@ -6,6 +6,7 @@ const swaggerUi = require('swagger-ui-express');
 const auth = require('../auth');
 const registerUploadsRoutes = require('./routes/uploads');
 const registerTerminalRoutes = require('./routes/terminal');
+const registerGdbRoutes = require('./routes/gdb');
 const { openapiSpec } = require('./openapi');
 
 /**
@@ -58,6 +59,9 @@ function createApp(deps = {}) {
   // Operator terminal-control routes: enqueue commands to the terminal API over
   // the queue and relay the result. ACL'd to the caller's associated devices.
   registerTerminalRoutes(app, deps.terminal || {});
+  // Operator GDB routes: list active gdbserver sessions on the caller's devices,
+  // answered by the GDB bridge API over its own queue. ACL'd the same way.
+  registerGdbRoutes(app, deps.gdb || {});
 
   // Translate JSON body-parser failures on the terminal POST routes into the
   // same error shapes the routes use.

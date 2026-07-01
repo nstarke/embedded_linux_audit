@@ -13,6 +13,13 @@ const QUEUE_NAME = process.env.ELA_BUILD_QUEUE_NAME || 'ela-binary-builds';
 // client API reaches agents without the terminal API exposing any client REST.
 const COMMAND_QUEUE_NAME = process.env.ELA_COMMAND_QUEUE_NAME || 'ela-terminal-commands';
 
+// GDB command request/reply queue: the client API enqueues a query (e.g. list
+// active gdbserver sessions) and awaits its result; the GDB bridge API worker
+// answers it from its in-memory session map. Mirrors the terminal command queue
+// so the client API can reach the GDB bridge's live state without the GDB API
+// exposing any client REST of its own.
+const GDB_COMMAND_QUEUE_NAME = process.env.ELA_GDB_COMMAND_QUEUE_NAME || 'ela-gdb-commands';
+
 function getConnection() {
   return {
     host: process.env.REDIS_HOST || 'redis',
@@ -135,9 +142,71 @@ async function closeCommandQueue() {
   }
 }
 
+/* -------------------------------------------------------------------------
+ * GDB command request/reply queue
+ * ---------------------------------------------------------------------- */
+
+let gdbCommandQueue = null;
+let gdbCommandQueueEvents = null;
+
+function getGdbCommandQueue() {
+  if (!gdbCommandQueue) {
+    gdbCommandQueue = new Queue(GDB_COMMAND_QUEUE_NAME, { connection: getConnection() });
+  }
+  return gdbCommandQueue;
+}
+
+function getGdbCommandQueueEvents() {
+  if (!gdbCommandQueueEvents) {
+    gdbCommandQueueEvents = new QueueEvents(GDB_COMMAND_QUEUE_NAME, { connection: getConnection() });
+  }
+  return gdbCommandQueueEvents;
+}
+
+// GDB command worker options. These queries only read the in-memory session
+// map, so concurrency can be higher than the terminal worker's; default 4,
+// env-overridable.
+function getGdbCommandWorkerOptions() {
+  return {
+    connection: getConnection(),
+    concurrency: intFromEnv('ELA_GDB_CONCURRENCY', 4),
+  };
+}
+
+/**
+ * Enqueue a GDB bridge query and wait for the GDB worker's result. Returns the
+ * worker's return value (`{ status, body }`). Rejects if the wait exceeds
+ * `waitMs` (e.g. the GDB API is down) or the job fails.
+ *
+ * @param {object} payload  { type, ... } — see api/gdb/commandWorker.js.
+ * @param {{waitMs?: number}} [opts]
+ */
+async function sendGdbCommand(payload, { waitMs = 30000 } = {}) {
+  const q = getGdbCommandQueue();
+  const events = getGdbCommandQueueEvents();
+  await events.waitUntilReady();
+  const job = await q.add(payload.type || 'command', payload, {
+    removeOnComplete: true,
+    removeOnFail: true,
+  });
+  return job.waitUntilFinished(events, waitMs);
+}
+
+async function closeGdbCommandQueue() {
+  if (gdbCommandQueueEvents) {
+    await gdbCommandQueueEvents.close();
+    gdbCommandQueueEvents = null;
+  }
+  if (gdbCommandQueue) {
+    await gdbCommandQueue.close();
+    gdbCommandQueue = null;
+  }
+}
+
 module.exports = {
   QUEUE_NAME,
   COMMAND_QUEUE_NAME,
+  GDB_COMMAND_QUEUE_NAME,
   getConnection,
   getWorkerOptions,
   getBuildQueue,
@@ -147,4 +216,9 @@ module.exports = {
   getCommandWorkerOptions,
   sendTerminalCommand,
   closeCommandQueue,
+  getGdbCommandQueue,
+  getGdbCommandQueueEvents,
+  getGdbCommandWorkerOptions,
+  sendGdbCommand,
+  closeGdbCommandQueue,
 };
