@@ -2,12 +2,28 @@
 
 const { getModels, getSequelize } = require('./index');
 
+// Canonicalize a MAC to lowercase dash-separated form (`20-4c-03-32-75-5c`).
+// The agent identifies itself with `:` on the upload path but `-` on the
+// terminal/WebSocket path, and Device rows are keyed by this exact string.
+// Without canonicalization those two spellings create two separate Device rows,
+// so an upload (colon) and the user↔device association made on phone-home (dash)
+// never line up and the artifact is invisible in /uploads. Dash form is chosen
+// because the terminal session registry, client routing, and existing
+// associations already use it, so uploads converge onto the associated device.
+function normalizeMac(macAddress) {
+  if (macAddress == null) return macAddress;
+  const hex = String(macAddress).toLowerCase().replace(/[^0-9a-f]/g, '');
+  if (hex.length !== 12) return String(macAddress).toLowerCase();
+  return hex.match(/.{2}/g).join('-');
+}
+
 async function ensureDevice(macAddress, transaction, seenAt = new Date()) {
   const { Device } = getModels();
+  const mac = normalizeMac(macAddress);
   const [device] = await Device.findOrCreate({
-    where: { macAddress },
+    where: { macAddress: mac },
     defaults: {
-      macAddress,
+      macAddress: mac,
       firstSeenAt: seenAt,
       lastSeenAt: seenAt,
     },
@@ -25,7 +41,7 @@ async function ensureDevice(macAddress, transaction, seenAt = new Date()) {
 async function getDeviceAlias(macAddress) {
   const { Device, DeviceAlias } = getModels();
   const device = await Device.findOne({
-    where: { macAddress },
+    where: { macAddress: normalizeMac(macAddress) },
     include: [{ model: DeviceAlias }],
   });
 
@@ -163,7 +179,7 @@ async function isUserAssociatedWithDevice(username, macAddress) {
   const { User, Device, UserDevice } = getModels();
   const user = await User.findOne({ where: { username } });
   if (!user) return false;
-  const device = await Device.findOne({ where: { macAddress } });
+  const device = await Device.findOne({ where: { macAddress: normalizeMac(macAddress) } });
   if (!device) return false;
   const link = await UserDevice.findOne({
     where: { userId: user.id, deviceId: device.id },
@@ -194,12 +210,13 @@ async function listUserDeviceMacs(username) {
 // not fail the command.
 async function recordCommandLog({ username, macAddress, commandType, command, status = null }) {
   const { User, Device, CommandLog } = getModels();
+  const mac = macAddress ? normalizeMac(macAddress) : null;
   const user = username ? await User.findOne({ where: { username } }) : null;
-  const device = macAddress ? await Device.findOne({ where: { macAddress } }) : null;
+  const device = mac ? await Device.findOne({ where: { macAddress: mac } }) : null;
   await CommandLog.create({
     userId: user ? user.id : null,
     deviceId: device ? device.id : null,
-    macAddress: macAddress || null,
+    macAddress: mac || null,
     commandType,
     command,
     status,
@@ -334,6 +351,7 @@ async function createApiKey(username, keyHash, label = null, scope = 'agent') {
 }
 
 module.exports = {
+  normalizeMac,
   ensureDevice,
   getDeviceAlias,
   setDeviceAlias,

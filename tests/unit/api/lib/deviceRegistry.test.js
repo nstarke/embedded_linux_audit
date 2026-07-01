@@ -21,6 +21,37 @@ describe('device registry', () => {
     jest.restoreAllMocks();
   });
 
+  describe('normalizeMac', () => {
+    test('collapses colon, dash, and bare 12-hex spellings to one dash form', () => {
+      const { registry } = loadDeviceRegistry({ models: {} });
+      const canonical = '20-4c-03-32-75-5c';
+      expect(registry.normalizeMac('20:4C:03:32:75:5C')).toBe(canonical);
+      expect(registry.normalizeMac('20-4c-03-32-75-5c')).toBe(canonical);
+      expect(registry.normalizeMac('204c0332755c')).toBe(canonical);
+    });
+
+    test('passes through non-canonical inputs lowercased (no 12-hex MAC)', () => {
+      const { registry } = loadDeviceRegistry({ models: {} });
+      expect(registry.normalizeMac('aa:bb')).toBe('aa:bb');
+      expect(registry.normalizeMac(null)).toBeNull();
+    });
+  });
+
+  test('ensureDevice canonicalizes a colon MAC to dash form before findOrCreate', async () => {
+    const device = { id: 9, lastSeenAt: new Date('2026-01-01T00:00:00Z'), save: jest.fn() };
+    const models = { Device: { findOrCreate: jest.fn().mockResolvedValue([device]) } };
+    const { registry } = loadDeviceRegistry({ models });
+    const seenAt = new Date('2026-01-01T00:00:00Z');
+
+    await registry.ensureDevice('20:4C:03:32:75:5C', 'tx', seenAt);
+
+    expect(models.Device.findOrCreate).toHaveBeenCalledWith({
+      where: { macAddress: '20-4c-03-32-75-5c' },
+      defaults: { macAddress: '20-4c-03-32-75-5c', firstSeenAt: seenAt, lastSeenAt: seenAt },
+      transaction: 'tx',
+    });
+  });
+
   test('ensureDevice updates lastSeenAt when a newer timestamp is observed', async () => {
     const device = {
       id: 1,
