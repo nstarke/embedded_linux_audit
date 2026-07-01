@@ -15,6 +15,50 @@ function shSingleQuote(value) {
   return String(value == null ? '' : value).replace(/'/g, "'\\''");
 }
 
+// Inverse of a POSIX-sh single-quoted word: resolve `'...'` segments and `\c`
+// escapes back to the literal string. Recovers a value written as
+// `'` + shSingleQuote(v) + `'` (see buildWrapperHeader), used when rebuilding a
+// launcher from an existing one.
+function shUnquote(s) {
+  let out = '';
+  let i = 0;
+  while (i < s.length) {
+    const c = s[i];
+    if (c === "'") {
+      i += 1;
+      while (i < s.length && s[i] !== "'") { out += s[i]; i += 1; }
+      i += 1; // skip the closing quote
+    } else if (c === '\\') {
+      i += 1;
+      if (i < s.length) { out += s[i]; i += 1; }
+    } else {
+      out += c;
+      i += 1;
+    }
+  }
+  return out;
+}
+
+/**
+ * Parse the launcher header text (everything before the payload marker) back
+ * into the values it was built with. Returns null if no token line is found.
+ * @param {string} text
+ * @returns {{token:string, serverUrl:string, insecure:boolean}|null}
+ */
+function parseLauncherHeader(text) {
+  const grab = (name) => {
+    const m = String(text).match(new RegExp(`^${name}=(.*)$`, 'm'));
+    return m ? shUnquote(m[1].trim()) : null;
+  };
+  const token = grab('ELA_TOKEN');
+  if (!token) return null;
+  return {
+    token,
+    serverUrl: grab('ELA_REMOTE') || '',
+    insecure: grab('ELA_INSECURE') === 'true',
+  };
+}
+
 /**
  * Build the POSIX-sh launcher header that precedes the embedded agent binary.
  *
@@ -121,4 +165,11 @@ function assembleWrapper(genericBinary, { token, serverUrl = '', insecure = fals
   return Buffer.concat([Buffer.from(header, 'utf8'), genericBinary]);
 }
 
-module.exports = { PAYLOAD_MARKER, shSingleQuote, buildWrapperHeader, assembleWrapper };
+module.exports = {
+  PAYLOAD_MARKER,
+  shSingleQuote,
+  shUnquote,
+  parseLauncherHeader,
+  buildWrapperHeader,
+  assembleWrapper,
+};

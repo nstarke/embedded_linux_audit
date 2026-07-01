@@ -296,6 +296,27 @@ instead. **With no server URL configured the launcher just sets the token and a
 bare run prints the agent help** — set `ELA_SERVER_URL` (or `--server-url`) and
 re-run `add-user-key` to enable phone-home.
 
+#### Refreshing existing users after changing the URL
+
+Setting `ELA_SERVER_URL` (or re-running `nginx/install.sh`) only affects users
+created **afterward** — it does not touch already-provisioned launchers, and
+`add-user-key` refuses to re-run for an existing key. To apply a new URL (or a
+fresh generic build) to existing users **in place**, without changing their
+tokens or download URLs, use `tools/rebuild-launchers.js`:
+
+```bash
+# all users (URL from ELA_SERVER_URL in the container env)
+docker compose exec agent-api node /app/tools/rebuild-launchers.js
+# or override the URL / limit to one user
+docker compose exec agent-api node /app/tools/rebuild-launchers.js \
+    --server-url wss://ela.example.com --keyhash <sha256-of-agent-key>
+```
+
+It recovers each user's token from one of their existing launchers (the DB
+stores only the hash), then re-wraps the current generic binaries with the
+configured URL. `--insecure`/`--no-insecure` force the TLS-verification flag;
+otherwise each launcher's current setting is kept. Needs no database.
+
 The download endpoint is **unauthenticated** — the token rides in the URL path —
 so a freshly provisioned host with no agent yet can pull its launcher with a
 plain GET, then run it:

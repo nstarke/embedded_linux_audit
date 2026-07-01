@@ -5,8 +5,13 @@ const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
 
-const { listGenericBinaries, assembleUserWrappers } = require('../../../../api/agent/provisionWrappers');
-const { PAYLOAD_MARKER } = require('../../../../api/agent/selfExtract');
+const {
+  listGenericBinaries,
+  assembleUserWrappers,
+  readLauncherMetadata,
+  rebuildAllLaunchers,
+} = require('../../../../api/agent/provisionWrappers');
+const { PAYLOAD_MARKER, parseLauncherHeader } = require('../../../../api/agent/selfExtract');
 
 describe('provisionWrappers', () => {
   let root;
@@ -83,5 +88,97 @@ describe('provisionWrappers', () => {
       encoding: 'utf8',
     });
     expect(out.trim()).toBe('x86 KEY=tok-abc');
+  });
+
+  describe('rebuildAllLaunchers', () => {
+    let usersDir;
+
+    // Seed the generic binaries and one user's launchers built with the OLD
+    // (empty) server URL, as if provisioned before ELA_SERVER_URL was set.
+    async function seedUser(keyHash, token) {
+      fs.writeFileSync(path.join(genericDir, 'ela-x86_64'), Buffer.from('#!/bin/sh\necho v1\n'));
+      fs.writeFileSync(path.join(genericDir, 'ela-arm32-le'), Buffer.from('#!/bin/sh\necho v1\n'));
+      await assembleUserWrappers({
+        genericDir,
+        userDir: path.join(usersDir, keyHash),
+        token,
+        serverUrl: '',
+      });
+    }
+
+    beforeEach(() => {
+      usersDir = path.join(root, 'users');
+      fs.mkdirSync(usersDir, { recursive: true });
+    });
+
+    test('readLauncherMetadata recovers the token from an assembled launcher', async () => {
+      await seedUser('hashA', 'token-A');
+      const meta = await readLauncherMetadata(path.join(usersDir, 'hashA', 'ela-x86_64'));
+      expect(meta).toEqual({ token: 'token-A', serverUrl: '', insecure: false });
+    });
+
+    test('rebuilds every user with the new URL while preserving their token', async () => {
+      await seedUser('hashA', 'token-A');
+      await seedUser('hashB', 'token-B');
+
+      const { rebuilt, skipped } = await rebuildAllLaunchers({
+        genericDir,
+        usersDir,
+        serverUrl: 'wss://new.example.com',
+      });
+
+      expect(skipped).toEqual([]);
+      expect(rebuilt.map((r) => r.keyHash).sort()).toEqual(['hashA', 'hashB']);
+
+      for (const [hash, token] of [['hashA', 'token-A'], ['hashB', 'token-B']]) {
+        const header = fs.readFileSync(path.join(usersDir, hash, 'ela-x86_64'), 'utf8');
+        const meta = parseLauncherHeader(header);
+        expect(meta.token).toBe(token);              // token preserved
+        expect(meta.serverUrl).toBe('wss://new.example.com'); // URL updated
+      }
+    });
+
+    test('--keyhash limits the rebuild to one user', async () => {
+      await seedUser('hashA', 'token-A');
+      await seedUser('hashB', 'token-B');
+
+      const { rebuilt } = await rebuildAllLaunchers({
+        genericDir, usersDir, serverUrl: 'wss://h', onlyKeyHash: 'hashA',
+      });
+      expect(rebuilt.map((r) => r.keyHash)).toEqual(['hashA']);
+
+      // hashB still has the old (empty) URL.
+      const bHeader = fs.readFileSync(path.join(usersDir, 'hashB', 'ela-x86_64'), 'utf8');
+      expect(parseLauncherHeader(bHeader).serverUrl).toBe('');
+    });
+
+    test('insecureOverride forces the flag; null keeps the existing value', async () => {
+      await seedUser('hashA', 'token-A'); // seeded with insecure:false
+
+      await rebuildAllLaunchers({ genericDir, usersDir, serverUrl: 'wss://h', insecureOverride: true });
+      let header = fs.readFileSync(path.join(usersDir, 'hashA', 'ela-x86_64'), 'utf8');
+      expect(parseLauncherHeader(header).insecure).toBe(true);
+
+      // null override keeps the just-written true value.
+      await rebuildAllLaunchers({ genericDir, usersDir, serverUrl: 'wss://h', insecureOverride: null });
+      header = fs.readFileSync(path.join(usersDir, 'hashA', 'ela-x86_64'), 'utf8');
+      expect(parseLauncherHeader(header).insecure).toBe(true);
+    });
+
+    test('skips a user directory with no launcher to read the token from', async () => {
+      // Generic binaries exist, but this user's dir is empty.
+      fs.writeFileSync(path.join(genericDir, 'ela-x86_64'), Buffer.from('bin'));
+      fs.mkdirSync(path.join(usersDir, 'emptyhash'), { recursive: true });
+
+      const { rebuilt, skipped } = await rebuildAllLaunchers({ genericDir, usersDir, serverUrl: 'wss://h' });
+      expect(rebuilt).toEqual([]);
+      expect(skipped).toEqual([{ keyHash: 'emptyhash', reason: 'no existing launcher to read the token from' }]);
+    });
+
+    test('throws when there are no generic binaries to rebuild from', async () => {
+      await expect(
+        rebuildAllLaunchers({ genericDir, usersDir, serverUrl: 'wss://h' }),
+      ).rejects.toThrow(/no generic binaries/);
+    });
   });
 });

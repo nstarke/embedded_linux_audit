@@ -8,6 +8,8 @@ const { execFileSync } = require('child_process');
 const {
   PAYLOAD_MARKER,
   shSingleQuote,
+  shUnquote,
+  parseLauncherHeader,
   buildWrapperHeader,
   assembleWrapper,
 } = require('../../../../api/agent/selfExtract');
@@ -28,6 +30,34 @@ describe('selfExtract', () => {
       expect(shSingleQuote("a'b")).toBe("a'\\''b");
       expect(shSingleQuote('plain')).toBe('plain');
       expect(shSingleQuote(null)).toBe('');
+    });
+  });
+
+  describe('shUnquote / parseLauncherHeader', () => {
+    test('shUnquote is the inverse of a single-quoted shSingleQuote value', () => {
+      for (const v of ['plain', "has'quote", "a'b'c", 'wss://h:9000', '']) {
+        expect(shUnquote(`'${shSingleQuote(v)}'`)).toBe(v);
+      }
+    });
+
+    test('parseLauncherHeader recovers token, serverUrl, and insecure from a header', () => {
+      const header = buildWrapperHeader({
+        token: "tok'en", serverUrl: 'wss://h', insecure: true, cacheKey: 'k',
+      });
+      expect(parseLauncherHeader(header)).toEqual({
+        token: "tok'en",
+        serverUrl: 'wss://h',
+        insecure: true,
+      });
+    });
+
+    test('parseLauncherHeader reads an empty URL and false insecure', () => {
+      const header = buildWrapperHeader({ token: 't', cacheKey: 'k' });
+      expect(parseLauncherHeader(header)).toEqual({ token: 't', serverUrl: '', insecure: false });
+    });
+
+    test('parseLauncherHeader returns null without a token line', () => {
+      expect(parseLauncherHeader('#!/bin/sh\necho hi\n')).toBeNull();
     });
   });
 
