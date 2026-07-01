@@ -14,7 +14,10 @@ describe('client OpenAPI spec', () => {
     expect(Object.keys(openapiSpec.paths).sort()).toEqual([
       '/terminal/sessions',
       '/terminal/sessions/{mac}',
-      '/terminal/{mac}/exec',
+      '/terminal/{mac}/ela/exec',
+      '/terminal/{mac}/ela/spawn',
+      '/terminal/{mac}/linux/exec',
+      '/terminal/{mac}/linux/spawn',
       '/terminal/{mac}/spawn',
       '/terminal/{mac}/spawn/{pid}',
       '/uploads',

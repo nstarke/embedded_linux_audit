@@ -39,6 +39,7 @@ describe('db models', () => {
       'ApiKey',
       'ArchReport',
       'BlockedRemote',
+      'CommandLog',
       'CommandUpload',
       'Device',
       'DeviceAlias',

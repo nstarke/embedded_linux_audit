@@ -52,6 +52,7 @@ function registerTerminalRoutes(app, deps = {}) {
   const {
     sendCommand = defaultSendCommand,
     listUserDeviceMacs = (username) => deviceRegistry().listUserDeviceMacs(username),
+    recordCommandLog = (row) => deviceRegistry().recordCommandLog(row),
   } = deps;
 
   const parseBody = express.json({ limit: MAX_BODY_BYTES, type: () => true });
@@ -90,16 +91,27 @@ function registerTerminalRoutes(app, deps = {}) {
   }
 
   // Enqueue a command, await the terminal worker's result, and relay it. A wait
-  // failure (worker down or slow) surfaces as 504.
-  async function dispatch(res, payload, waitMs) {
-    let result;
+  // failure (worker down or slow) surfaces as 504. When `log` is provided, the
+  // command is audit-logged (who/what/when + resulting status); a logging
+  // failure never fails the command.
+  async function dispatch(res, payload, waitMs, log = null) {
+    let status;
+    let body;
     try {
-      result = await sendCommand(payload, { waitMs });
+      const result = await sendCommand(payload, { waitMs });
+      ({ status, body } = result);
     } catch {
-      res.status(504).json({ error: 'terminal command timed out or terminal API unavailable' });
-      return;
+      status = 504;
+      body = { error: 'terminal command timed out or terminal API unavailable' };
     }
-    res.status(result.status).json(result.body);
+    if (log) {
+      try {
+        await recordCommandLog({ ...log, status });
+      } catch {
+        // audit-log failures must not fail the command
+      }
+    }
+    res.status(status).json(body);
   }
 
   // GET /terminal/sessions — only the caller's associated devices.
@@ -156,55 +168,78 @@ function registerTerminalRoutes(app, deps = {}) {
     await dispatch(res, payload, DEFAULT_WAIT_MS);
   });
 
-  app.post('/terminal/:mac/exec', validateMac, requireDeviceAssociation, parseBody, async (req, res) => {
-    const body = req.body || {};
-    const command = typeof body.command === 'string' ? body.command : '';
-    if (!command.trim()) {
-      res.status(400).json({ error: 'command is required' });
-      return;
-    }
-
-    let timeoutMs;
-    if (body.timeoutMs !== undefined && body.timeoutMs !== null) {
-      timeoutMs = Number(body.timeoutMs);
-      if (!Number.isInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > MAX_EXEC_TIMEOUT_MS) {
-        res.status(400).json({ error: `timeoutMs must be a positive integer <= ${MAX_EXEC_TIMEOUT_MS}` });
+  // `mode` is 'linux' (Linux shell command, run via `linux execute-command`) or
+  // 'ela' (a raw ELA agent command such as `linux gdbserver ...`). The route
+  // path carries it, so the client picks the interpretation explicitly.
+  function makeExecHandler(mode) {
+    return async (req, res) => {
+      const body = req.body || {};
+      const command = typeof body.command === 'string' ? body.command : '';
+      if (!command.trim()) {
+        res.status(400).json({ error: 'command is required' });
         return;
       }
-    }
 
-    const waitMs = (timeoutMs || DEFAULT_EXEC_TIMEOUT_MS) + WAIT_MARGIN_MS;
-    await dispatch(res, { type: 'exec', mac: req.deviceMac, command, timeoutMs }, waitMs);
-  });
+      let timeoutMs;
+      if (body.timeoutMs !== undefined && body.timeoutMs !== null) {
+        timeoutMs = Number(body.timeoutMs);
+        if (!Number.isInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > MAX_EXEC_TIMEOUT_MS) {
+          res.status(400).json({ error: `timeoutMs must be a positive integer <= ${MAX_EXEC_TIMEOUT_MS}` });
+          return;
+        }
+      }
 
-  app.post('/terminal/:mac/spawn', validateMac, requireDeviceAssociation, parseBody, async (req, res) => {
-    const body = req.body || {};
-    const command = typeof body.command === 'string' ? body.command : '';
-    if (!command.trim()) {
-      res.status(400).json({ error: 'command is required' });
-      return;
-    }
+      const waitMs = (timeoutMs || DEFAULT_EXEC_TIMEOUT_MS) + WAIT_MARGIN_MS;
+      await dispatch(
+        res,
+        { type: 'exec', mode, mac: req.deviceMac, command, timeoutMs },
+        waitMs,
+        { username: req.authUser, macAddress: req.deviceMac, commandType: `${mode}-exec`, command },
+      );
+    };
+  }
 
-    let args = [];
-    if (body.args !== undefined && body.args !== null) {
-      if (!Array.isArray(body.args) || !body.args.every((a) => typeof a === 'string')) {
-        res.status(400).json({ error: 'args must be an array of strings' });
+  function makeSpawnHandler(mode) {
+    return async (req, res) => {
+      const body = req.body || {};
+      const command = typeof body.command === 'string' ? body.command : '';
+      if (!command.trim()) {
+        res.status(400).json({ error: 'command is required' });
         return;
       }
-      args = body.args;
-    }
 
-    let port;
-    if (body.port !== undefined && body.port !== null) {
-      port = Number(body.port);
-      if (!Number.isInteger(port) || port < 1 || port > 65535) {
-        res.status(400).json({ error: 'port must be an integer between 1 and 65535' });
-        return;
+      let args = [];
+      if (body.args !== undefined && body.args !== null) {
+        if (!Array.isArray(body.args) || !body.args.every((a) => typeof a === 'string')) {
+          res.status(400).json({ error: 'args must be an array of strings' });
+          return;
+        }
+        args = body.args;
       }
-    }
 
-    await dispatch(res, { type: 'spawn', mac: req.deviceMac, command, args, port }, DEFAULT_WAIT_MS);
-  });
+      let port;
+      if (body.port !== undefined && body.port !== null) {
+        port = Number(body.port);
+        if (!Number.isInteger(port) || port < 1 || port > 65535) {
+          res.status(400).json({ error: 'port must be an integer between 1 and 65535' });
+          return;
+        }
+      }
+
+      await dispatch(
+        res,
+        { type: 'spawn', mode, mac: req.deviceMac, command, args, port },
+        DEFAULT_WAIT_MS,
+        { username: req.authUser, macAddress: req.deviceMac, commandType: `${mode}-spawn`, command: [command, ...args].join(' ') },
+      );
+    };
+  }
+
+  // Linux shell command vs raw ELA agent command, for both exec and spawn.
+  app.post('/terminal/:mac/linux/exec', validateMac, requireDeviceAssociation, parseBody, makeExecHandler('linux'));
+  app.post('/terminal/:mac/ela/exec', validateMac, requireDeviceAssociation, parseBody, makeExecHandler('ela'));
+  app.post('/terminal/:mac/linux/spawn', validateMac, requireDeviceAssociation, parseBody, makeSpawnHandler('linux'));
+  app.post('/terminal/:mac/ela/spawn', validateMac, requireDeviceAssociation, parseBody, makeSpawnHandler('ela'));
 
   app.get('/terminal/:mac/spawn', validateMac, requireDeviceAssociation, async (req, res) => {
     await dispatch(res, { type: 'listSpawns', mac: req.deviceMac }, DEFAULT_WAIT_MS);
@@ -216,7 +251,12 @@ function registerTerminalRoutes(app, deps = {}) {
       res.status(400).json({ error: 'invalid pid' });
       return;
     }
-    await dispatch(res, { type: 'killSpawn', mac: req.deviceMac, pid }, DEFAULT_WAIT_MS);
+    await dispatch(
+      res,
+      { type: 'killSpawn', mac: req.deviceMac, pid },
+      DEFAULT_WAIT_MS,
+      { username: req.authUser, macAddress: req.deviceMac, commandType: 'kill', command: `kill ${pid}` },
+    );
   });
 }
 

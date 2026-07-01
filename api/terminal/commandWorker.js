@@ -48,11 +48,18 @@ function listSessions(sessionRegistry) {
   return { status: 200, body: { sessions } };
 }
 
-async function execOnSession(sessionRegistry, runExecImpl, { mac, command, timeoutMs }) {
+// mode 'linux' (default) wraps the command as a Linux shell command
+// (`linux execute-command`); mode 'ela' sends it verbatim as an ELA agent
+// command (e.g. `linux gdbserver ...`).
+function wrapShellForMode(mode) {
+  return mode !== 'ela';
+}
+
+async function execOnSession(sessionRegistry, runExecImpl, { mac, command, timeoutMs, mode }) {
   const entry = sessionRegistry.getSession(mac);
   if (!entry) return NO_SESSION;
   try {
-    const result = await runExecImpl({ entry, mac, command, timeoutMs });
+    const result = await runExecImpl({ entry, mac, command, timeoutMs, wrapShell: wrapShellForMode(mode) });
     return { status: 200, body: { ok: true, output: result.output, durationMs: result.durationMs } };
   } catch (err) {
     if (err.code === 'TIMEOUT') {
@@ -66,9 +73,27 @@ async function execOnSession(sessionRegistry, runExecImpl, { mac, command, timeo
   }
 }
 
-async function spawnOnSession(sessionRegistry, runSpawnImpl, now, { mac, command, args = [], port }) {
+async function spawnOnSession(sessionRegistry, runSpawnImpl, runExecImpl, now, { mac, command, args = [], port, mode }) {
   const entry = sessionRegistry.getSession(mac);
   if (!entry) return NO_SESSION;
+
+  // An ELA agent command (e.g. `linux gdbserver tunnel ...`) daemonizes itself
+  // rather than shell-backgrounding, so there is no `$!` PID to capture: run it
+  // verbatim and return its output (which carries e.g. the gdb tunnel URL).
+  if (mode === 'ela') {
+    try {
+      const result = await runExecImpl({ entry, mac, command, wrapShell: false });
+      return { status: 201, body: { ok: true, output: result.output, durationMs: result.durationMs } };
+    } catch (err) {
+      if (err.code === 'TIMEOUT') {
+        return { status: 504, body: { ok: false, error: 'spawn timed out', output: err.output || '' } };
+      }
+      if (err.code === 'NOT_CONNECTED') return NO_SESSION;
+      return { status: 500, body: { error: 'spawn failed' } };
+    }
+  }
+
+  // A Linux command is shell-backgrounded; capture and track its PID/port.
   try {
     const result = await runSpawnImpl({ entry, mac, command, args, port });
     const record = { pid: result.pid, command, args, port: result.port, startedAt: now() };
@@ -158,7 +183,7 @@ async function processCommand({
     case 'exec':
       return execOnSession(sessionRegistry, runExecImpl, data);
     case 'spawn':
-      return spawnOnSession(sessionRegistry, runSpawnImpl, now, data);
+      return spawnOnSession(sessionRegistry, runSpawnImpl, runExecImpl, now, data);
     case 'listSpawns':
       return listSpawns(sessionRegistry, data);
     case 'killSpawn':

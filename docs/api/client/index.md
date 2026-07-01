@@ -97,10 +97,22 @@ relays it to you. The terminal server exposes no operator HTTP surface.
 | --- | --- |
 | `GET /terminal/sessions` | List connected devices you are associated with: `{ "sessions": [{ mac, alias, group, remoteAddress, connectedAt, lastHeartbeat }] }`. |
 | `POST /terminal/sessions/:mac` | Set the device's `alias` and/or `group`. Body `{ "alias"?: string\|null, "group"?: string\|null }` (at least one; a string sets, `null` clears) → `{ mac, alias, group }`. Persists to the DB and updates the live session immediately. |
-| `POST /terminal/:mac/exec` | Run one command and wait for its output. Body `{ "command": "uname -a", "timeoutMs"?: <=60000 }` → `{ ok, output, durationMs }`. |
-| `POST /terminal/:mac/spawn` | Launch a long-running process. Body `{ "command", "args"?: [...], "port"?: 1-65535 }` → `201 { pid, port? }`. |
-| `GET /terminal/:mac/spawn` | List tracked spawns for the device: `{ "spawns": [...] }`. |
+| `POST /terminal/:mac/linux/exec` | Run a **Linux shell** command (via the agent's `linux execute-command`) and wait for its output. Body `{ "command": "uname -a", "timeoutMs"?: <=60000 }` → `{ ok, output, durationMs }`. |
+| `POST /terminal/:mac/ela/exec` | Run a **raw ELA agent** command (sent verbatim, e.g. `linux dmesg`) and wait for its output. Same body/response as above. |
+| `POST /terminal/:mac/linux/spawn` | Launch a long-running **Linux** background process. Body `{ "command", "args"?: [...], "port"?: 1-65535 }` → `201 { pid, port? }` (tracked, killable). |
+| `POST /terminal/:mac/ela/spawn` | Start a self-daemonizing **ELA** command (e.g. `linux gdbserver tunnel <pid> <url>`) → `201 { ok, output, durationMs }`. ELA processes self-manage, so no PID is tracked. |
+| `GET /terminal/:mac/spawn` | List tracked (Linux) spawns for the device: `{ "spawns": [...] }`. |
 | `DELETE /terminal/:mac/spawn/:pid` | Kill a tracked spawn → `{ "ok": true }`. |
+
+**Linux vs ELA.** `linux/*` runs a shell command through the agent's
+`linux execute-command`; `ela/*` sends the command **verbatim** to the ELA agent
+(so `linux gdbserver`, `linux dmesg`, etc. run as agent commands). Pick the path
+that matches what your `command` is.
+
+**Audit log.** Every command (both `linux/*` and `ela/*` exec/spawn, and kills)
+is recorded in `command_logs` — the user, the device, the command text, the
+command type, the resulting status, and the time — so there is a full history of
+what was run against each device.
 
 **MAC format.** `:mac` accepts either separator and any case —
 `aa:bb:cc:dd:ee:ff` or `aa-bb-cc-dd-ee-ff` — and is matched against your devices

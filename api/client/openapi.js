@@ -171,11 +171,12 @@ const openapiSpec = {
         },
       },
     },
-    '/terminal/{mac}/exec': {
+    '/terminal/{mac}/linux/exec': {
       post: {
         tags: ['terminal'],
-        summary: 'Run a command on a device and wait for its output',
-        operationId: 'terminalExec',
+        summary: 'Run a Linux shell command and wait for its output',
+        description: 'Runs the shell command via the agent\'s `linux execute-command` and returns the captured output.',
+        operationId: 'terminalLinuxExec',
         parameters: [{ $ref: '#/components/parameters/Mac' }],
         requestBody: {
           required: true,
@@ -193,11 +194,35 @@ const openapiSpec = {
         },
       },
     },
-    '/terminal/{mac}/spawn': {
+    '/terminal/{mac}/ela/exec': {
       post: {
         tags: ['terminal'],
-        summary: 'Launch a long-running background process on a device',
-        operationId: 'terminalSpawn',
+        summary: 'Run a raw ELA agent command and wait for its output',
+        description: 'Sends the command verbatim to the ELA agent (e.g. `linux dmesg`, `linux gdbserver tunnel <pid> <url>`) and returns its output. Not wrapped in `execute-command`.',
+        operationId: 'terminalElaExec',
+        parameters: [{ $ref: '#/components/parameters/Mac' }],
+        requestBody: {
+          required: true,
+          content: { 'application/json': { schema: { $ref: '#/components/schemas/ExecRequest' } } },
+        },
+        responses: {
+          200: {
+            description: 'Captured command output',
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/ExecResponse' } } },
+          },
+          400: { $ref: '#/components/responses/BadRequest' },
+          401: { $ref: '#/components/responses/Unauthorized' },
+          404: { $ref: '#/components/responses/NoSession' },
+          504: { $ref: '#/components/responses/TerminalUnavailable' },
+        },
+      },
+    },
+    '/terminal/{mac}/linux/spawn': {
+      post: {
+        tags: ['terminal'],
+        summary: 'Launch a long-running background Linux process',
+        description: 'Shell-backgrounds the command and returns the tracked PID (and port if detected). List with `GET /terminal/{mac}/spawn`, kill with `DELETE`.',
+        operationId: 'terminalLinuxSpawn',
         parameters: [{ $ref: '#/components/parameters/Mac' }],
         requestBody: {
           required: true,
@@ -214,6 +239,31 @@ const openapiSpec = {
           504: { $ref: '#/components/responses/TerminalUnavailable' },
         },
       },
+    },
+    '/terminal/{mac}/ela/spawn': {
+      post: {
+        tags: ['terminal'],
+        summary: 'Start a self-daemonizing ELA agent command',
+        description: 'Runs a raw ELA command that backgrounds itself (e.g. `linux gdbserver tunnel <pid> <url>`) and returns its output. ELA processes are self-managed, so no PID is tracked.',
+        operationId: 'terminalElaSpawn',
+        parameters: [{ $ref: '#/components/parameters/Mac' }],
+        requestBody: {
+          required: true,
+          content: { 'application/json': { schema: { $ref: '#/components/schemas/SpawnRequest' } } },
+        },
+        responses: {
+          201: {
+            description: 'Captured command output',
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/ExecResponse' } } },
+          },
+          400: { $ref: '#/components/responses/BadRequest' },
+          401: { $ref: '#/components/responses/Unauthorized' },
+          404: { $ref: '#/components/responses/NoSession' },
+          504: { $ref: '#/components/responses/TerminalUnavailable' },
+        },
+      },
+    },
+    '/terminal/{mac}/spawn': {
       get: {
         tags: ['terminal'],
         summary: 'List the processes spawned on a device',

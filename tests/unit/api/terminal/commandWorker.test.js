@@ -39,12 +39,19 @@ describe('processCommand', () => {
       expect(res).toEqual({ status: 404, body: { error: 'no active session for mac' } });
     });
 
-    test('200 with output on success', async () => {
+    test('200 with output on success; default mode wraps as a shell command', async () => {
       const sessionRegistry = registry([['aa:bb', { ws: {} }]]);
       const runExecImpl = jest.fn().mockResolvedValue({ output: 'uid=0', durationMs: 7 });
       const res = await run({ type: 'exec', mac: 'aa:bb', command: 'id', timeoutMs: 1000 }, { sessionRegistry, runExecImpl });
-      expect(runExecImpl).toHaveBeenCalledWith({ entry: { ws: {} }, mac: 'aa:bb', command: 'id', timeoutMs: 1000 });
+      expect(runExecImpl).toHaveBeenCalledWith({ entry: { ws: {} }, mac: 'aa:bb', command: 'id', timeoutMs: 1000, wrapShell: true });
       expect(res).toEqual({ status: 200, body: { ok: true, output: 'uid=0', durationMs: 7 } });
+    });
+
+    test("mode 'ela' sends the command verbatim (wrapShell false)", async () => {
+      const sessionRegistry = registry([['aa:bb', { ws: {} }]]);
+      const runExecImpl = jest.fn().mockResolvedValue({ output: 'ok', durationMs: 1 });
+      await run({ type: 'exec', mode: 'ela', mac: 'aa:bb', command: 'linux dmesg' }, { sessionRegistry, runExecImpl });
+      expect(runExecImpl).toHaveBeenCalledWith(expect.objectContaining({ command: 'linux dmesg', wrapShell: false }));
     });
 
     test('504 on timeout, 404 on NOT_CONNECTED, 500 otherwise', async () => {
@@ -84,6 +91,20 @@ describe('processCommand', () => {
       const timeout = Object.assign(new Error('t'), { code: 'TIMEOUT' });
       expect(await run({ type: 'spawn', mac: 'aa:bb', command: 'x' }, { sessionRegistry, runSpawnImpl: jest.fn().mockRejectedValue(timeout) }))
         .toEqual({ status: 504, body: { error: 'spawn timed out' } });
+    });
+
+    test("mode 'ela' runs the raw command (no PID) and returns its output", async () => {
+      const sessionRegistry = registry([['aa:bb', { ws: {} }]]);
+      const runExecImpl = jest.fn().mockResolvedValue({ output: 'wss://h/gdb/out/abc', durationMs: 3 });
+      const runSpawnImpl = jest.fn();
+      const res = await run(
+        { type: 'spawn', mode: 'ela', mac: 'aa:bb', command: 'linux gdbserver tunnel 42 wss://h' },
+        { sessionRegistry, runExecImpl, runSpawnImpl },
+      );
+      // ELA spawn does not shell-background, so runSpawn is not used.
+      expect(runSpawnImpl).not.toHaveBeenCalled();
+      expect(runExecImpl).toHaveBeenCalledWith(expect.objectContaining({ command: 'linux gdbserver tunnel 42 wss://h', wrapShell: false }));
+      expect(res).toEqual({ status: 201, body: { ok: true, output: 'wss://h/gdb/out/abc', durationMs: 3 } });
     });
   });
 

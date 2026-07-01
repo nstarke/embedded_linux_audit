@@ -48,6 +48,43 @@ describe('runExec', () => {
     expect(entry.outputListeners.size).toBe(0);
   });
 
+  test('does not settle on the input-echo prompt, and returns clean output', async () => {
+    // Reproduces the interactive REPL: the agent redraws the prompt while the
+    // command is "typed" (each redraw contains the prompt token but is NOT a
+    // completion), then echoes the full command, then the real output, then a
+    // fresh prompt on its own line.
+    const entry = createEntry();
+    const promise = runExec({ entry, mac, command: 'uname -a', now: () => 0 });
+
+    entry.emit(`\r\x1b[2K(${mac})> l`);
+    entry.emit(`\r\x1b[2K(${mac})> lin`);
+    entry.emit(`\r\x1b[2K(${mac})> linux execute-command "uname -a"`);
+    // These redraw prompts must not have resolved the promise.
+    let done = false;
+    promise.then(() => { done = true; });
+    await Promise.resolve();
+    expect(done).toBe(false);
+
+    entry.emit('\r\n');
+    entry.emit('Linux host 5.10.0 #1 SMP x86_64\r\n');
+    entry.emit(`(${mac})> `); // completion prompt (preceded by newline)
+
+    const result = await promise;
+    expect(result.ok).toBe(true);
+    expect(result.output).toBe('Linux host 5.10.0 #1 SMP x86_64');
+  });
+
+  test('sends the raw command when wrapShell is false (ELA agent command)', () => {
+    const entry = createEntry();
+    // Stub the timer so the un-awaited promise does not schedule a real timeout.
+    const p = runExec({
+      entry, mac, command: 'linux gdbserver tunnel 42 wss://h', wrapShell: false, now: () => 0,
+      setTimeoutImpl: () => 1, clearTimeoutImpl: () => {},
+    });
+    p.catch(() => {});
+    expect(entry.sent).toEqual(['linux gdbserver tunnel 42 wss://h\n']);
+  });
+
   test('rejects with NOT_CONNECTED when the socket is closed', async () => {
     const entry = createEntry({ readyState: 3 });
     await expect(runExec({ entry, mac, command: 'ls' })).rejects.toMatchObject({ code: 'NOT_CONNECTED' });

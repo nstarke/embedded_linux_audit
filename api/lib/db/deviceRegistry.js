@@ -188,6 +188,24 @@ async function listUserDeviceMacs(username) {
     .filter((mac) => typeof mac === 'string' && mac.length > 0);
 }
 
+// Audit-log one operator command issued through the client API. Resolves the
+// username → user and the MAC → device (best effort; both may be null) and
+// inserts a command_logs row. Never throws to the caller — logging failures must
+// not fail the command.
+async function recordCommandLog({ username, macAddress, commandType, command, status = null }) {
+  const { User, Device, CommandLog } = getModels();
+  const user = username ? await User.findOne({ where: { username } }) : null;
+  const device = macAddress ? await Device.findOne({ where: { macAddress } }) : null;
+  await CommandLog.create({
+    userId: user ? user.id : null,
+    deviceId: device ? device.id : null,
+    macAddress: macAddress || null,
+    commandType,
+    command,
+    status,
+  });
+}
+
 async function recordTerminalConnection(macAddress, remoteAddress, authenticatedUser = null) {
   const sequelize = getSequelize();
   const { DeviceAlias, TerminalConnection, User } = getModels();
@@ -331,6 +349,7 @@ module.exports = {
   associateUserDevice,
   isUserAssociatedWithDevice,
   listUserDeviceMacs,
+  recordCommandLog,
   recordTerminalConnection,
   touchTerminalHeartbeat,
   closeTerminalConnection,

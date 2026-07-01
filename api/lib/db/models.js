@@ -663,6 +663,24 @@ function defineModels(sequelize) {
     underscored: true,
   });
 
+  const CommandLog = sequelize.define('CommandLog', {
+    id: {
+      type: DataTypes.BIGINT,
+      autoIncrement: true,
+      primaryKey: true,
+    },
+    userId: { type: DataTypes.BIGINT, allowNull: true, field: 'user_id' },
+    deviceId: { type: DataTypes.BIGINT, allowNull: true, field: 'device_id' },
+    macAddress: { type: DataTypes.STRING, allowNull: true, field: 'mac_address' },
+    commandType: { type: DataTypes.STRING, allowNull: false, field: 'command_type' },
+    command: { type: DataTypes.TEXT, allowNull: false },
+    status: { type: DataTypes.INTEGER, allowNull: true },
+  }, {
+    tableName: 'command_logs',
+    underscored: true,
+    updatedAt: false,
+  });
+
   Device.hasOne(DeviceAlias, { foreignKey: 'deviceId' });
   DeviceAlias.belongsTo(Device, { foreignKey: 'deviceId' });
   User.hasMany(UserDevice, { foreignKey: 'userId' });
@@ -675,9 +693,14 @@ function defineModels(sequelize) {
   ApiKey.belongsTo(User, { foreignKey: 'userId' });
   User.hasMany(Upload, { foreignKey: 'userId' });
   Upload.belongsTo(User, { foreignKey: 'userId' });
+  User.hasMany(CommandLog, { foreignKey: 'userId' });
+  CommandLog.belongsTo(User, { foreignKey: 'userId' });
+  Device.hasMany(CommandLog, { foreignKey: 'deviceId' });
+  CommandLog.belongsTo(Device, { foreignKey: 'deviceId' });
 
   return {
     Device,
+    CommandLog,
     Upload,
     CommandUpload,
     FileListEntry,

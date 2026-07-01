@@ -35,7 +35,7 @@ async function main() {
   });
 
   console.log(`ELA client API listening on http://${host}:${port}/`);
-  console.log('Routes: GET /uploads[...]; GET /terminal/sessions; POST /terminal/:mac/exec|spawn; GET|DELETE /terminal/:mac/spawn[/:pid]');
+  console.log('Routes: GET /uploads[...]; GET /terminal/sessions; POST /terminal/sessions/:mac; POST /terminal/:mac/{linux,ela}/{exec,spawn}; GET|DELETE /terminal/:mac/spawn[/:pid]');
 
   process.on('SIGINT', () => {
     server.close(async () => {

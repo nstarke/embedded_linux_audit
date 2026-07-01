@@ -50,6 +50,7 @@ function setup(overrides = {}) {
     sendCommand: jest.fn().mockResolvedValue({ status: 200, body: { ok: true } }),
     // By default the caller is associated with MAC (its stored form).
     listUserDeviceMacs: jest.fn().mockResolvedValue([MAC]),
+    recordCommandLog: jest.fn().mockResolvedValue(undefined),
     ...overrides,
   };
   registerTerminalRoutes(app, deps);
@@ -89,7 +90,7 @@ describe('client terminal routes', () => {
     test('a non-associated device is 404 and never enqueues a command', async () => {
       const { app, deps } = setup({ listUserDeviceMacs: jest.fn().mockResolvedValue([]) });
       const res = createRes();
-      await invoke(app.find('post', '/terminal/:mac/exec'), { authUser: 'mallory', params: { mac: MAC }, body: { command: 'id' } }, res);
+      await invoke(app.find('post', '/terminal/:mac/linux/exec'), { authUser: 'mallory', params: { mac: MAC }, body: { command: 'id' } }, res);
 
       expect(deps.listUserDeviceMacs).toHaveBeenCalledWith('mallory');
       expect(res.statusCode).toBe(404);
@@ -100,7 +101,7 @@ describe('client terminal routes', () => {
     test('an invalid MAC is 400 before any association check', async () => {
       const { app, deps } = setup();
       const res = createRes();
-      await invoke(app.find('post', '/terminal/:mac/exec'), { authUser: 'alice', params: { mac: 'not-a-mac' }, body: { command: 'id' } }, res);
+      await invoke(app.find('post', '/terminal/:mac/linux/exec'), { authUser: 'alice', params: { mac: 'not-a-mac' }, body: { command: 'id' } }, res);
       expect(res.statusCode).toBe(400);
       expect(deps.listUserDeviceMacs).not.toHaveBeenCalled();
     });
@@ -121,7 +122,7 @@ describe('client terminal routes', () => {
       });
       const res = createRes();
       await invoke(
-        app.find('post', '/terminal/:mac/exec'),
+        app.find('post', '/terminal/:mac/linux/exec'),
         { authUser: 'nick', params: { mac: '20:4C:03:32:75:5C' }, body: { command: 'id' } },
         res,
       );
@@ -182,7 +183,7 @@ describe('client terminal routes', () => {
     test('requires a command', async () => {
       const { app, deps } = setup();
       const res = createRes();
-      await invoke(app.find('post', '/terminal/:mac/exec'), { authUser: 'alice', params: { mac: MAC }, body: {} }, res);
+      await invoke(app.find('post', '/terminal/:mac/linux/exec'), { authUser: 'alice', params: { mac: MAC }, body: {} }, res);
       expect(res.statusCode).toBe(400);
       expect(deps.sendCommand).not.toHaveBeenCalled();
     });
@@ -190,49 +191,92 @@ describe('client terminal routes', () => {
     test('rejects an out-of-range timeoutMs', async () => {
       const { app } = setup();
       const res = createRes();
-      await invoke(app.find('post', '/terminal/:mac/exec'), { authUser: 'alice', params: { mac: MAC }, body: { command: 'id', timeoutMs: 99999 } }, res);
+      await invoke(app.find('post', '/terminal/:mac/linux/exec'), { authUser: 'alice', params: { mac: MAC }, body: { command: 'id', timeoutMs: 99999 } }, res);
       expect(res.statusCode).toBe(400);
     });
 
-    test('enqueues an exec command and relays the worker result', async () => {
+    test('linux/exec enqueues an exec command (mode linux), relays result, and audit-logs', async () => {
       const { app, deps } = setup({
         sendCommand: jest.fn().mockResolvedValue({ status: 200, body: { ok: true, output: 'uid=0', durationMs: 4 } }),
       });
       const res = createRes();
-      await invoke(app.find('post', '/terminal/:mac/exec'), { authUser: 'alice', params: { mac: MAC }, body: { command: 'id', timeoutMs: 2000 } }, res);
+      await invoke(app.find('post', '/terminal/:mac/linux/exec'), { authUser: 'alice', params: { mac: MAC }, body: { command: 'id', timeoutMs: 2000 } }, res);
 
       expect(deps.sendCommand).toHaveBeenCalledWith(
-        { type: 'exec', mac: MAC, command: 'id', timeoutMs: 2000 },
+        { type: 'exec', mode: 'linux', mac: MAC, command: 'id', timeoutMs: 2000 },
         { waitMs: 12000 },
+      );
+      expect(deps.recordCommandLog).toHaveBeenCalledWith(
+        { username: 'alice', macAddress: MAC, commandType: 'linux-exec', command: 'id', status: 200 },
       );
       expect(res.statusCode).toBe(200);
       expect(res.body).toEqual({ ok: true, output: 'uid=0', durationMs: 4 });
     });
+
+    test('ela/exec sends the raw command (mode ela) and audit-logs as ela-exec', async () => {
+      const { app, deps } = setup({
+        sendCommand: jest.fn().mockResolvedValue({ status: 200, body: { ok: true, output: 'tunnel up', durationMs: 9 } }),
+      });
+      const res = createRes();
+      await invoke(app.find('post', '/terminal/:mac/ela/exec'), { authUser: 'nick', params: { mac: MAC }, body: { command: 'linux gdbserver tunnel 42 wss://h' } }, res);
+
+      expect(deps.sendCommand).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'exec', mode: 'ela', mac: MAC, command: 'linux gdbserver tunnel 42 wss://h' }),
+        expect.any(Object),
+      );
+      expect(deps.recordCommandLog).toHaveBeenCalledWith(
+        expect.objectContaining({ username: 'nick', commandType: 'ela-exec', command: 'linux gdbserver tunnel 42 wss://h', status: 200 }),
+      );
+      expect(res.statusCode).toBe(200);
+    });
+
+    test('a 504 (worker unavailable) is still audit-logged with status 504', async () => {
+      const { app, deps } = setup({ sendCommand: jest.fn().mockRejectedValue(new Error('down')) });
+      const res = createRes();
+      await invoke(app.find('post', '/terminal/:mac/linux/exec'), { authUser: 'alice', params: { mac: MAC }, body: { command: 'id' } }, res);
+      expect(res.statusCode).toBe(504);
+      expect(deps.recordCommandLog).toHaveBeenCalledWith(expect.objectContaining({ commandType: 'linux-exec', status: 504 }));
+    });
   });
 
   describe('spawn / kill', () => {
-    test('validates args and port, then enqueues spawn', async () => {
+    test('linux/spawn validates args/port, enqueues (mode linux), and audit-logs', async () => {
       const { app, deps } = setup({ sendCommand: jest.fn().mockResolvedValue({ status: 201, body: { pid: 7 } }) });
 
       const badArgs = createRes();
-      await invoke(app.find('post', '/terminal/:mac/spawn'), { authUser: 'alice', params: { mac: MAC }, body: { command: 'x', args: [1] } }, badArgs);
+      await invoke(app.find('post', '/terminal/:mac/linux/spawn'), { authUser: 'alice', params: { mac: MAC }, body: { command: 'x', args: [1] } }, badArgs);
       expect(badArgs.statusCode).toBe(400);
 
       const badPort = createRes();
-      await invoke(app.find('post', '/terminal/:mac/spawn'), { authUser: 'alice', params: { mac: MAC }, body: { command: 'x', port: 70000 } }, badPort);
+      await invoke(app.find('post', '/terminal/:mac/linux/spawn'), { authUser: 'alice', params: { mac: MAC }, body: { command: 'x', port: 70000 } }, badPort);
       expect(badPort.statusCode).toBe(400);
 
       const ok = createRes();
-      await invoke(app.find('post', '/terminal/:mac/spawn'), { authUser: 'alice', params: { mac: MAC }, body: { command: 'gdbserver', args: ['a'], port: 1234 } }, ok);
+      await invoke(app.find('post', '/terminal/:mac/linux/spawn'), { authUser: 'alice', params: { mac: MAC }, body: { command: 'gdbserver', args: ['a'], port: 1234 } }, ok);
       expect(deps.sendCommand).toHaveBeenLastCalledWith(
-        { type: 'spawn', mac: MAC, command: 'gdbserver', args: ['a'], port: 1234 },
+        { type: 'spawn', mode: 'linux', mac: MAC, command: 'gdbserver', args: ['a'], port: 1234 },
         expect.any(Object),
+      );
+      expect(deps.recordCommandLog).toHaveBeenLastCalledWith(
+        expect.objectContaining({ commandType: 'linux-spawn', command: 'gdbserver a', status: 201 }),
       );
       expect(ok.statusCode).toBe(201);
       expect(ok.body).toEqual({ pid: 7 });
     });
 
-    test('DELETE validates the pid then enqueues killSpawn', async () => {
+    test('ela/spawn enqueues a spawn with mode ela', async () => {
+      const { app, deps } = setup({ sendCommand: jest.fn().mockResolvedValue({ status: 201, body: { ok: true, output: 'wss://h/gdb/out/abc' } }) });
+      const res = createRes();
+      await invoke(app.find('post', '/terminal/:mac/ela/spawn'), { authUser: 'nick', params: { mac: MAC }, body: { command: 'linux gdbserver tunnel 42 wss://h' } }, res);
+      expect(deps.sendCommand).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'spawn', mode: 'ela', mac: MAC, command: 'linux gdbserver tunnel 42 wss://h' }),
+        expect.any(Object),
+      );
+      expect(deps.recordCommandLog).toHaveBeenCalledWith(expect.objectContaining({ commandType: 'ela-spawn' }));
+      expect(res.statusCode).toBe(201);
+    });
+
+    test('DELETE validates the pid, enqueues killSpawn, and audit-logs', async () => {
       const { app, deps } = setup({ sendCommand: jest.fn().mockResolvedValue({ status: 200, body: { ok: true } }) });
 
       const bad = createRes();
@@ -243,6 +287,7 @@ describe('client terminal routes', () => {
       const ok = createRes();
       await invoke(app.find('delete', '/terminal/:mac/spawn/:pid'), { authUser: 'alice', params: { mac: MAC, pid: '7' } }, ok);
       expect(deps.sendCommand).toHaveBeenCalledWith({ type: 'killSpawn', mac: MAC, pid: 7 }, expect.any(Object));
+      expect(deps.recordCommandLog).toHaveBeenCalledWith(expect.objectContaining({ commandType: 'kill', command: 'kill 7', status: 200 }));
       expect(ok.statusCode).toBe(200);
     });
   });
