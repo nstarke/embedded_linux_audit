@@ -164,9 +164,11 @@ Build-queue variables (used by `agent-api` to enqueue and `builder` to consume):
 - `ELA_BUILD_MAX_STALLED_COUNT` — times a stalled job is recovered before being
   failed (default `3`)
 - `ELA_SERVER_URL` — base terminal-API WS URL (e.g. `wss://ela.example.com`)
-  baked into each user's binaries so a bare run auto-connects to the terminal
-  API. Empty by default (nothing embedded); `nginx/install.sh` defaults it to
-  `wss://<hostname>`. See [Embedded server URL](#embedded-server-url).
+  baked into each user's launcher so a bare run auto-connects to the terminal
+  API. Empty by default (no phone-home); `nginx/install.sh` defaults it to
+  `wss://<hostname>` and **persists it to the env file Compose reads** (the
+  `--env-file`, else `<repo>/.env`), so `add-user-key` run later still bakes it
+  in. See [Server URL / phone-home](#server-url--phone-home).
 
 Important terminal API variables:
 
@@ -284,14 +286,15 @@ exist yet, `add-user-key` prints a hint to wait for the builder and re-run.
 ### Server URL / phone-home
 
 If `ELA_SERVER_URL` is set (a base WS URL such as `wss://ela.example.com`) — or
-`add-user-key --server-url <wss://host>` is passed — the launcher seeds
-`/tmp/.ela.conf` with `remote=<url>` on first run. A launcher run with **no
-command** then auto-connects to the terminal API at `<url>/terminal/<mac>`,
-authenticating with the user's token, so the device shows up in the terminal API
-on its own. Running the launcher with an explicit command (`./ela-<isa> linux
-dmesg`) runs that command locally instead; an explicit `--remote <host>` still
-overrides. With no server URL configured the launcher just sets the token and
-does not phone home.
+`add-user-key --server-url <wss://host>` is passed — the URL is baked into the
+launcher. Run with **no arguments** the launcher invokes the agent with
+`--remote <url>` (plus `--insecure` if `add-user-key --insecure` was used), so it
+connects to the terminal API at `<url>/terminal/<mac>`, authenticates with the
+user's token, and daemonizes — the device shows up in the terminal API on its
+own. Run with arguments (`./ela-<isa> linux dmesg`) it runs that command locally
+instead. **With no server URL configured the launcher just sets the token and a
+bare run prints the agent help** — set `ELA_SERVER_URL` (or `--server-url`) and
+re-run `add-user-key` to enable phone-home.
 
 The download endpoint is **unauthenticated** — the token rides in the URL path —
 so a freshly provisioned host with no agent yet can pull its launcher with a

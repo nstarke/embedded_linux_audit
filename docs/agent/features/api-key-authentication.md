@@ -21,12 +21,14 @@ the same run.
 > sources below. The sources below still override or supplement it for binaries
 > you build yourself.
 >
-> A binary may also have the **server URL** baked in
-> (`ELA_EMBEDDED_SERVER_URL`, set from `ELA_SERVER_URL` at build time). When it
-> does, running the binary with no command auto-connects to the terminal API at
-> `<url>/terminal/<mac>` using the embedded token (precedence: an explicit
-> `--remote` > a saved `/tmp/.ela.conf` remote > the embedded URL). See
-> [docker operations](../../api/docker-operations.md#embedded-server-url).
+> The per-user **launcher** (the self-extracting script served at
+> `/isa/:token/:isa`) sets the token via `ELA_API_KEY` and, when a server URL was
+> configured (`ELA_SERVER_URL`), runs the agent with `--remote <url>` on a bare
+> invocation so it auto-connects to the terminal API at `<url>/terminal/<mac>`.
+> (The legacy compile-time `ELA_EMBEDDED_SERVER_URL` macro still works too;
+> precedence is an explicit `--remote` > a saved `/tmp/.ela.conf` remote > the
+> embedded URL.) See
+> [docker operations](../../api/docker-operations.md#server-url--phone-home).
 
 ### 1. `--api-key` command-line argument
 

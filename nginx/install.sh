@@ -93,6 +93,25 @@ copy_compiled_release_binaries() {
     fi
 }
 
+# Upsert NAME=VALUE into an env file (create it if missing), replacing any
+# existing NAME= line. Docker Compose reads this file, so a value persisted here
+# survives fresh shells and container recreates.
+persist_env_var() {
+    _pev_name="$1"
+    _pev_value="$2"
+    _pev_file="$3"
+
+    [ -f "$_pev_file" ] || : > "$_pev_file"
+    if grep -q "^${_pev_name}=" "$_pev_file" 2>/dev/null; then
+        _pev_tmp="${_pev_file}.tmp.$$"
+        grep -v "^${_pev_name}=" "$_pev_file" > "$_pev_tmp"
+        printf '%s=%s\n' "$_pev_name" "$_pev_value" >> "$_pev_tmp"
+        mv "$_pev_tmp" "$_pev_file"
+    else
+        printf '%s=%s\n' "$_pev_name" "$_pev_value" >> "$_pev_file"
+    fi
+}
+
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --cert)
@@ -497,12 +516,21 @@ fi
 sed "s/example\\.com/$HOSTNAME/g" "$NGINX_TLS_TEMPLATE" > "$GENERATED_NGINX_CONF"
 export ELA_NGINX_CONF_PATH="$GENERATED_NGINX_CONF"
 
-# Base terminal-API WS URL baked into per-user agent binaries (via add-user-key)
-# so a dropped binary auto-connects to this server. Defaults to wss://<hostname>;
-# override by exporting ELA_SERVER_URL before running the installer.
+# Base terminal-API WS URL baked into per-user agent launchers (via
+# add-user-key) so a dropped launcher auto-connects to this server on a bare run.
+# Defaults to wss://<hostname>; override by exporting ELA_SERVER_URL before
+# running the installer.
 ELA_SERVER_URL="${ELA_SERVER_URL:-wss://$HOSTNAME}"
 export ELA_SERVER_URL
-echo "Per-user binaries will embed terminal-API URL: $ELA_SERVER_URL"
+echo "Per-user launchers will embed terminal-API URL: $ELA_SERVER_URL"
+
+# Persist ELA_SERVER_URL into the env file Compose reads, so `add-user-key` (run
+# later — possibly from a fresh shell or after a container recreate) still sees
+# the URL and bakes it into each user's launcher. Default to <repo>/.env when no
+# --env-file was given, and always hand that file to Compose below.
+ENV_FILE="${ENV_FILE:-$REPO_ROOT/.env}"
+persist_env_var ELA_SERVER_URL "$ELA_SERVER_URL" "$ENV_FILE"
+echo "Persisted ELA_SERVER_URL to $ENV_FILE"
 
 # The installer passes -f explicitly, which suppresses Compose's automatic
 # docker-compose.override.yml merge, so the bundled-DB overlay is listed
@@ -511,9 +539,7 @@ set -- docker compose -f "$COMPOSE_FILE"
 if [ "$EXTERNAL_DB" -eq 0 ]; then
     set -- "$@" -f "$COMPOSE_BUNDLED_DB_FILE"
 fi
-if [ -n "$ENV_FILE" ]; then
-    set -- "$@" --env-file "$ENV_FILE"
-fi
+set -- "$@" --env-file "$ENV_FILE"
 
 # Services to start before nginx; the bundled postgres only when not external.
 # redis (queue broker) and builder (binary build worker) are always started.

@@ -44,11 +44,14 @@ describe('selfExtract', () => {
       expect(header.endsWith(`${PAYLOAD_MARKER}\n`)).toBe(true);
     });
 
-    test('seeds remote only when a serverUrl is provided', () => {
+    test('carries the URL/insecure vars and a bare-run --remote guard', () => {
       const withUrl = buildWrapperHeader({ token: 't', serverUrl: 'wss://h', insecure: true, cacheKey: 'k' });
       expect(withUrl).toMatch(/ELA_REMOTE='wss:\/\/h'/);
       expect(withUrl).toMatch(/ELA_INSECURE='true'/);
-      expect(withUrl).toMatch(/remote=%s/);
+      // Bare run adds --remote (and --insecure) rather than seeding a conf file.
+      expect(withUrl).toMatch(/\[ "\$#" -eq 0 \] && \[ -n "\$ELA_REMOTE" \]/);
+      expect(withUrl).toMatch(/set -- --insecure --remote "\$ELA_REMOTE"/);
+      expect(withUrl).not.toMatch(/\.ela\.conf/);
 
       const noUrl = buildWrapperHeader({ token: 't', cacheKey: 'k' });
       expect(noUrl).toMatch(/ELA_REMOTE=''/);
@@ -104,6 +107,43 @@ describe('selfExtract', () => {
 
       expect(out).toContain('KEY=secret-tok-123');
       expect(out).toContain('ARGS=hello wide world');
+    });
+
+    test('a bare run injects --remote (and --insecure) from the baked URL', () => {
+      // Payload echoes its argv so we can see exactly what the launcher execs.
+      const payload = Buffer.from('#!/bin/sh\nfor a in "$@"; do echo "ARG=$a"; done\n', 'utf8');
+      const wrapper = assembleWrapper(payload, {
+        token: 't', serverUrl: 'wss://ela.example.com', insecure: true, isa: 'remote',
+      });
+      const wrapperPath = path.join(tmpDir, 'ela-remote');
+      fs.writeFileSync(wrapperPath, wrapper);
+
+      const out = execFileSync('sh', [wrapperPath], { env: { ...process.env, TMPDIR: tmpDir }, encoding: 'utf8' });
+      expect(out.split('\n').filter(Boolean)).toEqual([
+        'ARG=--insecure',
+        'ARG=--remote',
+        'ARG=wss://ela.example.com',
+      ]);
+    });
+
+    test('a run with arguments passes them through unchanged (no --remote)', () => {
+      const payload = Buffer.from('#!/bin/sh\nfor a in "$@"; do echo "ARG=$a"; done\n', 'utf8');
+      const wrapper = assembleWrapper(payload, { token: 't', serverUrl: 'wss://h', isa: 'passthru' });
+      const wrapperPath = path.join(tmpDir, 'ela-passthru');
+      fs.writeFileSync(wrapperPath, wrapper);
+
+      const out = execFileSync('sh', [wrapperPath, 'linux', 'dmesg'], { env: { ...process.env, TMPDIR: tmpDir }, encoding: 'utf8' });
+      expect(out.split('\n').filter(Boolean)).toEqual(['ARG=linux', 'ARG=dmesg']);
+    });
+
+    test('a bare run with no baked URL does not inject --remote', () => {
+      const payload = Buffer.from('#!/bin/sh\necho "COUNT=$#"\n', 'utf8');
+      const wrapper = assembleWrapper(payload, { token: 't', serverUrl: '', isa: 'nourl' });
+      const wrapperPath = path.join(tmpDir, 'ela-nourl');
+      fs.writeFileSync(wrapperPath, wrapper);
+
+      const out = execFileSync('sh', [wrapperPath], { env: { ...process.env, TMPDIR: tmpDir }, encoding: 'utf8' });
+      expect(out.trim()).toBe('COUNT=0');
     });
 
     test('reuses the cached extracted binary on a second run', () => {

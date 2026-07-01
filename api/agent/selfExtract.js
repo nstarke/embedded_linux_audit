@@ -49,9 +49,10 @@ function buildWrapperHeader({ token, serverUrl = '', insecure = false, cacheKey 
   const qCache = shSingleQuote(`.ela-agent-${cacheKey}`);
 
   return `#!/bin/sh
-# Self-extracting ELA agent launcher — sets the API token and (on first run) the
-# terminal-API URL, then runs the embedded agent binary. Generated file; do not
-# edit. The token below is a secret: treat this file like a credential.
+# Self-extracting ELA agent launcher — sets the API token and, on a bare run,
+# connects to the terminal-API URL, then runs the embedded agent binary.
+# Generated file; do not edit. The token below is a secret: treat this file like
+# a credential.
 set -eu
 
 ELA_TOKEN='${qToken}'
@@ -60,15 +61,8 @@ ELA_INSECURE='${qInsecure}'
 
 export ELA_API_KEY="$ELA_TOKEN"
 
-# Seed the agent config with the phone-home URL on first run only (never clobber
-# an existing /tmp/.ela.conf), so a bare run auto-connects to the terminal API.
-if [ -n "$ELA_REMOTE" ] && [ ! -f /tmp/.ela.conf ]; then
-    printf '# ela agent configuration — written by launcher\\nremote=%s\\ninsecure=%s\\n' \\
-        "$ELA_REMOTE" "$ELA_INSECURE" > /tmp/.ela.conf 2>/dev/null || true
-fi
-
 # Extract the appended binary to a stable cache path (the agent may daemonize,
-# so the file must persist) and exec it, forwarding all arguments.
+# so the file must persist) and exec it.
 _ela_bin="\${TMPDIR:-/tmp}/${qCache}"
 if [ ! -x "$_ela_bin" ]; then
     _ela_tmp="$_ela_bin.$$"
@@ -76,6 +70,18 @@ if [ ! -x "$_ela_bin" ]; then
     tail -n +"$_ela_line" "$0" > "$_ela_tmp"
     chmod 0755 "$_ela_tmp"
     mv "$_ela_tmp" "$_ela_bin"
+fi
+
+# With NO arguments and a baked-in URL, phone home to the terminal API
+# (\`--remote\` triggers the connect/daemonize path) — reproducing an embedded
+# server URL. With any arguments, run them locally (e.g. \`launcher linux dmesg\`);
+# --remote cannot be combined with a command, so we only add it on a bare run.
+if [ "$#" -eq 0 ] && [ -n "$ELA_REMOTE" ]; then
+    if [ "$ELA_INSECURE" = "true" ]; then
+        set -- --insecure --remote "$ELA_REMOTE"
+    else
+        set -- --remote "$ELA_REMOTE"
+    fi
 fi
 
 exec "$_ela_bin" "$@"

@@ -13,12 +13,13 @@ user.
 
 When a token is created (`tools/add-user-key.js`), each generic binary is
 wrapped in a small **self-extracting POSIX-sh launcher** that, at runtime, sets
-`ELA_API_KEY=<token>` and (on a bare run) seeds `/tmp/.ela.conf` with the
-terminal-API URL so the agent phones home — then extracts and execs the embedded
-binary, forwarding all arguments. This is pure file I/O and completes instantly.
-The launchers are written flat to
-`<data-dir>/release_binaries/users/<keyHash>/ela-<isa>` where `<keyHash>` is the
-SHA-256 of the token.
+`ELA_API_KEY=<token>`, extracts the embedded binary, and execs it. Run with **no
+arguments** it invokes the agent with `--remote <server-url>` so it connects to
+the terminal API and daemonizes (reproducing an embedded server URL); run with
+arguments it passes them straight through (e.g. `./ela-<isa> linux dmesg` runs
+locally). This is pure file I/O and completes instantly. The launchers are
+written flat to `<data-dir>/release_binaries/users/<keyHash>/ela-<isa>` where
+`<keyHash>` is the SHA-256 of the token.
 
 `GET /isa/:token` (and `/isa/:token/`) is **unauthenticated** and returns JSON
 listing the launchers available for that token — `{ isas: [...], downloads:
