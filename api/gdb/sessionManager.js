@@ -5,14 +5,15 @@
  * Factory that returns a GDB session manager.
  *
  * Sessions are keyed by 32-char hex strings.  Each session tracks the 'in'
- * (agent/gdbserver) and 'out' (gdb-multiarch) WebSocket connections.
+ * (agent/gdbserver) and 'out' (gdb-multiarch) WebSocket connections, plus the
+ * device MAC the agent declared on the in side (used to gate the out side).
  */
 function createSessionManager() {
   const sessions = new Map();
 
   function getOrCreate(key) {
     if (!sessions.has(key)) {
-      sessions.set(key, { in: null, out: null });
+      sessions.set(key, { in: null, out: null, deviceMac: null });
     }
     return sessions.get(key);
   }

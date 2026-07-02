@@ -8,9 +8,27 @@ was started with `--validate-key`.
 
 ## Providing a token
 
-Three sources are accepted, tried in the order listed below.  The first
+Up to four sources are accepted, tried in the order listed below.  The first
 source that the server accepts is locked in for all subsequent requests in
 the same run.
+
+> **Embedded token.** Binaries downloaded from the agent helper API
+> (`GET /isa/:token/:isa`) are compiled per-user with the downloader's token baked in
+> at build time (the `ELA_EMBEDDED_API_KEY` macro; see
+> [docker operations](../../api/docker-operations.md)). Such a binary
+> authenticates with no `--api-key`, `ELA_API_KEY`, or `/tmp/ela.key` needed —
+> the embedded token is added as an additional candidate after the three
+> sources below. The sources below still override or supplement it for binaries
+> you build yourself.
+>
+> The per-user **launcher** (the self-extracting script served at
+> `/isa/:token/:isa`) sets the token via `ELA_API_KEY` and, when a server URL was
+> configured (`ELA_SERVER_URL`), runs the agent with `--remote <url>` on a bare
+> invocation so it auto-connects to the terminal API at `<url>/terminal/<mac>`.
+> (The legacy compile-time `ELA_EMBEDDED_SERVER_URL` macro still works too;
+> precedence is an explicit `--remote` > a saved `/tmp/.ela.conf` remote > the
+> embedded URL.) See
+> [docker operations](../../api/docker-operations.md#server-url--phone-home).
 
 ### 1. `--api-key` command-line argument
 

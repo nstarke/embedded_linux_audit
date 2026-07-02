@@ -98,14 +98,17 @@ module.exports = function registerRootRoute(app, deps) {
 
   app.get('/', async (req, res) => {
     verboseRequestLog(req);
-    const binaryEntries = await listBinaryEntries(deps.assetsDir, fsp, deps.releaseStateFile);
+    const assetsBaseDir = req.authKeyHash
+      ? deps.path.join(deps.assetsDir, 'users', req.authKeyHash)
+      : deps.assetsDir;
+    const binaryEntries = await listBinaryEntries(assetsBaseDir, fsp, deps.releaseStateFile);
     const agentTestDirs = Object.keys(agentTestTypeMeta).flatMap((type) => getAgentTestDirs(type));
     const testEntries = await listAgentTestEntries();
     const scriptEntries = await listScriptEntries(scriptsDir);
 
     const assetItems = binaryEntries.length
-      ? binaryEntries.map(({ fileName, url }) => `      <li><a href="${escapeHtml(url)}">${escapeHtml(fileName)}</a></li>`).join('\n')
-      : '      <li><em>No binaries downloaded.</em></li>';
+      ? binaryEntries.map(({ fileName, isa }) => `      <li>${escapeHtml(fileName)} <code>GET /isa/&lt;token&gt;/${escapeHtml(isa)}</code></li>`).join('\n')
+      : '      <li><em>No binaries built.</em></li>';
 
     const testItems = testEntries.length
       ? testEntries.map(({ pathLabel, url }) => `      <li><a href="${escapeHtml(url)}">${escapeHtml(pathLabel)}</a></li>`).join('\n')
@@ -123,7 +126,7 @@ module.exports = function registerRootRoute(app, deps) {
   </head>
   <body>
     <h1>Release Binaries</h1>
-    <p>Serving files from: ${escapeHtml(deps.assetsDir)}</p>
+    <p>Serving files from: ${escapeHtml(assetsBaseDir)}</p>
     <ul>
 ${assetItems}
     </ul>

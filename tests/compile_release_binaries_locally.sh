@@ -39,7 +39,11 @@ clean_outputs() {
     fi
 
     for isa in "$@"; do
-        rm -rf "$DEST_RELEASE_DIR/$isa"
+        if [ "${ELA_RELEASE_FLAT_OUTPUT:-}" = "1" ]; then
+            rm -f "$DEST_RELEASE_DIR/ela-$isa"
+        else
+            rm -rf "$DEST_RELEASE_DIR/$isa"
+        fi
     done
 }
 
@@ -274,6 +278,22 @@ build_with_targets() {
     output_path="$1"
     target_list="$2"
 
+    # Bake build-time values into the binary as string literals:
+    #   ELA_EMBEDDED_API_KEY     -> agent/net/api_key.c
+    #   ELA_EMBEDDED_SERVER_URL  -> agent/embedded_linux_audit.c (auto-connect)
+    # The backslash-escaped quotes survive make's recipe shell so the
+    # preprocessor receives "<value>" rather than a bare identifier. Multiple
+    # -D flags need a space between them, so CFLAGS_APPEND is passed to make via
+    # the environment (a single unquoted make arg cannot contain a space).
+    cflags_append=""
+    if [ -n "${ELA_EMBEDDED_API_KEY:-}" ]; then
+        cflags_append="$cflags_append -DELA_EMBEDDED_API_KEY=\\\"${ELA_EMBEDDED_API_KEY}\\\""
+    fi
+    if [ -n "${ELA_EMBEDDED_SERVER_URL:-}" ]; then
+        cflags_append="$cflags_append -DELA_EMBEDDED_SERVER_URL=\\\"${ELA_EMBEDDED_SERVER_URL}\\\""
+    fi
+    cflags_append="${cflags_append# }"
+
     old_ifs="$IFS"
     IFS=,
     set -- $target_list
@@ -289,8 +309,19 @@ build_with_targets() {
             fi
         fi
 
+        # libefivar.a is built at a fixed path (third_party/libefivar/src) but its
+        # build stamp is keyed per target (.ela-build-<CC_TAG>). When several
+        # ISAs are built in one source tree, a stale stamp lets a previous
+        # target's libefivar.a be reused, producing "is incompatible with
+        # <arch>" link errors. Reset the stamp and the repacked link archive so
+        # libefivar is rebuilt with this target's compiler. (The third_party
+        # cmake libs use per-target build-<CC_TAG> dirs and are unaffected.)
+        rm -f "$REPO_ROOT"/third_party/libefivar/.ela-build-* 2>/dev/null || true
+        rm -f "$REPO_ROOT"/generated/libefivar-link-*.a 2>/dev/null || true
+        rm -rf "$REPO_ROOT"/generated/libefivar-repack-* 2>/dev/null || true
+
         build_ok=1
-        make -C "$REPO_ROOT" static \
+        CFLAGS_APPEND="$cflags_append" make -C "$REPO_ROOT" static \
             JOBS="$jobs_arg" \
             ELA_USE_READLINE=0 \
             CMAKE_C_COMPILER="$(command -v zig)" \
@@ -311,7 +342,11 @@ build_with_targets() {
 
 build_release_binary() {
     isa="$1"
-    dest_dir="$DEST_RELEASE_DIR/$isa"
+    if [ "${ELA_RELEASE_FLAT_OUTPUT:-}" = "1" ]; then
+        dest_dir="$DEST_RELEASE_DIR"
+    else
+        dest_dir="$DEST_RELEASE_DIR/$isa"
+    fi
     dest="$dest_dir/ela-$isa"
 
     set_isa_config "$isa"

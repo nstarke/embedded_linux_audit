@@ -8,6 +8,10 @@ This section contains documentation for repository components under `api/`.
 - [API Helper Server](agent/helper-server.md)
 - PCAP capture streams are accepted by the agent helper API at `/pcap/<mac>`.
 
+## Client API
+
+- [Client API — reading back uploaded artifacts](client/index.md)
+
 ## WebSocket Terminal Server
 
 - [Terminal Server](terminal/index.md)

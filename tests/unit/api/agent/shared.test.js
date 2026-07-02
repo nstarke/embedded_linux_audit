@@ -34,9 +34,9 @@ describe('agent route shared helpers', () => {
     };
 
     await expect(listBinaryEntries('/assets', fsp, '.release_state.json')).resolves.toEqual([
-      { isa: 'arm32-be', fileName: 'embedded_linux_audit-arm32-be', url: '/isa/arm32-be' },
-      { isa: 'plain-name', fileName: 'plain-name', url: '/isa/plain-name' },
-      { isa: 'x86_64', fileName: 'ela-x86_64', url: '/isa/x86_64' },
+      { isa: 'arm32-be', fileName: 'embedded_linux_audit-arm32-be' },
+      { isa: 'plain-name', fileName: 'plain-name' },
+      { isa: 'x86_64', fileName: 'ela-x86_64' },
     ]);
   });
 

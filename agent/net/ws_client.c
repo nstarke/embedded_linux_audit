@@ -998,6 +998,7 @@ int ela_ws_run_interactive(struct ela_ws_conn *ws, const char *prog)
 	char   mac[32];
 	int    child_exited = 0;
 	int    child_status = 0;
+	int    no_reconnect = 0;
 	const char *exit_reason = "unknown";
 
 	fprintf(stderr, "ws: starting interactive session\n");
@@ -1117,7 +1118,12 @@ int ela_ws_run_interactive(struct ela_ws_conn *ws, const char *prog)
 					&dispatch_ops,
 					&dispatch_ctx);
 				if (dispatch_rc != 0) {
-					exit_reason = "ws close frame";
+					if (dispatch_rc == ELA_WS_DISPATCH_TERMINATE_NO_RECONNECT) {
+						no_reconnect = 1;
+						exit_reason = "ws close frame (session superseded; not reconnecting)";
+					} else {
+						exit_reason = "ws close frame";
+					}
 					break;
 				}
 			}
@@ -1172,6 +1178,13 @@ int ela_ws_run_interactive(struct ela_ws_conn *ws, const char *prog)
 		close(ws->sock);
 		ws->sock = -1;
 	}
+	/*
+	 * A server-initiated "superseded" close means a newer connection for this
+	 * MAC has taken over; report a clean exit so the --remote loop stops
+	 * instead of reconnecting and displacing that newer session in turn.
+	 */
+	if (no_reconnect)
+		return ELA_WS_EXIT_CLEAN;
 	return ela_ws_interactive_exit_code(child_exited);
 }
 

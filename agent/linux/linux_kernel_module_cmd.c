@@ -4,14 +4,28 @@
 #include "linux_kernel_module_util.h"
 #include "util/command_io_util.h"
 
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <unistd.h>
+
+/* Root searched for a .ko when `modules vermagic` is given no path. Defaults to
+ * /lib; overridable via the ELA_MODULE_SEARCH_ROOT env var for unusual module
+ * layouts (and to keep tests deterministic). */
+#define ELA_MODULE_SEARCH_ROOT_DEFAULT "/lib"
+
+static const char *module_search_root(void)
+{
+	const char *root = getenv("ELA_MODULE_SEARCH_ROOT");
+
+	return (root && *root) ? root : ELA_MODULE_SEARCH_ROOT_DEFAULT;
+}
 
 #ifndef SYS_finit_module
 # if defined(__NR_finit_module)
@@ -37,11 +51,13 @@ static void usage(const char *prog)
 		"Usage: %s list\n"
 		"       %s load [--force] <module.ko> [param=value ...]\n"
 		"       %s unload <module-name>\n"
-		"       %s vermagic <module.ko>\n"
+		"       %s vermagic [<module.ko>]\n"
 		"  list reads /proc/modules directly\n"
 		"  load uses finit_module/init_module directly; --force ignores vermagic\n"
 		"  unload uses delete_module directly\n"
-		"  vermagic reads the module file and emits its kernel vermagic\n",
+		"  vermagic reads the module file and emits its path and kernel vermagic;\n"
+		"    with no path, the first .ko found under " ELA_MODULE_SEARCH_ROOT_DEFAULT "\n"
+		"    (or $ELA_MODULE_SEARCH_ROOT) is used\n",
 		prog, prog, prog, prog);
 }
 
@@ -323,6 +339,52 @@ static int unload_module(const struct ela_kernel_module_request *request)
 #endif
 }
 
+/*
+ * Recursively search `dir` for the first regular file whose name ends in ".ko"
+ * and copy its full path into `out`. Returns 0 on success, -1 if none is found
+ * or on error. Uses lstat() so symlinked directories are not descended into,
+ * which avoids symlink loops. "First" follows readdir() order, so it is not
+ * deterministic across filesystems — matching the caller's "the first one we
+ * find" intent.
+ */
+static int find_first_ko(const char *dir, char *out, size_t out_len)
+{
+	DIR *d = opendir(dir);
+	struct dirent *ent;
+	int rc = -1;
+
+	if (!d)
+		return -1;
+
+	while ((ent = readdir(d)) != NULL) {
+		char path[PATH_MAX];
+		struct stat st;
+
+		if (!strcmp(ent->d_name, ".") || !strcmp(ent->d_name, ".."))
+			continue;
+		if (snprintf(path, sizeof(path), "%s/%s", dir, ent->d_name) >= (int)sizeof(path))
+			continue;
+		if (lstat(path, &st) != 0)
+			continue;
+
+		if (S_ISDIR(st.st_mode)) {
+			if (find_first_ko(path, out, out_len) == 0) {
+				rc = 0;
+				break;
+			}
+		} else if (S_ISREG(st.st_mode) &&
+			   ela_kernel_module_has_ko_suffix(ent->d_name)) {
+			if (snprintf(out, out_len, "%s", path) < (int)out_len) {
+				rc = 0;
+				break;
+			}
+		}
+	}
+
+	closedir(d);
+	return rc;
+}
+
 static int print_vermagic(const struct ela_kernel_module_request *request)
 {
 	int fd;
@@ -332,17 +394,31 @@ static int print_vermagic(const struct ela_kernel_module_request *request)
 	ssize_t got;
 	char vermagic[512];
 	char payload[2048];
+	char found[PATH_MAX];
+	const char *path = request->module_path;
 	const char *format = getenv("ELA_OUTPUT_FORMAT");
 
-	fd = open(request->module_path, O_RDONLY | O_CLOEXEC);
+	/* No path supplied: discover the first .ko under the module tree. The
+	 * emitted payload carries this discovered path alongside the vermagic. */
+	if (!path) {
+		const char *root = module_search_root();
+
+		if (find_first_ko(root, found, sizeof(found)) != 0) {
+			fprintf(stderr, "No .ko module found under %s\n", root);
+			return 1;
+		}
+		path = found;
+	}
+
+	fd = open(path, O_RDONLY | O_CLOEXEC);
 	if (fd < 0) {
 		fprintf(stderr, "Cannot open module %s: %s\n",
-			request->module_path, strerror(errno));
+			path, strerror(errno));
 		return 1;
 	}
 	if (fstat(fd, &st) != 0 || st.st_size < 0) {
 		fprintf(stderr, "Cannot stat module %s: %s\n",
-			request->module_path, strerror(errno));
+			path, strerror(errno));
 		close(fd);
 		return 1;
 	}
@@ -356,7 +432,7 @@ static int print_vermagic(const struct ela_kernel_module_request *request)
 		got = read(fd, buf + off, (size_t)st.st_size - off);
 		if (got <= 0) {
 			fprintf(stderr, "Cannot read module %s: %s\n",
-				request->module_path,
+				path,
 				got < 0 ? strerror(errno) : "unexpected EOF");
 			free(buf);
 			close(fd);
@@ -368,13 +444,13 @@ static int print_vermagic(const struct ela_kernel_module_request *request)
 
 	if (ela_kernel_module_extract_vermagic(buf, (size_t)st.st_size,
 					      vermagic, sizeof(vermagic)) != 0) {
-		fprintf(stderr, "No vermagic found in module %s\n", request->module_path);
+		fprintf(stderr, "No vermagic found in module %s\n", path);
 		free(buf);
 		return 1;
 	}
 	free(buf);
 
-	if (format_vermagic_payload(format, request->module_path, vermagic,
+	if (format_vermagic_payload(format, path, vermagic,
 				    payload, sizeof(payload)) != 0) {
 		fprintf(stderr, "Failed to format module vermagic output\n");
 		return 1;

@@ -59,13 +59,13 @@ Software breakpoints (`Z0`) are handled by writing an `INT3` (`0xcc`) byte into 
 
 Routes the GDB Remote Serial Protocol over WebSocket through the ELA GDB bridge API instead of opening a direct TCP port. This is useful when the target device is not directly reachable from the analyst workstation but can reach the ELA server.
 
-The agent attaches to the process, generates a random 128-bit session key, and connects to `/gdb/in/<32-hex-key>` on the bridge. The analyst's GDB connects to `/gdb/out/<32-hex-key>` and the bridge relays binary frames bidirectionally.
+The agent attaches to the process, generates a random 128-bit session key, and connects to `/gdb/in/<32-hex-key>?mac=<device-mac>` on the bridge — the MAC identifies the device the session belongs to. The analyst's GDB connects to `/gdb/out/<32-hex-key>` and the bridge relays binary frames bidirectionally.
 
 ## `gdbserver tunnel` arguments
 
 - `<PID>` — required process ID to attach to
-- `<WSS_BASE_URL>` — required base WebSocket URL of the ELA server (e.g. `wss://ela.example.com` or `ws://ela.example.com` for plain HTTP)
-- `--insecure` — optional; disables TLS certificate verification when connecting to the bridge
+- `<WSS_BASE_URL>` — optional base WebSocket URL of the ELA server (e.g. `wss://ela.example.com` or `ws://ela.example.com` for plain HTTP). **When omitted, it defaults to the terminal-API server the agent phoned home to** (the `--remote` value saved in `/tmp/.ela.conf`), since the GDB bridge lives at the same origin. If no URL is given and no terminal-API server is configured, the command errors.
+- `--insecure` — optional; disables TLS certificate verification when connecting to the bridge. When the URL is defaulted from the terminal-API server, the terminal connection's TLS setting is inherited unless `--insecure` is passed explicitly.
 
 ## Session key
 
@@ -80,6 +80,38 @@ Connect GDB with:
 ```
 
 Copy the `out` URL and use it in `gdb-multiarch` on the analyst workstation.
+
+## Authentication — which token each end uses
+
+The two ends of the tunnel authenticate with **different** token scopes
+(see [server-side auth](../../api/auth.md)):
+
+- `/gdb/in/<key>` — the **agent** pushing the gdbserver RSP. It authenticates
+  with the **agent** token it is already configured with (`--api-key`,
+  `ELA_API_KEY`, `/tmp/ela.key`, or the token compiled into a per-user binary).
+- `/gdb/out/<key>` — the analyst's `gdb-multiarch` running the remote session.
+  It authenticates with the **client** token — the same token used for the
+  [client API](../../api/client/index.md).
+
+Each direction is gated only when keys of its scope exist in the database, so a
+deployment with no keys stays open. When a user is created with
+`tools/add-user-key.js`, both tokens are issued: give the analyst the printed
+`client key` for `wss-remote`/Ghidra.
+
+### Device association on the `out` side
+
+Beyond the scope check, the `/gdb/out/` side is restricted to the **device on
+the in side**. The agent attaches its MAC to the in URL (`?mac=<mac>`); the
+bridge records it on the session, and the operator's client token is accepted
+only if its user is **associated** with that device — i.e. that user has phoned
+the device into the [terminal API](../../api/terminal/index.md), creating a
+`user_devices` link (binaries built with an embedded server URL do this
+automatically on first run). An operator whose user is not associated with the
+device is rejected with `403 Forbidden`, even with a valid client token. The
+agent must connect the in side first (the normal flow, since it prints the out
+URL afterward); until it does, the bridge has no device to check and rejects the
+out side. This check is skipped only in fully open mode, where no client keys
+exist and there is no user to scope by.
 
 ## Connecting with `wss-remote`
 
@@ -115,13 +147,17 @@ wss-remote [--insecure] [--token TOKEN] wss://HOST/gdb/out/<32-hex-key>
 
 - Without `--insecure`: uses GDB's native WebSocket transport (requires GDB 14+ built with WebSocket support).
 - With `--insecure`: falls back to the `tools/gdb-ws-proxy.py` stdin/stdout pipe with TLS verification disabled. Works with any GDB version that supports `target remote | command`.
-- `--token TOKEN`: override the API bearer token. If omitted, `ELA_API_KEY` from the environment is used.
+- `--token TOKEN`: override the API bearer token. If omitted, `ELA_API_KEY` from the environment is used. For the `/gdb/out/` endpoint this must be the **client** token (see [Authentication](#authentication--which-token-each-end-uses)).
 
 ## Example workflow
 
 ```bash
 # --- On the target device (via ela shell or terminal) ---
 ./embedded_linux_audit linux gdbserver tunnel --insecure 1234 wss://ela.example.com
+
+# Or, on an agent that phoned home over --remote, omit the URL to reuse that
+# same server (and its TLS setting):
+#   ./embedded_linux_audit linux gdbserver tunnel 1234
 
 # Agent prints:
 #   GDB tunnel ready:
@@ -130,7 +166,7 @@ wss-remote [--insecure] [--token TOKEN] wss://HOST/gdb/out/<32-hex-key>
 #     wss-remote wss://ela.example.com/gdb/out/aabbccddeeff00112233445566778899
 
 # --- On the analyst workstation ---
-export ELA_API_KEY=<your-api-key>
+export ELA_API_KEY=<your-client-key>   # the client-scoped token
 gdb-multiarch ./firmware.elf
 (gdb) wss-remote --insecure wss://ela.example.com/gdb/out/aabbccddeeff00112233445566778899
 ```
@@ -177,7 +213,7 @@ The same `websockets` package used by `gdb-ws-proxy.py`.
 #     out: wss://ela.example.com/gdb/out/aabbccddeeff00112233445566778899
 
 # --- On the analyst workstation ---
-export ELA_API_KEY=<your-api-key>
+export ELA_API_KEY=<your-client-key>   # the client-scoped token
 
 # Start the bridge
 python3 tools/ghidra_bridge.py \

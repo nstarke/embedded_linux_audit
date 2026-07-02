@@ -33,9 +33,22 @@ run_exact_case "linux modules load missing file" 1 "$BIN" linux modules load /tm
 run_exact_case "linux modules load --force missing file" 1 "$BIN" linux modules load --force /tmp/definitely-missing-ela-module.ko
 run_exact_case "linux modules unload missing name" 2 "$BIN" linux modules unload
 run_exact_case "linux modules unload extra arg" 2 "$BIN" linux modules unload demo extra
-run_exact_case "linux modules vermagic missing path" 2 "$BIN" linux modules vermagic
 run_exact_case "linux modules vermagic extra arg" 2 "$BIN" linux modules vermagic "$fake_module" extra
 run_exact_case "linux modules vermagic missing file" 1 "$BIN" linux modules vermagic /tmp/definitely-missing-ela-module.ko
+
+# vermagic with no path discovers the first .ko under the (env-overridable)
+# module search root. Point it at controlled dirs so the result is deterministic.
+modroot_empty="$(mktemp -d /tmp/ela-modroot-empty.XXXXXX)"
+modroot_found="$(mktemp -d /tmp/ela-modroot-found.XXXXXX)"
+cp "$fake_module" "$modroot_found/demo.ko"
+trap 'rm -rf "$modroot_empty" "$modroot_found"; rm -f "$fake_module"' EXIT INT TERM
+
+ELA_MODULE_SEARCH_ROOT="$modroot_empty"
+export ELA_MODULE_SEARCH_ROOT
+run_exact_case "linux modules vermagic no path, none found" 1 "$BIN" linux modules vermagic
+ELA_MODULE_SEARCH_ROOT="$modroot_found"
+run_exact_case "linux modules vermagic no path discovers a .ko" 0 "$BIN" linux modules vermagic
+unset ELA_MODULE_SEARCH_ROOT
 
 vermagic_log="$(mktemp /tmp/test_linux_modules_vermagic.XXXXXX)"
 "$BIN" --output-format json linux modules vermagic "$fake_module" >"$vermagic_log" 2>&1

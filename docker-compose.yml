@@ -1,18 +1,40 @@
 services:
-  postgres:
-    image: postgres:16-alpine
+  redis:
+    image: redis:7-alpine
     restart: unless-stopped
-    environment:
-      POSTGRES_DB: embedded_linux_audit
-      POSTGRES_USER: ela
-      POSTGRES_PASSWORD: ela
+    command: ["redis-server", "--appendonly", "yes"]
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ela -d embedded_linux_audit"]
+      test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
     volumes:
-      - ${ELA_POSTGRES_DATA_DIR:-/data/postgres}:/var/lib/postgresql/data
+      - ${ELA_REDIS_DATA_DIR:-/data/redis}:/data
+
+  builder:
+    build:
+      context: .
+      dockerfile: api/builder/Dockerfile
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      REDIS_HOST: ${ELA_REDIS_HOST:-redis}
+      REDIS_PORT: ${ELA_REDIS_PORT:-6379}
+      ELA_BUILD_REPO_ROOT: /src
+      # Must match agent-api so the generic binaries land where the helper server
+      # serves from and add-user-key assembles launchers (<data>/release_binaries).
+      ELA_AGENT_DATA_DIR: /data/agent
+    volumes:
+      # Output: the one-time generic binaries land on the shared agent-data
+      # volume that agent-api serves from and add-user-key wraps into launchers.
+      - ${ELA_DATA_DIR:-/data/agent}:/data/agent
+      # Sources: the host repo (third_party, .git, Makefile, agent/, tests/...).
+      # Read-write because the cross-compile writes build-* dirs under it.
+      # Requires `git submodule update --init --recursive` on the host.
+      - ${ELA_BUILD_SRC_DIR:-.}:/src
+    depends_on:
+      redis:
+        condition: service_healthy
 
   agent-api:
     build:
@@ -21,21 +43,46 @@ services:
     restart: unless-stopped
     environment:
       NODE_ENV: production
-      ELA_DB_HOST: postgres
-      ELA_DB_PORT: 5432
-      ELA_DB_NAME: embedded_linux_audit
-      ELA_DB_USER: ela
-      ELA_DB_PASSWORD: ela
+      ELA_DB_HOST: ${ELA_DB_HOST:-postgres}
+      ELA_DB_PORT: ${ELA_DB_PORT:-5432}
+      ELA_DB_NAME: ${ELA_DB_NAME:-embedded_linux_audit}
+      ELA_DB_USER: ${ELA_DB_USER:-ela}
+      ELA_DB_PASSWORD: ${ELA_DB_PASSWORD:-ela}
       ELA_AGENT_HOST: 0.0.0.0
       ELA_AGENT_PORT: 5000
       ELA_AGENT_DATA_DIR: /data/agent
-      ELA_AGENT_SKIP_ASSET_SYNC: ${ELA_AGENT_SKIP_ASSET_SYNC:-false}
-      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
-    depends_on:
-      postgres:
-        condition: service_healthy
+      # For tools/add-user-key.js to enqueue builds.
+      REDIS_HOST: ${ELA_REDIS_HOST:-redis}
+      REDIS_PORT: ${ELA_REDIS_PORT:-6379}
+      # Base terminal-API WS URL baked into per-user binaries so they auto-connect
+      # on a bare run (e.g. wss://ela.example.com). Empty = do not embed.
+      ELA_SERVER_URL: ${ELA_SERVER_URL:-}
     volumes:
       - ${ELA_DATA_DIR:-/data/agent}:/data/agent
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  client-api:
+    build:
+      context: .
+      dockerfile: api/client/Dockerfile
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      ELA_DB_HOST: ${ELA_DB_HOST:-postgres}
+      ELA_DB_PORT: ${ELA_DB_PORT:-5432}
+      ELA_DB_NAME: ${ELA_DB_NAME:-embedded_linux_audit}
+      ELA_DB_USER: ${ELA_DB_USER:-ela}
+      ELA_DB_PASSWORD: ${ELA_DB_PASSWORD:-ela}
+      ELA_CLIENT_HOST: 0.0.0.0
+      ELA_CLIENT_PORT: 7000
+      # Enqueue operator commands to the terminal API and await results.
+      REDIS_HOST: ${ELA_REDIS_HOST:-redis}
+      REDIS_PORT: ${ELA_REDIS_PORT:-6379}
+    depends_on:
+      redis:
+        condition: service_healthy
 
   terminal-api:
     build:
@@ -44,19 +91,22 @@ services:
     restart: unless-stopped
     environment:
       NODE_ENV: production
-      ELA_DB_HOST: postgres
-      ELA_DB_PORT: 5432
-      ELA_DB_NAME: embedded_linux_audit
-      ELA_DB_USER: ela
-      ELA_DB_PASSWORD: ela
+      ELA_DB_HOST: ${ELA_DB_HOST:-postgres}
+      ELA_DB_PORT: ${ELA_DB_PORT:-5432}
+      ELA_DB_NAME: ${ELA_DB_NAME:-embedded_linux_audit}
+      ELA_DB_USER: ${ELA_DB_USER:-ela}
+      ELA_DB_PASSWORD: ${ELA_DB_PASSWORD:-ela}
       ELA_TERMINAL_HOST: 0.0.0.0
       ELA_TERMINAL_PORT: 8080
       ELA_SOCKET_UID: ${ELA_SOCKET_UID:-}
-    depends_on:
-      postgres:
-        condition: service_healthy
+      # Consume operator commands enqueued by the client API.
+      REDIS_HOST: ${ELA_REDIS_HOST:-redis}
+      REDIS_PORT: ${ELA_REDIS_PORT:-6379}
     volumes:
       - ${ELA_TERMINAL_SOCKET_DIR:-/run/ela-terminal}:/run/ela-terminal
+    depends_on:
+      redis:
+        condition: service_healthy
 
   gdb-api:
     build:
@@ -67,12 +117,19 @@ services:
       NODE_ENV: production
       ELA_GDB_HOST: 0.0.0.0
       ELA_GDB_PORT: 9000
+      # Answers the client API's "list sessions" queries over the shared queue.
+      REDIS_HOST: ${ELA_REDIS_HOST:-redis}
+      REDIS_PORT: ${ELA_REDIS_PORT:-6379}
+    depends_on:
+      redis:
+        condition: service_healthy
 
   nginx:
     image: nginx:1.27-alpine
     restart: unless-stopped
     depends_on:
       - agent-api
+      - client-api
       - terminal-api
       - gdb-api
     ports:

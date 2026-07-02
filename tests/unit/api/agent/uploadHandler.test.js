@@ -94,6 +94,26 @@ describe('upload handler', () => {
     }));
   });
 
+  test('accepts module-vermagic json uploads and persists them', async () => {
+    const deps = { ...baseDeps, validUploadTypes: new Set([...baseDeps.validUploadTypes, 'module-vermagic']) };
+    const handler = createUploadHandler(deps);
+    const req = {
+      params: { mac: 'aa:bb:cc:dd:ee:ff', type: 'module-vermagic' },
+      query: {},
+      body: Buffer.from('{"path":"/lib/modules/anul.ko","vermagic":"3.12.19-rt30 SMP mod_unload ARMv7"}\n'),
+      get: () => 'application/json',
+    };
+    const res = createRes();
+
+    await handler(req, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(deps.persistUpload).toHaveBeenCalledWith(expect.objectContaining({
+      uploadType: 'module-vermagic',
+      contentType: 'application/json',
+    }));
+  });
+
   test('requires absolute filePath for grep uploads', async () => {
     const handler = createUploadHandler(baseDeps);
     const req = {

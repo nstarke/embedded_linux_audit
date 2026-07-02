@@ -16,10 +16,6 @@ run_exact_case "linux netstat --help" 0 "$BIN" linux netstat --help
 run_exact_case "linux netstat extra arg" 2 "$BIN" linux netstat extra
 run_accept_case "linux netstat output-format warning" "$BIN" --output-format json linux netstat --help
 
-if command -v netstat >/dev/null 2>&1 || command -v ss >/dev/null 2>&1; then
-    run_accept_case "linux netstat" "$BIN" linux netstat
-else
-    run_exact_case "linux netstat without netstat or ss" 1 "$BIN" linux netstat
-fi
+run_accept_case "linux netstat reads /proc socket tables" "$BIN" linux netstat
 
 finish_tests

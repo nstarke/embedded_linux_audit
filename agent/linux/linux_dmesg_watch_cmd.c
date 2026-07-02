@@ -274,12 +274,14 @@ static pid_t read_pid_file(void)
 
 /*
  * Fork a daemon child that runs the watch loop.  Returns 0 in the parent
- * (success), -1 on fork error.  The child never returns from this function.
+ * (success), -1 on fork error.  On success the daemon's PID is stored in
+ * *out_pid (when non-NULL).  The child never returns from this function.
  */
 static int daemonize_and_watch(const char *fmt,
 				const char *tcp_target,
 				const char *http_uri,
-				bool insecure)
+				bool insecure,
+				pid_t *out_pid)
 {
 	pid_t pid = fork();
 
@@ -291,6 +293,8 @@ static int daemonize_and_watch(const char *fmt,
 		if (write_pid_file(pid) != 0)
 			fprintf(stderr, "dmesg watch: warning: failed to write PID file %s\n",
 				WATCH_PID_FILE);
+		if (out_pid)
+			*out_pid = pid;
 		return 0;
 	}
 
@@ -372,6 +376,7 @@ int linux_dmesg_watch_main(int argc, char **argv)
 	const char *http_uri = NULL;
 	const char *action;
 	pid_t existing_pid;
+	pid_t watch_pid = -1;
 
 	if (!fmt || !*fmt)
 		fmt = "txt";
@@ -418,13 +423,13 @@ int linux_dmesg_watch_main(int argc, char **argv)
 	else if (output_https && *output_https)
 		http_uri = output_https;
 
-	if (daemonize_and_watch(fmt, output_tcp, http_uri, insecure) != 0) {
+	if (daemonize_and_watch(fmt, output_tcp, http_uri, insecure, &watch_pid) != 0) {
 		fprintf(stderr, "dmesg watch: failed to start daemon: %s\n",
 			strerror(errno));
 		return 1;
 	}
 
-	fprintf(stdout, "dmesg watch started\n");
+	fprintf(stdout, "dmesg watch started (pid=%ld)\n", (long)watch_pid);
 	return 0;
 }
 

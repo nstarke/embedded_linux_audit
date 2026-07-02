@@ -61,6 +61,9 @@ void ela_api_key_init(const char *cli_key)
 
 	add_key(cli_key);
 	add_key(getenv("ELA_API_KEY"));
+#ifdef ELA_EMBEDDED_API_KEY
+	add_key(ELA_EMBEDDED_API_KEY);
+#endif
 	load_key_file(KEY_FILE);
 }
 

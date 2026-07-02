@@ -42,6 +42,17 @@ static void test_ws_heartbeat_ack_builder_and_frame_classification(void)
 
 	ela_ws_classify_incoming_frame(ELA_WS_OPCODE_CLOSE, "", 0, &action);
 	ELA_ASSERT_INT_EQ(1, action.terminate_session);
+	ELA_ASSERT_INT_EQ(0, action.no_reconnect);
+
+	/* A plain close (code 1000) terminates but still allows reconnect. */
+	ela_ws_classify_incoming_frame(ELA_WS_OPCODE_CLOSE, "\x03\xe8", 2, &action);
+	ELA_ASSERT_INT_EQ(1, action.terminate_session);
+	ELA_ASSERT_INT_EQ(0, action.no_reconnect);
+
+	/* The superseded code (4000 = 0x0FA0) sets no_reconnect. */
+	ela_ws_classify_incoming_frame(ELA_WS_OPCODE_CLOSE, "\x0f\xa0", 2, &action);
+	ELA_ASSERT_INT_EQ(1, action.terminate_session);
+	ELA_ASSERT_INT_EQ(1, action.no_reconnect);
 }
 
 static void test_ws_zero_mask_control_frame_builder_emits_expected_bytes(void)

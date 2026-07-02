@@ -1,0 +1,42 @@
+# Bundled PostgreSQL overlay.
+#
+# Docker Compose auto-merges docker-compose.override.yml for plain
+# `docker compose` commands (when no -f is given), so `docker compose up`
+# runs the full stack with a bundled PostgreSQL out of the box.
+#
+# To use an EXTERNAL PostgreSQL instead (and not run this container), run
+# Compose with the base file only and point ELA_DB_HOST at your server:
+#
+#   ELA_DB_HOST=db.example.com docker compose -f docker-compose.yml up -d
+#
+# The installer exposes this as `nginx/install.sh HOST --db-host <host> ...`.
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${ELA_DB_NAME:-embedded_linux_audit}
+      POSTGRES_USER: ${ELA_DB_USER:-ela}
+      POSTGRES_PASSWORD: ${ELA_DB_PASSWORD:-ela}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${ELA_DB_USER:-ela} -d ${ELA_DB_NAME:-embedded_linux_audit}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - ${ELA_POSTGRES_DATA_DIR:-/data/postgres}:/var/lib/postgresql/data
+
+  agent-api:
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  client-api:
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  terminal-api:
+    depends_on:
+      postgres:
+        condition: service_healthy

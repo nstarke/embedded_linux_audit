@@ -7,10 +7,12 @@ RUN apt-get update \
     autoconf \
     automake \
     bash \
+    bison \
     build-essential \
     ca-certificates \
     cmake \
     curl \
+    flex \
     git \
     libltdl-dev \
     libtool-bin \

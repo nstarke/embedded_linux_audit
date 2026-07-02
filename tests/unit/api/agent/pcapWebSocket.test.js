@@ -34,7 +34,7 @@ function loadPcapWebSocket(options = {}) {
     });
   });
   const auth = {
-    checkBearer: jest.fn(() => true),
+    resolveBearer: jest.fn().mockResolvedValue(true),
   };
   const serverUtils = {
     isValidMacAddress: jest.fn(() => true),
@@ -60,7 +60,7 @@ describe('agent pcap websocket receiver', () => {
     jest.restoreAllMocks();
   });
 
-  test('verifyClient enforces pcap path and bearer auth', () => {
+  test('verifyClient enforces pcap path and bearer auth', async () => {
     const { createPcapWebSocketServer, WebSocketServer, auth } = loadPcapWebSocket();
     createPcapWebSocketServer({
       server: {},
@@ -69,16 +69,27 @@ describe('agent pcap websocket receiver', () => {
     });
     const verifyClient = WebSocketServer.mock.instances[0].options.verifyClient;
     const done = jest.fn();
+    const flush = () => new Promise((resolve) => setImmediate(resolve));
 
+    // Wrong path -> 404 synchronously (before auth).
     verifyClient({ req: { url: '/upload/aa:bb', headers: {} } }, done);
     expect(done).toHaveBeenLastCalledWith(false, 404, 'Not Found');
 
-    auth.checkBearer.mockReturnValueOnce(false);
+    auth.resolveBearer.mockResolvedValueOnce(false);
     verifyClient({ req: { url: '/pcap/aa:bb:cc:dd:ee:ff', headers: {} } }, done);
+    await flush();
     expect(done).toHaveBeenLastCalledWith(false, 401, 'Unauthorized');
 
+    auth.resolveBearer.mockResolvedValueOnce(true);
     verifyClient({ req: { url: '/pcap/aa:bb:cc:dd:ee:ff', headers: { authorization: 'Bearer ok' } } }, done);
+    await flush();
     expect(done).toHaveBeenLastCalledWith(true);
+
+    // A key-lookup error fails closed (401).
+    auth.resolveBearer.mockRejectedValueOnce(new Error('db down'));
+    verifyClient({ req: { url: '/pcap/aa:bb:cc:dd:ee:ff', headers: { authorization: 'Bearer ok' } } }, done);
+    await flush();
+    expect(done).toHaveBeenLastCalledWith(false, 401, 'Unauthorized');
   });
 
   test('connection writes binary chunks and persists artifact path on close', async () => {

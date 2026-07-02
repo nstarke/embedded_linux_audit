@@ -14,6 +14,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <signal.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -122,6 +123,50 @@ void ela_usage(const char *prog)
 	usage(prog);
 }
 
+/*
+ * Derive an HTTP(S) upload endpoint from a WebSocket --remote target. The
+ * terminal API the agent phones home to and the agent upload API share one
+ * origin (see nginx/ela.conf), so only the scheme differs:
+ *   wss://host  -> https://host
+ *   ws://host   -> http://host
+ * Any path/query on the URL is dropped (the upload builder appends
+ * /<mac>/upload/<type> itself). Writes into buf and returns it, or NULL when
+ * url is not a ws(s):// URL or does not fit.
+ */
+static const char *ela_derive_output_uri_from_remote(const char *url,
+						     char *buf, size_t buf_sz)
+{
+	const char *scheme;
+	const char *authority;
+	const char *authority_end;
+	size_t authority_len;
+
+	if (!url)
+		return NULL;
+	if (!strncmp(url, "wss://", 6)) {
+		scheme = "https://";
+		authority = url + 6;
+	} else if (!strncmp(url, "ws://", 5)) {
+		scheme = "http://";
+		authority = url + 5;
+	} else {
+		return NULL;
+	}
+
+	authority_end = authority;
+	while (*authority_end && *authority_end != '/' &&
+	       *authority_end != '?' && *authority_end != '#')
+		authority_end++;
+	authority_len = (size_t)(authority_end - authority);
+
+	if (authority_len == 0 ||
+	    strlen(scheme) + authority_len >= buf_sz)
+		return NULL;
+
+	snprintf(buf, buf_sz, "%s%.*s", scheme, (int)authority_len, authority);
+	return buf;
+}
+
 /* Declared non-static so shell/interactive.c and shell/script_exec.c can call it. */
 int embedded_linux_audit_dispatch(int argc, char **argv)
 {
@@ -129,6 +174,7 @@ int embedded_linux_audit_dispatch(int argc, char **argv)
 	struct ela_dispatch_opts opts = {0};
 	struct ela_conf ela_conf = {0};
 	char errbuf[256];
+	char derived_output_uri[512];
 	int ret;
 	char *command_summary;
 	bool emit_lifecycle_events;
@@ -182,6 +228,43 @@ int embedded_linux_audit_dispatch(int argc, char **argv)
 	    opts.cmd_idx >= argc && !opts.script_path &&
 	    !opts.output_explicit)
 		opts.remote_target = ela_conf.remote;
+
+#ifdef ELA_EMBEDDED_SERVER_URL
+	/*
+	 * Fall back to the server URL baked in at build time (alongside the
+	 * embedded API key) when the binary is run bare. This makes a dropped
+	 * binary phone home to the terminal API automatically. Precedence:
+	 * explicit --remote > saved conf.remote > embedded URL.
+	 */
+	if (!opts.remote_target &&
+	    opts.cmd_idx >= argc && !opts.script_path &&
+	    !opts.output_explicit)
+		opts.remote_target = ELA_EMBEDDED_SERVER_URL;
+#endif
+
+	/*
+	 * When phoning home over a WebSocket --remote target and no upload
+	 * endpoint was explicitly configured, default command-output uploads to
+	 * the same origin. This keeps the /uploads endpoints populated without
+	 * depending on the launcher exporting ELA_OUTPUT_HTTP/HTTPS (which must
+	 * also match scheme). Explicit --output-* / ELA_OUTPUT_* always wins.
+	 * Set on the initial --remote invocation, it is exported below so the
+	 * daemon and its interactive-session commands inherit it.
+	 */
+	if (opts.remote_target && ela_is_ws_url(opts.remote_target) &&
+	    (!opts.output_http  || !*opts.output_http) &&
+	    (!opts.output_https || !*opts.output_https) &&
+	    (!opts.output_tcp   || !*opts.output_tcp)) {
+		const char *derived = ela_derive_output_uri_from_remote(
+			opts.remote_target, derived_output_uri,
+			sizeof(derived_output_uri));
+		if (derived) {
+			if (!strncmp(derived, "https://", 8))
+				opts.output_https = derived;
+			else
+				opts.output_http = derived;
+		}
+	}
 
 	if (strcmp(opts.output_format, "txt") &&
 	    strcmp(opts.output_format, "csv") &&
@@ -687,6 +770,15 @@ done:
 int main(int argc, char **argv)
 {
 	struct ela_conf boot_conf = {0};
+
+	/*
+	 * Ignore SIGPIPE process-wide: this is a network daemon, and a write to a
+	 * socket or pipe whose peer has gone away must surface as EPIPE for the
+	 * caller to handle, not kill the process. The disposition is inherited
+	 * across every fork() (the --remote daemon, the WS session child, upload
+	 * POSTs), so setting it once here covers them all.
+	 */
+	signal(SIGPIPE, SIG_IGN);
 
 	ela_conf_load(&boot_conf);
 	/* Sanitize output_format by replacing the tainted buffer with a known-safe

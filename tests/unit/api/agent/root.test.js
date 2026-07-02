@@ -56,7 +56,7 @@ describe('agent root route', () => {
     const { registerRootRoute, listBinaryEntries } = loadRegisterRootRoute(async () => ([
       {
         fileName: 'ela-x86_64<script>.bin',
-        url: '/isa/x86_64?x=<y>&z="1"',
+        isa: 'x86_64<y>',
       },
     ]));
     const app = { get: jest.fn() };
@@ -99,7 +99,7 @@ describe('agent root route', () => {
     expect(listBinaryEntries).toHaveBeenCalledWith('/assets', expect.any(Object), '.release_state.json');
     expect(res.headers['content-type']).toBe('text/html');
     expect(res.body).toContain('ela-x86_64&lt;script&gt;.bin');
-    expect(res.body).toContain('/isa/x86_64?x=&lt;y&gt;&amp;z=&quot;1&quot;');
+    expect(res.body).toContain('/isa/&lt;token&gt;/x86_64&lt;y&gt;');
     expect(res.body).toContain('tests/agent/shell/configured.sh');
     expect(res.body).toContain('tests/agent/shell/nested/deep.sh');
     expect(res.body).toContain('tests/agent/shell/repo-only.sh');
@@ -139,7 +139,7 @@ describe('agent root route', () => {
 
     expect(verboseRequestLog).toHaveBeenCalledWith(req);
     expect(verboseResponseLog).toHaveBeenCalledWith(req, 200, Buffer.byteLength(res.body));
-    expect(res.body).toContain('No binaries downloaded.');
+    expect(res.body).toContain('No binaries built.');
     expect(res.body).toContain('No agent test shell or script files found.');
     expect(res.body).toContain('No command scripts found.');
   });

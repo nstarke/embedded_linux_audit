@@ -3,6 +3,7 @@
   "private": true,
   "description": "Shared dependencies for api/lib — installed at the api/ level so Node module resolution finds them from api/lib subdirectories.",
   "dependencies": {
+    "bullmq": "^5.34.0",
     "pg": "^8.13.3",
     "sequelize": "^6.37.5",
     "umzug": "^3.8.2"

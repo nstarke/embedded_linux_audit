@@ -5,6 +5,7 @@
 #include "linux_gdbserver_tunnel_util.h"
 #include "../embedded_linux_audit_cmd.h"
 #include "../net/ws_client.h"
+#include "../net/ela_conf.h"
 
 #include <libxml/tree.h>
 
@@ -5557,7 +5558,11 @@ static int tcp_listen_port(uint16_t port)
 }
 
 /* -----------------------------------------------------------------------
- * linux gdbserver tunnel [--insecure] <PID> <wss://host>
+ * linux gdbserver tunnel [--insecure] <PID> [<wss://host>]
+ *
+ * <wss://host> is optional: when omitted it defaults to the terminal-API
+ * server the agent phoned home to (conf `remote`), since the GDB bridge lives
+ * at the same origin.
  *
  * Generates a 32-char hex session key, attaches to PID, creates a
  * socketpair, forks a grandchild to run the RSP engine on sv[0], and
@@ -5678,9 +5683,11 @@ static int linux_gdbserver_tunnel(int argc, char **argv)
 	char              *endptr;
 	const char        *base_url;
 	char               hex_key[33];
+	char               mac[64];
 	char               in_url[600];
 	char               out_url[600];
 	int                insecure  = 0;
+	int                insecure_explicit = 0;
 	int                arg_idx   = 1;
 	int                sv[2];
 	int                pipefd[2];
@@ -5690,20 +5697,25 @@ static int linux_gdbserver_tunnel(int argc, char **argv)
 	int                wstatus;
 	int                devnull;
 	struct ela_ws_conn ws;
+	struct ela_conf    conf;
 	pid_t              rsp_child;
 
 	/* Optional --insecure flag before PID */
 	if (argc > 1 && strcmp(argv[1], "--insecure") == 0) {
 		insecure = 1;
+		insecure_explicit = 1;
 		arg_idx  = 2;
 	}
 
-	if (argc < arg_idx + 2) {
+	/* PID is required; the base URL is optional (defaults to the terminal-API
+	 * server this agent phoned home to). */
+	if (argc < arg_idx + 1) {
 		fprintf(stderr,
-			"Usage: linux gdbserver tunnel [--insecure] <PID> <WSS_BASE_URL>\n"
+			"Usage: linux gdbserver tunnel [--insecure] <PID> [<WSS_BASE_URL>]\n"
 			"  --insecure    : skip TLS certificate verification\n"
 			"  PID           : process to attach to\n"
-			"  WSS_BASE_URL  : wss://host  (key generated automatically)\n"
+			"  WSS_BASE_URL  : wss://host  (key generated automatically);\n"
+			"                  defaults to the terminal-API server (--remote) when omitted\n"
 			"\n"
 			"The agent prints the full wss:// URL on success; give the\n"
 			"gdb/out URL to gdb-multiarch:\n"
@@ -5719,7 +5731,21 @@ static int linux_gdbserver_tunnel(int argc, char **argv)
 	}
 	pid = (pid_t)val;
 
-	base_url = argv[arg_idx + 1];
+	ela_conf_load(&conf);
+
+	/* The base URL is optional: when omitted, reuse the terminal-API server the
+	 * agent phoned home to (conf `remote`), inheriting its TLS setting, since
+	 * the GDB bridge lives at the same origin. */
+	if (ela_gdb_tunnel_resolve_target(argc >= arg_idx + 2 ? argv[arg_idx + 1] : NULL,
+					  conf.remote, conf.insecure,
+					  insecure_explicit,
+					  &base_url, &insecure) != 0) {
+		fprintf(stderr,
+			"gdbserver tunnel: no <WSS_BASE_URL> given and no terminal-API "
+			"server is configured; pass a wss://host URL or run the agent "
+			"with --remote first\n");
+		return 1;
+	}
 
 	/* Generate a fresh 32-char hex session key */
 	if (tunnel_generate_hex_key(hex_key) != 0) {
@@ -5727,7 +5753,12 @@ static int linux_gdbserver_tunnel(int argc, char **argv)
 		return 1;
 	}
 
-	if (ela_gdb_tunnel_build_urls(base_url, hex_key,
+	/* Attach this device's MAC to the /gdb/in/ URL (same identifier the
+	 * terminal API keys associations on) so the bridge can restrict the
+	 * /gdb/out/ operator side to users associated with this device. */
+	ela_ws_get_primary_mac(mac, sizeof(mac));
+
+	if (ela_gdb_tunnel_build_urls(base_url, hex_key, mac,
 				      in_url,  sizeof(in_url),
 				      out_url, sizeof(out_url)) != 0) {
 		fprintf(stderr, "URL too long\n");
@@ -5994,10 +6025,11 @@ int linux_gdbserver_main(int argc, char **argv)
 	if (argc < 3) {
 		fprintf(stderr,
 			"Usage: linux gdbserver <PID> <PORT>\n"
-			"       linux gdbserver tunnel [--insecure] <PID> <WSS_BASE_URL>\n"
+			"       linux gdbserver tunnel [--insecure] <PID> [<WSS_BASE_URL>]\n"
 			"  PID           : process ID to attach to\n"
 			"  PORT          : TCP port for gdb-multiarch to connect on\n"
-			"  WSS_BASE_URL  : wss://host  (session key generated automatically)\n"
+			"  WSS_BASE_URL  : wss://host  (session key generated automatically);\n"
+			"                  defaults to the terminal-API server (--remote) when omitted\n"
 			"\n"
 			"Direct TCP: target remote <agent-ip>:<PORT>\n"
 			"Tunnel:     wss-remote [--insecure] wss://host/gdb/out/<key>  (printed on connect)\n");

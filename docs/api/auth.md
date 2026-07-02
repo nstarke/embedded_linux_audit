@@ -1,9 +1,16 @@
 # API Key Authentication — Server Side
 
-Both web API servers (`api/agent` and `api/terminal`) share the same
-authentication module (`api/auth.js`).  Authentication is **opt-in**:
-by default neither server enforces tokens, so existing deployments are
-unaffected.
+All API services (`api/agent`, `api/client`, `api/terminal`, `api/gdb`) share the
+same authentication module (`api/auth.js`).
+
+Bearer keys live in the database (`api_keys`, created by `tools/add-user-key.js`)
+and are **read on every request** via `loadApiKeyHashes(scope)` — a key that is
+created or revoked takes effect immediately, with **no service restart**.
+
+Enforcement is **dynamic**: as soon as any key exists for a service's scope, that
+service requires a valid token and resolves the request's user
+(`req.authUser`); with no keys configured for the scope it stays open. The
+`--validate-key` flag forces the closed case (reject even when no keys exist).
 
 ## Key file format — `ela.key`
 
@@ -17,8 +24,12 @@ anothertoken
 - Blank lines and lines containing only whitespace are ignored.
 - There is no maximum number of tokens; all listed tokens are valid
   simultaneously.
-- The file is read once at server startup.  Restart the server to pick up
-  changes.
+
+> Note: the servers read keys from the **database** (`api_keys`), not from
+> `ela.key`, and re-read them on every request — so creating or revoking a key
+> takes effect immediately without restarting any service. The `ela.key` file
+> remains the **agent-side** token source (see
+> [agent-side auth](../agent/features/api-key-authentication.md)).
 
 ## Enabling enforcement — `--validate-key`
 
@@ -76,6 +87,60 @@ for details.
 - WebSocket connections, including terminal sessions and pcap capture streams,
   are rejected with HTTP `401` before the upgrade handshake completes, so no
   WebSocket connection object is created for unauthorised clients.
+
+## Token scopes — agent vs client
+
+API keys carry a `scope` (`api_keys.scope`):
+
+- `agent` — used by the agent for uploads, the terminal server, and the
+  **agent side** of the gdb bridge (`/gdb/in/<key>`, the gdbserver RSP push).
+  Existing keys default to this scope.
+- `client` — used by the [client API](client/index.md) to read back uploaded
+  artifacts, and by the **operator side** of the gdb bridge
+  (`/gdb/out/<key>`, the `gdb-multiarch` remote session).
+
+Each service loads only the keys for its scope, so an agent token cannot be used
+against the client API and vice-versa. The gdb bridge is the one service that
+accepts both: it validates `/gdb/in/` against agent keys and `/gdb/out/` against
+client keys (see [gdbserver tunnel](../agent/linux/gdbserver.md)).
+
+The `/gdb/out/` side is additionally gated by **device association**: the agent
+appends its MAC to the in URL (`/gdb/in/<key>?mac=<mac>`), the bridge records it
+on the session, and the operator's client token may only attach if its user is
+associated with that device (the same `user_devices` link the terminal API
+records). An operator whose user has not phoned that device into the terminal
+API is rejected with `403 Forbidden`. As with the rest of the bridge this is
+skipped only in fully open mode (no client keys configured, so there is no user
+to scope by).
+
+When an agent connects to the terminal API with a valid agent token, that
+token's user is associated with the connected device's MAC (`user_devices`).
+The user's client token can then read that device's artifacts — see
+[client API visibility](client/index.md#visibility-by-device-association). A
+device may be associated with several users.
+
+## Per-user tokens and binaries
+
+`tools/add-user-key.js` creates a user with **both** tokens at once, but only
+prints the **client** token — the agent token is an agent-only credential baked
+into the user's launchers, so it is never shown:
+
+```sh
+node tools/add-user-key.js --username alice
+# or inside the container:
+docker compose exec agent-api node /app/tools/add-user-key.js --username alice
+```
+
+```
+client key: <for the client API>
+```
+
+Only the SHA-256 hashes are stored. The agent key is compiled into
+architecture-specific binaries written to
+`<data-dir>/release_binaries/users/<keyHash>/`; when a request to
+`GET /isa/:token/:isa` is reached (the token in the path), the agent server
+hashes the token and serves the matching user's binary. See
+[docker operations](docker-operations.md) for the full workflow.
 
 ## nginx and TLS
 

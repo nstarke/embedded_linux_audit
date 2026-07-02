@@ -2,7 +2,9 @@
   "name": "embedded_linux_audit-js-tests",
   "private": true,
   "scripts": {
-    "test:js": "jest --runInBand tests/unit/api"
+    "test:js": "jest --runInBand tests/unit/api",
+    "setup": "npm install && npm --prefix api install",
+    "add-user-key": "npm --prefix api install --silent && node tools/add-user-key.js"
   },
   "dependencies": {
     "express": "^5.2.1",

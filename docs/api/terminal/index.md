@@ -303,154 +303,50 @@ heartbeat arrives the session entry remains visible until the WebSocket closes.
 
 ## HTTP API
 
-In addition to the WebSocket interface, the server exposes a small JSON HTTP API
-on the same port for programmatic control of connected sessions.  When the
-server is started with `--validate-key`, every endpoint except
-`/terminal/healthcheck` requires the same `Authorization: Bearer <token>`
-header as the WebSocket upgrade.  The `/terminal/healthcheck` endpoint is
-always unauthenticated.
+The terminal server is **agent-only**. Its HTTP surface is just a liveness
+check — there is no operator control API on this port anymore:
 
 | Method & path | Purpose |
 |---------------|---------|
-| `GET /terminal/healthcheck` | Liveness check (always public) |
-| `GET /terminal/sessions` | List connected sessions |
-| `POST /terminal/<mac>/exec` | Run one command and wait for it to finish |
+| `GET /terminal/healthcheck` | Liveness check (always public, plain `200 ok`) |
+
+The agent WebSocket (`/terminal/<mac>`) is described above; every other HTTP path
+returns `404`.
+
+### Operator control moved to the client API
+
+Listing sessions and running commands on connected devices is now done through
+the **client API**, authenticated with your **client** token (not the agent
+token). Behind nginx these live under the `/client/` prefix:
+
+| Method & path (client API) | Purpose |
+|----------------------------|---------|
+| `GET /terminal/sessions` | List devices you are associated with |
+| `POST /terminal/<mac>/exec` | Run one command and wait for its output |
 | `POST /terminal/<mac>/spawn` | Launch a long-running background process |
-| `GET /terminal/<mac>/spawn` | List the processes spawned on a session |
+| `GET /terminal/<mac>/spawn` | List the processes spawned on a device |
 | `DELETE /terminal/<mac>/spawn/<pid>` | Kill a spawned process |
 
-### `GET /terminal/healthcheck`
+The client API validates your token, checks you are **associated** with `<mac>`
+(via `user_devices`; a device you are not associated with is treated as not
+connected — `404 {"error":"no active session for mac"}`), then hands the command
+to the terminal server over the internal `ela-terminal-commands` Redis queue.
+The terminal server executes it against the live agent session and queues the
+result back, which the client API relays to you. The terminal server thus never
+exposes an operator HTTP surface — only agents (WebSocket) and the queue reach
+it. See [client API](../client/index.md) and the OpenAPI docs at `/client/docs`.
 
-Returns `200 ok` (plain text) while the server is running.
-
-### `GET /terminal/sessions`
-
-Lists the currently connected sessions.
-
-```sh
-curl -H "Authorization: Bearer mysecrettoken" \
-    http://server:8080/terminal/sessions
-```
-
-```json
-[
-  {
-    "mac": "aa:bb:cc:dd:ee:ff",
-    "alias": "router1",
-    "group": "factory-floor",
-    "remoteAddress": "10.0.0.5",
-    "connectedAt": "2026-06-29T14:32:01.000Z",
-    "lastHeartbeat": "2026-06-29T14:32:31.000Z"
-  }
-]
-```
-
-Any field that is not yet known is `null` (for example `lastHeartbeat` before the
-first heartbeat acknowledgement).
-
-### `POST /terminal/<mac>/exec`
-
-Runs a single command on the agent identified by `<mac>` and waits for it to
-complete.  The command is executed via the agent's `linux execute-command`
-primitive; completion is detected when the agent re-emits its prompt.
-
-Request body:
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `command` | string | yes | The shell command to run on the device |
-| `timeoutMs` | number | no | Max time to wait for completion (default 15000) |
+Example:
 
 ```sh
-curl -X POST \
-    -H "Authorization: Bearer mysecrettoken" \
-    -H "Content-Type: application/json" \
-    -d '{"command":"uname -a","timeoutMs":10000}' \
-    http://server:8080/terminal/aa:bb:cc:dd:ee:ff/exec
+# through nginx, with your CLIENT token
+curl -H "Authorization: Bearer <client-token>" \
+    https://ela.example.com/client/terminal/sessions
+
+curl -X POST -H "Authorization: Bearer <client-token>" \
+    -H 'Content-Type: application/json' -d '{"command":"uname -a"}' \
+    https://ela.example.com/client/terminal/aa:bb:cc:dd:ee:ff/exec
 ```
-
-Responses:
-
-| Status | Body | Meaning |
-|--------|------|---------|
-| `200` | `{ "ok": true, "output": "...", "durationMs": 123 }` | Command completed |
-| `400` | `{ "error": "..." }` | Invalid MAC, missing `command`, or bad `timeoutMs` |
-| `401` | `{ "error": "Unauthorized" }` | Missing/invalid bearer token (when enforced) |
-| `404` | `{ "error": "no active session for mac" }` | No connected session for `<mac>` |
-| `504` | `{ "ok": false, "error": "exec timed out", "output": "...", "durationMs": 15000 }` | Command did not complete before `timeoutMs`; `output` holds whatever was captured so far |
-
-### `POST /terminal/<mac>/spawn`
-
-Launches a **long-running** background process on the agent — for example a
-`gdbserver` instance or an SSH tunnel — and returns immediately with its PID.
-Unlike `exec`, the process is backgrounded on the device, so it keeps running
-after the request completes and is tracked until it is killed (see `DELETE`
-below) or the session disconnects.
-
-Request body:
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `command` | string | yes | The program to launch on the device |
-| `args` | string[] | no | Arguments passed to the program (each is shell-quoted) |
-| `port` | number | no | The TCP port the process binds (1–65535). When supplied it is returned verbatim; otherwise the server watches the process output briefly for a `port <N>` line (e.g. gdbserver's `Listening on port 1234`) |
-
-```sh
-curl -X POST \
-    -H "Authorization: Bearer mysecrettoken" \
-    -H "Content-Type: application/json" \
-    -d '{"command":"gdbserver","args":[":0","/bin/ls"]}' \
-    http://server:8080/terminal/aa:bb:cc:dd:ee:ff/spawn
-```
-
-Responses:
-
-| Status | Body | Meaning |
-|--------|------|---------|
-| `201` | `{ "pid": 4242, "port": 34567 }` | Process started; `port` is omitted when neither supplied nor detected |
-| `400` | `{ "error": "..." }` | Invalid MAC, missing `command`, non-string `args`, or out-of-range `port` |
-| `401` | `{ "error": "Unauthorized" }` | Missing/invalid bearer token (when enforced) |
-| `404` | `{ "error": "no active session for mac" }` | No connected session for `<mac>` |
-| `504` | `{ "error": "spawn timed out" }` | The agent did not report a PID in time |
-
-### `GET /terminal/<mac>/spawn`
-
-Lists the processes currently tracked for the session.
-
-```json
-[
-  {
-    "pid": 4242,
-    "command": "gdbserver",
-    "args": [":0", "/bin/ls"],
-    "port": 34567,
-    "startedAt": "2026-06-29T14:35:10.000Z"
-  }
-]
-```
-
-`port` is omitted for spawns whose bound port was never supplied or detected.
-
-### `DELETE /terminal/<mac>/spawn/<pid>`
-
-Kills a tracked spawn (via `kill <pid>` on the device) and removes it from the
-registry.  Only PIDs returned by a previous `spawn` call are accepted.
-
-```sh
-curl -X DELETE \
-    -H "Authorization: Bearer mysecrettoken" \
-    http://server:8080/terminal/aa:bb:cc:dd:ee:ff/spawn/4242
-```
-
-Responses:
-
-| Status | Body | Meaning |
-|--------|------|---------|
-| `200` | `{ "ok": true }` | Process killed and untracked |
-| `400` | `{ "error": "invalid pid" }` | `<pid>` is not a positive integer |
-| `401` | `{ "error": "Unauthorized" }` | Missing/invalid bearer token (when enforced) |
-| `404` | `{ "error": "no such spawn" }` | No tracked spawn with that PID |
-| `404` | `{ "error": "no active session for mac" }` | No connected session for `<mac>` |
 
 ## nginx reverse proxy
 

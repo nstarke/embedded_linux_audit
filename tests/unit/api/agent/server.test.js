@@ -2,32 +2,6 @@
 
 const path = require('path');
 
-function makeResponse({ statusCode = 200, headers = {}, body = '', location } = {}) {
-  const handlers = {};
-  return {
-    statusCode,
-    headers: location ? { ...headers, location } : headers,
-    setEncoding: jest.fn(),
-    on: jest.fn((event, handler) => {
-      handlers[event] = handler;
-      return this;
-    }),
-    emit(event, value) {
-      if (handlers[event]) {
-        handlers[event](value);
-      }
-    },
-    pipe(dest) {
-      setImmediate(() => {
-        if (dest._handlers.finish) {
-          dest._handlers.finish();
-        }
-      });
-    },
-    resume: jest.fn(),
-  };
-}
-
 function makeWriteStream() {
   const stream = {
     _handlers: {},
@@ -62,8 +36,6 @@ function loadAgentServer(options = {}) {
     rm: jest.fn().mockResolvedValue(undefined),
     access: jest.fn().mockResolvedValue(undefined),
   };
-  const httpGet = jest.fn();
-  const httpsGet = jest.fn();
   const httpServer = {
     once: jest.fn(),
     listen: jest.fn((port, host, cb) => cb()),
@@ -95,7 +67,6 @@ function loadAgentServer(options = {}) {
     port: 5000,
     logPrefix: 'post_requests',
     dataDir: 'api/agent/data',
-    repo: 'nstarke/embedded_linux_audit',
     assetsDir: null,
     testsDir: 'tests',
   }));
@@ -123,15 +94,10 @@ function loadAgentServer(options = {}) {
   jest.doMock('fs', () => fsMock);
   jest.doMock('fs/promises', () => fspMock);
   jest.doMock('http', () => ({
-    get: httpGet,
     createServer: jest.fn(() => httpServer),
   }), { virtual: true });
   jest.doMock('https', () => ({
-    get: httpsGet,
     createServer: jest.fn(() => httpsServer),
-  }), { virtual: true });
-  jest.doMock('mime-types', () => ({
-    lookup: jest.fn(() => 'application/octet-stream'),
   }), { virtual: true });
   jest.doMock('child_process', () => ({
     execFileSync,
@@ -177,8 +143,6 @@ function loadAgentServer(options = {}) {
     server,
     fsMock,
     fspMock,
-    httpGet,
-    httpsGet,
     httpServer,
     httpsServer,
     auth,
@@ -205,103 +169,6 @@ describe('agent server', () => {
     jest.resetModules();
     jest.restoreAllMocks();
     process.argv = ['node', 'server.js'];
-  });
-
-  test('githubJsonGet fetches JSON and includes auth headers', async () => {
-    const { server, httpsGet } = loadAgentServer();
-    httpsGet.mockImplementation((url, options, cb) => {
-      const res = makeResponse({ body: '{"ok":true}' });
-      cb(res);
-      res.emit('data', '{"ok":');
-      res.emit('data', 'true}');
-      res.emit('end');
-      return { on: jest.fn() };
-    });
-
-    await expect(server.githubJsonGet('https://api.example.test/data', 'token-1')).resolves.toEqual({ ok: true });
-    expect(httpsGet).toHaveBeenCalledWith('https://api.example.test/data', expect.objectContaining({
-      headers: expect.objectContaining({
-        Authorization: 'Bearer token-1',
-        Accept: 'application/vnd.github+json',
-      }),
-    }), expect.any(Function));
-  });
-
-  test('getLatestRelease requests the GitHub latest release endpoint and rejects on HTTP error', async () => {
-    const { server, httpsGet } = loadAgentServer();
-    httpsGet
-      .mockImplementationOnce((url, _options, cb) => {
-        const res = makeResponse({ statusCode: 403 });
-        cb(res);
-        res.emit('end');
-        return { on: jest.fn() };
-      })
-      .mockImplementationOnce((url, _options, cb) => {
-        const res = makeResponse();
-        cb(res);
-        res.emit('data', '{"tag_name":"v1.2.3"}');
-        res.emit('end');
-        return { on: jest.fn() };
-      });
-
-    await expect(server.githubJsonGet('https://api.example.test/data')).rejects.toMatchObject({ message: 'HTTP 403', statusCode: 403 });
-    await expect(server.getLatestRelease('owner/repo', 'tok')).resolves.toEqual({ tag_name: 'v1.2.3' });
-    expect(httpsGet.mock.calls[1][0]).toBe('https://api.github.com/repos/owner/repo/releases/latest');
-  });
-
-  test('downloadFile follows redirects and cleans temporary files', async () => {
-    const { server, fsMock, httpsGet } = loadAgentServer();
-    httpsGet
-      .mockImplementationOnce((_url, _options, cb) => {
-        const res = makeResponse({ statusCode: 302, location: '/redirected.bin' });
-        cb(res);
-        return { on: jest.fn() };
-      })
-      .mockImplementationOnce((_url, _options, cb) => {
-        const res = makeResponse({ statusCode: 200 });
-        cb(res);
-        return { on: jest.fn() };
-      });
-
-    await expect(server.downloadFile('https://example.test/file.bin', '/tmp/file.bin', 'tok')).resolves.toBeUndefined();
-    expect(httpsGet).toHaveBeenCalledTimes(2);
-    expect(fsMock.rm).toHaveBeenCalledWith('/tmp/file.bin', { force: true }, expect.any(Function));
-  });
-
-  test('releaseIdentity and cached release helpers handle expected values', async () => {
-    const { server, fspMock } = loadAgentServer();
-    fspMock.readFile.mockResolvedValueOnce('{"release":"v9.9.9"}');
-
-    expect(server.releaseIdentity({ tag_name: 'v1.0.0' })).toBe('v1.0.0');
-    expect(server.releaseIdentity({ id: 1234 })).toBe('1234');
-    expect(server.releaseIdentity({})).toBe('');
-    await expect(server.loadCachedReleaseIdentity('/tmp/assets')).resolves.toBe('v9.9.9');
-
-    await server.saveCachedReleaseIdentity('/tmp/assets', 'v2.0.0');
-    expect(fspMock.mkdir).toHaveBeenCalledWith('/tmp/assets', { recursive: true });
-    expect(fspMock.writeFile).toHaveBeenCalledWith(
-      path.join('/tmp/assets', '.release_state.json'),
-      expect.stringContaining('"release": "v2.0.0"'),
-      'utf8',
-    );
-  });
-
-  test('clearDownloadedAssets preserves release state files and ignores missing directories', async () => {
-    const { server, fspMock } = loadAgentServer();
-    fspMock.readdir
-      .mockResolvedValueOnce([
-        { name: '.release_state.json', isFile: () => true, isSymbolicLink: () => false },
-        { name: '.release_state.123', isFile: () => true, isSymbolicLink: () => false },
-        { name: 'ela-x86_64', isFile: () => true, isSymbolicLink: () => false },
-        { name: 'link.bin', isFile: () => false, isSymbolicLink: () => true },
-      ])
-      .mockRejectedValueOnce(Object.assign(new Error('missing'), { code: 'ENOENT' }));
-
-    await server.clearDownloadedAssets('/tmp/assets');
-    expect(fspMock.unlink).toHaveBeenCalledWith(path.join('/tmp/assets', 'ela-x86_64'));
-    expect(fspMock.unlink).toHaveBeenCalledWith(path.join('/tmp/assets', 'link.bin'));
-    expect(fspMock.unlink).not.toHaveBeenCalledWith(path.join('/tmp/assets', '.release_state.json'));
-    await expect(server.clearDownloadedAssets('/tmp/missing')).resolves.toBeUndefined();
   });
 
   test('ensureSelfSignedCert skips existing files and otherwise creates certs with openssl', () => {
@@ -347,7 +214,7 @@ describe('agent server', () => {
     expect(loaded.consoleError).toHaveBeenCalledWith('Failed to initialize database: db unavailable');
   });
 
-  test('main honors CLI bootstrap flags for skip-asset-sync and starts an HTTP server', async () => {
+  test('main starts an HTTP server and serves per-user binaries', async () => {
     const loaded = loadAgentServer();
     process.argv = [
       'node', 'server.js',
@@ -356,7 +223,6 @@ describe('agent server', () => {
       '--data-dir', 'data-root',
       '--tests-dir', 'tests-root',
       '--log-prefix', 'logs/prefix',
-      '--skip-asset-sync',
       '--reuse-last-data-dir',
       '--verbose',
     ];
@@ -376,6 +242,11 @@ describe('agent server', () => {
       verbose: true,
       persistUpload: loaded.persistUpload,
     }));
+    // The per-user binary directory is created under the shared assets dir.
+    expect(loaded.fspMock.mkdir).toHaveBeenCalledWith(
+      path.join('/repo/data-root', 'release_binaries', 'users'),
+      { recursive: true },
+    );
     expect(loaded.createPcapWebSocketServer).toHaveBeenCalledWith({
       server: loaded.httpServer,
       dataDir: '/repo/data/123',
@@ -383,156 +254,22 @@ describe('agent server', () => {
       verbose: true,
     });
     expect(loaded.httpServer.listen).toHaveBeenCalledWith(5050, '127.0.0.1', expect.any(Function));
-    expect(loaded.consoleLog).toHaveBeenCalledWith(expect.stringContaining('Skipping release asset sync; serving assets from'));
+    expect(loaded.consoleLog).toHaveBeenCalledWith(expect.stringContaining('Serving per-user agent binaries'));
     expect(loaded.processOn).toHaveBeenCalledWith('SIGINT', expect.any(Function));
   });
 
-  test('main creates an HTTPS server and syncs assets when requested', async () => {
+  test('main creates an HTTPS server with a generated self-signed cert', async () => {
     const loaded = loadAgentServer({
       fs: {
         existsSync: jest.fn(() => false),
       },
-      fsp: {
-        readFile: jest.fn().mockRejectedValue(new Error('missing')),
-        access: jest.fn().mockRejectedValue(new Error('missing')),
-        readdir: jest.fn().mockResolvedValue([]),
-      },
     });
-    loaded.httpsGet
-      .mockImplementationOnce((_url, _options, cb) => {
-        const res = makeResponse();
-        cb(res);
-        res.emit('data', '{"tag_name":"v1.2.3","assets":[{"name":"ela-x86_64","browser_download_url":"https://download.test/ela-x86_64"}]}');
-        res.emit('end');
-        return { on: jest.fn() };
-      })
-      .mockImplementationOnce((_url, _options, cb) => {
-        const res = makeResponse({ statusCode: 200 });
-        cb(res);
-        return { on: jest.fn() };
-      });
 
     process.argv = ['node', 'server.js', '--https', '--cert', 'certs/server.crt', '--key', 'certs/server.key'];
     await expect(loaded.server.main()).resolves.toBe(0);
 
     expect(loaded.execFileSync).toHaveBeenCalled();
     expect(loaded.httpsServer.listen).toHaveBeenCalledWith(5000, '0.0.0.0', expect.any(Function));
-    expect(loaded.fspMock.writeFile).toHaveBeenCalledWith(
-      path.join('/repo/api/agent/data/release_binaries', '.release_state.json'),
-      expect.stringContaining('"release": "v1.2.3"'),
-      'utf8',
-    );
-    expect(loaded.consoleLog).toHaveBeenCalledWith(expect.stringContaining('Downloaded 1 release asset(s)'));
-  });
-
-  // githubJsonGet – additional branches
-  test('githubJsonGet omits Authorization header when no token is provided', async () => {
-    const { server, httpsGet } = loadAgentServer();
-    httpsGet.mockImplementation((_url, options, cb) => {
-      const res = makeResponse();
-      cb(res);
-      res.emit('data', '{}');
-      res.emit('end');
-      return { on: jest.fn() };
-    });
-
-    await server.githubJsonGet('https://api.example.test/data');
-    expect(httpsGet.mock.calls[0][1].headers).not.toHaveProperty('Authorization');
-  });
-
-  test('githubJsonGet rejects when the response body is not valid JSON', async () => {
-    const { server, httpsGet } = loadAgentServer();
-    httpsGet.mockImplementation((_url, _options, cb) => {
-      const res = makeResponse();
-      cb(res);
-      res.emit('data', 'not-json');
-      res.emit('end');
-      return { on: jest.fn() };
-    });
-
-    await expect(server.githubJsonGet('https://api.example.test/data')).rejects.toThrow(SyntaxError);
-  });
-
-  // requestUrl
-  test('requestUrl resolves with the response and selects the correct client', async () => {
-    const { server, httpGet, httpsGet } = loadAgentServer();
-
-    httpGet.mockImplementation((_url, _opts, cb) => {
-      cb(makeResponse());
-      return { on: jest.fn() };
-    });
-    const httpRes = await server.requestUrl('http://example.test/path', {});
-    expect(httpGet).toHaveBeenCalledWith('http://example.test/path', expect.any(Object), expect.any(Function));
-    expect(httpRes).toBeDefined();
-
-    httpsGet.mockImplementation((_url, _opts, cb) => {
-      cb(makeResponse());
-      return { on: jest.fn() };
-    });
-    const httpsRes = await server.requestUrl('https://example.test/path', {});
-    expect(httpsGet).toHaveBeenCalledWith('https://example.test/path', expect.any(Object), expect.any(Function));
-    expect(httpsRes).toBeDefined();
-  });
-
-  test('requestUrl rejects on a network error', async () => {
-    const { server, httpGet } = loadAgentServer();
-    let errorHandler;
-    httpGet.mockImplementation(() => ({
-      on: jest.fn((event, handler) => {
-        if (event === 'error') errorHandler = handler;
-      }),
-    }));
-
-    const promise = server.requestUrl('http://example.test/path', {});
-    errorHandler(new Error('network failure'));
-    await expect(promise).rejects.toThrow('network failure');
-  });
-
-  // downloadFile – additional branches
-  test('downloadFile rejects immediately when redirect count exceeds the limit', async () => {
-    const { server } = loadAgentServer();
-    await expect(server.downloadFile('https://example.test/file', '/tmp/f', null, 6)).rejects.toThrow('Too many redirects');
-  });
-
-  test('downloadFile rejects on a 4xx HTTP response', async () => {
-    const { server, httpsGet } = loadAgentServer();
-    httpsGet.mockImplementation((_url, _opts, cb) => {
-      const res = makeResponse({ statusCode: 404 });
-      cb(res);
-      return { on: jest.fn() };
-    });
-
-    await expect(server.downloadFile('https://example.test/file', '/tmp/f', null)).rejects.toThrow('HTTP 404');
-  });
-
-  test('downloadFile rejects on a network-level error', async () => {
-    const { server, httpsGet } = loadAgentServer();
-    let errorHandler;
-    httpsGet.mockImplementation((_url, _opts, _cb) => ({
-      on: jest.fn((event, handler) => {
-        if (event === 'error') errorHandler = handler;
-      }),
-    }));
-
-    const promise = server.downloadFile('https://example.test/file', '/tmp/f', null);
-    errorHandler(new Error('socket hang up'));
-    await expect(promise).rejects.toThrow('socket hang up');
-  });
-
-  // clearDownloadedAssets – additional branches
-  test('clearDownloadedAssets rethrows non-ENOENT errors', async () => {
-    const { server, fspMock } = loadAgentServer();
-    fspMock.readdir.mockRejectedValueOnce(Object.assign(new Error('permission denied'), { code: 'EACCES' }));
-    await expect(server.clearDownloadedAssets('/tmp/assets')).rejects.toThrow('permission denied');
-  });
-
-  test('clearDownloadedAssets does not unlink directory entries', async () => {
-    const { server, fspMock } = loadAgentServer();
-    fspMock.readdir.mockResolvedValueOnce([
-      { name: 'subdir', isFile: () => false, isSymbolicLink: () => false },
-    ]);
-    await server.clearDownloadedAssets('/tmp/assets');
-    expect(fspMock.unlink).not.toHaveBeenCalled();
   });
 
   // removeDirectoryContents
@@ -560,49 +297,6 @@ describe('agent server', () => {
     await expect(server.removeDirectoryContents('/tmp/dir')).rejects.toThrow('perm denied');
   });
 
-  // loadCachedReleaseIdentity – failure modes
-  test('loadCachedReleaseIdentity returns null for missing file, invalid JSON, and non-string release', async () => {
-    const { server, fspMock } = loadAgentServer();
-    fspMock.readFile
-      .mockRejectedValueOnce(new Error('ENOENT'))
-      .mockResolvedValueOnce('not-valid-json')
-      .mockResolvedValueOnce('{"release":42}')
-      .mockResolvedValueOnce('{"release":""}');
-
-    await expect(server.loadCachedReleaseIdentity('/dir')).resolves.toBeNull();
-    await expect(server.loadCachedReleaseIdentity('/dir')).resolves.toBeNull();
-    await expect(server.loadCachedReleaseIdentity('/dir')).resolves.toBeNull();
-    await expect(server.loadCachedReleaseIdentity('/dir')).resolves.toBeNull();
-  });
-
-  // downloadReleaseAssets
-  test('downloadReleaseAssets skips assets without a name or URL, and skips existing files', async () => {
-    const { server, fspMock, httpsGet } = loadAgentServer();
-    fspMock.access
-      .mockResolvedValueOnce(undefined)       // existing.bin → exists, skip
-      .mockRejectedValueOnce(new Error('not found')); // new.bin → not found, download
-
-    httpsGet.mockImplementation((_url, _opts, cb) => {
-      const res = makeResponse({ statusCode: 200 });
-      cb(res);
-      return { on: jest.fn() };
-    });
-
-    const release = {
-      assets: [
-        { name: null, browser_download_url: 'https://example.test/bad' },
-        { name: 'existing.bin', browser_download_url: 'https://example.test/existing.bin' },
-        { name: 'new.bin', browser_download_url: 'https://example.test/new.bin' },
-      ],
-    };
-
-    const result = await server.downloadReleaseAssets(release, '/tmp/assets', null, false);
-    expect(result.skippedExisting).toHaveLength(1);
-    expect(result.downloaded).toHaveLength(1);
-    expect(result.skippedExisting[0]).toContain('existing.bin');
-    expect(result.downloaded[0]).toContain('new.bin');
-  });
-
   // parseArgs
   test('parseArgs applies all recognised flags', () => {
     const { server } = loadAgentServer();
@@ -611,17 +305,13 @@ describe('agent server', () => {
       '--port', '8080',
       '--log-prefix', 'logs/p',
       '--data-dir', 'data',
-      '--repo', 'org/repo',
       '--assets-dir', 'assets',
       '--tests-dir', 'tests',
-      '--github-token', 'tok',
-      '--force-download',
       '--clean',
       '--https',
       '--verbose',
       '--cert', 'cert.pem',
       '--key', 'key.pem',
-      '--skip-asset-sync',
       '--reuse-last-data-dir',
     ]);
     expect(args).toMatchObject({
@@ -629,17 +319,13 @@ describe('agent server', () => {
       port: 8080,
       logPrefix: 'logs/p',
       dataDir: 'data',
-      repo: 'org/repo',
       assetsDir: 'assets',
       testsDir: 'tests',
-      githubToken: 'tok',
-      forceDownload: true,
       clean: true,
       https: true,
       verbose: true,
       cert: 'cert.pem',
       key: 'key.pem',
-      skipAssetSync: true,
       reuseLastDataDir: true,
     });
   });
@@ -657,65 +343,6 @@ describe('agent server', () => {
   });
 
   // main – additional paths
-  test('main returns 1 when the GitHub API request fails', async () => {
-    const loaded = loadAgentServer();
-    loaded.httpsGet.mockImplementation((_url, _opts, cb) => {
-      const res = makeResponse({ statusCode: 503 });
-      cb(res);
-      res.emit('end');
-      return { on: jest.fn() };
-    });
-
-    process.argv = ['node', 'server.js'];
-    await expect(loaded.server.main()).resolves.toBe(1);
-    expect(loaded.consoleError).toHaveBeenCalledWith(expect.stringContaining('Failed to fetch/download release assets'));
-  });
-
-  test('main logs "No new release" when the cached release matches the latest', async () => {
-    const loaded = loadAgentServer({
-      fsp: {
-        readFile: jest.fn().mockResolvedValue('{"release":"v1.0.0"}'),
-        access: jest.fn().mockResolvedValue(undefined),
-        readdir: jest.fn().mockResolvedValue([]),
-      },
-    });
-    loaded.httpsGet.mockImplementationOnce((_url, _options, cb) => {
-      const res = makeResponse();
-      cb(res);
-      res.emit('data', '{"tag_name":"v1.0.0","assets":[]}');
-      res.emit('end');
-      return { on: jest.fn() };
-    });
-
-    process.argv = ['node', 'server.js'];
-    await expect(loaded.server.main()).resolves.toBe(0);
-    expect(loaded.consoleLog).toHaveBeenCalledWith(expect.stringContaining('No new release'));
-  });
-
-  test('main clears and re-downloads assets when --force-download is set', async () => {
-    const loaded = loadAgentServer({
-      fsp: {
-        readFile: jest.fn().mockRejectedValue(new Error('missing')),
-        access: jest.fn().mockResolvedValue(undefined),
-        readdir: jest.fn().mockResolvedValue([
-          { name: 'old-binary', isFile: () => true, isSymbolicLink: () => false },
-        ]),
-      },
-    });
-    loaded.httpsGet.mockImplementationOnce((_url, _options, cb) => {
-      const res = makeResponse();
-      cb(res);
-      res.emit('data', '{"tag_name":"v2.0.0","assets":[]}');
-      res.emit('end');
-      return { on: jest.fn() };
-    });
-
-    process.argv = ['node', 'server.js', '--force-download'];
-    await expect(loaded.server.main()).resolves.toBe(0);
-    expect(loaded.fspMock.unlink).toHaveBeenCalledWith(expect.stringContaining('old-binary'));
-    expect(loaded.consoleLog).toHaveBeenCalledWith(expect.stringContaining('Force download enabled'));
-  });
-
   test('main removes stale data directories when --clean is set', async () => {
     const loaded = loadAgentServer({
       fsp: {
@@ -725,7 +352,7 @@ describe('agent server', () => {
       },
     });
 
-    process.argv = ['node', 'server.js', '--clean', '--skip-asset-sync'];
+    process.argv = ['node', 'server.js', '--clean'];
     await expect(loaded.server.main()).resolves.toBe(0);
     expect(loaded.fspMock.rm).toHaveBeenCalledWith(
       expect.stringContaining('old-timestamp'),
@@ -743,7 +370,7 @@ describe('agent server', () => {
         }),
       },
     });
-    process.argv = ['node', 'server.js', '--skip-asset-sync', '--reuse-last-data-dir'];
+    process.argv = ['node', 'server.js', '--reuse-last-data-dir'];
     await loaded.server.main();
     expect(loaded.consoleLog).toHaveBeenCalledWith(expect.stringContaining('Reusing'));
 
@@ -756,14 +383,14 @@ describe('agent server', () => {
         }),
       },
     });
-    process.argv = ['node', 'server.js', '--skip-asset-sync', '--reuse-last-data-dir'];
+    process.argv = ['node', 'server.js', '--reuse-last-data-dir'];
     await loaded2.server.main();
     expect(loaded2.consoleLog).toHaveBeenCalledWith(expect.stringContaining('Created'));
   });
 
   test('SIGINT handler closes the server and database then exits', async () => {
     const loaded = loadAgentServer();
-    process.argv = ['node', 'server.js', '--skip-asset-sync'];
+    process.argv = ['node', 'server.js'];
     await loaded.server.main();
 
     const sigintCall = loaded.processOn.mock.calls.find(([event]) => event === 'SIGINT');

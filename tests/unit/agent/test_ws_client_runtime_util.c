@@ -137,8 +137,13 @@ static void test_ws_client_runtime_dispatches_frames(void)
 		ELA_WS_OPCODE_TEXT, "{\"_type\":\"heartbeat\"}", 23, &ops, &state));
 	ELA_ASSERT_INT_EQ(1, state.ack_calls);
 
-	ELA_ASSERT_INT_EQ(1, ela_ws_dispatch_incoming_frame(
+	/* A plain close terminates with the reconnect-allowed code. */
+	ELA_ASSERT_INT_EQ(ELA_WS_DISPATCH_TERMINATE, ela_ws_dispatch_incoming_frame(
 		ELA_WS_OPCODE_CLOSE, "", 0, &ops, &state));
+
+	/* A superseded close (code 4000) reports the no-reconnect code. */
+	ELA_ASSERT_INT_EQ(ELA_WS_DISPATCH_TERMINATE_NO_RECONNECT, ela_ws_dispatch_incoming_frame(
+		ELA_WS_OPCODE_CLOSE, "\x0f\xa0", 2, &ops, &state));
 
 	memset(&state, 0, sizeof(state));
 	state.fail_write = 1;

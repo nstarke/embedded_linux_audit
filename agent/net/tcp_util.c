@@ -32,6 +32,22 @@
  * unit-test environment.
  */
 /* LCOV_EXCL_START */
+
+/*
+ * Connection tracing ("trying <ip>", "<ip> failed") is low-level diagnostic
+ * noise. This TCP helper is shared by the WebSocket client AND the HTTP upload
+ * client, so when a command uploads its output the traces would otherwise leak
+ * into the command's captured output (the interactive session merges agent
+ * stderr into it), which also corrupts JSON output. Gate them behind ELA_DEBUG
+ * — NOT ELA_VERBOSE, which defaults to on — so normal output stays clean and
+ * parseable; set ELA_DEBUG=1 to see per-address connection attempts.
+ */
+static bool tcp_trace_enabled(void)
+{
+	const char *v = getenv("ELA_DEBUG");
+
+	return v && !strcmp(v, "1");
+}
 static int ela_has_dns_configured(void)
 {
 	FILE *f;
@@ -307,14 +323,16 @@ int connect_tcp_host_port_any(const char *host, uint16_t port)
 				  &((struct sockaddr_in6 *)ai->ai_addr)->sin6_addr,
 				  addr_str, sizeof(addr_str));
 		}
-		fprintf(stderr, "ws: trying %s\n", addr_str);
+		if (tcp_trace_enabled())
+			fprintf(stderr, "ws: trying %s\n", addr_str);
 
 		sock = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
 		if (sock < 0)
 			continue;
 		if (connect(sock, ai->ai_addr, ai->ai_addrlen) == 0)
 			break;
-		fprintf(stderr, "ws: %s failed: %s\n", addr_str, strerror(errno));
+		if (tcp_trace_enabled())
+			fprintf(stderr, "ws: %s failed: %s\n", addr_str, strerror(errno));
 		close(sock);
 		sock = -1;
 	}

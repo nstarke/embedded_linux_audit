@@ -4,8 +4,11 @@
 const http = require('http');
 const readline = require('readline');
 const { WebSocketServer } = require('ws');
+const { Worker } = require('bullmq');
 const auth = require('../auth');
 const { getTerminalServiceConfig } = require('../lib/config');
+const { COMMAND_QUEUE_NAME, getCommandWorkerOptions } = require('../lib/queue');
+const { processCommand } = require('./commandWorker');
 const { initializeDatabase, runMigrations, closeDatabase } = require('../lib/db');
 const {
   recordTerminalConnection,
@@ -56,6 +59,10 @@ async function importLegacyAliases() {
 
 const sessionRegistry = createSessionRegistry({ heartbeatIntervalMs: HEARTBEAT_INTERVAL_MS });
 
+// BullMQ worker consuming operator commands from the client API. Created in
+// main() (so requiring this module in tests does not open a Redis connection).
+let commandWorker = null;
+
 const blockedCidrs = [];
 
 async function addBlock(cidr) {
@@ -83,6 +90,9 @@ async function cleanup() {
         resolve();
       }
     }));
+  }
+  if (commandWorker) {
+    closeOps.push(commandWorker.close().catch(() => {}));
   }
   if (typeof httpServer.close === 'function') {
     closeOps.push(new Promise((resolve) => {
@@ -140,15 +150,19 @@ const wss = new WebSocketServer({
       done(false, 403, 'Forbidden');
       return;
     }
-    const authUser = auth.checkBearer(info.req.headers.authorization);
-    if (!authUser) {
-      done(false, 401, 'Unauthorized');
-      return;
-    }
-    // Store the resolved username so the connection handler can initialise the
-    // device group. When auth is not enforced checkBearer returns true (no user).
-    info.req.authenticatedUser = typeof authUser === 'string' ? authUser : null;
-    done(true);
+    auth.resolveBearer(info.req.headers.authorization)
+      .then((authUser) => {
+        if (!authUser) {
+          done(false, 401, 'Unauthorized');
+          return;
+        }
+        // Store the resolved username so the connection handler can initialise
+        // the device group. When auth is open (no keys) resolveBearer returns
+        // true (no specific user).
+        info.req.authenticatedUser = typeof authUser === 'string' ? authUser : null;
+        done(true);
+      })
+      .catch(() => done(false, 401, 'Unauthorized'));
   },
 });
 
@@ -159,7 +173,10 @@ wss.on('connection', async (ws, req) => {
   const existing = sessionRegistry.getSession(mac);
   if (existing) {
     try {
-      existing.ws.close();
+      // Close code 4000 (ELA_WS_CLOSE_SUPERSEDED) tells the displaced agent it
+      // was replaced by a newer connection so it exits instead of reconnecting;
+      // otherwise duplicate daemons flap, each kicking the other in turn.
+      existing.ws.close(4000, 'session superseded');
     } catch (err) {
       process.stderr.write(`Warning: failed to close existing terminal session for ${mac}: ${err.message}\n`);
     }
@@ -758,7 +775,7 @@ async function main() {
   await initializeDatabase();
   await runMigrations();
 
-  if (!await auth.init(false, loadApiKeyHashes)) {
+  if (!await auth.init(false, () => loadApiKeyHashes('agent'))) {
     process.stderr.write('error: no API keys are configured in the database\n');
     process.exit(1);
   }
@@ -770,6 +787,18 @@ async function main() {
     const parsed = parseCidr(record.cidr);
     if (parsed) blockedCidrs.push(parsed);
   }
+
+  // Consume operator commands from the client API and run them against the live
+  // agent sessions this process holds. This is the only non-agent path into the
+  // terminal API, and it never exposes an HTTP surface.
+  commandWorker = new Worker(
+    COMMAND_QUEUE_NAME,
+    (job) => processCommand({ job, sessionRegistry }),
+    getCommandWorkerOptions(),
+  );
+  commandWorker.on('error', (err) => {
+    process.stderr.write(`terminal command worker error: ${err && err.message}\n`);
+  });
 
   httpServer.listen(PORT, HOST, () => {
     setupInput();

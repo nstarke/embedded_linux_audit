@@ -7,12 +7,30 @@ const VALID_KEY = 'aabbccddeeff00112233445566778899';
 describe('parseGdbUrl', () => {
   test('parses valid in URL', () => {
     expect(parseGdbUrl(`/gdb/in/${VALID_KEY}`))
-      .toEqual({ direction: 'in', hexkey: VALID_KEY });
+      .toEqual({ direction: 'in', hexkey: VALID_KEY, mac: null });
   });
 
   test('parses valid out URL', () => {
     expect(parseGdbUrl(`/gdb/out/${VALID_KEY}`))
-      .toEqual({ direction: 'out', hexkey: VALID_KEY });
+      .toEqual({ direction: 'out', hexkey: VALID_KEY, mac: null });
+  });
+
+  test('parses the device MAC from the in URL query string', () => {
+    expect(parseGdbUrl(`/gdb/in/${VALID_KEY}?mac=AA:BB:CC:DD:EE:FF`))
+      .toEqual({ direction: 'in', hexkey: VALID_KEY, mac: 'aa:bb:cc:dd:ee:ff' });
+  });
+
+  test('ignores other query params and picks out mac', () => {
+    expect(parseGdbUrl(`/gdb/in/${VALID_KEY}?foo=1&mac=aa:bb:cc:dd:ee:ff`).mac)
+      .toBe('aa:bb:cc:dd:ee:ff');
+  });
+
+  test('rejects a malformed mac to null', () => {
+    expect(parseGdbUrl(`/gdb/in/${VALID_KEY}?mac=not a mac!`).mac).toBeNull();
+  });
+
+  test('an empty query string yields a null mac', () => {
+    expect(parseGdbUrl(`/gdb/in/${VALID_KEY}?`).mac).toBeNull();
   });
 
   test('returns null for unrecognised path', () => {

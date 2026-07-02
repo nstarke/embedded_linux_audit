@@ -5,17 +5,25 @@ This guide covers how to run, inspect, and maintain the containerized
 
 ## Services
 
-The default [docker-compose.yml](/home/nick/Documents/git/embedded_linux_audit/docker-compose.yml) starts five containers:
+A default `docker compose up` starts eight containers:
 
-- `postgres` - PostgreSQL database
+- `postgres` - bundled PostgreSQL database (defined in `docker-compose.override.yml`; see [External PostgreSQL](#external-postgresql))
+- `redis` - queue broker for binary-build jobs (see [Build queue](#build-queue))
+- `builder` - worker that cross-compiles per-user agent binaries off the queue
 - `agent-api` - HTTP upload and asset-serving API
+- `client-api` - read-back API for uploaded artifacts ([client API](client/index.md))
 - `terminal-api` - WebSocket terminal server
 - `gdb-api` - WebSocket GDB RSP bridge
-- `nginx` - frontend reverse proxy for both APIs
+- `nginx` - frontend reverse proxy for the APIs
+
+The API services live in
+[docker-compose.yml](/home/nick/Documents/git/embedded_linux_audit/docker-compose.yml);
+the bundled database is an overlay so it can be swapped for an external server.
 
 Traffic flow:
 
 - `http://localhost/` -> `agent-api`
+- `http://localhost/client/...` -> `client-api`
 - `http://localhost/terminal/<mac>` -> `terminal-api`
 - `http://localhost/gdb/...` -> `gdb-api`
 - `http://localhost/pcap/<mac>` -> `agent-api`
@@ -46,19 +54,6 @@ than the default `example.com`, use the installer instead:
 
 ```bash
 ./nginx/install.sh ela.example.com
-```
-
-To compile release binaries locally in Docker and disable GitHub release
-downloads for the agent API:
-
-```bash
-./nginx/install.sh ela.example.com --compile-locally
-```
-
-To set the local release build parallelism explicitly:
-
-```bash
-./nginx/install.sh ela.example.com --compile-locally --jobs 8
 ```
 
 Expected behavior on first boot:
@@ -125,7 +120,8 @@ These volumes survive `docker compose down` unless `-v` is used.
 The compose file defines default values for the APIs and database. You can
 override them with shell environment variables or by editing the compose file.
 
-Important database variables used by the APIs:
+Important database variables used by the APIs (see
+[External PostgreSQL](#external-postgresql)):
 
 - `ELA_DB_HOST`
 - `ELA_DB_PORT`
@@ -139,13 +135,40 @@ Important agent API variables:
 - `ELA_AGENT_HOST`
 - `ELA_AGENT_PORT`
 - `ELA_AGENT_DATA_DIR`
-- `ELA_AGENT_SKIP_ASSET_SYNC`
-- `ELA_AGENT_REPO`
+- `ELA_AGENT_ASSETS_DIR` (overrides the default `<data-dir>/release_binaries`)
+
+> Agent binaries are no longer fetched from GitHub releases, so the former
+> `ELA_AGENT_SKIP_ASSET_SYNC`, `ELA_AGENT_REPO`, and `GITHUB_TOKEN` variables and
+> the `--repo`/`--github-token`/`--force-download`/`--skip-asset-sync` flags have
+> been removed. See [Creating users and per-user binaries](#creating-users-and-per-user-binaries).
 
 The bundled agent container starts with `--reuse-last-data-dir`, so container
 restarts continue writing runtime artifacts into the latest timestamped
 directory already present in the `agent-data` volume instead of creating a new
 timestamp on every boot.
+
+Build-queue variables (used by `agent-api` to enqueue and `builder` to consume):
+
+- `ELA_REDIS_HOST` / `REDIS_HOST` (default `redis`)
+- `ELA_REDIS_PORT` / `REDIS_PORT` (default `6379`)
+- `ELA_REDIS_DATA_DIR` (host path for the redis volume, default `/data/redis`)
+- `ELA_BUILD_SRC_DIR` (host repo mounted into `builder` at `/src`, default `.`)
+- `ELA_BUILD_CONCURRENCY` — number of builds the `builder` runs at once
+  (default `1`; keep at 1 unless builds no longer share `generated/`/`third_party`)
+- `ELA_BUILD_LOCK_DURATION_MS` — how long a build may hold its BullMQ job lock
+  before the job is considered stalled (default `1800000` = 30 min). Raise this
+  if long builds fail with `job stalled more than allowable limit`; the worker
+  renews the lock every `lockDuration / 2` while a build runs.
+- `ELA_BUILD_STALLED_INTERVAL_MS` — how often the worker scans for stalled jobs
+  (default `30000`)
+- `ELA_BUILD_MAX_STALLED_COUNT` — times a stalled job is recovered before being
+  failed (default `3`)
+- `ELA_SERVER_URL` — base terminal-API WS URL (e.g. `wss://ela.example.com`)
+  baked into each user's launcher so a bare run auto-connects to the terminal
+  API. Empty by default (no phone-home); `nginx/install.sh` defaults it to
+  `wss://<hostname>` and **persists it to the env file Compose reads** (the
+  `--env-file`, else `<repo>/.env`), so `add-user-key` run later still bakes it
+  in. See [Server URL / phone-home](#server-url--phone-home).
 
 Important terminal API variables:
 
@@ -159,6 +182,47 @@ Example override at launch time:
 ELA_DB_PASSWORD=strongpassword docker compose up -d --build
 ```
 
+## External PostgreSQL
+
+By default the stack runs a bundled `postgres` container. The bundled database
+is defined in `docker-compose.override.yml`, which Compose automatically merges
+into `docker-compose.yml` for plain `docker compose` commands — so
+`docker compose up` runs the full stack with a local database, unchanged.
+
+To point the APIs at an **existing** PostgreSQL server and **not** run a second
+database container, start Compose with the base file only and set the
+connection variables:
+
+```bash
+ELA_DB_HOST=db.example.com \
+ELA_DB_USER=ela \
+ELA_DB_PASSWORD=secret \
+ELA_DB_NAME=embedded_linux_audit \
+docker compose -f docker-compose.yml up -d
+```
+
+Using `-f docker-compose.yml` excludes the override file, so the `postgres`
+service is not defined or started. The database must be reachable from the
+containers and already exist; the APIs create their tables via migrations on
+startup. `ELA_DATABASE_URL` may be used instead of the discrete fields.
+
+The installer wraps this:
+
+```bash
+# bundled database (default)
+./nginx/install.sh ela.example.com
+
+# external database
+./nginx/install.sh ela.example.com \
+    --db-host db.example.com --db-user ela --db-password secret
+```
+
+`--db-host` switches the installer to external mode: it omits the bundled
+`postgres` container, skips creating the PostgreSQL data directory, and starts
+only the API services. `--db-port`, `--db-name`, `--db-user`, and
+`--db-password` customize the connection (and the bundled container's
+credentials when no `--db-host` is given).
+
 ## Migrations
 
 The APIs run migrations on startup automatically. The migration runner lives in:
@@ -170,6 +234,130 @@ If you need to run migrations manually inside the `agent-api` container:
 ```bash
 docker compose run --rm agent-api node /app/api/lib/db/migrate.js
 ```
+
+## Creating users and per-user launchers
+
+The agent is cross-compiled **once** into generic (unembedded) binaries — one
+per ISA — that carry no token or URL. Each user then downloads a small
+**self-extracting launcher** that wraps a generic binary and sets their token
+and the terminal-API URL at runtime. There is **no per-user compile**, so
+creating a user is instant.
+
+The one-time generic build runs in the `builder` container (off the same Redis
+queue), which compiles from the host repo mounted at `/src`, so submodules must
+be initialized on the host first:
+
+```bash
+git submodule update --init --recursive
+docker compose up -d   # starts postgres, redis, builder, the APIs, nginx
+```
+
+On first start the `builder` notices `<data-dir>/release_binaries/generic/` is
+empty and enqueues the one-time generic build automatically. Watch it finish:
+
+```bash
+docker compose logs -f builder
+docker compose exec agent-api node /app/tools/build-status.js   # counts + recent jobs
+```
+
+Then create a user (this needs the generic binaries to exist):
+
+```bash
+docker compose exec agent-api node /app/tools/add-user-key.js --username alice
+```
+
+This creates two scoped tokens, prints only the **client** token (the agent
+token is baked into the launchers and is not shown), assembles the launchers,
+and returns immediately:
+
+```
+client key: <for the client API>
+
+Launchers written (15 ISAs) -> /data/agent/release_binaries/users/<sha256(agent-key)>
+```
+
+Only the SHA-256 hashes are stored. The launchers are at
+`<data-dir>/release_binaries/users/<sha256(agent-key)>/ela-<isa>` on the shared
+`agent-data` volume. Pass `--skip-build` to only create the database records,
+`--key <token>` to supply a specific agent token, or `--insecure` to have the
+launcher skip TLS verification when phoning home. If the generic binaries do not
+exist yet, `add-user-key` prints a hint to wait for the builder and re-run.
+
+### Server URL / phone-home
+
+If `ELA_SERVER_URL` is set (a base WS URL such as `wss://ela.example.com`) — or
+`add-user-key --server-url <wss://host>` is passed — the URL is baked into the
+launcher. Run with **no arguments** the launcher invokes the agent with
+`--remote <url>` (plus `--insecure` if `add-user-key --insecure` was used), so it
+connects to the terminal API at `<url>/terminal/<mac>`, authenticates with the
+user's token, and daemonizes — the device shows up in the terminal API on its
+own. Run with arguments (`./ela-<isa> linux dmesg`) it runs that command locally
+instead. **With no server URL configured the launcher just sets the token and a
+bare run prints the agent help** — set `ELA_SERVER_URL` (or `--server-url`) and
+re-run `add-user-key` to enable phone-home.
+
+#### Refreshing existing users after changing the URL
+
+Setting `ELA_SERVER_URL` (or re-running `nginx/install.sh`) only affects users
+created **afterward** — it does not touch already-provisioned launchers, and
+`add-user-key` refuses to re-run for an existing key. To apply a new URL (or a
+fresh generic build) to existing users **in place**, without changing their
+tokens or download URLs, use `tools/rebuild-launchers.js`:
+
+```bash
+# all users (URL from ELA_SERVER_URL in the container env)
+docker compose exec agent-api node /app/tools/rebuild-launchers.js
+# or override the URL / limit to one user
+docker compose exec agent-api node /app/tools/rebuild-launchers.js \
+    --server-url wss://ela.example.com --keyhash <sha256-of-agent-key>
+```
+
+It recovers each user's token from one of their existing launchers (the DB
+stores only the hash), then re-wraps the current generic binaries with the
+configured URL. `--insecure`/`--no-insecure` force the TLS-verification flag;
+otherwise each launcher's current setting is kept. Needs no database.
+
+Distribute the launcher by copying it off the shared volume (the directory
+printed above) to the target, then `chmod +x` and run it:
+
+```bash
+# from the launcher directory on the agent-data volume:
+cp .../users/<sha256(agent-key)>/ela-x86_64 ela-x86_64
+chmod +x ela-x86_64 && ./ela-x86_64        # bare run -> phones home
+```
+
+There is also an **unauthenticated** self-fetch endpoint, `GET /isa/:token/:isa`,
+which hashes the path token (`sha256`) to locate the user's launcher set — handy
+for a freshly provisioned host that already has its agent token. Because the
+agent token is agent-only, `add-user-key` no longer prints it, so this URL is not
+shown; the agent token still lives inside the launcher file itself (`ELA_TOKEN`),
+so treat launcher files as credentials.
+
+### Removing a user
+
+`tools/remove-user-key.js` is the inverse of `add-user-key.js`:
+
+```bash
+docker compose exec agent-api node /app/tools/remove-user-key.js --username alice
+```
+
+It deletes the user row (its `api_keys` cascade-delete) and the per-user launcher
+directories `users/<keyHash>/`. Uploaded artifacts are **retained** but unlinked
+from the user (`uploads.user_id` → NULL), so they no longer appear in the client
+API. Flags: `--keep-binaries`, `--keep-queue`, `--assets-dir <dir>`. (Per-user
+builds no longer exist, so there is normally nothing in the queue to remove.)
+
+### Reading back artifacts (client API)
+
+Use the **client key** with the [client API](client/index.md) to read back what
+the agent uploaded for that user:
+
+```bash
+curl -H "Authorization: Bearer <client-key>" http://localhost/client/uploads
+curl -H "Authorization: Bearer <client-key>" http://localhost/client/uploads/dmesg
+```
+
+The client API only returns artifacts uploaded by the same user's agent.
 
 If a migration fails:
 

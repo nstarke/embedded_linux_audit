@@ -10,10 +10,12 @@ function listBinaryEntries(assetsDir, fsp, releaseStateFile) {
         : entry.name.startsWith('embedded_linux_audit-')
         ? entry.name.slice('embedded_linux_audit-'.length)
         : entry.name;
+      // No `url` here: the download route is /isa/<token>/<isa>, and the token
+      // is not known to the server (only its hash), so a working link cannot be
+      // generated. Callers render the usage pattern instead.
       return {
         isa,
-        fileName: entry.name,
-        url: `/isa/${encodeURIComponent(isa)}`
+        fileName: entry.name
       };
     })
     .sort((a, b) => a.isa.localeCompare(b.isa)));

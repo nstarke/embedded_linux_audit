@@ -1,6 +1,6 @@
 'use strict';
 
-const { runExec } = require('../../../../api/terminal/execCommand');
+const { runExec, maybeParseJsonOutput } = require('../../../../api/terminal/execCommand');
 
 function createEntry({ readyState = 1 } = {}) {
   const sent = [];
@@ -46,6 +46,99 @@ describe('runExec', () => {
     expect(result).toEqual({ ok: true, output: 'hi', durationMs: 5 });
     // listener is cleaned up after completion
     expect(entry.outputListeners.size).toBe(0);
+  });
+
+  test('parses a JSON command output into a structured object', async () => {
+    const entry = createEntry();
+    const promise = runExec({ entry, mac, command: 'linux modules vermagic', wrapShell: false, now: () => 0 });
+
+    entry.emit(`(${mac})> linux modules vermagic\r\n`);
+    entry.emit('{"path":"/lib/modules/anul.ko","vermagic":"3.12.19-rt30 SMP mod_unload ARMv7"}\r\n');
+    entry.emit(`(${mac})> `);
+
+    const result = await promise;
+    expect(result.output).toEqual({
+      path: '/lib/modules/anul.ko',
+      vermagic: '3.12.19-rt30 SMP mod_unload ARMv7',
+    });
+  });
+
+  test('maybeParseJsonOutput returns objects/arrays parsed and leaves plain text alone', () => {
+    expect(maybeParseJsonOutput('{"a":1}')).toEqual({ a: 1 });
+    expect(maybeParseJsonOutput('[1,2]')).toEqual([1, 2]);
+    expect(maybeParseJsonOutput('Linux host 5.10.0')).toBe('Linux host 5.10.0');
+    // Malformed JSON is returned unchanged rather than throwing.
+    expect(maybeParseJsonOutput('{not json')).toBe('{not json');
+    expect(maybeParseJsonOutput('')).toBe('');
+  });
+
+  test('does not settle on the input-echo prompt, and returns clean output', async () => {
+    // Reproduces the interactive REPL: the agent redraws the prompt while the
+    // command is "typed" (each redraw contains the prompt token but is NOT a
+    // completion), then echoes the full command, then the real output, then a
+    // fresh prompt on its own line.
+    const entry = createEntry();
+    const promise = runExec({ entry, mac, command: 'uname -a', now: () => 0 });
+
+    entry.emit(`\r\x1b[2K(${mac})> l`);
+    entry.emit(`\r\x1b[2K(${mac})> lin`);
+    entry.emit(`\r\x1b[2K(${mac})> linux execute-command "uname -a"`);
+    // These redraw prompts must not have resolved the promise.
+    let done = false;
+    promise.then(() => { done = true; });
+    await Promise.resolve();
+    expect(done).toBe(false);
+
+    entry.emit('\r\n');
+    entry.emit('Linux host 5.10.0 #1 SMP x86_64\r\n');
+    entry.emit(`(${mac})> `); // completion prompt (preceded by newline)
+
+    const result = await promise;
+    expect(result.ok).toBe(true);
+    expect(result.output).toBe('Linux host 5.10.0 #1 SMP x86_64');
+  });
+
+  test('strips the execute-command record echo of the command from linux/exec output', async () => {
+    // The agent's `linux execute-command` txt record is `<command>\n<output>`,
+    // so after the REPL input echo is dropped the output still starts with a
+    // second echo of the shell command. That leading line must be removed.
+    const entry = createEntry();
+    const promise = runExec({ entry, mac, command: 'uname -a', now: () => 0 });
+
+    entry.emit(`\r\x1b[2K(${mac})> linux execute-command "uname -a"`);
+    entry.emit('\r\n'); // end of the REPL input-echo line
+    entry.emit('uname -a\r\n'); // execute-command record: the command echo
+    entry.emit('Linux 192.168.120.50 3.12.19-rt30 #95415 SMP armv7l unknown\r\n');
+    entry.emit(`(${mac})> `); // completion prompt
+
+    const result = await promise;
+    expect(result.output).toBe('Linux 192.168.120.50 3.12.19-rt30 #95415 SMP armv7l unknown');
+  });
+
+  test('leaves ela/exec (wrapShell=false) output untouched — no record echo to strip', async () => {
+    const entry = createEntry();
+    // A raw ELA command whose real output happens to begin with a line equal to
+    // the command must NOT have that line stripped (no execute-command wrapper).
+    const promise = runExec({ entry, mac, command: 'linux netstat', wrapShell: false, now: () => 0 });
+
+    entry.emit(`(${mac})> linux netstat\r\n`);
+    entry.emit('linux netstat\r\n'); // real first line of output, not an echo
+    entry.emit('tcp 0 0 0.0.0.0:22\r\n');
+    entry.emit(`(${mac})> `);
+
+    const result = await promise;
+    expect(result.output).toBe('linux netstat\ntcp 0 0 0.0.0.0:22');
+  });
+
+  test('sends the raw command when wrapShell is false (ELA agent command)', () => {
+    const entry = createEntry();
+    // Stub the timer so the un-awaited promise does not schedule a real timeout.
+    const p = runExec({
+      entry, mac, command: 'linux gdbserver tunnel 42 wss://h', wrapShell: false, now: () => 0,
+      setTimeoutImpl: () => 1, clearTimeoutImpl: () => {},
+    });
+    p.catch(() => {});
+    expect(entry.sent).toEqual(['linux gdbserver tunnel 42 wss://h\n']);
   });
 
   test('rejects with NOT_CONNECTED when the socket is closed', async () => {

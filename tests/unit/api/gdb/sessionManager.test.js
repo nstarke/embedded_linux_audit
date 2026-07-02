@@ -17,7 +17,7 @@ function mockWs(open = true) {
 describe('createSessionManager', () => {
   test('getOrCreate creates a new session with null sides', () => {
     const sm = createSessionManager();
-    expect(sm.getOrCreate(KEY)).toEqual({ in: null, out: null });
+    expect(sm.getOrCreate(KEY)).toEqual({ in: null, out: null, deviceMac: null });
   });
 
   test('getOrCreate returns the same object on second call', () => {

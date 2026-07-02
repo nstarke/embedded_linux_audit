@@ -1,0 +1,24 @@
+{
+  "name": "ela-client",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Client API exposing agent-uploaded artifacts as JSON",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "migrate": "node ../lib/db/migrate.js",
+    "test:unit": "node ../../node_modules/jest/bin/jest.js --runInBand ../../tests/unit/api/client ../../tests/unit/api/lib"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "express": "^5.0.0",
+    "express-rate-limit": "^8.3.2",
+    "pg": "^8.13.3",
+    "sequelize": "^6.37.5",
+    "swagger-ui-express": "^5.0.1",
+    "umzug": "^3.8.2"
+  }
+}
