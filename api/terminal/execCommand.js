@@ -48,6 +48,22 @@ function stripCommandEcho(output, commandEcho) {
   return output;
 }
 
+// Agents launched by the embedded wrapper emit JSON (ELA_OUTPUT_FORMAT=json).
+// When the captured output is a single JSON object/array, return it parsed so
+// callers get structured data instead of a JSON string; otherwise return the
+// text unchanged (plain-text output, or a command that ignored the format).
+function maybeParseJsonOutput(text) {
+  const trimmed = String(text).trim();
+  if (!trimmed || (trimmed[0] !== '{' && trimmed[0] !== '[')) {
+    return text;
+  }
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return text;
+  }
+}
+
 // Extract just the command's output from the raw buffer, given the completion
 // prompt index. The output sits between the last echoed-command prompt (the
 // input line the REPL echoed back) and the completion prompt; the echoed
@@ -138,7 +154,9 @@ function runExec({
         cleanup();
         resolve({
           ok: true,
-          output: extractExecOutput(buffer, completionIndex, promptToken, commandEcho),
+          output: maybeParseJsonOutput(
+            extractExecOutput(buffer, completionIndex, promptToken, commandEcho),
+          ),
           durationMs: now() - startedAt,
         });
       }
@@ -176,6 +194,7 @@ module.exports = {
   runExec,
   stripAnsi,
   stripCommandEcho,
+  maybeParseJsonOutput,
   findCompletionIndex,
   extractExecOutput,
   DEFAULT_EXEC_TIMEOUT_MS,

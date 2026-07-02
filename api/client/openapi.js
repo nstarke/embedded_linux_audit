@@ -556,7 +556,12 @@ const openapiSpec = {
         type: 'object',
         properties: {
           ok: { type: 'boolean', example: true },
-          output: { type: 'string' },
+          output: {
+            description: 'Command output. Agents emit JSON (ELA_OUTPUT_FORMAT=json), '
+              + 'so this is the parsed JSON object/array when the output is valid JSON; '
+              + 'otherwise the raw text string.',
+            oneOf: [{ type: 'string' }, { type: 'object' }, { type: 'array' }],
+          },
           durationMs: { type: 'integer' },
         },
         required: ['ok', 'output'],

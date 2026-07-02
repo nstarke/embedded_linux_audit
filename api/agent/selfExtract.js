@@ -138,6 +138,11 @@ ELA_INSECURE='${qInsecure}'
 
 export ELA_API_KEY="$ELA_TOKEN"
 
+# Emit machine-readable JSON from every command so callers (the terminal API's
+# exec endpoints, the /uploads records) can parse the output directly rather
+# than scraping text. A caller may still override it per-invocation.
+export ELA_OUTPUT_FORMAT="\${ELA_OUTPUT_FORMAT:-json}"
+
 # Route every command's output (dmesg, netstat, exec, …) to the agent API's
 # upload endpoint so results are retrievable via the client /uploads routes.
 # The agent requires an http:// URL in ELA_OUTPUT_HTTP and an https:// URL in

@@ -1,6 +1,6 @@
 'use strict';
 
-const { runExec } = require('../../../../api/terminal/execCommand');
+const { runExec, maybeParseJsonOutput } = require('../../../../api/terminal/execCommand');
 
 function createEntry({ readyState = 1 } = {}) {
   const sent = [];
@@ -46,6 +46,30 @@ describe('runExec', () => {
     expect(result).toEqual({ ok: true, output: 'hi', durationMs: 5 });
     // listener is cleaned up after completion
     expect(entry.outputListeners.size).toBe(0);
+  });
+
+  test('parses a JSON command output into a structured object', async () => {
+    const entry = createEntry();
+    const promise = runExec({ entry, mac, command: 'linux modules vermagic', wrapShell: false, now: () => 0 });
+
+    entry.emit(`(${mac})> linux modules vermagic\r\n`);
+    entry.emit('{"path":"/lib/modules/anul.ko","vermagic":"3.12.19-rt30 SMP mod_unload ARMv7"}\r\n');
+    entry.emit(`(${mac})> `);
+
+    const result = await promise;
+    expect(result.output).toEqual({
+      path: '/lib/modules/anul.ko',
+      vermagic: '3.12.19-rt30 SMP mod_unload ARMv7',
+    });
+  });
+
+  test('maybeParseJsonOutput returns objects/arrays parsed and leaves plain text alone', () => {
+    expect(maybeParseJsonOutput('{"a":1}')).toEqual({ a: 1 });
+    expect(maybeParseJsonOutput('[1,2]')).toEqual([1, 2]);
+    expect(maybeParseJsonOutput('Linux host 5.10.0')).toBe('Linux host 5.10.0');
+    // Malformed JSON is returned unchanged rather than throwing.
+    expect(maybeParseJsonOutput('{not json')).toBe('{not json');
+    expect(maybeParseJsonOutput('')).toBe('');
   });
 
   test('does not settle on the input-echo prompt, and returns clean output', async () => {
