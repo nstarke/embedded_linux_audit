@@ -74,12 +74,20 @@ describe('provisionWrappers', () => {
 
     for (const isa of ['x86_64', 'arm32-le']) {
       const p = path.join(userDir, `ela-${isa}`);
-      // Executable bit set.
-      expect(fs.statSync(p).mode & 0o111).not.toBe(0);
-      const content = fs.readFileSync(p);
-      // Header carries the token and ends the text section with the marker.
-      expect(content.toString('utf8')).toContain("ELA_TOKEN='tok-abc'");
-      expect(content.includes(`${PAYLOAD_MARKER}\n`)).toBe(true);
+      // Open once and inspect via the fd so the mode check and the read operate
+      // on the same open file rather than resolving the path twice (avoids a
+      // check-then-use / TOCTOU pattern).
+      const fd = fs.openSync(p, 'r');
+      try {
+        // Executable bit set.
+        expect(fs.fstatSync(fd).mode & 0o111).not.toBe(0);
+        const content = fs.readFileSync(fd);
+        // Header carries the token and ends the text section with the marker.
+        expect(content.toString('utf8')).toContain("ELA_TOKEN='tok-abc'");
+        expect(content.includes(`${PAYLOAD_MARKER}\n`)).toBe(true);
+      } finally {
+        fs.closeSync(fd);
+      }
     }
 
     // The x86 launcher actually runs its own payload with the token set.

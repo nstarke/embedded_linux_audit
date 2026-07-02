@@ -15,8 +15,17 @@
 #include <sys/syscall.h>
 #include <unistd.h>
 
-/* Default root searched for a .ko when `modules vermagic` is given no path. */
-#define ELA_MODULE_SEARCH_ROOT "/lib"
+/* Root searched for a .ko when `modules vermagic` is given no path. Defaults to
+ * /lib; overridable via the ELA_MODULE_SEARCH_ROOT env var for unusual module
+ * layouts (and to keep tests deterministic). */
+#define ELA_MODULE_SEARCH_ROOT_DEFAULT "/lib"
+
+static const char *module_search_root(void)
+{
+	const char *root = getenv("ELA_MODULE_SEARCH_ROOT");
+
+	return (root && *root) ? root : ELA_MODULE_SEARCH_ROOT_DEFAULT;
+}
 
 #ifndef SYS_finit_module
 # if defined(__NR_finit_module)
@@ -47,7 +56,8 @@ static void usage(const char *prog)
 		"  load uses finit_module/init_module directly; --force ignores vermagic\n"
 		"  unload uses delete_module directly\n"
 		"  vermagic reads the module file and emits its path and kernel vermagic;\n"
-		"    with no path, the first .ko found under " ELA_MODULE_SEARCH_ROOT " is used\n",
+		"    with no path, the first .ko found under " ELA_MODULE_SEARCH_ROOT_DEFAULT "\n"
+		"    (or $ELA_MODULE_SEARCH_ROOT) is used\n",
 		prog, prog, prog, prog);
 }
 
@@ -391,9 +401,10 @@ static int print_vermagic(const struct ela_kernel_module_request *request)
 	/* No path supplied: discover the first .ko under the module tree. The
 	 * emitted payload carries this discovered path alongside the vermagic. */
 	if (!path) {
-		if (find_first_ko(ELA_MODULE_SEARCH_ROOT, found, sizeof(found)) != 0) {
-			fprintf(stderr, "No .ko module found under %s\n",
-				ELA_MODULE_SEARCH_ROOT);
+		const char *root = module_search_root();
+
+		if (find_first_ko(root, found, sizeof(found)) != 0) {
+			fprintf(stderr, "No .ko module found under %s\n", root);
 			return 1;
 		}
 		path = found;
