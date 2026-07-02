@@ -64,8 +64,8 @@ The agent attaches to the process, generates a random 128-bit session key, and c
 ## `gdbserver tunnel` arguments
 
 - `<PID>` — required process ID to attach to
-- `<WSS_BASE_URL>` — required base WebSocket URL of the ELA server (e.g. `wss://ela.example.com` or `ws://ela.example.com` for plain HTTP)
-- `--insecure` — optional; disables TLS certificate verification when connecting to the bridge
+- `<WSS_BASE_URL>` — optional base WebSocket URL of the ELA server (e.g. `wss://ela.example.com` or `ws://ela.example.com` for plain HTTP). **When omitted, it defaults to the terminal-API server the agent phoned home to** (the `--remote` value saved in `/tmp/.ela.conf`), since the GDB bridge lives at the same origin. If no URL is given and no terminal-API server is configured, the command errors.
+- `--insecure` — optional; disables TLS certificate verification when connecting to the bridge. When the URL is defaulted from the terminal-API server, the terminal connection's TLS setting is inherited unless `--insecure` is passed explicitly.
 
 ## Session key
 
@@ -154,6 +154,10 @@ wss-remote [--insecure] [--token TOKEN] wss://HOST/gdb/out/<32-hex-key>
 ```bash
 # --- On the target device (via ela shell or terminal) ---
 ./embedded_linux_audit linux gdbserver tunnel --insecure 1234 wss://ela.example.com
+
+# Or, on an agent that phoned home over --remote, omit the URL to reuse that
+# same server (and its TLS setting):
+#   ./embedded_linux_audit linux gdbserver tunnel 1234
 
 # Agent prints:
 #   GDB tunnel ready:

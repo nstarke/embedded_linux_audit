@@ -36,4 +36,28 @@ int ela_gdb_tunnel_build_urls(const char *base_url, const char *hex_key,
  */
 int ela_gdb_tunnel_key_is_valid(const char *key);
 
+/*
+ * Resolve the tunnel's base URL (and TLS-verification setting) from the parsed
+ * command line and the saved agent conf.
+ *
+ * - arg_url: the <WSS_BASE_URL> argument, or NULL/"" when omitted.
+ * - conf_remote: the terminal-API server saved in the conf (`remote`), or
+ *   NULL/"" when the agent never phoned home.
+ * - conf_insecure: the conf's insecure flag (0/1).
+ * - insecure_explicit: non-zero when --insecure was passed on the command line.
+ * - *in_out_insecure: the current insecure flag (from --insecure); on success,
+ *   when the URL is defaulted from the conf and --insecure was not explicit, it
+ *   is raised to conf_insecure.
+ *
+ * On success writes the chosen base URL to *out_base_url (pointing into arg_url
+ * or conf_remote — no copy) and returns 0. Returns -1 when no URL was given and
+ * none is configured, or on a NULL out pointer.
+ */
+int ela_gdb_tunnel_resolve_target(const char *arg_url,
+				   const char *conf_remote,
+				   int conf_insecure,
+				   int insecure_explicit,
+				   const char **out_base_url,
+				   int *in_out_insecure);
+
 #endif /* LINUX_GDBSERVER_TUNNEL_UTIL_H */

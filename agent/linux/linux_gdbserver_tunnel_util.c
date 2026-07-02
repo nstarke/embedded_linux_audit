@@ -58,3 +58,30 @@ int ela_gdb_tunnel_key_is_valid(const char *key)
 	}
 	return key[32] == '\0';
 }
+
+int ela_gdb_tunnel_resolve_target(const char *arg_url,
+				   const char *conf_remote,
+				   int conf_insecure,
+				   int insecure_explicit,
+				   const char **out_base_url,
+				   int *in_out_insecure)
+{
+	if (!out_base_url || !in_out_insecure)
+		return -1;
+
+	if (arg_url && *arg_url) {
+		*out_base_url = arg_url;
+		return 0;
+	}
+
+	if (conf_remote && *conf_remote) {
+		*out_base_url = conf_remote;
+		/* Reuse the terminal connection's TLS-verification setting for the
+		 * same server, unless --insecure was explicitly given. */
+		if (!insecure_explicit && conf_insecure)
+			*in_out_insecure = 1;
+		return 0;
+	}
+
+	return -1;
+}
