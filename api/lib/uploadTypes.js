@@ -13,6 +13,7 @@ const VALID_UPLOAD_TYPES = new Set([
   'grep',
   'log',
   'logs',
+  'module-vermagic',
   'netstat',
   'orom',
   'pcap',
