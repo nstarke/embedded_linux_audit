@@ -1,0 +1,20 @@
+name: "ELA CodeQL config (C agent)"
+
+# The C agent is an authorized, operator-driven audit tool. By design it opens
+# file paths the operator specifies or discovers on the target (e.g.
+# `linux modules vermagic <module.ko>`, download-file, list-files,
+# execute-command) and connects to endpoints the operator configures
+# (--remote, --output-http, --output-tcp, and their ELA_* env equivalents).
+#
+# Under this threat model the operator is trusted and the agent runs with their
+# authority, so CodeQL's path-injection and system-data-exposure queries fire on
+# the tool's intended core behavior — they are false positives here and would
+# otherwise drown out genuine findings. Exclude just those two query IDs; every
+# other security-and-quality query stays active. This config is applied ONLY to
+# the C/C++ analysis (see .github/workflows/codeql.yml); the network-facing
+# JavaScript API is analyzed without it and keeps full coverage.
+query-filters:
+  - exclude:
+      id: cpp/path-injection
+  - exclude:
+      id: cpp/system-data-exposure

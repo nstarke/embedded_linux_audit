@@ -36,6 +36,10 @@ jobs:
         with:
           languages: c-cpp
           queries: security-and-quality
+          # Excludes path-injection / system-data-exposure, which fire on the
+          # agent's by-design operator-directed file/network access. C only —
+          # the JavaScript job below is unaffected.
+          config-file: ./.github/codeql/codeql-config.yml
 
       - name: Build
         run: make
