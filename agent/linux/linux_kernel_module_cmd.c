@@ -553,8 +553,13 @@ static int upload_kernel_config(const char *config_path)
  * with a test fixture root, modprobe cannot create files there anyway.
  *
  * Detection deliberately avoids the shell (`command -v` and even /bin/sh
- * may be absent on embedded systems): walk PATH plus the conventional sbin
- * locations probing with access(X_OK), then fork+execv the absolute path.
+ * may be absent on embedded systems): probe the conventional sbin/bin
+ * locations with access(X_OK), then fork+execv the absolute path.
+ *
+ * The candidate directories are the helper's hardcoded trusted fallbacks
+ * (/sbin, /usr/sbin, /bin, /usr/bin) rather than $PATH: modprobe lives in
+ * those on any normal system, and keeping the executed path out of an
+ * environment variable avoids handing control of what we exec to $PATH.
  */
 static void try_modprobe_configs(void)
 {
@@ -564,7 +569,7 @@ static void try_modprobe_configs(void)
 	bool found = false;
 	pid_t pid;
 
-	for (i = 0; ela_kernel_buildinfo_tool_candidate(getenv("PATH"),
+	for (i = 0; ela_kernel_buildinfo_tool_candidate(NULL,
 							"modprobe", i,
 							candidate,
 							sizeof(candidate)) == 0;

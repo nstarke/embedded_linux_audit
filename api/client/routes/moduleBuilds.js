@@ -291,7 +291,15 @@ module.exports = function registerModuleBuildRoutes(app, deps = {}) {
     }
 
     const body = req.body && typeof req.body === 'object' ? req.body : {};
-    const baseUrl = String(body.baseUrl || moduleBaseUrl || '').trim().replace(/\/+$/, '');
+    // Strip trailing slashes with a plain loop rather than a `/\/+$/` regex:
+    // the regex backtracks polynomially on inputs with many '/' characters
+    // (CodeQL js/polynomial-redos), and this input is user-supplied.
+    let baseUrl = String(body.baseUrl || moduleBaseUrl || '').trim();
+    let baseEnd = baseUrl.length;
+    while (baseEnd > 0 && baseUrl.charCodeAt(baseEnd - 1) === 47 /* '/' */) {
+      baseEnd -= 1;
+    }
+    baseUrl = baseUrl.slice(0, baseEnd);
     if (!/^https?:\/\//i.test(baseUrl)) {
       res.status(400).json({
         error: 'baseUrl (agent-reachable agent-api origin) is required; set it in the body or ELA_MODULE_DOWNLOAD_BASE_URL',

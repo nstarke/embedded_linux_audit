@@ -232,9 +232,9 @@ int ela_pci_parse_bdf(const char *text, uint32_t *domain, uint8_t *bus,
 		      uint8_t *device, uint8_t *function)
 {
 	unsigned int dom = 0;
-	unsigned int b;
-	unsigned int d;
-	unsigned int f;
+	unsigned int b = 0;
+	unsigned int d = 0;
+	unsigned int f = 0;
 	int matched;
 	char extra;
 
