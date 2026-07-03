@@ -31,8 +31,21 @@
 # include <linux/pci.h>
 #endif
 /* Portable readq/writeq on 32-bit arches: split into two 32-bit accesses,
- * low word first (same order chipsec uses). 64-bit arches get native ops. */
-#include <linux/io-64-nonatomic-lo-hi.h>
+ * low word first (same order chipsec uses). 64-bit arches get native ops.
+ * Upstream moved this wrapper from <asm-generic/...> to <linux/...> in 3.15;
+ * probe for the newer path so pre-3.15 kernels (which only ship the
+ * asm-generic one) still build. */
+#if defined(__has_include)
+# if __has_include(<linux/io-64-nonatomic-lo-hi.h>)
+#  include <linux/io-64-nonatomic-lo-hi.h>
+# else
+#  include <asm-generic/io-64-nonatomic-lo-hi.h>
+# endif
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(3, 15, 0)
+# include <linux/io-64-nonatomic-lo-hi.h>
+#else
+# include <asm-generic/io-64-nonatomic-lo-hi.h>
+#endif
 
 #include "ela_ioctl.h"
 
@@ -48,6 +61,18 @@
 # define ela_ioremap_uncached(addr, size) ioremap(addr, size)
 #else
 # define ela_ioremap_uncached(addr, size) ioremap_nocache(addr, size)
+#endif
+
+/* Cached ioremap for the pre-memremap (< 4.3) path. The generic ioremap_cache()
+ * spelling isn't available on every old arch: ARM only carried ioremap_cached()
+ * through this era (it gained the generic alias later and dropped the old name
+ * in 5.x). Key on the arch rather than a version boundary, which is stable. */
+#if !ELA_HAVE_MEMREMAP
+# ifdef CONFIG_ARM
+#  define ela_ioremap_cached(addr, size) ioremap_cached(addr, size)
+# else
+#  define ela_ioremap_cached(addr, size) ioremap_cache(addr, size)
+# endif
 #endif
 
 /* Per-mapping window: large reads are served in page-aligned chunks of this
@@ -112,7 +137,7 @@ static int ela_map_phys(u64 phys, size_t len, bool uncached,
 		if (va)
 			map->used_memremap = true;
 #else
-		va = ioremap_cache(aligned, map_len);
+		va = ela_ioremap_cached(aligned, map_len);
 #endif
 	}
 	if (!va)

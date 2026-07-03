@@ -101,6 +101,35 @@ if [ ! -f "$PREPARED_STAMP" ]; then
     tar -xJf "$TARBALL" -C "$TREE_PARENT"
     [ -d "$TREE" ] || die "tarball did not contain linux-$KERNEL_VERSION/"
 
+    # Old kernels (pre-~4.x) hardcode `#include <linux/compiler-gcc$(GNUC).h>`,
+    # a per-GCC-major header that only shipped for the compilers of their era.
+    # A modern cross-GCC (e.g. 12) then dies with:
+    #   fatal error: linux/compiler-gccN.h: No such file or directory
+    # Upstream dropped the per-version split in 4.x and the macros are
+    # compatible, so alias the missing header to the newest one the tree ships.
+    COMPILER_GCC_DIR="$TREE/include/linux"
+    if [ -f "$COMPILER_GCC_DIR/compiler-gcc.h" ]; then
+        GCC_MAJOR="$("${CROSS_COMPILE}gcc" -dumpversion 2>/dev/null | cut -d. -f1)"
+        case "$GCC_MAJOR" in
+          ''|*[!0-9]*) GCC_MAJOR="" ;;  # only trust a clean integer
+        esac
+        if [ -n "$GCC_MAJOR" ] && [ ! -f "$COMPILER_GCC_DIR/compiler-gcc${GCC_MAJOR}.h" ]; then
+            NEWEST=""
+            for h in "$COMPILER_GCC_DIR"/compiler-gcc[0-9]*.h; do
+                [ -f "$h" ] || continue  # no glob match -> literal pattern, skip
+                n="${h##*compiler-gcc}"; n="${n%.h}"
+                case "$n" in *[!0-9]*|'') continue ;; esac
+                if [ -z "$NEWEST" ] || [ "$n" -gt "$NEWEST_N" ]; then
+                    NEWEST="$h"; NEWEST_N="$n"
+                fi
+            done
+            if [ -n "$NEWEST" ]; then
+                log "gcc $GCC_MAJOR shim: aliasing $(basename "$NEWEST") -> compiler-gcc${GCC_MAJOR}.h"
+                cp "$NEWEST" "$COMPILER_GCC_DIR/compiler-gcc${GCC_MAJOR}.h"
+            fi
+        fi
+    fi
+
     if [ -n "$WORK_CONFIG" ]; then
         log "configuring from device config"
         cp "$WORK_CONFIG" "$TREE/.config"
