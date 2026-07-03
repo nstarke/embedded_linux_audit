@@ -70,6 +70,61 @@ static void test_config_is_gz(void)
 	ELA_ASSERT_TRUE(!ela_kernel_buildinfo_config_is_gz(NULL));
 }
 
+static void test_tool_candidate_walks_path_then_fallbacks(void)
+{
+	char out[256];
+
+	/* PATH entries come first, in order, skipping empty segments. */
+	ELA_ASSERT_INT_EQ(0, ela_kernel_buildinfo_tool_candidate(
+		"/opt/bin::/usr/local/bin", "modprobe", 0, out, sizeof(out)));
+	ELA_ASSERT_STR_EQ("/opt/bin/modprobe", out);
+	ELA_ASSERT_INT_EQ(0, ela_kernel_buildinfo_tool_candidate(
+		"/opt/bin::/usr/local/bin", "modprobe", 1, out, sizeof(out)));
+	ELA_ASSERT_STR_EQ("/usr/local/bin/modprobe", out);
+
+	/* Then the conventional sbin/bin locations. */
+	ELA_ASSERT_INT_EQ(0, ela_kernel_buildinfo_tool_candidate(
+		"/opt/bin::/usr/local/bin", "modprobe", 2, out, sizeof(out)));
+	ELA_ASSERT_STR_EQ("/sbin/modprobe", out);
+	ELA_ASSERT_INT_EQ(0, ela_kernel_buildinfo_tool_candidate(
+		"/opt/bin::/usr/local/bin", "modprobe", 5, out, sizeof(out)));
+	ELA_ASSERT_STR_EQ("/usr/bin/modprobe", out);
+
+	/* Past the last fallback: done. */
+	ELA_ASSERT_INT_EQ(-1, ela_kernel_buildinfo_tool_candidate(
+		"/opt/bin::/usr/local/bin", "modprobe", 6, out, sizeof(out)));
+}
+
+static void test_tool_candidate_without_path(void)
+{
+	char out[256];
+
+	/* NULL or empty PATH: fallbacks only. */
+	ELA_ASSERT_INT_EQ(0, ela_kernel_buildinfo_tool_candidate(
+		NULL, "modprobe", 0, out, sizeof(out)));
+	ELA_ASSERT_STR_EQ("/sbin/modprobe", out);
+	ELA_ASSERT_INT_EQ(0, ela_kernel_buildinfo_tool_candidate(
+		"", "modprobe", 3, out, sizeof(out)));
+	ELA_ASSERT_STR_EQ("/usr/bin/modprobe", out);
+	ELA_ASSERT_INT_EQ(-1, ela_kernel_buildinfo_tool_candidate(
+		NULL, "modprobe", 4, out, sizeof(out)));
+}
+
+static void test_tool_candidate_rejects_bad_input(void)
+{
+	char out[256];
+	char tiny[4];
+
+	ELA_ASSERT_INT_EQ(-1, ela_kernel_buildinfo_tool_candidate(
+		"/bin", NULL, 0, out, sizeof(out)));
+	ELA_ASSERT_INT_EQ(-1, ela_kernel_buildinfo_tool_candidate(
+		"/bin", "", 0, out, sizeof(out)));
+	ELA_ASSERT_INT_EQ(-1, ela_kernel_buildinfo_tool_candidate(
+		"/bin", "modprobe", 0, NULL, 0));
+	ELA_ASSERT_INT_EQ(-1, ela_kernel_buildinfo_tool_candidate(
+		"/bin", "modprobe", 0, tiny, sizeof(tiny)));
+}
+
 static void test_trim_line(void)
 {
 	char lf[] = "Linux version 6.1.0\n";
@@ -220,6 +275,9 @@ int run_linux_kernel_buildinfo_util_tests(void)
 		{ "config_candidate/root_prefix", test_config_candidate_with_root_prefix },
 		{ "config_candidate/bad_input", test_config_candidate_rejects_bad_input },
 		{ "config/is_gz", test_config_is_gz },
+		{ "tool_candidate/path_then_fallbacks", test_tool_candidate_walks_path_then_fallbacks },
+		{ "tool_candidate/no_path", test_tool_candidate_without_path },
+		{ "tool_candidate/bad_input", test_tool_candidate_rejects_bad_input },
 		{ "trim_line", test_trim_line },
 		{ "format/json", test_format_payload_json },
 		{ "format/json_nulls", test_format_payload_json_missing_fields_are_null },

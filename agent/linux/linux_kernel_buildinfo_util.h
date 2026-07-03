@@ -42,6 +42,16 @@ bool ela_kernel_buildinfo_config_is_gz(const char *path);
  * first line read from /proc/version. Returns `s`. */
 char *ela_kernel_buildinfo_trim_line(char *s);
 
+/* Copy the index-th candidate path for tool `name` into `out`: first each
+ * non-empty entry of the colon-separated `path_env` (NULL/empty for none),
+ * then the conventional module-tool locations (/sbin, /usr/sbin, /bin,
+ * /usr/bin), which embedded agents often lack in PATH. Pure string logic —
+ * the caller probes each candidate with access(). Returns 0 on success, -1
+ * when index is past the last candidate or `out` is too small. */
+int ela_kernel_buildinfo_tool_candidate(const char *path_env, const char *name,
+					unsigned int index,
+					char *out, size_t out_len);
+
 /* Format the buildinfo payload as json, csv, or plain text (any other
  * `format`, including NULL). Empty string fields are emitted as JSON null /
  * empty CSV fields. Returns 0 on success, -1 on truncation or bad args. */

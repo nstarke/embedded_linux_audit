@@ -61,6 +61,46 @@ char *ela_kernel_buildinfo_trim_line(char *s)
 	return s;
 }
 
+int ela_kernel_buildinfo_tool_candidate(const char *path_env, const char *name,
+					unsigned int index,
+					char *out, size_t out_len)
+{
+	/* Where module tools conventionally live; PATH on embedded inits
+	 * frequently omits the sbin dirs even when the tools exist. */
+	static const char *const fallback_dirs[] = {
+		"/sbin", "/usr/sbin", "/bin", "/usr/bin",
+	};
+	unsigned int seen = 0;
+	const char *p = path_env;
+	int n;
+
+	if (!name || !*name || !out || !out_len)
+		return -1;
+
+	while (p && *p) {
+		const char *sep = strchr(p, ':');
+		size_t seg_len = sep ? (size_t)(sep - p) : strlen(p);
+
+		if (seg_len) {
+			if (seen == index) {
+				n = snprintf(out, out_len, "%.*s/%s",
+					     (int)seg_len, p, name);
+				return (n >= 0 && (size_t)n < out_len) ? 0 : -1;
+			}
+			seen++;
+		}
+		if (!sep)
+			break;
+		p = sep + 1;
+	}
+
+	if (index - seen >= sizeof(fallback_dirs) / sizeof(fallback_dirs[0]))
+		return -1;
+	n = snprintf(out, out_len, "%s/%s",
+		     fallback_dirs[index - seen], name);
+	return (n >= 0 && (size_t)n < out_len) ? 0 : -1;
+}
+
 static int append_json_escaped(char *out, size_t out_len, size_t *pos, const char *value)
 {
 	size_t i;

@@ -16,6 +16,7 @@
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <sys/utsname.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 /* Root searched for a .ko when `modules vermagic` is given no path. Defaults to
@@ -73,7 +74,8 @@ static void usage(const char *prog)
 		"    (or $ELA_MODULE_SEARCH_ROOT) is used\n"
 		"  buildinfo emits the kernel release, /proc/version banner, module\n"
 		"    vermagic, and kernel config so the server can compile a matching\n"
-		"    module; the config bytes are uploaded separately as kernel-config\n",
+		"    module; the config bytes are uploaded separately as kernel-config\n"
+		"    (tries `modprobe configs` first when /proc/config.gz is absent)\n",
 		prog, prog, prog, prog, prog);
 }
 
@@ -544,6 +546,58 @@ static int upload_kernel_config(const char *config_path)
 	return rc;
 }
 
+/*
+ * On kernels built with CONFIG_IKCONFIG=m, /proc/config.gz only exists after
+ * the `configs` module is loaded. When modprobe is available, try it once
+ * before giving up on the config. Only meaningful against the real /proc:
+ * with a test fixture root, modprobe cannot create files there anyway.
+ *
+ * Detection deliberately avoids the shell (`command -v` and even /bin/sh
+ * may be absent on embedded systems): walk PATH plus the conventional sbin
+ * locations probing with access(X_OK), then fork+execv the absolute path.
+ */
+static void try_modprobe_configs(void)
+{
+	char candidate[PATH_MAX];
+	char modprobe[PATH_MAX];
+	unsigned int i;
+	bool found = false;
+	pid_t pid;
+
+	for (i = 0; ela_kernel_buildinfo_tool_candidate(getenv("PATH"),
+							"modprobe", i,
+							candidate,
+							sizeof(candidate)) == 0;
+	     i++) {
+		if (access(candidate, X_OK) == 0) {
+			snprintf(modprobe, sizeof(modprobe), "%s", candidate);
+			found = true;
+			break;
+		}
+	}
+	if (!found)
+		return;
+
+	pid = fork();
+	if (pid < 0)
+		return;
+	if (pid == 0) {
+		char *const argv[] = { modprobe, (char *)"configs", NULL };
+		int devnull = open("/dev/null", O_WRONLY);
+
+		if (devnull >= 0) {
+			dup2(devnull, STDOUT_FILENO);
+			dup2(devnull, STDERR_FILENO);
+			close(devnull);
+		}
+		execv(modprobe, argv);
+		_exit(127);
+	}
+	/* Best-effort: whether modprobe worked shows up as /proc/config.gz
+	 * existing (or not) in the candidate scan that follows. */
+	waitpid(pid, NULL, 0);
+}
+
 static int print_buildinfo(const struct ela_kernel_module_request *request)
 {
 	struct ela_kernel_buildinfo info;
@@ -584,6 +638,11 @@ static int print_buildinfo(const struct ela_kernel_module_request *request)
 	 * build from kernel_release + config, so vermagic is not fatal. */
 	if (path)
 		snprintf(info.module_path, sizeof(info.module_path), "%s", path);
+
+	/* IKCONFIG=m: surface /proc/config.gz by loading the configs module
+	 * before looking for it. Skipped under a fixture root. */
+	if (!root[0] && access("/proc/config.gz", R_OK) != 0)
+		try_modprobe_configs();
 
 	for (i = 0; i < 3; i++) {
 		if (ela_kernel_buildinfo_config_candidate(root, info.kernel_release,

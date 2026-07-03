@@ -102,6 +102,58 @@ else
 fi
 rm -f "$buildinfo_log"
 
+# With no fixture root and no /proc/config.gz, buildinfo attempts
+# `modprobe configs` (IKCONFIG=m kernels) before scanning candidates. Prove it
+# via a PATH-stubbed modprobe that records its arguments. Only valid when the
+# host really lacks /proc/config.gz — skip otherwise (the attempt is
+# correctly bypassed there).
+if [ ! -r /proc/config.gz ]; then
+    stub_dir="$(mktemp -d /tmp/ela-modprobe-stub.XXXXXX)"
+    marker="$stub_dir/invoked"
+    cat >"$stub_dir/modprobe" <<STUB
+#!/bin/sh
+echo "\$@" >> "$marker"
+exit 0
+STUB
+    chmod +x "$stub_dir/modprobe"
+    unset ELA_BUILDINFO_ROOT
+    PATH="$stub_dir:$PATH" "$BIN" linux modules buildinfo "$fake_module" >/dev/null 2>&1
+    if [ -f "$marker" ] && grep -q "configs" "$marker"; then
+        echo "[PASS] linux modules buildinfo attempts modprobe configs"
+        PASS_COUNT="$(expr "$PASS_COUNT" + 1)"
+    else
+        echo "[FAIL] linux modules buildinfo attempts modprobe configs"
+        ls -la "$stub_dir" 2>/dev/null
+        FAIL_COUNT="$(expr "$FAIL_COUNT" + 1)"
+    fi
+    ELA_BUILDINFO_ROOT="$buildinfo_root"
+    export ELA_BUILDINFO_ROOT
+    rm -rf "$stub_dir"
+else
+    echo "[SKIP] linux modules buildinfo attempts modprobe configs (/proc/config.gz present)"
+fi
+
+# Under a fixture root the modprobe attempt must be bypassed entirely.
+stub_dir="$(mktemp -d /tmp/ela-modprobe-stub.XXXXXX)"
+marker="$stub_dir/invoked"
+cat >"$stub_dir/modprobe" <<STUB
+#!/bin/sh
+echo "\$@" >> "$marker"
+exit 0
+STUB
+chmod +x "$stub_dir/modprobe"
+PATH="$stub_dir:$PATH" ELA_BUILDINFO_ROOT="$buildinfo_root_empty" \
+    "$BIN" linux modules buildinfo "$fake_module" >/dev/null 2>&1
+if [ ! -f "$marker" ]; then
+    echo "[PASS] fixture root bypasses modprobe configs"
+    PASS_COUNT="$(expr "$PASS_COUNT" + 1)"
+else
+    echo "[FAIL] fixture root bypasses modprobe configs"
+    cat "$marker"
+    FAIL_COUNT="$(expr "$FAIL_COUNT" + 1)"
+fi
+rm -rf "$stub_dir"
+
 # Over HTTP the command POSTs twice: the buildinfo JSON, then the raw config
 # bytes as kernel-config.
 http_req_path="$(mktemp /tmp/test_modules_buildinfo_http_path.XXXXXX)"
