@@ -67,6 +67,7 @@ function baseDeps(overrides = {}) {
           buildInfo: { ...BUILD_INFO },
         }),
         latestKernelConfigPath: jest.fn().mockResolvedValue('/data/agent/aa:bb:cc:dd:ee:ff/kernel-config/upload_1.bin'),
+        findReusableModuleBuild: jest.fn().mockResolvedValue(null),
         createModuleBuildRequest: jest.fn().mockResolvedValue(createdRow),
         listModuleBuildRequests: jest.fn().mockResolvedValue([createdRow]),
         getModuleBuildRequest: jest.fn().mockResolvedValue(createdRow),
@@ -117,6 +118,59 @@ describe('module build routes', () => {
         vermagic: BUILD_INFO.vermagic,
         configPath: '/data/agent/aa:bb:cc:dd:ee:ff/kernel-config/upload_1.bin',
       }), expect.any(Object));
+    });
+
+    test('reuses an existing compilation instead of queueing a new build', async () => {
+      const reusableRow = {
+        id: 4,
+        status: 'succeeded',
+        kernelRelease: BUILD_INFO.kernelRelease,
+        isa: BUILD_INFO.isa,
+        endianness: BUILD_INFO.endianness,
+        deviceVermagic: BUILD_INFO.vermagic,
+        artifactPath: '/data/agent/aa:bb:cc:dd:ee:ff/modules/4/ela.ko',
+      };
+      const artifactExists = jest.fn().mockResolvedValue(true);
+      const { app, queue, deps } = register({
+        db: { findReusableModuleBuild: jest.fn().mockResolvedValue(reusableRow) },
+        deps: { artifactExists },
+      });
+      const res = createRes();
+
+      await app.posts['/devices/:mac/module-builds']({ params: { mac: MAC }, authUser: 'alice' }, res);
+
+      expect(deps.db.findReusableModuleBuild).toHaveBeenCalledWith(3, {
+        kernelRelease: BUILD_INFO.kernelRelease,
+        isa: 'aarch64',
+        endianness: 'little',
+        deviceVermagic: BUILD_INFO.vermagic,
+      });
+      expect(artifactExists).toHaveBeenCalledWith(reusableRow.artifactPath);
+      expect(res.statusCode).toBe(200);
+      expect(res.jsonBody).toEqual(expect.objectContaining({ reused: true }));
+      expect(res.jsonBody.moduleBuild).toEqual(expect.objectContaining({ id: 4, status: 'succeeded' }));
+      // No duplicate compile.
+      expect(deps.db.createModuleBuildRequest).not.toHaveBeenCalled();
+      expect(queue.add).not.toHaveBeenCalled();
+    });
+
+    test('rebuilds when the reuse candidate artifact is gone from disk', async () => {
+      const reusableRow = {
+        id: 4,
+        status: 'succeeded',
+        artifactPath: '/data/agent/aa:bb:cc:dd:ee:ff/modules/4/ela.ko',
+      };
+      const { app, queue, deps } = register({
+        db: { findReusableModuleBuild: jest.fn().mockResolvedValue(reusableRow) },
+        deps: { artifactExists: jest.fn().mockResolvedValue(false) },
+      });
+      const res = createRes();
+
+      await app.posts['/devices/:mac/module-builds']({ params: { mac: MAC }, authUser: 'alice' }, res);
+
+      expect(res.statusCode).toBe(202);
+      expect(deps.db.createModuleBuildRequest).toHaveBeenCalled();
+      expect(queue.add).toHaveBeenCalled();
     });
 
     test('skips config lookup when buildinfo reports no config', async () => {

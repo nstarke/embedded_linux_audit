@@ -336,7 +336,7 @@ const openapiSpec = {
       post: {
         tags: ['modules'],
         summary: 'Request a cross-compiled kernel module for a device',
-        description: 'Creates a build request from the device\'s latest `module-buildinfo` upload and enqueues it. Pass `autobuild: true` to first push `linux modules buildinfo` to the live agent and wait for a fresh upload, so the build uses current kernel facts (and works on devices that have never uploaded buildinfo).',
+        description: 'Creates a build request from the device\'s latest `module-buildinfo` upload and enqueues it. If this exact target (same kernel release, ISA, endianness, and vermagic) was already compiled for the device and the artifact is still available, the existing build is returned instead of queueing a new one (200 with `reused: true`). Pass `autobuild: true` to first push `linux modules buildinfo` to the live agent and wait for a fresh upload, so the build uses current kernel facts (and works on devices that have never uploaded buildinfo).',
         operationId: 'createModuleBuild',
         parameters: [{ $ref: '#/components/parameters/Mac' }],
         requestBody: {
@@ -344,8 +344,12 @@ const openapiSpec = {
           content: { 'application/json': { schema: { $ref: '#/components/schemas/CreateModuleBuildRequest' } } },
         },
         responses: {
+          200: {
+            description: 'An existing compilation for this target was reused; no new build was queued (`reused: true`)',
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/ModuleBuildResponse' } } },
+          },
           202: {
-            description: 'The queued build request',
+            description: 'A new build request was queued',
             content: { 'application/json': { schema: { $ref: '#/components/schemas/ModuleBuildResponse' } } },
           },
           400: { $ref: '#/components/responses/BadRequest' },
@@ -775,7 +779,13 @@ const openapiSpec = {
       },
       ModuleBuildResponse: {
         type: 'object',
-        properties: { moduleBuild: { $ref: '#/components/schemas/ModuleBuild' } },
+        properties: {
+          moduleBuild: { $ref: '#/components/schemas/ModuleBuild' },
+          reused: {
+            type: 'boolean',
+            description: 'Present and true when an existing compilation was returned instead of queueing a new build.',
+          },
+        },
         required: ['moduleBuild'],
       },
       ModuleBuildListResponse: {

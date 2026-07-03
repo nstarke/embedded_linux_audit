@@ -2,6 +2,7 @@
 'use strict';
 
 const express = require('express');
+const fs = require('fs');
 const path = require('path');
 
 // Same separator-insensitive MAC handling as the terminal routes.
@@ -61,6 +62,7 @@ module.exports = function registerModuleBuildRoutes(app, deps = {}) {
   const db = {
     latestBuildInfoForDevice: (...args) => moduleBuilds().latestBuildInfoForDevice(...args),
     latestKernelConfigPath: (...args) => moduleBuilds().latestKernelConfigPath(...args),
+    findReusableModuleBuild: (...args) => moduleBuilds().findReusableModuleBuild(...args),
     createModuleBuildRequest: (...args) => moduleBuilds().createModuleBuildRequest(...args),
     listModuleBuildRequests: (...args) => moduleBuilds().listModuleBuildRequests(...args),
     getModuleBuildRequest: (...args) => moduleBuilds().getModuleBuildRequest(...args),
@@ -136,6 +138,16 @@ module.exports = function registerModuleBuildRoutes(app, deps = {}) {
     });
   const getQueue = deps.getQueue || defaultGetQueue;
   const dataDir = deps.dataDir || process.env.ELA_AGENT_DATA_DIR || 'api/agent/data';
+  // Confirm a reuse candidate's compiled .ko is still on the shared volume
+  // before handing it back instead of rebuilding.
+  const artifactExists = deps.artifactExists
+    || (async (p) => {
+      try {
+        return (await fs.promises.stat(p)).isFile();
+      } catch {
+        return false;
+      }
+    });
 
   function macKey(mac) {
     return String(mac || '').toLowerCase().replace(/[^0-9a-f]/g, '');
@@ -210,6 +222,21 @@ module.exports = function registerModuleBuildRoutes(app, deps = {}) {
       res.status(422).json({
         error: `no cross toolchain for isa=${buildInfo.isa} endianness=${buildInfo.endianness}`,
       });
+      return;
+    }
+
+    // If this exact target was already compiled for the device and the .ko is
+    // still on disk, reuse it instead of queueing a duplicate build — the
+    // artifact would be byte-for-byte identical. Returns 200 (not 202) so the
+    // caller can tell an immediate hit from a freshly queued build.
+    const reusable = await db.findReusableModuleBuild(device.id, {
+      kernelRelease: buildInfo.kernelRelease,
+      isa: buildInfo.isa,
+      endianness: buildInfo.endianness,
+      deviceVermagic: buildInfo.vermagic,
+    });
+    if (reusable && await artifactExists(reusable.artifactPath)) {
+      res.status(200).json({ moduleBuild: serializeRequest(reusable), reused: true });
       return;
     }
 

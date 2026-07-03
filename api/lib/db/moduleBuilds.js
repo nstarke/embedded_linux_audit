@@ -2,15 +2,23 @@
 'use strict';
 
 const crypto = require('crypto');
+const { Op } = require('sequelize');
 const { getModels } = require('./index');
 const { normalizeMac } = require('./deviceRegistry');
 
-// A .ko grants ring-0 on the target, so download URLs are short-lived by
-// default (long enough for the agent to fetch over a slow link, not long
-// enough to be useful if leaked later). Env-overridable in minutes.
+// A .ko grants ring-0 on the target, so download tokens are always single-use
+// (consuming one clears its hash). Time-based expiry is opt-in: set
+// ELA_MODULE_TOKEN_TTL_MINUTES to a positive integer to also expire unused
+// tokens after that many minutes (useful to bound the window on a slow or
+// hostile link). Unset / 0 / non-numeric => null => no time-based expiry, so a
+// minted URL stays valid until it is used.
 const DEFAULT_TOKEN_TTL_MS = (() => {
-  const minutes = Number.parseInt(process.env.ELA_MODULE_TOKEN_TTL_MINUTES || '10', 10);
-  return (Number.isInteger(minutes) && minutes > 0 ? minutes : 10) * 60 * 1000;
+  const raw = process.env.ELA_MODULE_TOKEN_TTL_MINUTES;
+  if (raw === undefined || raw === '') {
+    return null;
+  }
+  const minutes = Number.parseInt(raw, 10);
+  return Number.isInteger(minutes) && minutes > 0 ? minutes * 60 * 1000 : null;
 })();
 
 function hashToken(token) {
@@ -77,6 +85,31 @@ async function createModuleBuildRequest({
     endianness,
     deviceVermagic: deviceVermagic || null,
     configArtifactPath: configArtifactPath || null,
+  });
+}
+
+// Find an already-succeeded build for this device whose compiled .ko can be
+// reused for an identical target, newest first. The build is a pure function of
+// (kernelRelease, isa, endianness, vermagic), and vermagic is precisely the
+// kernel-module compatibility contract, so a matching artifact is load-
+// equivalent to a fresh compile. Only rows that still carry an artifactPath are
+// returned; the caller must confirm the file is present on disk before reusing
+// it (the volume may have been wiped).
+async function findReusableModuleBuild(deviceId, {
+  kernelRelease, isa, endianness, deviceVermagic,
+}) {
+  const { ModuleBuildRequest } = getModels();
+  return ModuleBuildRequest.findOne({
+    where: {
+      deviceId,
+      status: 'succeeded',
+      artifactPath: { [Op.ne]: null },
+      kernelRelease,
+      isa: isa ?? null,
+      endianness: endianness ?? null,
+      deviceVermagic: deviceVermagic ?? null,
+    },
+    order: [['id', 'DESC']],
   });
 }
 
@@ -151,7 +184,8 @@ async function listModuleBuildRequests(username, { mac = null, limit = 100 } = {
 async function issueDownloadToken(requestId, { ttlMs = DEFAULT_TOKEN_TTL_MS } = {}) {
   const { ModuleBuildRequest } = getModels();
   const token = crypto.randomBytes(32).toString('hex');
-  const expiresAt = new Date(Date.now() + ttlMs);
+  // null ttl => non-expiring token (invalidated only by single use).
+  const expiresAt = ttlMs == null ? null : new Date(Date.now() + ttlMs);
   const [updated] = await ModuleBuildRequest.update({
     downloadTokenHash: hashToken(token),
     downloadTokenExpiresAt: expiresAt,
@@ -165,9 +199,12 @@ async function issueDownloadToken(requestId, { ttlMs = DEFAULT_TOKEN_TTL_MS } = 
 }
 
 // Resolve a presented download token to its build request: hash must match,
-// not expired, artifact present. On success the hash is cleared atomically
-// (single-use); a second request with the same token 404s. Returns the row
-// or null — the caller cannot distinguish unknown/expired/used, by design.
+// not expired, artifact present. A null downloadTokenExpiresAt means the token
+// has no time-based expiry (see DEFAULT_TOKEN_TTL_MS) and is valid until used;
+// single use is guaranteed by clearing the hash, not by the expiry. On success
+// the hash is cleared atomically (single-use); a second request with the same
+// token 404s. Returns the row or null — the caller cannot distinguish
+// unknown/expired/used, by design.
 async function consumeDownloadToken(token) {
   const { ModuleBuildRequest } = getModels();
   const row = await ModuleBuildRequest.findOne({
@@ -176,7 +213,7 @@ async function consumeDownloadToken(token) {
   if (!row || !row.artifactPath) {
     return null;
   }
-  if (!row.downloadTokenExpiresAt || row.downloadTokenExpiresAt.getTime() < Date.now()) {
+  if (row.downloadTokenExpiresAt && row.downloadTokenExpiresAt.getTime() < Date.now()) {
     return null;
   }
   // Single-use: only the request that clears the hash serves the file, so
@@ -206,6 +243,7 @@ async function getModuleBuildRequest(username, id) {
 module.exports = {
   latestBuildInfoForDevice,
   latestKernelConfigPath,
+  findReusableModuleBuild,
   createModuleBuildRequest,
   markBuildStarted,
   markBuildSucceeded,
