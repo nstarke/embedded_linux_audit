@@ -208,6 +208,98 @@ describe('module build routes', () => {
     });
   });
 
+  describe('POST /devices/:mac/module-builds autobuild', () => {
+    const FRESH = {
+      upload: { id: 88 },
+      buildInfo: { ...BUILD_INFO, kernelRelease: '6.6.0-fresh' },
+    };
+
+    test('pushes buildinfo to the agent and builds from the fresh upload', async () => {
+      const latestBuildInfoForDevice = jest.fn()
+        // First call: the stale pre-refresh upload; the poll then sees fresh.
+        .mockResolvedValueOnce({ upload: { id: 55 }, buildInfo: { ...BUILD_INFO } })
+        .mockResolvedValue(FRESH);
+      const { app, deps, sendCommand } = register({
+        db: { latestBuildInfoForDevice },
+        deps: { autobuildPollMs: 0, sleep: () => Promise.resolve() },
+      });
+      const res = createRes();
+
+      await app.posts['/devices/:mac/module-builds'](
+        { params: { mac: MAC }, body: { autobuild: true }, authUser: 'alice' }, res,
+      );
+
+      expect(sendCommand).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'exec', mode: 'ela', mac: MAC, command: 'linux modules buildinfo' }),
+        expect.any(Object),
+      );
+      expect(res.statusCode).toBe(202);
+      expect(deps.db.createModuleBuildRequest).toHaveBeenCalledWith(expect.objectContaining({
+        buildinfoUploadId: 88,
+        kernelRelease: '6.6.0-fresh',
+      }));
+    });
+
+    test('works on a device with no prior buildinfo upload', async () => {
+      const latestBuildInfoForDevice = jest.fn()
+        .mockResolvedValueOnce(null)   // pre-refresh: nothing
+        .mockResolvedValue(FRESH);     // poll: the new upload
+      const { app, deps } = register({
+        db: { latestBuildInfoForDevice },
+        deps: { autobuildPollMs: 0, sleep: () => Promise.resolve() },
+      });
+      const res = createRes();
+
+      await app.posts['/devices/:mac/module-builds'](
+        { params: { mac: MAC }, body: { autobuild: true }, authUser: 'alice' }, res,
+      );
+
+      expect(res.statusCode).toBe(202);
+      expect(deps.db.createModuleBuildRequest).toHaveBeenCalled();
+    });
+
+    test('504s when the agent command fails and does not build from stale facts', async () => {
+      const { app, deps, sendCommand } = register();
+      sendCommand.mockResolvedValue({ status: 504, body: { error: 'timeout' } });
+      const res = createRes();
+
+      await app.posts['/devices/:mac/module-builds'](
+        { params: { mac: MAC }, body: { autobuild: true }, authUser: 'alice' }, res,
+      );
+
+      expect(res.statusCode).toBe(504);
+      expect(deps.db.createModuleBuildRequest).not.toHaveBeenCalled();
+    });
+
+    test('504s when the fresh upload never arrives within the wait window', async () => {
+      const stale = { upload: { id: 55 }, buildInfo: { ...BUILD_INFO } };
+      const { app, deps } = register({
+        db: { latestBuildInfoForDevice: jest.fn().mockResolvedValue(stale) },
+        deps: { autobuildWaitMs: 0, autobuildPollMs: 0, sleep: () => Promise.resolve() },
+      });
+      const res = createRes();
+
+      await app.posts['/devices/:mac/module-builds'](
+        { params: { mac: MAC }, body: { autobuild: true }, authUser: 'alice' }, res,
+      );
+
+      expect(res.statusCode).toBe(504);
+      expect(deps.db.createModuleBuildRequest).not.toHaveBeenCalled();
+    });
+
+    test('without autobuild the agent is never commanded', async () => {
+      const { app, sendCommand } = register();
+      const res = createRes();
+
+      await app.posts['/devices/:mac/module-builds'](
+        { params: { mac: MAC }, body: {}, authUser: 'alice' }, res,
+      );
+
+      expect(res.statusCode).toBe(202);
+      expect(sendCommand).not.toHaveBeenCalled();
+    });
+  });
+
   describe('POST /module-builds/:id/deliver', () => {
     const SUCCEEDED_ROW = {
       id: 7,

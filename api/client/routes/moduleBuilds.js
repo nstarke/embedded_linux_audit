@@ -74,6 +74,53 @@ module.exports = function registerModuleBuildRoutes(app, deps = {}) {
   // (the docker-internal name the client API uses would not resolve on the
   // device). Deployments set this to the public agent-api origin.
   const moduleBaseUrl = deps.moduleBaseUrl || process.env.ELA_MODULE_DOWNLOAD_BASE_URL || null;
+  const parseBody = deps.parseBody || express.json({ limit: 64 * 1024, type: () => true });
+  const sleep = deps.sleep || ((ms) => new Promise((resolve) => { setTimeout(resolve, ms); }));
+  // How long to wait for the buildinfo upload to land after pushing the
+  // command: the agent runs it in a second or two, but the upload arrives on
+  // a separate HTTP path after the exec returns.
+  const autobuildWaitMs = deps.autobuildWaitMs ?? 20000;
+  const autobuildPollMs = deps.autobuildPollMs ?? 1000;
+
+  /*
+   * Push `linux modules buildinfo` to the live agent session and wait for the
+   * resulting module-buildinfo upload to supersede `previousUploadId`.
+   * Returns the fresh {upload, buildInfo} or null (agent offline, command
+   * failed, or the upload never arrived in time).
+   */
+  async function refreshBuildInfo(username, mac, deviceId, previousUploadId) {
+    let result;
+    try {
+      result = await sendCommand(
+        { type: 'exec', mode: 'ela', mac, command: 'linux modules buildinfo' },
+        { waitMs: 30000 },
+      );
+    } catch {
+      result = { status: 504 };
+    }
+    await recordCommandLog({
+      username,
+      macAddress: mac,
+      commandType: 'module-autobuild',
+      command: 'linux modules buildinfo',
+      status: result && result.status,
+    }).catch(() => {});
+    if (!result || result.status !== 200) {
+      return null;
+    }
+
+    const deadline = Date.now() + autobuildWaitMs;
+    for (;;) {
+      const latest = await db.latestBuildInfoForDevice(deviceId);
+      if (latest && latest.upload.id !== previousUploadId) {
+        return latest;
+      }
+      if (Date.now() >= deadline) {
+        return null;
+      }
+      await sleep(autobuildPollMs);
+    }
+  }
   const listUserDeviceMacs = deps.listUserDeviceMacs
     || ((username) => deviceRegistry().listUserDeviceMacs(username));
   const findDeviceByMac = deps.findDeviceByMac
@@ -94,12 +141,23 @@ module.exports = function registerModuleBuildRoutes(app, deps = {}) {
     return String(mac || '').toLowerCase().replace(/[^0-9a-f]/g, '');
   }
 
-  app.post('/devices/:mac/module-builds', async (req, res) => {
+  /*
+   * Create a build request from the device's latest module-buildinfo upload.
+   *
+   * Body (optional): { autobuild: true } — first push `linux modules
+   * buildinfo` to the live agent session and wait for the fresh upload, so
+   * the build uses current kernel facts (and works on devices that have
+   * never uploaded buildinfo). Without autobuild, a device with no buildinfo
+   * upload is a 409.
+   */
+  app.post('/devices/:mac/module-builds', parseBody, async (req, res) => {
     const mac = String(req.params.mac || '');
     if (!MAC_ADDRESS_RE.test(mac)) {
       res.status(400).json({ error: 'invalid mac address' });
       return;
     }
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const autobuild = body.autobuild === true;
 
     // ACL: resolve the requested MAC within the caller's associated devices.
     let macs;
@@ -121,10 +179,24 @@ module.exports = function registerModuleBuildRoutes(app, deps = {}) {
       return;
     }
 
-    const latest = await db.latestBuildInfoForDevice(device.id);
+    let latest = await db.latestBuildInfoForDevice(device.id);
+    if (autobuild) {
+      // Always refresh: stale facts after a kernel update would build the
+      // wrong module. The previous upload id tells the poll what "fresh" is.
+      const refreshed = await refreshBuildInfo(
+        req.authUser, storedMac, device.id, latest ? latest.upload.id : null,
+      );
+      if (!refreshed) {
+        res.status(504).json({
+          error: 'autobuild failed: agent did not produce a module-buildinfo upload (device offline?)',
+        });
+        return;
+      }
+      latest = refreshed;
+    }
     if (!latest) {
       res.status(409).json({
-        error: 'no module-buildinfo upload for this device; run `linux modules buildinfo` on the agent first',
+        error: 'no module-buildinfo upload for this device; run `linux modules buildinfo` on the agent first or pass autobuild:true',
       });
       return;
     }
@@ -200,8 +272,6 @@ module.exports = function registerModuleBuildRoutes(app, deps = {}) {
    *             exact 'match', since a plain load would be refused anyway.
    *   destPath  where the .ko lands on the device (default /tmp/ela_kmod.ko)
    */
-  const parseBody = deps.parseBody || express.json({ limit: 64 * 1024, type: () => true });
-
   app.post('/module-builds/:id/deliver', parseBody, async (req, res) => {
     const id = String(req.params.id || '');
     if (!/^[0-9]+$/.test(id)) {
