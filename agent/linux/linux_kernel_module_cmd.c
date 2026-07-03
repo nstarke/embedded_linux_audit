@@ -552,50 +552,47 @@ static int upload_kernel_config(const char *config_path)
  * before giving up on the config. Only meaningful against the real /proc:
  * with a test fixture root, modprobe cannot create files there anyway.
  *
- * Detection deliberately avoids the shell (`command -v` and even /bin/sh
- * may be absent on embedded systems): probe the conventional sbin/bin
- * locations with access(X_OK), then fork+execv the absolute path.
- *
- * The candidate directories are the helper's hardcoded trusted fallbacks
- * (/sbin, /usr/sbin, /bin, /usr/bin) rather than $PATH: modprobe lives in
- * those on any normal system, and keeping the executed path out of an
- * environment variable avoids handing control of what we exec to $PATH.
+ * Deliberately avoids the shell (`command -v` and even /bin/sh may be absent
+ * on embedded systems). The value handed to the exec sink is only ever a
+ * string literal, never a $PATH-derived path, so the environment cannot
+ * dictate which binary we run: libc searches $PATH for the constant name
+ * "modprobe" first (honouring an operator-provided PATH, e.g. the test
+ * stub), then the conventional sbin/bin locations that embedded PATHs
+ * frequently omit, built purely from literals.
  */
 static void try_modprobe_configs(void)
 {
-	char candidate[PATH_MAX];
-	char modprobe[PATH_MAX];
-	unsigned int i;
-	bool found = false;
+	static const char *const dirs[] = {
+		"/sbin", "/usr/sbin", "/bin", "/usr/bin",
+	};
 	pid_t pid;
-
-	for (i = 0; ela_kernel_buildinfo_tool_candidate(NULL,
-							"modprobe", i,
-							candidate,
-							sizeof(candidate)) == 0;
-	     i++) {
-		if (access(candidate, X_OK) == 0) {
-			snprintf(modprobe, sizeof(modprobe), "%s", candidate);
-			found = true;
-			break;
-		}
-	}
-	if (!found)
-		return;
 
 	pid = fork();
 	if (pid < 0)
 		return;
 	if (pid == 0) {
-		char *const argv[] = { modprobe, (char *)"configs", NULL };
+		char *const argv[] = {
+			(char *)"modprobe", (char *)"configs", NULL,
+		};
 		int devnull = open("/dev/null", O_WRONLY);
+		unsigned int i;
 
 		if (devnull >= 0) {
 			dup2(devnull, STDOUT_FILENO);
 			dup2(devnull, STDERR_FILENO);
 			close(devnull);
 		}
-		execv(modprobe, argv);
+		/* Constant program name: libc walks $PATH, but the argument to
+		 * the exec sink is a literal, not an environment value. */
+		execvp("modprobe", argv);
+		for (i = 0; i < sizeof(dirs) / sizeof(dirs[0]); i++) {
+			char abspath[PATH_MAX];
+			int n = snprintf(abspath, sizeof(abspath),
+					 "%s/modprobe", dirs[i]);
+
+			if (n > 0 && (size_t)n < sizeof(abspath))
+				execv(abspath, argv);
+		}
 		_exit(127);
 	}
 	/* Best-effort: whether modprobe worked shows up as /proc/config.gz
