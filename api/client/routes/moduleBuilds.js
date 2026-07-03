@@ -43,6 +43,21 @@ function serializeRequest(row) {
   };
 }
 
+// A kernel that refuses the module for a vermagic/format reason surfaces
+// ENOEXEC, which the agent reports as "Exec format error", "Invalid module
+// format", or a "version magic '...' should be '...'" line. Scan the whole
+// agent result for any of these so we can react by re-delivering a
+// vermagic-patched copy.
+function looksLikeVermagicReject(result) {
+  if (!result) {
+    return false;
+  }
+  const hay = JSON.stringify(result).toLowerCase();
+  return hay.includes('exec format error')
+    || hay.includes('invalid module format')
+    || hay.includes('version magic');
+}
+
 /**
  * Operator routes for kernel-module builds:
  *
@@ -357,17 +372,13 @@ module.exports = function registerModuleBuildRoutes(app, deps = {}) {
       return;
     }
 
-    // Raw ELA agent commands over the live terminal session — the same
-    // download+run shape the self-update flow uses.
-    const downloadCommand = `linux download-file ${baseUrl}/module/${issued.token} ${destPath}`;
-    const loadCommand = `linux modules load${force ? ' --force' : ''} ${destPath}`;
-
-    const commands = load ? [downloadCommand, loadCommand] : [downloadCommand];
+    // Run one raw ELA command over the live terminal session, audit-log it with
+    // the token redacted (the log must not become a second copy of the
+    // credential), record the result, and return it.
     const results = [];
-    for (const command of commands) {
+    const runDeliverStep = async (command, token, commandType) => {
       let result;
       try {
-        // eslint-disable-next-line no-await-in-loop
         result = await sendCommand(
           { type: 'exec', mode: 'ela', mac: device.macAddress, command },
           { waitMs: 60000 },
@@ -375,26 +386,61 @@ module.exports = function registerModuleBuildRoutes(app, deps = {}) {
       } catch {
         result = { status: 504, body: { error: 'terminal command timed out or terminal API unavailable' } };
       }
-      // Audit-log with the token redacted: the log line must not become a
-      // second copy of the credential.
-      // eslint-disable-next-line no-await-in-loop
+      const redacted = command.split(token).join('<token>');
       await recordCommandLog({
         username: req.authUser,
         macAddress: device.macAddress,
-        commandType: 'module-deliver',
-        command: command.replace(issued.token, '<token>'),
+        commandType,
+        command: redacted,
         status: result && result.status,
       }).catch(() => {});
-      results.push({ command: command.replace(issued.token, '<token>'), ...result });
-      if (!result || result.status !== 200) {
-        break;
+      results.push({ command: redacted, ...result });
+      return result;
+    };
+
+    // Same download+run shape the self-update flow uses.
+    const dl = await runDeliverStep(
+      `linux download-file ${baseUrl}/module/${issued.token} ${destPath}`,
+      issued.token, 'module-deliver',
+    );
+    let lastLoad = null;
+    if (load && dl && dl.status === 200) {
+      lastLoad = await runDeliverStep(
+        `linux modules load${force ? ' --force' : ''} ${destPath}`,
+        issued.token, 'module-deliver',
+      );
+    }
+
+    // Reactive vermagic patch: a kernel built without CONFIG_MODULE_FORCE_LOAD
+    // ignores --force, so a vermagic mismatch still fails the load with ENOEXEC
+    // ("Exec format error"). When we know the device's vermagic, mint a fresh
+    // token and re-deliver the SAME module with its .modinfo vermagic rewritten
+    // to match — the agent-api patches it at serve time when the download URL
+    // carries ?vermagic=device — then load without --force since it now matches.
+    let vermagicPatched = false;
+    if (load && row.deviceVermagic && looksLikeVermagicReject(lastLoad)) {
+      const patchTok = await db.issueDownloadToken(row.id);
+      if (patchTok) {
+        vermagicPatched = true;
+        const pdl = await runDeliverStep(
+          `linux download-file ${baseUrl}/module/${patchTok.token}?vermagic=device ${destPath}`,
+          patchTok.token, 'module-deliver-patched',
+        );
+        if (pdl && pdl.status === 200) {
+          lastLoad = await runDeliverStep(
+            `linux modules load ${destPath}`, patchTok.token, 'module-deliver-patched',
+          );
+        }
       }
     }
 
-    const ok = results.length === commands.length && results.every((r) => r.status === 200);
-    res.status(ok ? 200 : 502).json({
-      delivered: ok,
+    const delivered = load
+      ? Boolean(lastLoad && lastLoad.status === 200 && !looksLikeVermagicReject(lastLoad))
+      : Boolean(dl && dl.status === 200);
+    res.status(delivered ? 200 : 502).json({
+      delivered,
       force,
+      vermagicPatched,
       destPath,
       tokenExpiresAt: issued.expiresAt,
       results,

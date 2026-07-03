@@ -4,7 +4,9 @@
 const path = require('path');
 const fsp = require('fs/promises');
 const { spawn } = require('child_process');
-const { resolveTarget, parseKernelRelease, compareVermagic } = require('./kernelTarget');
+const {
+  resolveTarget, parseKernelRelease, compareVermagic, parseVermagicFlags,
+} = require('./kernelTarget');
 
 // Where the repo (kmod/ sources + build script) is mounted in the builder
 // container. Same mount as the binary builds.
@@ -74,6 +76,21 @@ function runModuleBuild(payload, opts = {}) {
   };
   if (configPath) {
     buildEnv.ELA_KMOD_CONFIG_PATH = configPath;
+  }
+  // When there's no device config, the build falls back to a defconfig. Feed
+  // it the vermagic-affecting flags read off the device's vermagic string so
+  // the built module's vermagic matches (SMP/preempt/mod_unload change the
+  // module ABI, not just the string). Only set when we actually have a
+  // vermagic; empty envs tell the script to leave the defconfig defaults.
+  if (vermagic) {
+    const f = parseVermagicFlags(vermagic);
+    buildEnv.ELA_KMOD_VM_SMP = f.smp ? 'y' : 'n';
+    buildEnv.ELA_KMOD_VM_PREEMPT = (f.preempt || f.preemptRt) ? 'y' : 'n';
+    buildEnv.ELA_KMOD_VM_MODULE_UNLOAD = f.modUnload ? 'y' : 'n';
+    buildEnv.ELA_KMOD_VM_PATCH_PHYS_VIRT = f.patchPhysVirt ? 'y' : 'n';
+    if (f.armArch) {
+      buildEnv.ELA_KMOD_VM_ARM_ARCH = f.armArch;
+    }
   }
 
   return new Promise((resolve, reject) => {

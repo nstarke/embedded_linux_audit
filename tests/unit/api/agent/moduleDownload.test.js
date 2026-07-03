@@ -117,4 +117,70 @@ describe('module download route', () => {
     expect(res.statusCode).toBe(404);
     expect(res.body).toBe('not found\n');
   });
+
+  test('?vermagic=device streams the vermagic-patched bytes, not the raw file', async () => {
+    const patchVermagic = jest.fn(() => Buffer.from('PATCHED-KO-BYTES'));
+    const { app, deps } = register({
+      fsp: {
+        stat: jest.fn().mockResolvedValue({ isFile: () => true, size: 13 }),
+        readFile: jest.fn().mockResolvedValue(Buffer.from('RAW-KO')),
+      },
+      consumeDownloadToken: jest.fn().mockResolvedValue({
+        id: 7,
+        artifactPath: '/data/agent/aa:bb:cc:dd:ee:ff/modules/7/ela_kmod.ko',
+        deviceVermagic: '3.12.19-rt30 SMP mod_unload ARMv7 p2v8 ',
+      }),
+      patchVermagic,
+    });
+    const res = createRes();
+
+    await app.gets['/module/:token']({ params: { token: 'tok' }, query: { vermagic: 'device' } }, res);
+
+    expect(deps.fsp.readFile).toHaveBeenCalledWith('/data/agent/aa:bb:cc:dd:ee:ff/modules/7/ela_kmod.ko');
+    expect(patchVermagic).toHaveBeenCalledWith(Buffer.from('RAW-KO'), '3.12.19-rt30 SMP mod_unload ARMv7 p2v8 ');
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toEqual(Buffer.from('PATCHED-KO-BYTES'));
+    expect(res.headers['content-length']).toBe('PATCHED-KO-BYTES'.length);
+    expect(res.sentFile).toBeUndefined(); // did NOT fall through to sendFile
+    expect(deps.verboseResponseLog).toHaveBeenCalledWith(expect.anything(), 200, 'PATCHED-KO-BYTES'.length);
+  });
+
+  test('falls back to the unpatched file when patching throws', async () => {
+    const { app } = register({
+      fsp: {
+        stat: jest.fn().mockResolvedValue({ isFile: () => true, size: 13 }),
+        readFile: jest.fn().mockResolvedValue(Buffer.from('RAW-KO')),
+      },
+      consumeDownloadToken: jest.fn().mockResolvedValue({
+        id: 7,
+        artifactPath: '/data/agent/aa:bb:cc:dd:ee:ff/modules/7/ela_kmod.ko',
+        deviceVermagic: 'x',
+      }),
+      patchVermagic: jest.fn(() => { throw new Error('no vermagic in .modinfo'); }),
+    });
+    const res = createRes();
+
+    await app.gets['/module/:token']({ params: { token: 'tok' }, query: { vermagic: 'device' } }, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.sentFile).toBe('/data/agent/aa:bb:cc:dd:ee:ff/modules/7/ela_kmod.ko');
+  });
+
+  test('does not patch without the ?vermagic=device flag', async () => {
+    const patchVermagic = jest.fn();
+    const { app } = register({
+      consumeDownloadToken: jest.fn().mockResolvedValue({
+        id: 7,
+        artifactPath: '/data/agent/aa:bb:cc:dd:ee:ff/modules/7/ela_kmod.ko',
+        deviceVermagic: 'x',
+      }),
+      patchVermagic,
+    });
+    const res = createRes();
+
+    await app.gets['/module/:token']({ params: { token: 'tok' }, query: {} }, res);
+
+    expect(patchVermagic).not.toHaveBeenCalled();
+    expect(res.sentFile).toBe('/data/agent/aa:bb:cc:dd:ee:ff/modules/7/ela_kmod.ko');
+  });
 });

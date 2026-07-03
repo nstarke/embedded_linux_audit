@@ -5,6 +5,7 @@ const {
   parseKernelRelease,
   kernelTarballUrl,
   compareVermagic,
+  parseVermagicFlags,
 } = require('../../../../api/builder/kernelTarget');
 
 describe('kernelTarget', () => {
@@ -87,5 +88,54 @@ describe('kernelTarget', () => {
     expect(compareVermagic('3.12.19 SMP mod_unload ARMv7', device)).toBe('mismatch');
     expect(compareVermagic('', device)).toBe('mismatch');
     expect(compareVermagic(device, '')).toBe('mismatch');
+  });
+
+  // ── parseVermagicFlags ─────────────────────────────────────────────────
+
+  test('reads config-derived flags off a vermagic string', () => {
+    expect(parseVermagicFlags('3.12.19-rt30 SMP mod_unload ARMv7 p2v8')).toEqual({
+      smp: true,
+      preempt: false,
+      preemptRt: false,
+      modUnload: true,
+      modversions: false,
+      armArch: 'ARMv7',
+      patchPhysVirt: true,
+    });
+  });
+
+  test('detects preempt, modversions, and a non-SMP ARMv5 target', () => {
+    expect(parseVermagicFlags('4.4.0 preempt modversions ARMv5')).toMatchObject({
+      smp: false,
+      preempt: true,
+      modversions: true,
+      modUnload: false,
+      armArch: 'ARMv5',
+      patchPhysVirt: false,
+    });
+  });
+
+  test('drops the release token and ignores unknown tokens', () => {
+    // First token (the release) must not be mistaken for a flag, and an
+    // x86_64-style vermagic carries no ARM arch token.
+    const f = parseVermagicFlags('5.15.0-generic SMP mod_unload modversions');
+    expect(f.smp).toBe(true);
+    expect(f.modUnload).toBe(true);
+    expect(f.modversions).toBe(true);
+    expect(f.armArch).toBeNull();
+  });
+
+  test('empty / missing vermagic yields all-false flags', () => {
+    const empty = {
+      smp: false,
+      preempt: false,
+      preemptRt: false,
+      modUnload: false,
+      modversions: false,
+      armArch: null,
+      patchPhysVirt: false,
+    };
+    expect(parseVermagicFlags('')).toEqual(empty);
+    expect(parseVermagicFlags(null)).toEqual(empty);
   });
 });

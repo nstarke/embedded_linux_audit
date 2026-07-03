@@ -37,6 +37,14 @@ OUT_DIR="${ELA_KMOD_OUT_DIR:-}"
 CACHE_DIR="${ELA_KMOD_CACHE_DIR:-/var/cache/ela-kmod}"
 REPO_ROOT="${ELA_BUILD_REPO_ROOT:-/src}"
 SRC_DIR="${ELA_KMOD_SRC_DIR:-$REPO_ROOT/kmod}"
+# Vermagic-derived defconfig flags (set by runModuleBuild when the device has a
+# vermagic; absent otherwise). Default to empty so `set -u` doesn't abort on the
+# no-vermagic / non-ARM paths — empty means "leave the defconfig default".
+ELA_KMOD_VM_SMP="${ELA_KMOD_VM_SMP:-}"
+ELA_KMOD_VM_PREEMPT="${ELA_KMOD_VM_PREEMPT:-}"
+ELA_KMOD_VM_MODULE_UNLOAD="${ELA_KMOD_VM_MODULE_UNLOAD:-}"
+ELA_KMOD_VM_PATCH_PHYS_VIRT="${ELA_KMOD_VM_PATCH_PHYS_VIRT:-}"
+ELA_KMOD_VM_ARM_ARCH="${ELA_KMOD_VM_ARM_ARCH:-}"
 
 [ -n "$KERNEL_VERSION" ] || die "ELA_KMOD_KERNEL_VERSION is required"
 [ -n "$ARCH" ] || die "ELA_KMOD_ARCH is required"
@@ -78,6 +86,13 @@ if [ -n "$CONFIG_PATH" ]; then
     fi
     grep -q '^CONFIG_' "$WORK_CONFIG" || die "config has no CONFIG_ lines: $CONFIG_PATH"
     CONFIG_HASH="$(sha256sum "$WORK_CONFIG" | cut -c1-16)"
+else
+    # No device config: the synthesized defconfig is specialized by the
+    # vermagic-derived flags/arch, so fold them into the cache key. Otherwise
+    # two devices that differ only in (say) SMP would collide on one prepared
+    # tree and the second would silently reuse the first one's config.
+    VM_SIG="arch=${ELA_KMOD_VM_ARM_ARCH} smp=${ELA_KMOD_VM_SMP} preempt=${ELA_KMOD_VM_PREEMPT} modunload=${ELA_KMOD_VM_MODULE_UNLOAD} p2v=${ELA_KMOD_VM_PATCH_PHYS_VIRT}"
+    CONFIG_HASH="defconfig-$(printf '%s' "$VM_SIG" | sha256sum | cut -c1-16)"
 fi
 
 TREE_KEY="${KERNEL_VERSION}-${ARCH}-${CONFIG_HASH}"
@@ -137,13 +152,44 @@ if [ ! -f "$PREPARED_STAMP" ]; then
         # older/newer minor) with their defaults, non-interactively.
         kmake olddefconfig
     else
+        # `make defconfig`. NOTE: on ARM this is versatile_defconfig (ARMv5, UP),
+        # where CONFIG_SMP / ARMv7 can't be selected — the flags below are still
+        # applied but olddefconfig drops the unsatisfiable ones. Reaching an
+        # exact ARMv7/SMP vermagic that way needs multi_v7_defconfig, which drags
+        # in the device-tree host tools (scripts/dtc) that don't build under a
+        # modern host toolchain on this vintage kernel; exact-vermagic matching
+        # is handled downstream by vermagic patching instead.
         log "no device config; using $ARCH defconfig"
         kmake defconfig
+
         # A defconfig build is best-effort: modules must at least be enabled,
         # and MODVERSIONS off avoids CRC mismatches against the real kernel
-        # (the load path still verifies/forces via vermagic).
+        # (we can't reproduce the device's symbol CRCs, so matching that
+        # vermagic token would only make loads fail on the CRC check instead).
         "$TREE/scripts/config" --file "$TREE/.config" \
             -e MODULES -d MODVERSIONS -d MODULE_SIG -d MODULE_SIG_FORCE
+
+        # Reconstruct the vermagic-affecting flags the device advertised so the
+        # built module's vermagic matches without the full config. An empty env
+        # means "unknown" (no device vermagic) -> leave the defconfig default.
+        ela_apply_flag() {  # $1 = y|n|"" , $2 = CONFIG symbol
+            case "$1" in
+                y) "$TREE/scripts/config" --file "$TREE/.config" -e "$2" ;;
+                n) "$TREE/scripts/config" --file "$TREE/.config" -d "$2" ;;
+            esac
+        }
+        ela_apply_flag "$ELA_KMOD_VM_SMP" SMP
+        ela_apply_flag "$ELA_KMOD_VM_PREEMPT" PREEMPT
+        ela_apply_flag "$ELA_KMOD_VM_MODULE_UNLOAD" MODULE_UNLOAD
+        if [ "$ARCH" = arm ]; then
+            ela_apply_flag "$ELA_KMOD_VM_PATCH_PHYS_VIRT" ARM_PATCH_PHYS_VIRT
+        fi
+        [ -n "$ELA_KMOD_VM_SMP" ] && log "applied vermagic flags:" \
+            "SMP=$ELA_KMOD_VM_SMP PREEMPT=$ELA_KMOD_VM_PREEMPT" \
+            "MODULE_UNLOAD=$ELA_KMOD_VM_MODULE_UNLOAD" \
+            "ARM_PATCH_PHYS_VIRT=$ELA_KMOD_VM_PATCH_PHYS_VIRT"
+
+        # olddefconfig settles any symbols the forced options pulled in/out.
         kmake olddefconfig
     fi
 

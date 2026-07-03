@@ -503,6 +503,82 @@ describe('module build routes', () => {
       // The load command must not run after a failed download.
       expect(sendCommand).toHaveBeenCalledTimes(1);
     });
+
+    // A device row that carries a vermagic (needed for the reactive patch path).
+    const ROW_WITH_VERMAGIC = {
+      ...SUCCEEDED_ROW,
+      vermagicResult: 'release-match',
+      deviceVermagic: '3.12.19-rt30 SMP mod_unload ARMv7 p2v8 ',
+    };
+
+    test('re-delivers a vermagic-patched module when a --force load hits Exec format error', async () => {
+      const { app, deps, sendCommand } = deliverSetup({
+        db: { getModuleBuildRequest: jest.fn().mockResolvedValue(ROW_WITH_VERMAGIC) },
+      });
+      // download OK, --force load rejected (ENOEXEC), patched download OK, patched load OK.
+      sendCommand
+        .mockResolvedValueOnce({ status: 200, body: { output: 'saved' } })
+        .mockResolvedValueOnce({ status: 200, body: { output: 'insmod: ERROR: could not insert module: Exec format error' } })
+        .mockResolvedValueOnce({ status: 200, body: { output: 'saved' } })
+        .mockResolvedValueOnce({ status: 200, body: { output: 'loaded' } });
+      const res = createRes();
+
+      await app.posts['/module-builds/:id/deliver'](
+        { params: { id: '7' }, body: {}, authUser: 'alice' }, res,
+      );
+
+      // A second token was minted for the patched re-delivery.
+      expect(deps.db.issueDownloadToken).toHaveBeenCalledTimes(2);
+      expect(sendCommand).toHaveBeenCalledTimes(4);
+      // The patched download asks the agent-api to rewrite the vermagic.
+      expect(sendCommand.mock.calls[2][0].command).toContain('?vermagic=device');
+      // The retried load drops --force (the vermagic now matches).
+      expect(sendCommand.mock.calls[3][0].command).toBe('linux modules load /tmp/ela_kmod.ko');
+      expect(res.statusCode).toBe(200);
+      expect(res.jsonBody.delivered).toBe(true);
+      expect(res.jsonBody.vermagicPatched).toBe(true);
+    });
+
+    test('does not patch when the forced load succeeds', async () => {
+      const { app, deps, sendCommand } = deliverSetup({
+        db: { getModuleBuildRequest: jest.fn().mockResolvedValue(ROW_WITH_VERMAGIC) },
+      });
+      sendCommand.mockResolvedValue({ status: 200, body: { output: 'loaded' } });
+      const res = createRes();
+
+      await app.posts['/module-builds/:id/deliver'](
+        { params: { id: '7' }, body: {}, authUser: 'alice' }, res,
+      );
+
+      expect(sendCommand).toHaveBeenCalledTimes(2);
+      expect(deps.db.issueDownloadToken).toHaveBeenCalledTimes(1);
+      expect(res.jsonBody.vermagicPatched).toBe(false);
+      expect(res.jsonBody.delivered).toBe(true);
+    });
+
+    test('reports failure without patching when the row has no device vermagic', async () => {
+      const { app, deps, sendCommand } = deliverSetup({
+        db: {
+          getModuleBuildRequest: jest.fn().mockResolvedValue({
+            ...SUCCEEDED_ROW, vermagicResult: 'release-match', deviceVermagic: null,
+          }),
+        },
+      });
+      sendCommand
+        .mockResolvedValueOnce({ status: 200, body: { output: 'saved' } })
+        .mockResolvedValueOnce({ status: 200, body: { output: 'Exec format error' } });
+      const res = createRes();
+
+      await app.posts['/module-builds/:id/deliver'](
+        { params: { id: '7' }, body: {}, authUser: 'alice' }, res,
+      );
+
+      expect(sendCommand).toHaveBeenCalledTimes(2); // no retry
+      expect(deps.db.issueDownloadToken).toHaveBeenCalledTimes(1);
+      expect(res.jsonBody.vermagicPatched).toBe(false);
+      expect(res.jsonBody.delivered).toBe(false);
+      expect(res.statusCode).toBe(502);
+    });
   });
 
   describe('GET /module-builds', () => {

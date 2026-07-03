@@ -109,6 +109,36 @@ describe('runModuleBuild', () => {
     await expect(promise).resolves.toEqual(expect.objectContaining({ vermagicResult: 'unverified' }));
   });
 
+  test('exports vermagic-derived config flags for the defconfig fallback', async () => {
+    const child = fakeChild();
+    const spawn = jest.fn(() => child);
+    runModuleBuild({
+      ...BASE_PAYLOAD,
+      kernelRelease: '3.12.19-rt30',
+      isa: 'arm32',
+      vermagic: '3.12.19-rt30 SMP mod_unload ARMv7 p2v8',
+    }, { spawn, fsp: fakeFsp() });
+
+    expect(spawn.mock.calls[0][2].env).toEqual(expect.objectContaining({
+      ELA_KMOD_VM_SMP: 'y',
+      ELA_KMOD_VM_PREEMPT: 'n',
+      ELA_KMOD_VM_MODULE_UNLOAD: 'y',
+      ELA_KMOD_VM_PATCH_PHYS_VIRT: 'y',
+      ELA_KMOD_VM_ARM_ARCH: 'ARMv7',
+    }));
+    child.emit('close', 0);
+  });
+
+  test('omits the vermagic flag env entirely when there is no device vermagic', async () => {
+    const child = fakeChild();
+    const spawn = jest.fn(() => child);
+    runModuleBuild({ ...BASE_PAYLOAD, vermagic: undefined }, { spawn, fsp: fakeFsp() });
+    const { env } = spawn.mock.calls[0][2];
+    expect(env).not.toHaveProperty('ELA_KMOD_VM_SMP');
+    expect(env).not.toHaveProperty('ELA_KMOD_VM_ARM_ARCH');
+    child.emit('close', 0);
+  });
+
   test('rejects without spawning on missing outDir, bad release, or unsupported target', async () => {
     const spawn = jest.fn();
     await expect(runModuleBuild({ ...BASE_PAYLOAD, outDir: undefined }, { spawn }))

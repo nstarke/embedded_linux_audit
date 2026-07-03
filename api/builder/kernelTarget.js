@@ -100,9 +100,58 @@ function compareVermagic(built, wanted) {
   return a.split(/\s+/)[0] === b.split(/\s+/)[0] ? 'release-match' : 'mismatch';
 }
 
+/**
+ * Parse the config-derived flag tokens the kernel bakes into a vermagic string
+ * (from include/linux/vermagic.h + the arch's MODULE_ARCH_VERMAGIC). The first
+ * whitespace token is the kernel release; each remaining token maps to a
+ * CONFIG_ symbol, so when the device config is unavailable we can still
+ * reconstruct the vermagic-affecting parts of a defconfig build.
+ *
+ *   "3.12.19-rt30 SMP mod_unload ARMv7 p2v8" ->
+ *     { smp:true, preempt:false, preemptRt:false, modUnload:true,
+ *       modversions:false, armArch:'ARMv7', patchPhysVirt:true }
+ *
+ * Unknown tokens are ignored. `armArch` is the raw "ARMv<n>" token (or null),
+ * which the build script uses to pick an arch-appropriate base defconfig — SMP
+ * and the ARMv<n> level are coupled to the CPU/platform, not a lone toggle.
+ *
+ * @param {string} vermagic
+ * @returns {{smp:boolean, preempt:boolean, preemptRt:boolean, modUnload:boolean,
+ *   modversions:boolean, armArch:(string|null), patchPhysVirt:boolean}}
+ */
+function parseVermagicFlags(vermagic) {
+  const tokens = String(vermagic || '').trim().split(/\s+/).slice(1);
+  const flags = {
+    smp: false,
+    preempt: false,
+    preemptRt: false,
+    modUnload: false,
+    modversions: false,
+    armArch: null,
+    patchPhysVirt: false,
+  };
+  for (const tok of tokens) {
+    switch (tok) {
+      case 'SMP': flags.smp = true; break;
+      case 'preempt': flags.preempt = true; break;
+      case 'preempt_rt': flags.preemptRt = true; break;
+      case 'mod_unload': flags.modUnload = true; break;
+      case 'modversions': flags.modversions = true; break;
+      case 'p2v8': flags.patchPhysVirt = true; break;
+      default:
+        if (/^ARMv\d+$/.test(tok)) {
+          flags.armArch = tok;
+        }
+        break;
+    }
+  }
+  return flags;
+}
+
 module.exports = {
   resolveTarget,
   parseKernelRelease,
   kernelTarballUrl,
   compareVermagic,
+  parseVermagicFlags,
 };
