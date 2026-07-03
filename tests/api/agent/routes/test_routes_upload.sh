@@ -115,6 +115,26 @@ fi
 run_curl_case "POST uboot-environment stores text log" POST "$TEST_WEB_BASE_URL/$MAC/upload/uboot-environment" 200 "ok" -H "Content-Type: text/plain" --data-binary "env line"
 assert_file_contains "uboot-environment upload writes env log" "$MAC_DIR/uboot/env/uboot-environment.text_plain.log" "env line"
 
+run_curl_case "POST module-buildinfo stores json log" POST "$TEST_WEB_BASE_URL/$MAC/upload/module-buildinfo" 200 "ok" -H "Content-Type: application/json" --data-binary '{"record":"module_buildinfo","kernel_release":"6.1.0-test","vermagic":"6.1.0-test SMP mod_unload x86_64","isa":"x86_64","bits":"64","endianness":"little","config_available":true,"config_compressed":true}'
+assert_file_contains "module-buildinfo upload writes json log" "$MAC_DIR/module-buildinfo/module-buildinfo.application_json.log" '"kernel_release":"6.1.0-test"'
+
+run_curl_body_contains_case "POST kernel-config rejects json content" POST "$TEST_WEB_BASE_URL/$MAC/upload/kernel-config" 415 "unsupported content type; expected one of:" -H "Content-Type: application/json" --data-binary '{}'
+run_curl_case "POST kernel-config stores binary artifact" POST "$TEST_WEB_BASE_URL/$MAC/upload/kernel-config" 200 "ok" -H "Content-Type: application/octet-stream" --data-binary "GZCONFIG"
+kernel_config_count="$(find "$MAC_DIR/kernel-config" -type f -name 'upload_*.bin' | wc -l | tr -d ' ')"
+if [ "$kernel_config_count" = "1" ]; then
+    pass_case "kernel-config upload creates generated .bin file"
+else
+    fail_case "kernel-config upload creates generated .bin file" sh -c "find \"$MAC_DIR/kernel-config\" -maxdepth 1 -type f -print 2>/dev/null || true"
+fi
+
+run_curl_case "POST physmem stores binary artifact" POST "$TEST_WEB_BASE_URL/$MAC/upload/physmem?filePath=0x1000-16" 200 "ok" -H "Content-Type: application/octet-stream" --data-binary "PHYSMEMBYTES"
+physmem_count="$(find "$MAC_DIR/physmem" -type f -name 'upload_*.bin' | wc -l | tr -d ' ')"
+if [ "$physmem_count" = "1" ]; then
+    pass_case "physmem upload creates generated .bin file"
+else
+    fail_case "physmem upload creates generated .bin file" sh -c "find \"$MAC_DIR/physmem\" -maxdepth 1 -type f -print 2>/dev/null || true"
+fi
+
 run_curl_case "POST efi-vars stores timestamped ndjson log" POST "$TEST_WEB_BASE_URL/$MAC/upload/efi-vars" 200 "ok" -H "Content-Type: application/x-ndjson" --data-binary '{"guid":"g","name":"n"}'
 efi_vars_log="$(find "$MAC_DIR/efi-vars" -maxdepth 1 -type f -name 'efi-vars.*.application_x_ndjson.log' | head -n 1)"
 if [ -n "$efi_vars_log" ]; then

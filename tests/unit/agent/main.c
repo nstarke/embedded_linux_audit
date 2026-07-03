@@ -83,6 +83,9 @@ int run_tpm2_util_tests(void);
 int run_tpm2_output_tests(void);
 #endif
 int run_linux_kernel_module_util_tests(void);
+int run_linux_kernel_buildinfo_util_tests(void);
+int run_ela_kmod_abi_tests(void);
+int run_linux_physmem_util_tests(void);
 
 int main(void)
 {
@@ -171,6 +174,9 @@ int main(void)
 	rc |= run_tpm2_output_tests();
 #endif
 	rc |= run_linux_kernel_module_util_tests();
+	rc |= run_linux_kernel_buildinfo_util_tests();
+	rc |= run_ela_kmod_abi_tests();
+	rc |= run_linux_physmem_util_tests();
 
 	return rc;
 }

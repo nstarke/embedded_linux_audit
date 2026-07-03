@@ -663,6 +663,15 @@ int embedded_linux_audit_dispatch(int argc, char **argv)
 			ret = linux_gdbserver_main(argc - sub_idx, argv + sub_idx);
 		else if (!strcmp(argv[sub_idx], "modules"))
 			ret = linux_kernel_module_main(argc - sub_idx, argv + sub_idx);
+		else if (!strcmp(argv[sub_idx], "memread") ||
+			 !strcmp(argv[sub_idx], "memwrite"))
+			ret = linux_physmem_main(argc - sub_idx, argv + sub_idx);
+		else if (!strcmp(argv[sub_idx], "mmio"))
+			ret = linux_mmio_main(argc - sub_idx, argv + sub_idx);
+		else if (!strcmp(argv[sub_idx], "pci"))
+			ret = linux_pci_main(argc - sub_idx, argv + sub_idx);
+		else if (!strcmp(argv[sub_idx], "physmem"))
+			ret = linux_physctl_main(argc - sub_idx, argv + sub_idx);
 		else if (!strcmp(argv[sub_idx], "pcap")) {
 			if (opts.output_format_explicit)
 				fprintf(stderr,

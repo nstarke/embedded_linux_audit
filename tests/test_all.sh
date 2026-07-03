@@ -82,5 +82,7 @@ run_step "agent script tests" env BIN="$REPO_ROOT/embedded_linux_audit" \
 run_step "API shell tests" /bin/sh "$REPO_ROOT/tests/api/agent/test_all.sh"
 run_step "API agent Jest tests" /bin/sh "$REPO_ROOT/tests/api/agent/test_jest.sh"
 run_step "API terminal Jest tests" /bin/sh "$REPO_ROOT/tests/api/terminal/test_jest.sh"
+# Real kernel fetch + module compile; skips itself unless ELA_RUN_BUILD_TESTS=1.
+run_step "kernel module build integration" /bin/sh "$REPO_ROOT/tests/builder/test_module_build.sh"
 
 exit "$rc"

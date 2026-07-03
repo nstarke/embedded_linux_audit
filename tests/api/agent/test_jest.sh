@@ -12,4 +12,4 @@ if [ ! -x node_modules/.bin/jest ]; then
     exit 1
 fi
 
-node_modules/.bin/jest --runInBand tests/unit/api/agent tests/unit/api/lib
+node_modules/.bin/jest --runInBand tests/unit/api/agent tests/unit/api/lib tests/unit/api/builder tests/unit/api/client

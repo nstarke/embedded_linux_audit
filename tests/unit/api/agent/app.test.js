@@ -17,6 +17,7 @@ function loadCreateApp() {
   const registerTestsRoute = jest.fn();
   const registerUbootEnvRoute = jest.fn();
   const registerIsaRoute = jest.fn();
+  const registerModuleDownloadRoute = jest.fn();
   const registerAssetRoute = jest.fn();
   const registerUploadRoute = jest.fn();
   const normalizeContentType = jest.fn();
@@ -37,6 +38,7 @@ function loadCreateApp() {
   jest.doMock('../../../../api/agent/routes/tests', () => registerTestsRoute);
   jest.doMock('../../../../api/agent/routes/ubootEnv', () => registerUbootEnvRoute);
   jest.doMock('../../../../api/agent/routes/isa', () => registerIsaRoute);
+  jest.doMock('../../../../api/agent/routes/moduleDownload', () => registerModuleDownloadRoute);
   jest.doMock('../../../../api/agent/routes/assets', () => registerAssetRoute);
   jest.doMock('../../../../api/agent/routes/upload', () => registerUploadRoute);
   jest.doMock('../../../../api/agent/serverUtils', () => ({
@@ -63,6 +65,7 @@ function loadCreateApp() {
     registerTestsRoute,
     registerUbootEnvRoute,
     registerIsaRoute,
+    registerModuleDownloadRoute,
     registerAssetRoute,
     registerUploadRoute,
     logPathForContentType,
@@ -88,6 +91,7 @@ describe('agent app bootstrap', () => {
       registerTestsRoute,
       registerUbootEnvRoute,
       registerIsaRoute,
+      registerModuleDownloadRoute,
       registerAssetRoute,
       registerUploadRoute,
       logPathForContentType,
@@ -121,6 +125,7 @@ describe('agent app bootstrap', () => {
     expect(registerTestsRoute).toHaveBeenCalledWith(app, expectedDeps);
     expect(registerUbootEnvRoute).toHaveBeenCalledWith(app, expectedDeps);
     expect(registerIsaRoute).toHaveBeenCalledWith(app, expectedDeps);
+    expect(registerModuleDownloadRoute).toHaveBeenCalledWith(app, expectedDeps);
     expect(registerUploadRoute).toHaveBeenCalledWith(app, expectedDeps);
     expect(registerAssetRoute).toHaveBeenCalledWith(app, expectedDeps);
 

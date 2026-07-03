@@ -166,6 +166,25 @@ int ela_kernel_module_prepare_request(int argc, char **argv,
 		return 0;
 	}
 
+	if (!strcmp(argv[1], "buildinfo")) {
+		request->action = ELA_KERNEL_MODULE_ACTION_BUILDINFO;
+		if (argc == 3 && (!strcmp(argv[2], "-h") || !strcmp(argv[2], "--help"))) {
+			request->show_help = true;
+			return 0;
+		}
+		if (argc == 2) {
+			/* No path given: leave module_path NULL so the caller
+			 * discovers the first .ko under the module tree. */
+			return 0;
+		}
+		if (argc != 3) {
+			set_err(errbuf, errbuf_len, "modules buildinfo accepts at most one module path");
+			return 2;
+		}
+		request->module_path = argv[2];
+		return 0;
+	}
+
 	set_err(errbuf, errbuf_len, "Unknown modules action");
 	return 2;
 }

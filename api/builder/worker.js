@@ -6,6 +6,7 @@ const fsp = require('fs/promises');
 const { Worker } = require('bullmq');
 const { QUEUE_NAME, getWorkerOptions, getBuildQueue, closeBuildQueue } = require('../lib/queue');
 const { runBuild } = require('./runBuild');
+const { startModuleBuildWorker } = require('./moduleBuildWorker');
 const { resolveAssetsDir, genericDir } = require('../lib/agentAssets');
 
 // The one-time generic build: cross-compile every ISA once, with no token/URL
@@ -74,6 +75,10 @@ worker.on('error', (err) => {
 
 console.log(`[builder] worker listening on queue "${QUEUE_NAME}"`);
 
+// Kernel-module builds run on their own queue with their own concurrency so a
+// slow modules_prepare never blocks binary/launcher builds.
+const moduleBuildWorker = startModuleBuildWorker();
+
 // Kick off the one-time generic build if needed (fire-and-forget; the worker
 // above consumes the enqueued job).
 bootstrapGenericBuild();
@@ -81,6 +86,7 @@ bootstrapGenericBuild();
 async function shutdown() {
   try {
     await worker.close();
+    await moduleBuildWorker.close();
   } finally {
     process.exit(0);
   }

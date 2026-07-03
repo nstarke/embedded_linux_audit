@@ -133,6 +133,29 @@ function parseArchReport(contentType, payloadText) {
   };
 }
 
+function parseKernelBuildInfo(contentType, payloadText) {
+  if (contentType !== 'application/json') {
+    return null;
+  }
+  const parsed = parseJsonValue(payloadText);
+  if (!parsed || parsed.record !== 'module_buildinfo') {
+    return null;
+  }
+  const str = (value) => (typeof value === 'string' && value.length ? value : null);
+  return {
+    kernelRelease: str(parsed.kernel_release),
+    procVersion: str(parsed.proc_version),
+    vermagic: str(parsed.vermagic),
+    modulePath: str(parsed.module_path),
+    isa: str(parsed.isa),
+    bits: str(parsed.bits),
+    endianness: str(parsed.endianness),
+    configSource: str(parsed.config_source),
+    configAvailable: parsed.config_available === true,
+    configCompressed: parsed.config_compressed === true,
+  };
+}
+
 function parseFileListEntries(payloadText, rootPath) {
   return splitLines(payloadText).map((entryPath, index) => ({
     recordIndex: index,
@@ -328,6 +351,7 @@ function normalizeUpload(input) {
     },
     commandUpload: null,
     archReport: null,
+    kernelBuildInfo: null,
     fileListEntries: [],
     grepMatches: [],
     symlinkListEntries: [],
@@ -347,6 +371,10 @@ function normalizeUpload(input) {
 
   if (input.uploadType === 'arch') {
     result.archReport = parseArchReport(input.contentType, payloadText);
+  }
+
+  if (input.uploadType === 'module-buildinfo') {
+    result.kernelBuildInfo = parseKernelBuildInfo(input.contentType, payloadText);
   }
 
   if (input.uploadType === 'file-list') {

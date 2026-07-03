@@ -7,6 +7,7 @@ const auth = require('../auth');
 const registerUploadsRoutes = require('./routes/uploads');
 const registerTerminalRoutes = require('./routes/terminal');
 const registerGdbRoutes = require('./routes/gdb');
+const registerModuleBuildRoutes = require('./routes/moduleBuilds');
 const { openapiSpec } = require('./openapi');
 
 /**
@@ -62,6 +63,9 @@ function createApp(deps = {}) {
   // Operator GDB routes: list active gdbserver sessions on the caller's devices,
   // answered by the GDB bridge API over its own queue. ACL'd the same way.
   registerGdbRoutes(app, deps.gdb || {});
+  // Kernel-module build routes: create a build request from a device's latest
+  // module-buildinfo upload (enqueued to the builder) and poll its status.
+  registerModuleBuildRoutes(app, deps.moduleBuilds || {});
 
   // Translate JSON body-parser failures on the terminal POST routes into the
   // same error shapes the routes use.

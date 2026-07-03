@@ -9,6 +9,7 @@ function loadCreateApp() {
   const authMiddleware = jest.fn();
   const registerUploadsRoutes = jest.fn();
   const registerTerminalRoutes = jest.fn();
+  const registerModuleBuildRoutes = jest.fn();
   const rateLimiter = jest.fn();
   const swaggerServe = [jest.fn()];
   const swaggerSetupHandler = jest.fn();
@@ -24,11 +25,13 @@ function loadCreateApp() {
   jest.doMock('../../../../api/auth', () => ({ middleware: authMiddleware }));
   jest.doMock('../../../../api/client/routes/uploads', () => registerUploadsRoutes);
   jest.doMock('../../../../api/client/routes/terminal', () => registerTerminalRoutes);
+  jest.doMock('../../../../api/client/routes/moduleBuilds', () => registerModuleBuildRoutes);
   jest.doMock('../../../../api/client/openapi', () => ({ openapiSpec }));
 
   const { createApp } = require('../../../../api/client/app');
   return {
-    app, createApp, authMiddleware, registerUploadsRoutes, registerTerminalRoutes, rateLimiter,
+    app, createApp, authMiddleware, registerUploadsRoutes, registerTerminalRoutes,
+    registerModuleBuildRoutes, rateLimiter,
     swaggerUi, swaggerServe, swaggerSetupHandler, openapiSpec,
   };
 }
@@ -45,7 +48,8 @@ describe('client app bootstrap', () => {
 
   test('serves the OpenAPI spec and Swagger UI before auth, then the upload routes', () => {
     const {
-      app, createApp, authMiddleware, registerUploadsRoutes, registerTerminalRoutes, rateLimiter,
+      app, createApp, authMiddleware, registerUploadsRoutes, registerTerminalRoutes,
+      registerModuleBuildRoutes, rateLimiter,
       swaggerUi, swaggerServe, swaggerSetupHandler,
     } = loadCreateApp();
 
@@ -74,6 +78,7 @@ describe('client app bootstrap', () => {
     // Auth, then a user guard, then routes.
     expect(registerUploadsRoutes).toHaveBeenCalledWith(app, {});
     expect(registerTerminalRoutes).toHaveBeenCalledWith(app, {});
+    expect(registerModuleBuildRoutes).toHaveBeenCalledWith(app, {});
     const guard = useFns(app).find((fn) => fn !== rateLimiter && fn !== authMiddleware);
     expect(typeof guard).toBe('function');
   });

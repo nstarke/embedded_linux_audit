@@ -27,6 +27,10 @@ run_curl_case "GET /tests/agent/shell/test_one rejects missing .sh suffix" GET "
 run_curl_case "GET /tests/agent/scripts/linux/test_linux_dmesg_args.sh rejects wrong suffix" GET "$TEST_WEB_BASE_URL/tests/agent/scripts/linux/test_linux_dmesg_args.sh" 400 "invalid path"
 run_curl_case "GET /tests/agent/scripts/..%2F..%2Fescape blocks traversal" GET "$TEST_WEB_BASE_URL/tests/agent/scripts/..%2F..%2Fescape" 400 "invalid path"
 
+# Module download: this test env has no DB, so the token resolver throws and
+# the route's uniform 404 (its catch path) is what a bad token yields anyway.
+run_curl_case "GET /module/:token unknown token returns 404" GET "$TEST_WEB_BASE_URL/module/definitely-not-a-token" 404 "not found"
+
 run_curl_case "GET /ela-arm64 serves asset" GET "$TEST_WEB_BASE_URL/ela-arm64" 200 "asset-one"
 run_curl_case "GET /custom-tool.bin serves custom asset" GET "$TEST_WEB_BASE_URL/custom-tool.bin" 200 "asset-two"
 run_curl_case "GET /assets/not_a_file returns 404" GET "$TEST_WEB_BASE_URL/not_a_file" 404 "not found"

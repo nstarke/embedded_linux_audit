@@ -24,14 +24,25 @@ services:
       # Must match agent-api so the generic binaries land where the helper server
       # serves from and add-user-key assembles launchers (<data>/release_binaries).
       ELA_AGENT_DATA_DIR: /data/agent
+      # Module-build status transitions are written straight to the DB (the
+      # module_build_requests rows the client API polls).
+      ELA_DB_HOST: ${ELA_DB_HOST:-postgres}
+      ELA_DB_PORT: ${ELA_DB_PORT:-5432}
+      ELA_DB_NAME: ${ELA_DB_NAME:-embedded_linux_audit}
+      ELA_DB_USER: ${ELA_DB_USER:-ela}
+      ELA_DB_PASSWORD: ${ELA_DB_PASSWORD:-ela}
     volumes:
       # Output: the one-time generic binaries land on the shared agent-data
       # volume that agent-api serves from and add-user-key wraps into launchers.
+      # Kernel-module artifacts land there too (<data>/<mac>/modules/<id>/).
       - ${ELA_DATA_DIR:-/data/agent}:/data/agent
       # Sources: the host repo (third_party, .git, Makefile, agent/, tests/...).
       # Read-write because the cross-compile writes build-* dirs under it.
       # Requires `git submodule update --init --recursive` on the host.
       - ${ELA_BUILD_SRC_DIR:-.}:/src
+      # Kernel source tarballs + prepared trees; survives container rebuilds so
+      # repeat module builds skip download and modules_prepare.
+      - ela-kmod-cache:/var/cache/ela-kmod
     depends_on:
       redis:
         condition: service_healthy
@@ -80,6 +91,12 @@ services:
       # Enqueue operator commands to the terminal API and await results.
       REDIS_HOST: ${ELA_REDIS_HOST:-redis}
       REDIS_PORT: ${ELA_REDIS_PORT:-6379}
+      # Must match the builder's mount: module-build job payloads carry artifact
+      # paths under this root, which the builder resolves on its own volume.
+      ELA_AGENT_DATA_DIR: /data/agent
+      # Default agent-api origin embedded in module-deliver download commands.
+      # Must be reachable FROM THE DEVICES (public origin), not docker-internal.
+      ELA_MODULE_DOWNLOAD_BASE_URL: ${ELA_MODULE_DOWNLOAD_BASE_URL:-}
     depends_on:
       redis:
         condition: service_healthy
@@ -140,4 +157,5 @@ services:
       - ${ELA_TLS_CERT:-./nginx/ssl/ela.crt}:/etc/nginx/ssl/ela.crt:ro
       - ${ELA_TLS_KEY:-./nginx/ssl/ela.key}:/etc/nginx/ssl/ela.key:ro
 
-volumes: {}
+volumes:
+  ela-kmod-cache:

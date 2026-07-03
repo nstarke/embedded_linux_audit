@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later - Copyright (c) 2026 Nicholas Starke
 
 #include "embedded_linux_audit_cmd.h"
+#include "../arch/arch_target.h"
+#include "linux_kernel_buildinfo_util.h"
 #include "linux_kernel_module_util.h"
 #include "util/command_io_util.h"
 
@@ -13,6 +15,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
+#include <sys/utsname.h>
 #include <unistd.h>
 
 /* Root searched for a .ko when `modules vermagic` is given no path. Defaults to
@@ -25,6 +28,15 @@ static const char *module_search_root(void)
 	const char *root = getenv("ELA_MODULE_SEARCH_ROOT");
 
 	return (root && *root) ? root : ELA_MODULE_SEARCH_ROOT_DEFAULT;
+}
+
+/* Prefix prepended to the absolute /proc and /boot paths buildinfo reads.
+ * Empty in production; tests point it at a fixture tree. */
+static const char *buildinfo_root(void)
+{
+	const char *root = getenv("ELA_BUILDINFO_ROOT");
+
+	return root ? root : "";
 }
 
 #ifndef SYS_finit_module
@@ -52,13 +64,17 @@ static void usage(const char *prog)
 		"       %s load [--force] <module.ko> [param=value ...]\n"
 		"       %s unload <module-name>\n"
 		"       %s vermagic [<module.ko>]\n"
+		"       %s buildinfo [<module.ko>]\n"
 		"  list reads /proc/modules directly\n"
 		"  load uses finit_module/init_module directly; --force ignores vermagic\n"
 		"  unload uses delete_module directly\n"
 		"  vermagic reads the module file and emits its path and kernel vermagic;\n"
 		"    with no path, the first .ko found under " ELA_MODULE_SEARCH_ROOT_DEFAULT "\n"
-		"    (or $ELA_MODULE_SEARCH_ROOT) is used\n",
-		prog, prog, prog, prog);
+		"    (or $ELA_MODULE_SEARCH_ROOT) is used\n"
+		"  buildinfo emits the kernel release, /proc/version banner, module\n"
+		"    vermagic, and kernel config so the server can compile a matching\n"
+		"    module; the config bytes are uploaded separately as kernel-config\n",
+		prog, prog, prog, prog, prog);
 }
 
 static int append_json_string(char *out, size_t out_len, size_t *pos, const char *value)
@@ -385,70 +401,95 @@ static int find_first_ko(const char *dir, char *out, size_t out_len)
 	return rc;
 }
 
-static int print_vermagic(const struct ela_kernel_module_request *request)
+/* Read the whole file at `path` into a malloc'd buffer. Returns NULL on
+ * error (with a message on stderr); the caller frees the buffer. */
+static unsigned char *read_whole_file(const char *path, size_t *len_out)
 {
 	int fd;
 	struct stat st;
 	unsigned char *buf;
 	size_t off = 0;
 	ssize_t got;
-	char vermagic[512];
-	char payload[2048];
-	char found[PATH_MAX];
-	const char *path = request->module_path;
-	const char *format = getenv("ELA_OUTPUT_FORMAT");
-
-	/* No path supplied: discover the first .ko under the module tree. The
-	 * emitted payload carries this discovered path alongside the vermagic. */
-	if (!path) {
-		const char *root = module_search_root();
-
-		if (find_first_ko(root, found, sizeof(found)) != 0) {
-			fprintf(stderr, "No .ko module found under %s\n", root);
-			return 1;
-		}
-		path = found;
-	}
 
 	fd = open(path, O_RDONLY | O_CLOEXEC);
 	if (fd < 0) {
-		fprintf(stderr, "Cannot open module %s: %s\n",
-			path, strerror(errno));
-		return 1;
+		fprintf(stderr, "Cannot open %s: %s\n", path, strerror(errno));
+		return NULL;
 	}
 	if (fstat(fd, &st) != 0 || st.st_size < 0) {
-		fprintf(stderr, "Cannot stat module %s: %s\n",
-			path, strerror(errno));
+		fprintf(stderr, "Cannot stat %s: %s\n", path, strerror(errno));
 		close(fd);
-		return 1;
+		return NULL;
 	}
-	buf = malloc((size_t)st.st_size);
+	buf = malloc((size_t)st.st_size ? (size_t)st.st_size : 1U);
 	if (!buf) {
-		fprintf(stderr, "Cannot allocate module buffer\n");
+		fprintf(stderr, "Cannot allocate file buffer\n");
 		close(fd);
-		return 1;
+		return NULL;
 	}
 	while (off < (size_t)st.st_size) {
 		got = read(fd, buf + off, (size_t)st.st_size - off);
 		if (got <= 0) {
-			fprintf(stderr, "Cannot read module %s: %s\n",
-				path,
+			fprintf(stderr, "Cannot read %s: %s\n", path,
 				got < 0 ? strerror(errno) : "unexpected EOF");
 			free(buf);
 			close(fd);
-			return 1;
+			return NULL;
 		}
 		off += (size_t)got;
 	}
 	close(fd);
+	*len_out = off;
+	return buf;
+}
 
-	if (ela_kernel_module_extract_vermagic(buf, (size_t)st.st_size,
-					      vermagic, sizeof(vermagic)) != 0) {
+/* Resolve the module path (discovering the first .ko under the module tree
+ * when `request_path` is NULL) and extract its vermagic. `found` backs the
+ * returned path when discovery runs. Returns the resolved path, or NULL. */
+static const char *resolve_module_vermagic(const char *request_path,
+					   char *found, size_t found_len,
+					   char *vermagic, size_t vermagic_len)
+{
+	unsigned char *buf;
+	size_t len;
+	const char *path = request_path;
+
+	if (!path) {
+		const char *root = module_search_root();
+
+		if (find_first_ko(root, found, found_len) != 0) {
+			fprintf(stderr, "No .ko module found under %s\n", root);
+			return NULL;
+		}
+		path = found;
+	}
+
+	buf = read_whole_file(path, &len);
+	if (!buf)
+		return NULL;
+
+	if (ela_kernel_module_extract_vermagic(buf, len,
+					      vermagic, vermagic_len) != 0) {
 		fprintf(stderr, "No vermagic found in module %s\n", path);
 		free(buf);
-		return 1;
+		return NULL;
 	}
 	free(buf);
+	return path;
+}
+
+static int print_vermagic(const struct ela_kernel_module_request *request)
+{
+	char vermagic[512];
+	char payload[2048];
+	char found[PATH_MAX];
+	const char *path;
+	const char *format = getenv("ELA_OUTPUT_FORMAT");
+
+	path = resolve_module_vermagic(request->module_path, found, sizeof(found),
+				       vermagic, sizeof(vermagic));
+	if (!path)
+		return 1;
 
 	if (format_vermagic_payload(format, path, vermagic,
 				    payload, sizeof(payload)) != 0) {
@@ -461,6 +502,117 @@ static int print_vermagic(const struct ela_kernel_module_request *request)
 		return 1;
 
 	return 0;
+}
+
+/* POST raw kernel config bytes as a kernel-config upload. Only runs when an
+ * HTTP(S) output base is configured; the buildinfo JSON carries enough for
+ * the server to know whether a config should have followed. */
+static int upload_kernel_config(const char *config_path)
+{
+	const char *output_http = getenv("ELA_OUTPUT_HTTP");
+	const char *output_https = getenv("ELA_OUTPUT_HTTPS");
+	const char *output_uri = output_http && *output_http ? output_http : output_https;
+	bool insecure = getenv("ELA_OUTPUT_INSECURE") &&
+		!strcmp(getenv("ELA_OUTPUT_INSECURE"), "1");
+	unsigned char *buf;
+	size_t len;
+	char errbuf[256];
+	char *upload_uri;
+	int rc = 0;
+
+	if (!output_uri || !*output_uri)
+		return 0;
+
+	buf = read_whole_file(config_path, &len);
+	if (!buf)
+		return -1;
+
+	upload_uri = ela_http_build_upload_uri(output_uri, "kernel-config",
+					       config_path);
+	if (!upload_uri) {
+		free(buf);
+		return -1;
+	}
+	if (ela_http_post(upload_uri, buf, len, "application/octet-stream",
+			  insecure, false, errbuf, sizeof(errbuf)) != 0) {
+		fprintf(stderr, "Failed to POST kernel config to %s: %s\n",
+			upload_uri, errbuf[0] ? errbuf : "unknown error");
+		rc = -1;
+	}
+	free(upload_uri);
+	free(buf);
+	return rc;
+}
+
+static int print_buildinfo(const struct ela_kernel_module_request *request)
+{
+	struct ela_kernel_buildinfo info;
+	struct utsname uts;
+	char payload[4096];
+	char found[PATH_MAX];
+	char candidate[PATH_MAX];
+	const char *path;
+	const char *format = getenv("ELA_OUTPUT_FORMAT");
+	const char *root = buildinfo_root();
+	char version_path[PATH_MAX];
+	FILE *fp;
+	unsigned int i;
+	int rc = 0;
+
+	memset(&info, 0, sizeof(info));
+	info.isa = ARCH_ISA;
+	info.bits = ARCH_BITS;
+	info.endianness = ARCH_ENDIANNESS;
+
+	if (uname(&uts) == 0)
+		snprintf(info.kernel_release, sizeof(info.kernel_release),
+			 "%s", uts.release);
+	else
+		fprintf(stderr, "uname failed: %s\n", strerror(errno));
+
+	snprintf(version_path, sizeof(version_path), "%s/proc/version", root);
+	fp = fopen(version_path, "r");
+	if (fp) {
+		if (fgets(info.proc_version, sizeof(info.proc_version), fp))
+			ela_kernel_buildinfo_trim_line(info.proc_version);
+		fclose(fp);
+	}
+
+	path = resolve_module_vermagic(request->module_path, found, sizeof(found),
+				       info.vermagic, sizeof(info.vermagic));
+	/* A host without an extractable .ko can still be served a best-effort
+	 * build from kernel_release + config, so vermagic is not fatal. */
+	if (path)
+		snprintf(info.module_path, sizeof(info.module_path), "%s", path);
+
+	for (i = 0; i < 3; i++) {
+		if (ela_kernel_buildinfo_config_candidate(root, info.kernel_release,
+							  i, candidate,
+							  sizeof(candidate)) != 0)
+			continue;
+		if (access(candidate, R_OK) == 0) {
+			snprintf(info.config_source, sizeof(info.config_source),
+				 "%s", candidate);
+			info.config_available = true;
+			info.config_compressed =
+				ela_kernel_buildinfo_config_is_gz(candidate);
+			break;
+		}
+	}
+
+	if (ela_kernel_buildinfo_format_payload(format, &info,
+						payload, sizeof(payload)) != 0) {
+		fprintf(stderr, "Failed to format module buildinfo output\n");
+		return 1;
+	}
+
+	fputs(payload, stdout);
+	if (emit_payload_remote(payload, "module-buildinfo") != 0)
+		rc = 1;
+	if (info.config_available && upload_kernel_config(info.config_source) != 0)
+		rc = 1;
+
+	return rc;
 }
 
 int linux_kernel_module_main(int argc, char **argv)
@@ -492,6 +644,8 @@ int linux_kernel_module_main(int argc, char **argv)
 		return unload_module(&request);
 	if (request.action == ELA_KERNEL_MODULE_ACTION_VERMAGIC)
 		return print_vermagic(&request);
+	if (request.action == ELA_KERNEL_MODULE_ACTION_BUILDINFO)
+		return print_buildinfo(&request);
 
 	usage(argv[0]);
 	return 2;
