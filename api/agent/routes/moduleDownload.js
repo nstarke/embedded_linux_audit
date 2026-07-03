@@ -36,9 +36,13 @@ module.exports = function registerModuleDownloadRoute(app, deps) {
       return;
     }
 
-    let bytes;
+    let size;
     try {
-      bytes = await fsp.readFile(row.artifactPath);
+      const stat = await fsp.stat(row.artifactPath);
+      if (!stat.isFile()) {
+        throw new Error('not a file');
+      }
+      size = stat.size;
     } catch {
       // The row said succeeded but the artifact is gone (volume wiped?):
       // still a uniform 404 for the caller, but worth a server-side trace.
@@ -51,7 +55,17 @@ module.exports = function registerModuleDownloadRoute(app, deps) {
     res.status(200);
     res.type('application/octet-stream');
     res.setHeader('Content-Disposition', `attachment; filename="${path.basename(row.artifactPath)}"`);
-    res.send(bytes);
-    verboseResponseLog(req, 200, bytes.length);
+    // Stream the artifact from disk (the convention the other download routes
+    // use) rather than buffering it into memory and writing to the response.
+    // artifactPath is a trusted absolute path stored server-side, never
+    // user-controlled.
+    res.sendFile(row.artifactPath, (err) => {
+      if (err && !res.headersSent) {
+        res.status(404).type('text').send('not found\n');
+        verboseResponseLog(req, 404, 10);
+        return;
+      }
+      verboseResponseLog(req, 200, size);
+    });
   });
 };

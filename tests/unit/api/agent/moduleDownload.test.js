@@ -15,10 +15,20 @@ function createRes() {
     statusCode: 200,
     headers: {},
     body: undefined,
+    sentFile: undefined,
+    headersSent: false,
     status(code) { this.statusCode = code; return this; },
     type(value) { this.headers['content-type'] = value; return this; },
     setHeader(name, value) { this.headers[name.toLowerCase()] = value; },
     send(value) { this.body = value; return this; },
+    // Emulate a successful Express sendFile: the file streams and the callback
+    // fires with no error. Tests that need a send failure override this.
+    sendFile(filePath, cb) {
+      this.sentFile = filePath;
+      this.headersSent = true;
+      if (cb) cb();
+      return this;
+    },
   };
 }
 
@@ -27,7 +37,7 @@ function register(overrides = {}) {
   const deps = {
     path: require('path'),
     fsp: {
-      readFile: jest.fn().mockResolvedValue(Buffer.from('\x7fELF-ko-bytes')),
+      stat: jest.fn().mockResolvedValue({ isFile: () => true, size: 13 }),
     },
     consumeDownloadToken: jest.fn().mockResolvedValue({
       id: 7,
@@ -52,8 +62,9 @@ describe('module download route', () => {
     expect(res.statusCode).toBe(200);
     expect(res.headers['content-type']).toBe('application/octet-stream');
     expect(res.headers['content-disposition']).toContain('ela_kmod.ko');
-    expect(res.body.toString()).toContain('ELF-ko-bytes');
-    expect(deps.fsp.readFile).toHaveBeenCalledWith('/data/agent/aa:bb:cc:dd:ee:ff/modules/7/ela_kmod.ko');
+    expect(res.sentFile).toBe('/data/agent/aa:bb:cc:dd:ee:ff/modules/7/ela_kmod.ko');
+    expect(deps.fsp.stat).toHaveBeenCalledWith('/data/agent/aa:bb:cc:dd:ee:ff/modules/7/ela_kmod.ko');
+    expect(deps.verboseResponseLog).toHaveBeenCalledWith(expect.anything(), 200, 13);
   });
 
   test('404s an unknown, expired, or used token uniformly', async () => {
@@ -81,12 +92,29 @@ describe('module download route', () => {
 
   test('404s when the artifact file is missing', async () => {
     const { app } = register({
-      fsp: { readFile: jest.fn().mockRejectedValue(Object.assign(new Error('missing'), { code: 'ENOENT' })) },
+      fsp: { stat: jest.fn().mockRejectedValue(Object.assign(new Error('missing'), { code: 'ENOENT' })) },
     });
     const res = createRes();
 
     await app.gets['/module/:token']({ params: { token: 'tok' } }, res);
 
     expect(res.statusCode).toBe(404);
+  });
+
+  test('404s when sendFile fails after stat succeeds', async () => {
+    const { app } = register();
+    const res = createRes();
+    // Emulate a stream error surfaced through the sendFile callback before any
+    // bytes reach the client.
+    res.sendFile = function (filePath, cb) {
+      this.sentFile = filePath;
+      cb(Object.assign(new Error('stream broke'), { code: 'ENOENT' }));
+      return this;
+    };
+
+    await app.gets['/module/:token']({ params: { token: 'tok' } }, res);
+
+    expect(res.statusCode).toBe(404);
+    expect(res.body).toBe('not found\n');
   });
 });
