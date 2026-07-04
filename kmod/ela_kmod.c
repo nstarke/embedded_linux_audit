@@ -20,6 +20,7 @@
 #include <linux/fs.h>
 #include <linux/io.h>
 #include <linux/mm.h>
+#include <linux/highmem.h>	/* kmap/kunmap for the RAM read/write path */
 #include <linux/mutex.h>
 #include <linux/list.h>
 #include <linux/gfp.h>
@@ -106,12 +107,36 @@ struct ela_phys_map {
 };
 
 /*
- * Map `len` bytes at physical `phys` for reading. `uncached` selects the
- * MMIO-safe path. The mapping is page-aligned around the request; callers
- * keep len within ELA_MAP_WINDOW. Returns 0 and fills *map, or -ENXIO.
+ * True only when every page the mapping would cover is real RAM (has a struct
+ * page). The default cached path must not ioremap device MMIO or unbacked
+ * physical holes: reading those faults the CPU (on ARM, an imprecise external
+ * abort that takes the machine down), which is exactly how a stray
+ * `memread 0x<not-ram>` crashes the device. Callers that genuinely want device
+ * memory opt in with ELA_KMOD_READ_F_UNCACHED and accept the risk.
  */
-static int ela_map_phys(u64 phys, size_t len, bool uncached,
-			struct ela_phys_map *map)
+static bool ela_range_is_ram(u64 phys, size_t len)
+{
+	unsigned long pfn = (unsigned long)(phys >> PAGE_SHIFT);
+	unsigned long end_pfn = (unsigned long)((phys + len - 1) >> PAGE_SHIFT);
+
+	if (!len)
+		return false;
+	for (; pfn <= end_pfn; pfn++) {
+		if (!pfn_valid(pfn))
+			return false;
+	}
+	return true;
+}
+
+/*
+ * Map `len` bytes at physical `phys` UNCACHED for device/MMIO access. RAM is
+ * never mapped here — it is already in the kernel's linear map and a second,
+ * differently-cached ioremap alias of it is architecturally illegal on ARMv6+
+ * (and crashes the machine); RAM goes through kmap in ela_do_phys_io instead.
+ * This path is reached only for ELA_KMOD_READ_F_UNCACHED. Page-aligned around
+ * the request; callers keep len within ELA_MAP_WINDOW. 0 + *map, or -ENXIO.
+ */
+static int ela_map_phys(u64 phys, size_t len, struct ela_phys_map *map)
 {
 	/* Not PAGE_MASK: that is an unsigned long, which on 32-bit kernels
 	 * with 64-bit physical addresses (PAE/LPAE) would clear the high
@@ -119,7 +144,7 @@ static int ela_map_phys(u64 phys, size_t len, bool uncached,
 	u64 aligned = phys & ~(u64)(PAGE_SIZE - 1);
 	size_t offset = phys - aligned;
 	size_t map_len = offset + len;
-	void __iomem *va = NULL;
+	void __iomem *va;
 
 	map->used_memremap = false;
 
@@ -129,19 +154,7 @@ static int ela_map_phys(u64 phys, size_t len, bool uncached,
 	    map_len != (size_t)(phys_addr_t)map_len)
 		return -ENXIO;
 
-	if (!uncached) {
-#if ELA_HAVE_MEMREMAP
-		/* memremap only maps RAM; it fails cleanly on device memory,
-		 * and we then retry uncached below. */
-		va = (void __iomem *)memremap(aligned, map_len, MEMREMAP_WB);
-		if (va)
-			map->used_memremap = true;
-#else
-		va = ela_ioremap_cached(aligned, map_len);
-#endif
-	}
-	if (!va)
-		va = ela_ioremap_uncached(aligned, map_len);
+	va = ela_ioremap_uncached(aligned, map_len);
 	if (!va)
 		return -ENXIO;
 
@@ -180,12 +193,65 @@ static long ela_do_phys_io(u64 phys_addr, u64 length, u32 flags,
 	if (!bounce)
 		return -ENOMEM;
 
+	/*
+	 * Default (cached) path: the target is RAM, which is ALREADY mapped in
+	 * the kernel's linear map. We must NOT ioremap it — a second mapping
+	 * with different cache attributes is an architecturally-illegal alias on
+	 * ARMv6+/v7 and takes the machine down (this is exactly how a plain
+	 * `memread <ram-addr>` crashed the device). Instead move data through
+	 * kmap page by page, reusing the existing coherent mapping (kmap also
+	 * handles highmem pages that aren't in the linear map). Non-RAM is
+	 * refused up front; device/MMIO must use the --uncached path below.
+	 */
+	if (!uncached) {
+		if (!ela_range_is_ram(phys_addr, length)) {
+			kfree(bounce);
+			return -ENXIO;
+		}
+		while (remaining) {
+			unsigned long pfn = (unsigned long)(phys >> PAGE_SHIFT);
+			size_t off = (size_t)(phys & (PAGE_SIZE - 1));
+			size_t chunk = min_t(u64, remaining, (u64)(PAGE_SIZE - off));
+			struct page *page = pfn_to_page(pfn);
+			void *kva;
+
+			if (chunk > ELA_BOUNCE_SIZE)
+				chunk = ELA_BOUNCE_SIZE;
+
+			/* copy_{from,to}_user can fault/sleep, so never straddle a
+			 * kmap: stage through the bounce buffer while mapped. */
+			if (write) {
+				if (copy_from_user(bounce, ubuf, chunk)) {
+					rc = -EFAULT;
+					break;
+				}
+				kva = kmap(page);
+				memcpy((u8 *)kva + off, bounce, chunk);
+				kunmap(page);
+			} else {
+				kva = kmap(page);
+				memcpy(bounce, (u8 *)kva + off, chunk);
+				kunmap(page);
+				if (copy_to_user(ubuf, bounce, chunk)) {
+					rc = -EFAULT;
+					break;
+				}
+			}
+			phys += chunk;
+			ubuf += chunk;
+			remaining -= chunk;
+		}
+		kfree(bounce);
+		return rc;
+	}
+
+	/* Uncached device/MMIO path: ioremap + memcpy_*io, window by window. */
 	while (remaining) {
 		size_t window = min_t(u64, remaining, ELA_MAP_WINDOW);
 		struct ela_phys_map map;
 		size_t done = 0;
 
-		rc = ela_map_phys(phys, window, uncached, &map);
+		rc = ela_map_phys(phys, window, &map);
 		if (rc)
 			break;
 

@@ -209,7 +209,14 @@ trap 'rm -rf "$BUILD_DIR"; rm -f "$WORK_CONFIG"' EXIT INT TERM
 cp "$SRC_DIR"/* "$BUILD_DIR/"
 
 log "building module for $ARCH against linux-$KERNEL_VERSION"
-kmake M="$BUILD_DIR" modules
+# Force non-PIC codegen. Distro cross-GCCs (e.g. Debian's) default to -fPIE,
+# which emits GOT-based relocations referencing _GLOBAL_OFFSET_TABLE_. A kernel
+# module has no GOT, so it then fails to load with:
+#   <mod>: Unknown symbol _GLOBAL_OFFSET_TABLE_
+# The kernel build only started passing -fno-PIE itself in ~4.9, so pre-4.9
+# trees need us to add it. Harmless (redundant) on newer kernels/arches, where
+# modules are non-PIC anyway.
+kmake M="$BUILD_DIR" modules KCFLAGS="-fno-pic -fno-PIE"
 
 [ -f "$BUILD_DIR/ela_kmod.ko" ] || die "build produced no ela_kmod.ko"
 

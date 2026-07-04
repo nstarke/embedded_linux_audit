@@ -46,15 +46,19 @@ typedef uint8_t __u8;
  * Read `length` bytes of physical memory starting at `phys_addr` into the
  * userspace buffer at `buf` (a userspace virtual address cast to __u64).
  *
- * flags: ELA_KMOD_READ_F_* below. Default (0) maps with memremap(MEMREMAP_WB)
- * and falls back to an uncached mapping when the range is not RAM (device
- * MMIO); ELA_KMOD_READ_F_UNCACHED forces the uncached path (side-effect-free
- * only if the target range tolerates reads, as with chipsec).
+ * flags: ELA_KMOD_READ_F_* below. Default (0) requires the whole range to be
+ * real RAM and moves it through the kernel's EXISTING mapping of that RAM (kmap
+ * / the linear map), never a fresh ioremap: RAM is already mapped, and a second
+ * differently-cached alias of it is illegal on ARMv6+/v7 and crashes the box. A
+ * non-RAM range is refused with ENXIO. ELA_KMOD_READ_F_UNCACHED instead maps the
+ * range uncached via ioremap (no RAM check) for deliberate device/MMIO access
+ * (side-effect-free only if the target tolerates reads, as with chipsec) — at
+ * the caller's risk.
  *
  * Returns 0 on success. Errors:
  *   EINVAL  bad abi_version, zero/oversized length, or unknown flags
  *   EFAULT  buf is not writable for `length` bytes
- *   ENXIO   the physical range cannot be mapped
+ *   ENXIO   the physical range cannot be mapped, or (default path) is not RAM
  */
 struct ela_kmod_read_phys {
 	__u32 abi_version;   /* in: ELA_KMOD_ABI_VERSION */

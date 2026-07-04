@@ -10,7 +10,13 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <sys/stat.h>
+#include <sys/sysmacros.h>
 #include <unistd.h>
+
+/* Fixed major of the misc char device class; ela_kmod is a miscdevice, so its
+ * node is always major 10 with a dynamic minor reported in /proc/misc. */
+#define ELA_MISC_MAJOR 10
 
 /* Device node override for tests (a fake node cannot service the ioctl, but
  * open/arg failure paths become reachable without root). */
@@ -36,11 +42,59 @@ static void usage(const char *prog)
 		prog, prog);
 }
 
-/* Open the ela_kmod device with the standard missing-module hint. */
+/* The module's dynamic misc minor from /proc/misc, or -1 if not present. */
+static int physmem_misc_minor(void)
+{
+	FILE *f = fopen("/proc/misc", "re");
+	char line[128];
+	int minor = -1;
+
+	if (!f)
+		return -1;
+	while (fgets(line, sizeof(line), f)) {
+		int m;
+		char name[64];
+
+		if (sscanf(line, "%d %63s", &m, name) == 2 &&
+		    !strcmp(name, ELA_KMOD_DEVICE_NAME)) {
+			minor = m;
+			break;
+		}
+	}
+	fclose(f);
+	return minor;
+}
+
+/*
+ * Create the device node ourselves. Embedded systems with a static /dev (no
+ * devtmpfs/udev/mdev) never materialize the miscdevice node, so a freshly
+ * loaded ela_kmod has no /dev/ela_physmem. Best-effort: needs CAP_MKNOD (we run
+ * as root where the module was loaded). Only for the default path — a test that
+ * overrides ELA_PHYSMEM_DEVICE must not have a real node conjured under it.
+ */
+static int physmem_try_create_node(void)
+{
+	int minor;
+
+	if (getenv("ELA_PHYSMEM_DEVICE"))
+		return -1;
+	minor = physmem_misc_minor();
+	if (minor < 0)
+		return -1;
+	if (mknod(ELA_KMOD_DEVICE_PATH, S_IFCHR | 0600,
+		  makedev(ELA_MISC_MAJOR, (unsigned int)minor)) != 0 &&
+	    errno != EEXIST)
+		return -1;
+	return 0;
+}
+
+/* Open the ela_kmod device, auto-creating its node on first use if missing. */
 static int physmem_open_device(void)
 {
 	int fd = open(physmem_device_path(), O_RDWR | O_CLOEXEC);
 
+	if (fd < 0 && errno == ENOENT && physmem_try_create_node() == 0)
+		fd = open(physmem_device_path(), O_RDWR | O_CLOEXEC);
 	if (fd < 0)
 		fprintf(stderr, "Cannot open %s: %s%s\n",
 			physmem_device_path(), strerror(errno),
