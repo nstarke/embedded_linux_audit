@@ -91,7 +91,9 @@ else
     # vermagic-derived flags/arch, so fold them into the cache key. Otherwise
     # two devices that differ only in (say) SMP would collide on one prepared
     # tree and the second would silently reuse the first one's config.
-    VM_SIG="arch=${ELA_KMOD_VM_ARM_ARCH} smp=${ELA_KMOD_VM_SMP} preempt=${ELA_KMOD_VM_PREEMPT} modunload=${ELA_KMOD_VM_MODULE_UNLOAD} p2v=${ELA_KMOD_VM_PATCH_PHYS_VIRT}"
+    # `rev` bumps whenever the config recipe below changes, so a recipe change
+    # invalidates cached prepared trees instead of silently reusing a stale one.
+    VM_SIG="rev=2 arch=${ELA_KMOD_VM_ARM_ARCH} smp=${ELA_KMOD_VM_SMP} preempt=${ELA_KMOD_VM_PREEMPT} modunload=${ELA_KMOD_VM_MODULE_UNLOAD} p2v=${ELA_KMOD_VM_PATCH_PHYS_VIRT}"
     CONFIG_HASH="defconfig-$(printf '%s' "$VM_SIG" | sha256sum | cut -c1-16)"
 fi
 
@@ -104,8 +106,14 @@ kmake() {
     # LOCALVERSION reproduces the device's release suffix in the built
     # vermagic. Setting it empty also suppresses the "+" localversion the
     # kernel appends when building outside git without CONFIG_LOCALVERSION.
+    #
+    # HOSTCFLAGS=-fcommon: modern host GCC (>= 10) defaults to -fno-common, which
+    # breaks the bundled dtc host tool with "multiple definition of `yylloc`"
+    # (its lexer and parser are separate translation units). Device-tree configs
+    # (multi_v7_defconfig) pull dtc into modules_prepare, so force -fcommon.
+    # Harmless for the other host tools; host code is build-time only.
     make -C "$TREE" ARCH="$ARCH" CROSS_COMPILE="$CROSS_COMPILE" \
-        LOCALVERSION="$LOCALVERSION" "$@"
+        LOCALVERSION="$LOCALVERSION" HOSTCFLAGS="-O2 -fcommon" "$@"
 }
 
 # --- 3. Unpack + configure + modules_prepare (cached) ----------------------
@@ -152,30 +160,64 @@ if [ ! -f "$PREPARED_STAMP" ]; then
         # older/newer minor) with their defaults, non-interactively.
         kmake olddefconfig
     else
-        # `make defconfig`. NOTE: on ARM this is versatile_defconfig (ARMv5, UP),
-        # where CONFIG_SMP / ARMv7 can't be selected — the flags below are still
-        # applied but olddefconfig drops the unsatisfiable ones. Reaching an
-        # exact ARMv7/SMP vermagic that way needs multi_v7_defconfig, which drags
-        # in the device-tree host tools (scripts/dtc) that don't build under a
-        # modern host toolchain on this vintage kernel; exact-vermagic matching
-        # is handled downstream by vermagic patching instead.
-        log "no device config; using $ARCH defconfig"
-        kmake defconfig
+        # Base defconfig. On ARM `make defconfig` is versatile (ARMv5, UP). An
+        # ARMv7 device needs multi_v7_defconfig (SMP, ARMv7) — but multi_v7 is a
+        # kitchen sink of real SoC platforms that force-select features the
+        # target may not have (L2 outer cache, HIGHMEM, unwind), each leaking a
+        # symbol the device kernel may not export. So for ARMv7 we take multi_v7
+        # for its working core (SMP, timers, ARMv7) and strip it down to the bare
+        # ARCH_VIRT machine (no L2), then apply universal-safe hardening. This
+        # maximizes the set of kernels the module will load on. multi_v7 also
+        # drags in device-tree, whose dtc host tool needs the HOSTCFLAGS=-fcommon
+        # fix in kmake() to link under a modern host GCC.
+        DEFCONFIG_TARGET=defconfig
+        STRIP_TO_VIRT=
+        if [ "$ARCH" = arm ] && [ "$ELA_KMOD_VM_ARM_ARCH" = ARMv7 ]; then
+            DEFCONFIG_TARGET=multi_v7_defconfig
+            STRIP_TO_VIRT=1
+        fi
+        log "no device config; using $ARCH $DEFCONFIG_TARGET"
+        kmake "$DEFCONFIG_TARGET"
 
-        # A defconfig build is best-effort: modules must at least be enabled,
-        # and MODVERSIONS off avoids CRC mismatches against the real kernel
-        # (we can't reproduce the device's symbol CRCs, so matching that
-        # vermagic token would only make loads fail on the CRC check instead).
-        "$TREE/scripts/config" --file "$TREE/.config" \
-            -e MODULES -d MODVERSIONS -d MODULE_SIG -d MODULE_SIG_FORCE
+        cfg() { "$TREE/scripts/config" --file "$TREE/.config" "$@"; }
 
-        # Reconstruct the vermagic-affecting flags the device advertised so the
-        # built module's vermagic matches without the full config. An empty env
-        # means "unknown" (no device vermagic) -> leave the defconfig default.
+        if [ -n "$STRIP_TO_VIRT" ]; then
+            # Disable every SoC/board platform except ARCH_VIRT (a bare ARMv7 SMP
+            # machine with no L2 controller). Dropping the ~80 platform symbols
+            # removes the selects that pull in OUTER_CACHE and specific L2 cache
+            # controllers. Helper ARCH_* symbols (ARCH_HAS_*, ARCH_SUPPORTS_*,
+            # the multiplatform core, VIRT) are preserved so the tree still
+            # builds and SMP/timers stay wired.
+            log "stripping multi_v7 platforms down to ARCH_VIRT"
+            _keep='ARCH_MULTIPLATFORM|ARCH_MULTI_V6|ARCH_MULTI_V7|ARCH_MULTI_V6_V7|ARCH_VIRT'
+            _helper='ARCH_(HAS|SUPPORTS|WANT|WANTS|HAVE|MIGHT_HAVE|NR|SELECT|USES|REQUIRE|DMA|FLATMEM|SPARSEMEM|BINFMT|MTD|SUSPEND|HIBERNATION|NO|CLOCKSOURCE|OPTIONAL|PROVIDES)'
+            for _s in $(grep -oE '^CONFIG_(ARCH|SOC|MACH)_[A-Z0-9_]+=y' "$TREE/.config" \
+                        | sed 's/^CONFIG_//; s/=y//' \
+                        | grep -vE "^($_keep)\$" | grep -vE "^$_helper"); do
+                cfg -d "$_s"
+            done
+        fi
+
+        # Modules must be enabled; MODVERSIONS off (we can't reproduce the
+        # device's symbol CRCs, so a matching modversions token would only make
+        # loads fail on the CRC check instead); signing off.
+        cfg -e MODULES -d MODVERSIONS -d MODULE_SIG -d MODULE_SIG_FORCE
+
+        # Universal-safe hardening: these options change the binary layout of
+        # core structs (mutex/spinlock/list) or gate lockdep bookkeeping. All
+        # OFF matches the common production-kernel case; ON would make the
+        # module ABI-incompatible (the SMP-vs-UP mutex mismatch that crashed
+        # alloc was exactly this class of problem).
+        cfg -d DEBUG_SPINLOCK -d DEBUG_MUTEXES -d DEBUG_LOCK_ALLOC \
+            -d PROVE_LOCKING -d LOCKDEP -d DEBUG_LIST -d DEBUG_PREEMPT \
+            -d DEBUG_ATOMIC_SLEEP -d TRACE_IRQFLAGS -d DEBUG_INFO
+
+        # Vermagic-affecting flags read off the device vermagic (empty => leave
+        # default). These must match or the module is ABI-incompatible.
         ela_apply_flag() {  # $1 = y|n|"" , $2 = CONFIG symbol
             case "$1" in
-                y) "$TREE/scripts/config" --file "$TREE/.config" -e "$2" ;;
-                n) "$TREE/scripts/config" --file "$TREE/.config" -d "$2" ;;
+                y) cfg -e "$2" ;;
+                n) cfg -d "$2" ;;
             esac
         }
         ela_apply_flag "$ELA_KMOD_VM_SMP" SMP
@@ -183,6 +225,22 @@ if [ ! -f "$PREPARED_STAMP" ]; then
         ela_apply_flag "$ELA_KMOD_VM_MODULE_UNLOAD" MODULE_UNLOAD
         if [ "$ARCH" = arm ]; then
             ela_apply_flag "$ELA_KMOD_VM_PATCH_PHYS_VIRT" ARM_PATCH_PHYS_VIRT
+            # No ARM EH unwind tables: CONFIG_ARM_UNWIND makes modules reference
+            # __aeabi_unwind_cpp_pr0, exported only by kernels using the EABI
+            # unwinder. Frame-pointer kernels don't export it. A module with no
+            # unwind tables loads on both.
+            cfg -d ARM_UNWIND -e FRAME_POINTER
+            # No HIGHMEM: it pulls in kmap/kunmap imports that only resolve on a
+            # HIGHMEM kernel. Off => kmap inlines to a direct lowmem access,
+            # loading on both (reads target lowmem RAM).
+            cfg -d HIGHMEM
+            # No outer L2 cache: the generic outer_cache inlines reference the
+            # `outer_cache` global; SoCs without an L2 controller don't export
+            # it. Our accesses never need outer-cache maintenance.
+            cfg -d CACHE_L2X0 -d OUTER_CACHE
+            # ARM (not Thumb-2) instruction set: a Thumb-2 module won't load on a
+            # kernel whose vermagic carries no "thumb2" token, and vice versa.
+            cfg -d THUMB2_KERNEL
         fi
         [ -n "$ELA_KMOD_VM_SMP" ] && log "applied vermagic flags:" \
             "SMP=$ELA_KMOD_VM_SMP PREEMPT=$ELA_KMOD_VM_PREEMPT" \
