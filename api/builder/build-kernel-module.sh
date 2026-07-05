@@ -112,8 +112,16 @@ kmake() {
     # (its lexer and parser are separate translation units). Device-tree configs
     # (multi_v7_defconfig) pull dtc into modules_prepare, so force -fcommon.
     # Harmless for the other host tools; host code is build-time only.
+    #
+    # KCFLAGS=-fno-pic -fno-PIE: distro cross-GCCs default to -fPIE. That emits
+    # GOT relocations a kernel module can't resolve (Unknown symbol
+    # _GLOBAL_OFFSET_TABLE_), and on x86_64 it outright conflicts with the
+    # kernel's -mcmodel=kernel even in modules_prepare ("code model kernel does
+    # not support PIC mode"). Old kernels (< 4.9) don't add -fno-PIE themselves,
+    # so force it for ALL target compilation. Harmless where already non-PIC.
     make -C "$TREE" ARCH="$ARCH" CROSS_COMPILE="$CROSS_COMPILE" \
-        LOCALVERSION="$LOCALVERSION" HOSTCFLAGS="-O2 -fcommon" "$@"
+        LOCALVERSION="$LOCALVERSION" HOSTCFLAGS="-O2 -fcommon" \
+        KCFLAGS="-fno-pic -fno-PIE" "$@"
 }
 
 # --- 3. Unpack + configure + modules_prepare (cached) ----------------------
@@ -170,12 +178,37 @@ if [ ! -f "$PREPARED_STAMP" ]; then
         # maximizes the set of kernels the module will load on. multi_v7 also
         # drags in device-tree, whose dtc host tool needs the HOSTCFLAGS=-fcommon
         # fix in kmake() to link under a modern host GCC.
+        # Base defconfig per arch. Pick the most generic/portable option; the
+        # universal-safe hardening below then normalizes the ABI-affecting bits.
+        # arm64/x86/riscv have a single generic defconfig; MIPS and PowerPC are
+        # machine-fragmented (like ARM) so we take a common baseline and rely on
+        # per-device tuning if a symbol leak surfaces.
         DEFCONFIG_TARGET=defconfig
         STRIP_TO_VIRT=
-        if [ "$ARCH" = arm ] && [ "$ELA_KMOD_VM_ARM_ARCH" = ARMv7 ]; then
-            DEFCONFIG_TARGET=multi_v7_defconfig
-            STRIP_TO_VIRT=1
-        fi
+        case "$ARCH" in
+        arm)
+            if [ "$ELA_KMOD_VM_ARM_ARCH" = ARMv7 ]; then
+                DEFCONFIG_TARGET=multi_v7_defconfig
+                STRIP_TO_VIRT=1
+            fi
+            ;;
+        arm64)  DEFCONFIG_TARGET=defconfig ;;         # generic, SMP, no highmem
+        x86_64) DEFCONFIG_TARGET=x86_64_defconfig ;;  # generic PC, SMP
+        i386)   DEFCONFIG_TARGET=i386_defconfig ;;    # SMP-capable; highmem off below
+        mips)
+            # No single generic MIPS defconfig; malta (QEMU) is the closest to a
+            # portable baseline and supports both endiannesses.
+            DEFCONFIG_TARGET=malta_defconfig
+            ;;
+        powerpc)
+            # 32- vs 64-bit is chosen by the toolchain prefix.
+            case "$CROSS_COMPILE" in
+            *powerpc64*) DEFCONFIG_TARGET=pseries_defconfig ;;  # 64-bit, SMP
+            *)           DEFCONFIG_TARGET=ppc44x_defconfig ;;   # 32-bit baseline
+            esac
+            ;;
+        riscv)  DEFCONFIG_TARGET=defconfig ;;         # generic, SMP (>=4.15 only)
+        esac
         log "no device config; using $ARCH $DEFCONFIG_TARGET"
         kmake "$DEFCONFIG_TARGET"
 
@@ -242,6 +275,23 @@ if [ ! -f "$PREPARED_STAMP" ]; then
             # kernel whose vermagic carries no "thumb2" token, and vice versa.
             cfg -d THUMB2_KERNEL
         fi
+        if [ "$ARCH" = i386 ]; then
+            # 32-bit x86 enables HIGHMEM (HIGHMEM4G/64G), which pulls in the same
+            # kmap/kunmap imports ARM does. Off => lowmem-only access, loads on
+            # both; our reads target lowmem RAM.
+            cfg -d HIGHMEM4G -d HIGHMEM64G -e NOHIGHMEM
+        fi
+        if [ "$ARCH" = mips ]; then
+            # Endianness is NOT in the vermagic — it's the ELF byte order, and a
+            # wrong-endian module won't load. The base defconfig (malta) defaults
+            # to little-endian regardless of the toolchain, so force the config's
+            # endianness to match the target (inferred from the cross prefix:
+            # mipsel/mips64el => little, mips/mips64 => big).
+            case "$CROSS_COMPILE" in
+            *mipsel*|*mips64el*) cfg -d CPU_BIG_ENDIAN -e CPU_LITTLE_ENDIAN ;;
+            *)                   cfg -e CPU_BIG_ENDIAN -d CPU_LITTLE_ENDIAN ;;
+            esac
+        fi
         [ -n "$ELA_KMOD_VM_SMP" ] && log "applied vermagic flags:" \
             "SMP=$ELA_KMOD_VM_SMP PREEMPT=$ELA_KMOD_VM_PREEMPT" \
             "MODULE_UNLOAD=$ELA_KMOD_VM_MODULE_UNLOAD" \
@@ -256,6 +306,12 @@ if [ ! -f "$PREPARED_STAMP" ]; then
 
     log "running modules_prepare (this is the slow step on a cold cache)"
     kmake modules_prepare
+    # PowerPC modules link against arch/powerpc/lib/crtsavres.o (GCC register
+    # save/restore stubs). modules_prepare doesn't build it, so the module link
+    # fails with "cannot find crtsavres.o" — build it explicitly.
+    if [ "$ARCH" = powerpc ]; then
+        kmake arch/powerpc/lib/crtsavres.o
+    fi
     touch "$PREPARED_STAMP"
 else
     log "prepared tree cache hit: $TREE_KEY"
@@ -267,14 +323,8 @@ trap 'rm -rf "$BUILD_DIR"; rm -f "$WORK_CONFIG"' EXIT INT TERM
 cp "$SRC_DIR"/* "$BUILD_DIR/"
 
 log "building module for $ARCH against linux-$KERNEL_VERSION"
-# Force non-PIC codegen. Distro cross-GCCs (e.g. Debian's) default to -fPIE,
-# which emits GOT-based relocations referencing _GLOBAL_OFFSET_TABLE_. A kernel
-# module has no GOT, so it then fails to load with:
-#   <mod>: Unknown symbol _GLOBAL_OFFSET_TABLE_
-# The kernel build only started passing -fno-PIE itself in ~4.9, so pre-4.9
-# trees need us to add it. Harmless (redundant) on newer kernels/arches, where
-# modules are non-PIC anyway.
-kmake M="$BUILD_DIR" modules KCFLAGS="-fno-pic -fno-PIE"
+# KCFLAGS=-fno-pic -fno-PIE is applied by kmake() for all target compilation.
+kmake M="$BUILD_DIR" modules
 
 [ -f "$BUILD_DIR/ela_kmod.ko" ] || die "build produced no ela_kmod.ko"
 
