@@ -118,12 +118,16 @@ describe('module download route', () => {
     expect(res.body).toBe('not found\n');
   });
 
-  test('?vermagic=device streams the vermagic-patched bytes, not the raw file', async () => {
+  test('?vermagic=device stages the patched bytes to a temp file and sendFiles them', async () => {
     const patchVermagic = jest.fn(() => Buffer.from('PATCHED-KO-BYTES'));
+    const writeFile = jest.fn().mockResolvedValue();
+    const unlink = jest.fn().mockResolvedValue();
     const { app, deps } = register({
       fsp: {
         stat: jest.fn().mockResolvedValue({ isFile: () => true, size: 13 }),
         readFile: jest.fn().mockResolvedValue(Buffer.from('RAW-KO')),
+        writeFile,
+        unlink,
       },
       consumeDownloadToken: jest.fn().mockResolvedValue({
         id: 7,
@@ -138,10 +142,15 @@ describe('module download route', () => {
 
     expect(deps.fsp.readFile).toHaveBeenCalledWith('/data/agent/aa:bb:cc:dd:ee:ff/modules/7/ela_kmod.ko');
     expect(patchVermagic).toHaveBeenCalledWith(Buffer.from('RAW-KO'), '3.12.19-rt30 SMP mod_unload ARMv7 p2v8 ');
+    // The patched bytes are staged to a temp file...
+    expect(writeFile).toHaveBeenCalledTimes(1);
+    const [tmpPath, tmpBytes] = writeFile.mock.calls[0];
+    expect(tmpBytes).toEqual(Buffer.from('PATCHED-KO-BYTES'));
+    // ...streamed from there (NOT the raw artifact), then cleaned up.
     expect(res.statusCode).toBe(200);
-    expect(res.body).toEqual(Buffer.from('PATCHED-KO-BYTES'));
-    expect(res.headers['content-length']).toBe('PATCHED-KO-BYTES'.length);
-    expect(res.sentFile).toBeUndefined(); // did NOT fall through to sendFile
+    expect(res.sentFile).toBe(tmpPath);
+    expect(res.sentFile).not.toBe('/data/agent/aa:bb:cc:dd:ee:ff/modules/7/ela_kmod.ko');
+    expect(unlink).toHaveBeenCalledWith(tmpPath);
     expect(deps.verboseResponseLog).toHaveBeenCalledWith(expect.anything(), 200, 'PATCHED-KO-BYTES'.length);
   });
 

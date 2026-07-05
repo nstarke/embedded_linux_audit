@@ -313,7 +313,13 @@ describe('module build routes', () => {
     });
 
     test('504s when the agent command fails and does not build from stale facts', async () => {
-      const { app, deps, sendCommand } = register();
+      // refreshBuildInfo polls for a fresh upload regardless of the exec status
+      // (the buildinfo uploads over a separate channel), so mock the poll to be
+      // instant. The stale buildinfo (id 55) never changes, so no fresh upload
+      // ever appears -> 504, and no build from stale facts.
+      const { app, deps, sendCommand } = register({
+        deps: { autobuildWaitMs: 0, autobuildPollMs: 0, sleep: () => Promise.resolve() },
+      });
       sendCommand.mockResolvedValue({ status: 504, body: { error: 'timeout' } });
       const res = createRes();
 
