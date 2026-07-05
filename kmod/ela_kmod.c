@@ -33,19 +33,47 @@
 #endif
 /* Portable readq/writeq on 32-bit arches: split into two 32-bit accesses,
  * low word first (same order chipsec uses). 64-bit arches get native ops.
- * Upstream moved this wrapper from <asm-generic/...> to <linux/...> in 3.15;
- * probe for the newer path so pre-3.15 kernels (which only ship the
- * asm-generic one) still build. */
+ * Upstream moved this wrapper from <asm-generic/...> to <linux/...> in 3.15,
+ * and the asm-generic one only appeared in 3.4 — before that NEITHER header
+ * exists, so we provide the split inline. Probe with __has_include where
+ * available, else fall back to version checks. */
 #if defined(__has_include)
 # if __has_include(<linux/io-64-nonatomic-lo-hi.h>)
 #  include <linux/io-64-nonatomic-lo-hi.h>
-# else
+# elif __has_include(<asm-generic/io-64-nonatomic-lo-hi.h>)
 #  include <asm-generic/io-64-nonatomic-lo-hi.h>
+# else
+#  define ELA_INLINE_IO64 1
 # endif
 #elif LINUX_VERSION_CODE >= KERNEL_VERSION(3, 15, 0)
 # include <linux/io-64-nonatomic-lo-hi.h>
-#else
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(3, 4, 0)
 # include <asm-generic/io-64-nonatomic-lo-hi.h>
+#else
+# define ELA_INLINE_IO64 1
+#endif
+
+#ifdef ELA_INLINE_IO64
+/* Pre-3.4 kernels ship no io-64-nonatomic header. Define the lo-hi split
+ * accessors ourselves, but only where the arch hasn't already provided them
+ * (64-bit arches define readq/writeq natively in asm/io.h). */
+# ifndef readq
+static inline u64 readq(const volatile void __iomem *addr)
+{
+	const volatile u32 __iomem *p = addr;
+
+	return (u64)readl(p) | ((u64)readl(p + 1) << 32);
+}
+# endif
+# ifndef writeq
+static inline void writeq(u64 val, volatile void __iomem *addr)
+{
+	volatile u32 __iomem *p = addr;
+
+	writel((u32)val, p);
+	writel((u32)(val >> 32), p + 1);
+}
+# endif
 #endif
 
 #include "ela_ioctl.h"

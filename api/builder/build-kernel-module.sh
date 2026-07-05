@@ -131,6 +131,33 @@ kmake() {
         KCFLAGS="-fno-pic -fno-PIE" "$@"
 }
 
+# Set kernel config symbols by editing .config directly, then let a later
+# oldconfig pass settle dependencies. We do NOT use scripts/config: the version
+# shipped with pre-2.6.36 kernels mishandles `--file` (it treats the filename as
+# a config symbol and just prints usage), which breaks the whole config step on
+# old trees. Direct editing works on every version. Args are -e SYM | -d SYM
+# pairs (mirroring scripts/config), applied left to right.
+cfg() {
+    while [ "$#" -gt 0 ]; do
+        _op="$1"; _sym="$2"; shift 2
+        sed -i "/^CONFIG_${_sym}=/d;/^# CONFIG_${_sym} is not set\$/d" "$TREE/.config"
+        case "$_op" in
+        -e) printf 'CONFIG_%s=y\n' "$_sym" >>"$TREE/.config" ;;
+        -d) printf '# CONFIG_%s is not set\n' "$_sym" >>"$TREE/.config" ;;
+        esac
+    done
+}
+
+# Non-interactively resolve the .config after edits. olddefconfig is the modern
+# target; kernels before 2.6.36 only have interactive oldconfig, so feed it
+# empty lines (accept every default) as a fallback.
+ela_oldconfig() {
+    if kmake olddefconfig >/dev/null 2>&1; then
+        return 0
+    fi
+    yes '' | kmake oldconfig >/dev/null 2>&1 || kmake oldnoconfig >/dev/null 2>&1
+}
+
 # --- 3. Unpack + configure + modules_prepare (cached) ----------------------
 if [ ! -f "$PREPARED_STAMP" ]; then
     rm -rf "$TREE_PARENT"
@@ -173,7 +200,7 @@ if [ ! -f "$PREPARED_STAMP" ]; then
         cp "$WORK_CONFIG" "$TREE/.config"
         # Settle symbols the device's kernel didn't know about (config from an
         # older/newer minor) with their defaults, non-interactively.
-        kmake olddefconfig
+        ela_oldconfig
     else
         # Base defconfig. On ARM `make defconfig` is versatile (ARMv5, UP). An
         # ARMv7 device needs multi_v7_defconfig (SMP, ARMv7) — but multi_v7 is a
@@ -215,15 +242,22 @@ if [ ! -f "$PREPARED_STAMP" ]; then
             # 32- vs 64-bit is chosen by the toolchain prefix.
             case "$CROSS_COMPILE" in
             *powerpc64*) DEFCONFIG_TARGET=pseries_defconfig ;;  # 64-bit, SMP
-            *)           DEFCONFIG_TARGET=ppc44x_defconfig ;;   # 32-bit baseline
+            *)
+                # 32-bit: ppc44x is a clean baseline but UP-only. An SMP device
+                # needs an SMP-capable base or SMP gets reverted; mpc85xx_smp
+                # (Freescale e500) is the common SMP embedded PPC32 config.
+                if [ "$ELA_KMOD_VM_SMP" = y ]; then
+                    DEFCONFIG_TARGET=mpc85xx_smp_defconfig
+                else
+                    DEFCONFIG_TARGET=ppc44x_defconfig
+                fi
+                ;;
             esac
             ;;
         riscv)  DEFCONFIG_TARGET=defconfig ;;         # generic, SMP (>=4.15 only)
         esac
         log "no device config; using $ARCH $DEFCONFIG_TARGET"
         kmake "$DEFCONFIG_TARGET"
-
-        cfg() { "$TREE/scripts/config" --file "$TREE/.config" "$@"; }
 
         if [ -n "$STRIP_TO_VIRT" ]; then
             # Disable every SoC/board platform except ARCH_VIRT (a bare ARMv7 SMP
@@ -303,13 +337,19 @@ if [ ! -f "$PREPARED_STAMP" ]; then
             *)                   cfg -e CPU_BIG_ENDIAN -d CPU_LITTLE_ENDIAN ;;
             esac
         fi
+        if [ "$ARCH" = powerpc ]; then
+            # 32-bit PowerPC configs (e.g. mpc85xx) enable HIGHMEM, which pulls in
+            # the kmap_high import that only resolves on a HIGHMEM kernel. Off =>
+            # lowmem access, loads on both. (ppc64 has no HIGHMEM, so no effect.)
+            cfg -d HIGHMEM
+        fi
         [ -n "$ELA_KMOD_VM_SMP" ] && log "applied vermagic flags:" \
             "SMP=$ELA_KMOD_VM_SMP PREEMPT=$ELA_KMOD_VM_PREEMPT" \
             "MODULE_UNLOAD=$ELA_KMOD_VM_MODULE_UNLOAD" \
             "ARM_PATCH_PHYS_VIRT=$ELA_KMOD_VM_PATCH_PHYS_VIRT"
 
-        # olddefconfig settles any symbols the forced options pulled in/out.
-        kmake olddefconfig
+        # Settle any symbols the forced options pulled in/out.
+        ela_oldconfig
     fi
 
     grep -q '^CONFIG_MODULES=y' "$TREE/.config" \
