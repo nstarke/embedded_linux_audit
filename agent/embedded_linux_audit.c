@@ -62,7 +62,12 @@ static void usage(const char *prog)
 		"  linux ssh          SSH client/copy/tunnel operations\n"
 		"  linux process      Watch for process restarts matching a needle string\n"
 		"  linux gdbserver    GDB RSP server; attach gdb-multiarch with target remote\n"
-		"  linux modules      List/load/unload modules and read module vermagic without utilities\n"
+		"  linux modules      List/load/unload modules, read vermagic, gather buildinfo (no utilities)\n"
+		"  linux memread      Read physical memory via the ela_kmod module and dump/upload it\n"
+		"  linux memwrite     Write physical memory via ela_kmod (DANGEROUS, no target validation)\n"
+		"  linux mmio         Sized MMIO register read/write via ela_kmod\n"
+		"  linux pci          PCI configuration space read/write via ela_kmod\n"
+		"  linux physmem      Physical-memory helpers via ela_kmod: alloc/free/va2pa\n"
 		"  linux pcap         Capture packets from an interface as pcap data\n"
 		"  linux coredump     Configure kernel coredump generation to /tmp\n"
 		"  tpm2               Run built-in TPM2 commands through the TPM2-TSS library\n"
@@ -90,6 +95,10 @@ static void usage(const char *prog)
 		"  %s linux modules load --force /tmp/demo.ko debug=1\n"
 		"  %s linux modules unload demo\n"
 		"  %s --output-format json linux modules vermagic /tmp/demo.ko\n"
+		"  %s linux modules buildinfo\n"
+		"  %s linux memread 0x80001000 256\n"
+		"  %s linux mmio read 0xfed00000 4\n"
+		"  %s linux physmem alloc 4096\n"
 		"  %s linux pcap --interface eth0\n"
 		"  %s --output-http http://127.0.0.1:5000 linux pcap --interface eth0\n"
 		"  %s --output-http http://127.0.0.1:5000 linux coredump\n"
@@ -110,10 +119,10 @@ static void usage(const char *prog)
 		prog, prog, prog, prog,
 		prog, prog, prog, prog,
 		prog, prog, prog, prog,
-		prog, prog, prog,
 		prog, prog, prog, prog,
 		prog, prog, prog, prog,
-		prog,
+		prog, prog, prog, prog,
+		prog, prog, prog, prog,
 		prog);
 }
 
