@@ -102,15 +102,31 @@ module.exports = function registerModuleBuildRoutes(app, deps = {}) {
   /*
    * Push `linux modules buildinfo` to the live agent session and wait for the
    * resulting module-buildinfo upload to supersede `previousUploadId`.
-   * Returns the fresh {upload, buildInfo} or null (agent offline, command
-   * failed, or the upload never arrived in time).
+   * Returns the fresh {upload, buildInfo} or null (the upload never arrived in
+   * time).
+   *
+   * The buildinfo result is POSTed to the agent API over a SEPARATE HTTP path,
+   * independent of the terminal session — so a fresh upload lands even when the
+   * terminal exec times out (a slow buildinfo, e.g. modprobing configs, can run
+   * longer than the exec wait, and a flapping session drops the exec response
+   * entirely). We therefore poll for the upload regardless of the exec status:
+   * the upload, not the exec response, is the real success signal. The exec is
+   * still issued (to trigger the command) and logged, but its status does not
+   * gate success.
    */
   async function refreshBuildInfo(username, mac, deviceId, previousUploadId) {
     let result;
     try {
       result = await sendCommand(
-        { type: 'exec', mode: 'ela', mac, command: 'linux modules buildinfo' },
-        { waitMs: 30000 },
+        // `linux modules buildinfo` gathers module facts and, when
+        // /proc/config.gz is absent, modprobes to recover the kernel config —
+        // which regularly runs past the 15s DEFAULT_EXEC_TIMEOUT_MS. Without an
+        // explicit timeoutMs it would ALWAYS spuriously time out (504) on a
+        // perfectly online device. Give it a realistic exec timeout and a
+        // matching client wait; the total with the upload poll below stays
+        // under the nginx proxy timeout.
+        { type: 'exec', mode: 'ela', mac, command: 'linux modules buildinfo', timeoutMs: 35000 },
+        { waitMs: 40000 },
       );
     } catch {
       result = { status: 504 };
@@ -122,9 +138,6 @@ module.exports = function registerModuleBuildRoutes(app, deps = {}) {
       command: 'linux modules buildinfo',
       status: result && result.status,
     }).catch(() => {});
-    if (!result || result.status !== 200) {
-      return null;
-    }
 
     const deadline = Date.now() + autobuildWaitMs;
     for (;;) {
