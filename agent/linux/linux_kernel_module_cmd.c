@@ -286,9 +286,15 @@ static int load_module(const struct ela_kernel_module_request *request)
 #endif
 
 	if (flags) {
-		fprintf(stderr, "finit_module is unavailable; --force cannot be applied with init_module\n");
-		close(fd);
-		return 1;
+		/* No finit_module (pre-3.8 kernel), so the ignore-vermagic flag can't
+		 * be honored. Don't give up: fall through to init_module anyway. If the
+		 * module's vermagic already matches the running kernel the flag was
+		 * unnecessary and the load succeeds; if it mismatches, init_module
+		 * reports the real error. This is the only way a module loads on old
+		 * kernels — force is impossible there — so a correctly built/patched
+		 * (matching-vermagic) module must be used. */
+		fprintf(stderr, "note: finit_module unavailable; --force cannot ignore "
+			"vermagic on this kernel — trying init_module (module must match).\n");
 	}
 
 #if defined(SYS_init_module)
