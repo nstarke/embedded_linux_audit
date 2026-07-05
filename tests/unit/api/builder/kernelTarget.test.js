@@ -67,11 +67,14 @@ describe('kernelTarget', () => {
 
   // ── kernelTarballUrl ───────────────────────────────────────────────────
 
-  test('builds the kernel.org CDN URL for an upstream version', () => {
+  test('builds the kernel.org mirror URL for an upstream version', () => {
     expect(kernelTarballUrl('3.12.19'))
-      .toBe('https://cdn.kernel.org/pub/linux/kernel/v3.x/linux-3.12.19.tar.xz');
+      .toBe('https://mirrors.edge.kernel.org/pub/linux/kernel/v3.x/linux-3.12.19.tar.xz');
     expect(kernelTarballUrl('6.1.0'))
-      .toBe('https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.1.0.tar.xz');
+      .toBe('https://mirrors.edge.kernel.org/pub/linux/kernel/v6.x/linux-6.1.0.tar.xz');
+    // The 2.6 series lives under v2.6, not v2.x.
+    expect(kernelTarballUrl('2.6.32'))
+      .toBe('https://mirrors.edge.kernel.org/pub/linux/kernel/v2.6/linux-2.6.32.tar.xz');
   });
 
   test('refuses local-suffixed or invalid versions', () => {

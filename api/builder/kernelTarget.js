@@ -70,15 +70,22 @@ function parseKernelRelease(release) {
 }
 
 /**
- * kernel.org CDN URL for an upstream release tarball.
- * `"3.12.19"` → `.../v3.x/linux-3.12.19.tar.xz`.
+ * kernel.org mirror URL for an upstream release tarball. Served from
+ * mirrors.edge.kernel.org (cdn.kernel.org has been unreliable). Tarballs group
+ * by directory: `v3.x`, `v4.x`, … but the 2.6 series lives under `v2.6` (2.4
+ * under `v2.4`), not `v2.x`.
+ * `"3.12.19"` → `.../v3.x/linux-3.12.19.tar.xz`;
+ * `"2.6.32"`  → `.../v2.6/linux-2.6.32.tar.xz`.
  */
 function kernelTarballUrl(version) {
   const parsed = parseKernelRelease(version);
   if (!parsed || parsed.localVersion) {
     return null;
   }
-  return `https://cdn.kernel.org/pub/linux/kernel/v${parsed.major}.x/linux-${parsed.version}.tar.xz`;
+  const dir = parsed.major === 2
+    ? `v2.${parsed.version.split('.')[1]}`
+    : `v${parsed.major}.x`;
+  return `https://mirrors.edge.kernel.org/pub/linux/kernel/${dir}/linux-${parsed.version}.tar.xz`;
 }
 
 /**

@@ -56,7 +56,14 @@ case "$KERNEL_VERSION" in
 esac
 
 MAJOR="${KERNEL_VERSION%%.*}"
-TARBALL_URL="https://cdn.kernel.org/pub/linux/kernel/v${MAJOR}.x/linux-${KERNEL_VERSION}.tar.xz"
+# kernel.org groups tarballs by directory: v3.x, v4.x, ... but the 2.6 series
+# lives under v2.6 (and 2.4 under v2.4), not v2.x. Serve from mirrors.edge
+# (cdn.kernel.org has been unreliable / 404ing tarball paths).
+case "$MAJOR" in
+2)  MINOR="${KERNEL_VERSION#*.}"; MINOR="${MINOR%%.*}"; KDIR="v2.${MINOR}" ;;
+*)  KDIR="v${MAJOR}.x" ;;
+esac
+TARBALL_URL="https://mirrors.edge.kernel.org/pub/linux/kernel/${KDIR}/linux-${KERNEL_VERSION}.tar.xz"
 TARBALL="$CACHE_DIR/tarballs/linux-${KERNEL_VERSION}.tar.xz"
 
 mkdir -p "$CACHE_DIR/tarballs" "$CACHE_DIR/trees" "$OUT_DIR"
@@ -196,9 +203,13 @@ if [ ! -f "$PREPARED_STAMP" ]; then
         x86_64) DEFCONFIG_TARGET=x86_64_defconfig ;;  # generic PC, SMP
         i386)   DEFCONFIG_TARGET=i386_defconfig ;;    # SMP-capable; highmem off below
         mips)
-            # No single generic MIPS defconfig; malta (QEMU) is the closest to a
-            # portable baseline and supports both endiannesses.
-            DEFCONFIG_TARGET=malta_defconfig
+            # No single generic MIPS defconfig. 32-bit: malta (QEMU). 64-bit:
+            # ip27 (SGI, MIPS64 BE SMP) is a clean 64-bit baseline. Endianness is
+            # forced below to match the toolchain.
+            case "$CROSS_COMPILE" in
+            *mips64*) DEFCONFIG_TARGET=ip27_defconfig ;;
+            *)        DEFCONFIG_TARGET=malta_defconfig ;;
+            esac
             ;;
         powerpc)
             # 32- vs 64-bit is chosen by the toolchain prefix.
