@@ -36,6 +36,34 @@ jobs:
           set -euo pipefail
           make test-unit-agent-c
 
+  kmod-build:
+    name: kmod/host-headers-build
+    if: ${{ github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ github.token }}
+          ref: ${{ github.event_name == 'workflow_run' && (github.event.workflow_run.head_branch || github.event.workflow_run.head_sha) || github.sha }}
+
+      # Cheap always-on check: compile kmod/ against the runner's kernel
+      # headers so kernel-API breakage in the module surfaces on every push.
+      # (The full pinned-kernel cross-compile path is the gated
+      # tests/builder/test_module_build.sh integration test.)
+      - name: Install kernel headers
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y "linux-headers-$(uname -r)"
+
+      - name: Build kernel module against host headers
+        run: |
+          set -euo pipefail
+          make -C kmod
+          modinfo kmod/ela_kmod.ko
+          modinfo -F vermagic kmod/ela_kmod.ko
+
   agent-c-coverage:
     name: coverage/agent-c
     if: ${{ github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
@@ -92,7 +120,7 @@ jobs:
       - name: Run agent API Jest tests
         run: |
           set -euo pipefail
-          node_modules/.bin/jest --runInBand --coverage tests/unit/api/agent tests/unit/api/lib
+          node_modules/.bin/jest --runInBand --coverage tests/unit/api/agent tests/unit/api/lib tests/unit/api/builder tests/unit/api/client
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4

@@ -27,6 +27,39 @@ RUN apt-get update \
     xz-utils \
  && rm -rf /var/lib/apt/lists/*
 
+# Kernel-module build support: Debian's packaged cross compilers for every ISA
+# in api/builder/kernelTarget.js, plus the kernel build system's own deps
+# (bc, cpio, kmod, libelf/openssl headers, rsync). Plain kernel headers
+# (modules_prepare) — no buildroot; see api/builder/build-kernel-module.sh.
+# gcc-x86-64/i686 are included so x86 targets also build on arm64 hosts.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+    bc \
+    cpio \
+    gcc-aarch64-linux-gnu \
+    gcc-arm-linux-gnueabi \
+    gcc-i686-linux-gnu \
+    gcc-mips-linux-gnu \
+    gcc-mips64-linux-gnuabi64 \
+    gcc-mips64el-linux-gnuabi64 \
+    gcc-mipsel-linux-gnu \
+    gcc-powerpc-linux-gnu \
+    gcc-powerpc64-linux-gnu \
+    gcc-powerpc64le-linux-gnu \
+    gcc-riscv64-linux-gnu \
+    gcc-x86-64-linux-gnu \
+    kmod \
+    libelf-dev \
+    libssl-dev \
+    rsync \
+ && rm -rf /var/lib/apt/lists/*
+
+# Kernel source tarball + prepared-tree cache. docker-compose mounts a named
+# volume here so a device's second build (same version/arch/config) skips the
+# slow modules_prepare step.
+ENV ELA_KMOD_CACHE_DIR=/var/cache/ela-kmod
+RUN mkdir -p /var/cache/ela-kmod
+
 # The repo (incl. .git for tpm2-tss's `git describe`) is bind-mounted at /src and
 # owned by a different uid than the container; trust it.
 RUN git config --system --add safe.directory '*'

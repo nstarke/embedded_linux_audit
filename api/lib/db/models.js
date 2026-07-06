@@ -520,6 +520,160 @@ function defineModels(sequelize) {
     timestamps: false,
   });
 
+  const KernelBuildInfo = sequelize.define('KernelBuildInfo', {
+    uploadId: {
+      type: DataTypes.BIGINT,
+      allowNull: false,
+      primaryKey: true,
+      field: 'upload_id',
+    },
+    kernelRelease: {
+      type: DataTypes.STRING(255),
+      allowNull: true,
+      field: 'kernel_release',
+    },
+    procVersion: {
+      type: DataTypes.TEXT,
+      allowNull: true,
+      field: 'proc_version',
+    },
+    vermagic: {
+      type: DataTypes.STRING(255),
+      allowNull: true,
+    },
+    modulePath: {
+      type: DataTypes.TEXT,
+      allowNull: true,
+      field: 'module_path',
+    },
+    isa: {
+      type: DataTypes.STRING(64),
+      allowNull: true,
+    },
+    bits: {
+      type: DataTypes.STRING(8),
+      allowNull: true,
+    },
+    endianness: {
+      type: DataTypes.STRING(16),
+      allowNull: true,
+    },
+    configSource: {
+      type: DataTypes.TEXT,
+      allowNull: true,
+      field: 'config_source',
+    },
+    configAvailable: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: false,
+      field: 'config_available',
+    },
+    configCompressed: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: false,
+      field: 'config_compressed',
+    },
+  }, {
+    tableName: 'kernel_build_infos',
+    underscored: true,
+    timestamps: false,
+  });
+
+  const ModuleBuildRequest = sequelize.define('ModuleBuildRequest', {
+    id: {
+      type: DataTypes.BIGINT,
+      autoIncrement: true,
+      primaryKey: true,
+    },
+    deviceId: {
+      type: DataTypes.BIGINT,
+      allowNull: false,
+      field: 'device_id',
+    },
+    userId: {
+      type: DataTypes.BIGINT,
+      allowNull: true,
+      field: 'user_id',
+    },
+    buildinfoUploadId: {
+      type: DataTypes.BIGINT,
+      allowNull: true,
+      field: 'buildinfo_upload_id',
+    },
+    // queued -> building -> succeeded | failed
+    status: {
+      type: DataTypes.STRING(32),
+      allowNull: false,
+      defaultValue: 'queued',
+    },
+    kernelRelease: {
+      type: DataTypes.STRING(255),
+      allowNull: false,
+      field: 'kernel_release',
+    },
+    isa: {
+      type: DataTypes.STRING(64),
+      allowNull: false,
+    },
+    endianness: {
+      type: DataTypes.STRING(16),
+      allowNull: false,
+    },
+    deviceVermagic: {
+      type: DataTypes.STRING(255),
+      allowNull: true,
+      field: 'device_vermagic',
+    },
+    configArtifactPath: {
+      type: DataTypes.TEXT,
+      allowNull: true,
+      field: 'config_artifact_path',
+    },
+    builtVermagic: {
+      type: DataTypes.STRING(255),
+      allowNull: true,
+      field: 'built_vermagic',
+    },
+    // match | release-match | mismatch | unverified (see kernelTarget.compareVermagic)
+    vermagicResult: {
+      type: DataTypes.STRING(32),
+      allowNull: true,
+      field: 'vermagic_result',
+    },
+    // upstream-exact | upstream-nearest (vendor suffix rebuilt via LOCALVERSION)
+    source: {
+      type: DataTypes.STRING(32),
+      allowNull: true,
+    },
+    artifactPath: {
+      type: DataTypes.TEXT,
+      allowNull: true,
+      field: 'artifact_path',
+    },
+    downloadTokenHash: {
+      type: DataTypes.STRING(64),
+      allowNull: true,
+      field: 'download_token_hash',
+    },
+    downloadTokenExpiresAt: {
+      type: DataTypes.DATE,
+      allowNull: true,
+      field: 'download_token_expires_at',
+    },
+    errorMessage: {
+      type: DataTypes.TEXT,
+      allowNull: true,
+      field: 'error_message',
+    },
+  }, {
+    tableName: 'module_build_requests',
+    underscored: true,
+    createdAt: 'created_at',
+    updatedAt: 'updated_at',
+  });
+
   const GrepMatch = sequelize.define('GrepMatch', {
     id: {
       type: DataTypes.BIGINT,
@@ -572,7 +726,10 @@ function defineModels(sequelize) {
   Upload.hasMany(UbootEnvVariable, { foreignKey: 'uploadId' });
   Upload.hasMany(LogEvent, { foreignKey: 'uploadId' });
   Upload.hasOne(ArchReport, { foreignKey: 'uploadId' });
+  Upload.hasOne(KernelBuildInfo, { foreignKey: 'uploadId' });
   Upload.hasMany(GrepMatch, { foreignKey: 'uploadId' });
+  Device.hasMany(ModuleBuildRequest, { foreignKey: 'deviceId' });
+  ModuleBuildRequest.belongsTo(Device, { foreignKey: 'deviceId' });
   const BlockedRemote = sequelize.define('BlockedRemote', {
     id: {
       type: DataTypes.BIGINT,
@@ -712,6 +869,8 @@ function defineModels(sequelize) {
     DeviceAlias,
     TerminalConnection,
     ArchReport,
+    KernelBuildInfo,
+    ModuleBuildRequest,
     GrepMatch,
     BlockedRemote,
     User,

@@ -46,7 +46,9 @@ describe('db models', () => {
       'EfiVariable',
       'FileListEntry',
       'GrepMatch',
+      'KernelBuildInfo',
       'LogEvent',
+      'ModuleBuildRequest',
       'SymlinkListEntry',
       'TerminalConnection',
       'UbootEnvCandidate',
@@ -90,6 +92,7 @@ describe('db models', () => {
     expect(models.Upload.hasMany).toHaveBeenCalledWith(models.UbootEnvVariable, { foreignKey: 'uploadId' });
     expect(models.Upload.hasMany).toHaveBeenCalledWith(models.LogEvent, { foreignKey: 'uploadId' });
     expect(models.Upload.hasOne).toHaveBeenCalledWith(models.ArchReport, { foreignKey: 'uploadId' });
+    expect(models.Upload.hasOne).toHaveBeenCalledWith(models.KernelBuildInfo, { foreignKey: 'uploadId' });
     expect(models.Upload.hasMany).toHaveBeenCalledWith(models.GrepMatch, { foreignKey: 'uploadId' });
     expect(models.Device.hasOne).toHaveBeenCalledWith(models.DeviceAlias, { foreignKey: 'deviceId' });
     expect(models.DeviceAlias.belongsTo).toHaveBeenCalledWith(models.Device, { foreignKey: 'deviceId' });

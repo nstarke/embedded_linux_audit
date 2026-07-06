@@ -20,6 +20,12 @@ const COMMAND_QUEUE_NAME = process.env.ELA_COMMAND_QUEUE_NAME || 'ela-terminal-c
 // exposing any client REST of its own.
 const GDB_COMMAND_QUEUE_NAME = process.env.ELA_GDB_COMMAND_QUEUE_NAME || 'ela-gdb-commands';
 
+// Kernel-module build queue: the client API enqueues a build request (device
+// kernel facts from a module-buildinfo upload) and the builder worker compiles
+// kmod/ against the matching upstream kernel. Separate from the binary-build
+// queue so a slow kernel modules_prepare never blocks launcher rebuilds.
+const MODULE_BUILD_QUEUE_NAME = process.env.ELA_MODULE_BUILD_QUEUE_NAME || 'ela-module-builds';
+
 function getConnection() {
   return {
     host: process.env.REDIS_HOST || 'redis',
@@ -76,6 +82,41 @@ async function closeBuildQueue() {
     await queue.close();
     queue = null;
   }
+}
+
+/* -------------------------------------------------------------------------
+ * Kernel-module build queue
+ * ---------------------------------------------------------------------- */
+
+let moduleBuildQueue = null;
+
+function getModuleBuildQueue() {
+  if (!moduleBuildQueue) {
+    moduleBuildQueue = new Queue(MODULE_BUILD_QUEUE_NAME, { connection: getConnection() });
+  }
+  return moduleBuildQueue;
+}
+
+async function closeModuleBuildQueue() {
+  if (moduleBuildQueue) {
+    await moduleBuildQueue.close();
+    moduleBuildQueue = null;
+  }
+}
+
+// Worker options for module builds. Same long-build reasoning as the binary
+// builder (see getWorkerOptions): a cold-cache modules_prepare can run for
+// several minutes, so the lock ceiling stays high. Concurrency 1 because
+// concurrent builds of the same (version, arch, config) key would race on the
+// shared prepared-tree cache.
+function getModuleBuildWorkerOptions() {
+  return {
+    connection: getConnection(),
+    concurrency: intFromEnv('ELA_MODULE_BUILD_CONCURRENCY', 1),
+    lockDuration: intFromEnv('ELA_MODULE_BUILD_LOCK_DURATION_MS', 30 * 60 * 1000),
+    stalledInterval: intFromEnv('ELA_MODULE_BUILD_STALLED_INTERVAL_MS', 30 * 1000),
+    maxStalledCount: intFromEnv('ELA_MODULE_BUILD_MAX_STALLED_COUNT', 3),
+  };
 }
 
 /* -------------------------------------------------------------------------
@@ -207,10 +248,14 @@ module.exports = {
   QUEUE_NAME,
   COMMAND_QUEUE_NAME,
   GDB_COMMAND_QUEUE_NAME,
+  MODULE_BUILD_QUEUE_NAME,
   getConnection,
   getWorkerOptions,
   getBuildQueue,
   closeBuildQueue,
+  getModuleBuildQueue,
+  closeModuleBuildQueue,
+  getModuleBuildWorkerOptions,
   getCommandQueue,
   getCommandQueueEvents,
   getCommandWorkerOptions,

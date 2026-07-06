@@ -227,6 +227,87 @@ describe('normalizeUpload', () => {
     expect(result.archReport).toEqual({ subcommand: null, value: null });
   });
 
+  // ── parseKernelBuildInfo ─────────────────────────────────────────────────
+
+  test('normalizes module-buildinfo json payloads', () => {
+    const result = normalizeUpload({
+      uploadType: 'module-buildinfo',
+      contentType: 'application/json',
+      payloadText: JSON.stringify({
+        record: 'module_buildinfo',
+        kernel_release: '3.12.19-rt30',
+        proc_version: 'Linux version 3.12.19-rt30 (gcc version 4.8.2) #1 SMP',
+        vermagic: '3.12.19-rt30 SMP mod_unload ARMv7',
+        module_path: '/lib/modules/demo.ko',
+        isa: 'arm32',
+        bits: '32',
+        endianness: 'little',
+        config_source: '/proc/config.gz',
+        config_available: true,
+        config_compressed: true,
+      }),
+    });
+    expect(result.kernelBuildInfo).toEqual({
+      kernelRelease: '3.12.19-rt30',
+      procVersion: 'Linux version 3.12.19-rt30 (gcc version 4.8.2) #1 SMP',
+      vermagic: '3.12.19-rt30 SMP mod_unload ARMv7',
+      modulePath: '/lib/modules/demo.ko',
+      isa: 'arm32',
+      bits: '32',
+      endianness: 'little',
+      configSource: '/proc/config.gz',
+      configAvailable: true,
+      configCompressed: true,
+    });
+  });
+
+  test('maps missing module-buildinfo fields to nulls and false flags', () => {
+    const result = normalizeUpload({
+      uploadType: 'module-buildinfo',
+      contentType: 'application/json',
+      payloadText: '{"record":"module_buildinfo","kernel_release":"6.1.0"}',
+    });
+    expect(result.kernelBuildInfo).toEqual({
+      kernelRelease: '6.1.0',
+      procVersion: null,
+      vermagic: null,
+      modulePath: null,
+      isa: null,
+      bits: null,
+      endianness: null,
+      configSource: null,
+      configAvailable: false,
+      configCompressed: false,
+    });
+  });
+
+  test('returns null kernelBuildInfo for json with wrong record type', () => {
+    const result = normalizeUpload({
+      uploadType: 'module-buildinfo',
+      contentType: 'application/json',
+      payloadText: '{"record":"other","kernel_release":"6.1.0"}',
+    });
+    expect(result.kernelBuildInfo).toBeNull();
+  });
+
+  test('returns null kernelBuildInfo for non-json content types', () => {
+    const result = normalizeUpload({
+      uploadType: 'module-buildinfo',
+      contentType: 'text/plain',
+      payloadText: 'kernel_release=6.1.0 vermagic=6.1.0\n',
+    });
+    expect(result.kernelBuildInfo).toBeNull();
+  });
+
+  test('returns null kernelBuildInfo for other upload types', () => {
+    const result = normalizeUpload({
+      uploadType: 'module-vermagic',
+      contentType: 'application/json',
+      payloadText: '{"record":"module_buildinfo","kernel_release":"6.1.0"}',
+    });
+    expect(result.kernelBuildInfo).toBeNull();
+  });
+
   // ── parseFileListEntries ─────────────────────────────────────────────────
 
   test('normalizes file-list payloads with a rootPath', () => {

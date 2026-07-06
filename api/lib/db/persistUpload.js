@@ -70,6 +70,13 @@ async function persistUpload(input) {
       }, { transaction });
     }
 
+    if (normalized.kernelBuildInfo) {
+      await models.KernelBuildInfo.create({
+        uploadId: upload.id,
+        ...normalized.kernelBuildInfo,
+      }, { transaction });
+    }
+
     const bulkInserts = [
       [models.FileListEntry, normalized.fileListEntries],
       [models.GrepMatch, normalized.grepMatches],

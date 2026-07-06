@@ -15,6 +15,7 @@ enum ela_kernel_module_action {
 	ELA_KERNEL_MODULE_ACTION_LOAD,
 	ELA_KERNEL_MODULE_ACTION_UNLOAD,
 	ELA_KERNEL_MODULE_ACTION_VERMAGIC,
+	ELA_KERNEL_MODULE_ACTION_BUILDINFO,
 };
 
 struct ela_kernel_module_record {

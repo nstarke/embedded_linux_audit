@@ -101,4 +101,64 @@ describe('persistUpload', () => {
       userId: 99,
     }), { transaction });
   });
+
+  test('creates a kernel build info row for module-buildinfo uploads', async () => {
+    const createdUpload = { id: 44 };
+    const transaction = {};
+    const sequelize = {
+      transaction: jest.fn(async (cb) => cb(transaction)),
+    };
+    const models = {
+      Upload: {
+        create: jest.fn().mockResolvedValue(createdUpload),
+      },
+      CommandUpload: { create: jest.fn() },
+      ArchReport: { create: jest.fn() },
+      KernelBuildInfo: { create: jest.fn() },
+      FileListEntry: { bulkCreate: jest.fn() },
+      GrepMatch: { bulkCreate: jest.fn() },
+      SymlinkListEntry: { bulkCreate: jest.fn() },
+      EfiVariable: { bulkCreate: jest.fn() },
+      UbootEnvCandidate: { bulkCreate: jest.fn() },
+      UbootEnvVariable: { bulkCreate: jest.fn() },
+      LogEvent: { bulkCreate: jest.fn() },
+    };
+
+    getSequelize.mockReturnValue(sequelize);
+    getModels.mockReturnValue(models);
+    ensureDevice.mockResolvedValue({ id: 7 });
+
+    const payload = JSON.stringify({
+      record: 'module_buildinfo',
+      kernel_release: '6.1.0-test',
+      vermagic: '6.1.0-test SMP preempt mod_unload x86_64',
+      isa: 'x86_64',
+      bits: '64',
+      endianness: 'little',
+      config_source: '/proc/config.gz',
+      config_available: true,
+      config_compressed: true,
+    });
+
+    await persistUpload({
+      macAddress: 'aa:bb:cc:dd:ee:ff',
+      uploadType: 'module-buildinfo',
+      contentType: 'application/json',
+      apiTimestamp: '2026-03-17T10:00:00.000Z',
+      payload: Buffer.from(payload),
+      payloadToPersist: Buffer.from(payload),
+    });
+
+    expect(models.KernelBuildInfo.create).toHaveBeenCalledWith(expect.objectContaining({
+      uploadId: 44,
+      kernelRelease: '6.1.0-test',
+      vermagic: '6.1.0-test SMP preempt mod_unload x86_64',
+      isa: 'x86_64',
+      bits: '64',
+      endianness: 'little',
+      configSource: '/proc/config.gz',
+      configAvailable: true,
+      configCompressed: true,
+    }), { transaction });
+  });
 });

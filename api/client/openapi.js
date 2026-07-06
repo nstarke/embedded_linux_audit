@@ -31,6 +31,7 @@ const openapiSpec = {
     { name: 'uploads', description: 'Uploaded artifacts' },
     { name: 'terminal', description: 'Live control of associated devices' },
     { name: 'gdb', description: 'Active gdbserver debug sessions on associated devices' },
+    { name: 'modules', description: 'Cross-compiled kernel-module builds for associated devices' },
   ],
   paths: {
     '/uploads': {
@@ -331,6 +332,96 @@ const openapiSpec = {
         },
       },
     },
+    '/devices/{mac}/module-builds': {
+      post: {
+        tags: ['modules'],
+        summary: 'Request a cross-compiled kernel module for a device',
+        description: 'Creates a build request from the device\'s latest `module-buildinfo` upload and enqueues it. If this exact target (same kernel release, ISA, endianness, and vermagic) was already compiled for the device and the artifact is still available, the existing build is returned instead of queueing a new one (200 with `reused: true`). Pass `autobuild: true` to first push `linux modules buildinfo` to the live agent and wait for a fresh upload, so the build uses current kernel facts (and works on devices that have never uploaded buildinfo).',
+        operationId: 'createModuleBuild',
+        parameters: [{ $ref: '#/components/parameters/Mac' }],
+        requestBody: {
+          required: false,
+          content: { 'application/json': { schema: { $ref: '#/components/schemas/CreateModuleBuildRequest' } } },
+        },
+        responses: {
+          200: {
+            description: 'An existing compilation for this target was reused; no new build was queued (`reused: true`)',
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/ModuleBuildResponse' } } },
+          },
+          202: {
+            description: 'A new build request was queued',
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/ModuleBuildResponse' } } },
+          },
+          400: { $ref: '#/components/responses/BadRequest' },
+          401: { $ref: '#/components/responses/Unauthorized' },
+          404: { $ref: '#/components/responses/DeviceNotFound' },
+          409: { $ref: '#/components/responses/ModuleBuildConflict' },
+          422: { $ref: '#/components/responses/ModuleBuildUnprocessable' },
+          503: { $ref: '#/components/responses/RegistryUnavailable' },
+          504: { $ref: '#/components/responses/AutobuildUnavailable' },
+        },
+      },
+    },
+    '/module-builds': {
+      get: {
+        tags: ['modules'],
+        summary: 'List your kernel-module build requests',
+        operationId: 'listModuleBuilds',
+        parameters: [{ $ref: '#/components/parameters/MacFilter' }],
+        responses: {
+          200: {
+            description: 'Build requests for your associated devices (newest first)',
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/ModuleBuildListResponse' } } },
+          },
+          400: { $ref: '#/components/responses/BadRequest' },
+          401: { $ref: '#/components/responses/Unauthorized' },
+        },
+      },
+    },
+    '/module-builds/{id}': {
+      get: {
+        tags: ['modules'],
+        summary: 'Fetch one kernel-module build request',
+        operationId: 'getModuleBuild',
+        parameters: [{ $ref: '#/components/parameters/ModuleBuildId' }],
+        responses: {
+          200: {
+            description: 'The build request status and result',
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/ModuleBuildResponse' } } },
+          },
+          400: { $ref: '#/components/responses/BadRequest' },
+          401: { $ref: '#/components/responses/Unauthorized' },
+          404: { $ref: '#/components/responses/ModuleBuildNotFound' },
+        },
+      },
+    },
+    '/module-builds/{id}/deliver': {
+      post: {
+        tags: ['modules'],
+        summary: 'Deliver a succeeded build to its device',
+        description: 'Mints a one-time download token and pushes `linux download-file` (then, unless `load: false`, `linux modules load`) to the device\'s live agent session. Only `succeeded` builds with an artifact are deliverable.',
+        operationId: 'deliverModuleBuild',
+        parameters: [{ $ref: '#/components/parameters/ModuleBuildId' }],
+        requestBody: {
+          required: false,
+          content: { 'application/json': { schema: { $ref: '#/components/schemas/DeliverModuleBuildRequest' } } },
+        },
+        responses: {
+          200: {
+            description: 'Delivery attempt completed (`delivered: true` on full success)',
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/DeliverModuleBuildResponse' } } },
+          },
+          400: { $ref: '#/components/responses/BadRequest' },
+          401: { $ref: '#/components/responses/Unauthorized' },
+          404: { $ref: '#/components/responses/ModuleBuildNotFound' },
+          409: { $ref: '#/components/responses/ModuleBuildConflict' },
+          502: {
+            description: 'A download/load command failed on the device (body has the same shape with `delivered: false`)',
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/DeliverModuleBuildResponse' } } },
+          },
+        },
+      },
+    },
   },
   components: {
     securitySchemes: {
@@ -376,6 +467,13 @@ const openapiSpec = {
         description: 'PID of a tracked spawn.',
         schema: { type: 'string', pattern: '^[0-9]+$' },
       },
+      ModuleBuildId: {
+        name: 'id',
+        in: 'path',
+        required: true,
+        description: 'Numeric module-build request id.',
+        schema: { type: 'string', pattern: '^[0-9]+$' },
+      },
     },
     responses: {
       Unauthorized: {
@@ -410,6 +508,42 @@ const openapiSpec = {
       },
       GdbUnavailable: {
         description: 'The query timed out or the GDB bridge API is unavailable',
+        content: {
+          'application/json': { schema: { $ref: '#/components/schemas/Error' } },
+        },
+      },
+      DeviceNotFound: {
+        description: 'No such device, or you are not associated with it',
+        content: {
+          'application/json': { schema: { $ref: '#/components/schemas/Error' } },
+        },
+      },
+      ModuleBuildNotFound: {
+        description: 'Module build not found or not owned',
+        content: {
+          'application/json': { schema: { $ref: '#/components/schemas/Error' } },
+        },
+      },
+      ModuleBuildConflict: {
+        description: 'No buildinfo upload to build from, or the build is not in a deliverable state',
+        content: {
+          'application/json': { schema: { $ref: '#/components/schemas/Error' } },
+        },
+      },
+      ModuleBuildUnprocessable: {
+        description: 'The device kernel release is unusable, or no cross toolchain matches its isa/endianness',
+        content: {
+          'application/json': { schema: { $ref: '#/components/schemas/Error' } },
+        },
+      },
+      RegistryUnavailable: {
+        description: 'The device registry is unavailable',
+        content: {
+          'application/json': { schema: { $ref: '#/components/schemas/Error' } },
+        },
+      },
+      AutobuildUnavailable: {
+        description: 'Autobuild requested but the agent produced no module-buildinfo upload (device offline?)',
         content: {
           'application/json': { schema: { $ref: '#/components/schemas/Error' } },
         },
@@ -605,6 +739,116 @@ const openapiSpec = {
         type: 'object',
         properties: { ok: { type: 'boolean', example: true } },
         required: ['ok'],
+      },
+      ModuleBuild: {
+        type: 'object',
+        properties: {
+          id: { type: 'integer', example: 12 },
+          status: {
+            type: 'string',
+            enum: ['queued', 'building', 'succeeded', 'failed'],
+            description: 'Lifecycle state; transitions are driven by the builder worker.',
+          },
+          kernelRelease: { type: 'string', example: '5.15.0-113-generic' },
+          isa: { type: 'string', nullable: true, example: 'arm' },
+          endianness: { type: 'string', nullable: true, enum: ['little', 'big'], example: 'little' },
+          deviceVermagic: {
+            type: 'string', nullable: true,
+            description: 'Vermagic reported by the device\'s modules.',
+            example: '5.15.0-113-generic SMP mod_unload modversions ARMv7',
+          },
+          builtVermagic: {
+            type: 'string', nullable: true,
+            description: 'Vermagic of the module this build produced (null until it succeeds).',
+          },
+          vermagicResult: {
+            type: 'string', nullable: true,
+            enum: ['match', 'release-match', 'mismatch', 'unverified'],
+            description: 'How the built vermagic compares to the device\'s.',
+          },
+          source: {
+            type: 'string', nullable: true,
+            enum: ['upstream-exact', 'upstream-nearest'],
+            description: 'Which upstream kernel source the module was compiled against.',
+          },
+          errorMessage: { type: 'string', nullable: true },
+          createdAt: { type: 'string', format: 'date-time' },
+          updatedAt: { type: 'string', format: 'date-time' },
+        },
+        required: ['id', 'status', 'kernelRelease'],
+      },
+      ModuleBuildResponse: {
+        type: 'object',
+        properties: {
+          moduleBuild: { $ref: '#/components/schemas/ModuleBuild' },
+          reused: {
+            type: 'boolean',
+            description: 'Present and true when an existing compilation was returned instead of queueing a new build.',
+          },
+        },
+        required: ['moduleBuild'],
+      },
+      ModuleBuildListResponse: {
+        type: 'object',
+        properties: {
+          moduleBuilds: { type: 'array', items: { $ref: '#/components/schemas/ModuleBuild' } },
+        },
+        required: ['moduleBuilds'],
+      },
+      CreateModuleBuildRequest: {
+        type: 'object',
+        properties: {
+          autobuild: {
+            type: 'boolean',
+            default: false,
+            description: 'Push `linux modules buildinfo` to the live agent and wait for a fresh upload before building, instead of using the last stored one.',
+          },
+        },
+      },
+      DeliverModuleBuildRequest: {
+        type: 'object',
+        properties: {
+          baseUrl: {
+            type: 'string',
+            description: 'agent-api origin as reachable FROM THE DEVICE, used to build the module download URL. Falls back to ELA_MODULE_DOWNLOAD_BASE_URL; required one way or the other.',
+            example: 'https://agent.example.com',
+          },
+          load: {
+            type: 'boolean',
+            default: true,
+            description: 'Run `linux modules load` after downloading. Set false to only download the artifact.',
+          },
+          force: {
+            type: 'boolean',
+            description: 'Load with --force (vermagic override). Defaults to true when the build\'s vermagicResult was not an exact `match`.',
+          },
+          destPath: {
+            type: 'string',
+            default: '/tmp/ela_kmod.ko',
+            description: 'Absolute path where the .ko lands on the device.',
+          },
+        },
+      },
+      DeliverCommandResult: {
+        type: 'object',
+        description: 'Outcome of one command pushed to the device (download token redacted).',
+        properties: {
+          command: { type: 'string', example: 'linux download-file https://agent.example.com/module/<token> /tmp/ela_kmod.ko' },
+          status: { type: 'integer', example: 200 },
+        },
+        required: ['command'],
+        additionalProperties: true,
+      },
+      DeliverModuleBuildResponse: {
+        type: 'object',
+        properties: {
+          delivered: { type: 'boolean', example: true },
+          force: { type: 'boolean' },
+          destPath: { type: 'string', example: '/tmp/ela_kmod.ko' },
+          tokenExpiresAt: { type: 'string', format: 'date-time', nullable: true },
+          results: { type: 'array', items: { $ref: '#/components/schemas/DeliverCommandResult' } },
+        },
+        required: ['delivered', 'results'],
       },
     },
   },

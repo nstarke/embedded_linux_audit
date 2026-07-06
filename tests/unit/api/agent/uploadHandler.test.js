@@ -114,6 +114,69 @@ describe('upload handler', () => {
     }));
   });
 
+  test('accepts module-buildinfo json uploads and persists them', async () => {
+    const deps = { ...baseDeps, validUploadTypes: new Set([...baseDeps.validUploadTypes, 'module-buildinfo']) };
+    const handler = createUploadHandler(deps);
+    const req = {
+      params: { mac: 'aa:bb:cc:dd:ee:ff', type: 'module-buildinfo' },
+      query: {},
+      body: Buffer.from('{"record":"module_buildinfo","kernel_release":"6.1.0","vermagic":"6.1.0 SMP mod_unload aarch64","isa":"aarch64","bits":"64","endianness":"little","config_available":true}\n'),
+      get: () => 'application/json',
+    };
+    const res = createRes();
+
+    await handler(req, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(deps.persistUpload).toHaveBeenCalledWith(expect.objectContaining({
+      uploadType: 'module-buildinfo',
+      contentType: 'application/json',
+    }));
+  });
+
+  test('rejects json content for kernel-config uploads', async () => {
+    const deps = { ...baseDeps, validUploadTypes: new Set([...baseDeps.validUploadTypes, 'kernel-config']) };
+    const handler = createUploadHandler(deps);
+    const req = {
+      params: { mac: 'aa:bb:cc:dd:ee:ff', type: 'kernel-config' },
+      query: {},
+      body: Buffer.from('{}'),
+      get: () => 'application/json',
+    };
+    const res = createRes();
+
+    await handler(req, res);
+
+    expect(res.statusCode).toBe(415);
+    expect(deps.persistUpload).not.toHaveBeenCalled();
+  });
+
+  test('stores kernel-config octet-stream uploads as binary artifacts', async () => {
+    const deps = { ...baseDeps, validUploadTypes: new Set([...baseDeps.validUploadTypes, 'kernel-config']) };
+    const handler = createUploadHandler(deps);
+    const configBytes = Buffer.from([0x1f, 0x8b, 0x08, 0x00, 0x01, 0x02]);
+    const req = {
+      params: { mac: 'aa:bb:cc:dd:ee:ff', type: 'kernel-config' },
+      query: {},
+      body: configBytes,
+      get: () => 'application/octet-stream',
+    };
+    const res = createRes();
+
+    await handler(req, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(deps.fsp.writeFile).toHaveBeenCalledWith(
+      expect.stringContaining('/data/aa:bb:cc:dd:ee:ff/kernel-config/'),
+      configBytes,
+    );
+    expect(deps.persistUpload).toHaveBeenCalledWith(expect.objectContaining({
+      uploadType: 'kernel-config',
+      contentType: 'application/octet-stream',
+      localArtifactPath: expect.stringContaining('/data/aa:bb:cc:dd:ee:ff/kernel-config/'),
+    }));
+  });
+
   test('requires absolute filePath for grep uploads', async () => {
     const handler = createUploadHandler(baseDeps);
     const req = {

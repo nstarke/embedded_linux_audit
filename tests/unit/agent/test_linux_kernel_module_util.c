@@ -82,6 +82,34 @@ static void test_prepare_list_load_unload_requests(void)
 	ELA_ASSERT_TRUE(req.module_path == NULL);
 }
 
+static void test_prepare_buildinfo_requests(void)
+{
+	struct ela_kernel_module_request req;
+	char errbuf[256];
+	char *buildinfo_argv[] = { "modules", "buildinfo" };
+	char *buildinfo_path_argv[] = { "modules", "buildinfo", "/tmp/demo.ko" };
+	char *buildinfo_help_argv[] = { "modules", "buildinfo", "--help" };
+	char *buildinfo_extra[] = { "modules", "buildinfo", "/tmp/demo.ko", "extra" };
+
+	ELA_ASSERT_INT_EQ(0, ela_kernel_module_prepare_request(
+		2, buildinfo_argv, &req, errbuf, sizeof(errbuf)));
+	ELA_ASSERT_INT_EQ(ELA_KERNEL_MODULE_ACTION_BUILDINFO, req.action);
+	ELA_ASSERT_TRUE(req.module_path == NULL);
+
+	ELA_ASSERT_INT_EQ(0, ela_kernel_module_prepare_request(
+		3, buildinfo_path_argv, &req, errbuf, sizeof(errbuf)));
+	ELA_ASSERT_INT_EQ(ELA_KERNEL_MODULE_ACTION_BUILDINFO, req.action);
+	ELA_ASSERT_STR_EQ("/tmp/demo.ko", req.module_path);
+
+	ELA_ASSERT_INT_EQ(0, ela_kernel_module_prepare_request(
+		3, buildinfo_help_argv, &req, errbuf, sizeof(errbuf)));
+	ELA_ASSERT_TRUE(req.show_help);
+
+	ELA_ASSERT_INT_EQ(2, ela_kernel_module_prepare_request(
+		4, buildinfo_extra, &req, errbuf, sizeof(errbuf)));
+	ELA_ASSERT_TRUE(strstr(errbuf, "at most one module path") != NULL);
+}
+
 static void test_prepare_rejects_invalid_requests(void)
 {
 	struct ela_kernel_module_request req;
@@ -182,6 +210,7 @@ int run_linux_kernel_module_util_tests(void)
 		{ "parse/without_dependencies", test_parse_proc_modules_line_without_dependencies },
 		{ "parse/bad_input", test_parse_proc_modules_line_rejects_bad_input },
 		{ "prepare/actions", test_prepare_list_load_unload_requests },
+		{ "prepare/buildinfo", test_prepare_buildinfo_requests },
 		{ "prepare/invalid", test_prepare_rejects_invalid_requests },
 		{ "prepare/help", test_prepare_help },
 		{ "extract/vermagic", test_extract_vermagic },

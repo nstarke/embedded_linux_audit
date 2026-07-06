@@ -263,17 +263,26 @@ wss.on('connection', async (ws, req) => {
         process.stderr.write(`Warning: failed to close terminal connection for ${mac}: ${err.message}\n`);
       });
     }
-    sessionRegistry.removeSession(mac);
-    if (tui.state === TUI_STATE.ACTIVE_SESSION && tui.activeMac === mac) {
-      process.stdout.write('\r\n[session disconnected]\r\n');
-      tui.detach();
-    } else if (tui.state === TUI_STATE.SESSION_LIST) {
-      tui.render();
+    // Only tear down the registry session if THIS connection is still the
+    // active one. A reconnect/supersede installs a newer entry under the same
+    // mac; when the displaced connection's close event fires afterwards it must
+    // NOT delete the live newer session — that race is what made healthy
+    // sessions flap (and autobuild/deliver 404 mid-flap).
+    if (sessionRegistry.getSession(mac) === entry) {
+      sessionRegistry.removeSession(mac);
+      if (tui.state === TUI_STATE.ACTIVE_SESSION && tui.activeMac === mac) {
+        process.stdout.write('\r\n[session disconnected]\r\n');
+        tui.detach();
+      } else if (tui.state === TUI_STATE.SESSION_LIST) {
+        tui.render();
+      }
     }
   });
 
   ws.on('error', () => {
-    sessionRegistry.removeSession(mac);
+    if (sessionRegistry.getSession(mac) === entry) {
+      sessionRegistry.removeSession(mac);
+    }
   });
 });
 

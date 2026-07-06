@@ -12,6 +12,7 @@ const registerScriptsRoute = require('./routes/scripts');
 const registerTestsRoute = require('./routes/tests');
 const registerUbootEnvRoute = require('./routes/ubootEnv');
 const registerIsaRoute = require('./routes/isa');
+const registerModuleDownloadRoute = require('./routes/moduleDownload');
 const registerAssetRoute = require('./routes/assets');
 const registerUploadRoute = require('./routes/upload');
 const {
@@ -90,6 +91,10 @@ function createApp({
   // Public, token-in-path binary download — registered before auth so an
   // unprovisioned host can fetch its agent binary without credentials.
   registerIsaRoute(app, routeDeps);
+  // Public, token-in-path kernel-module download: the agent fetches its built
+  // .ko via `linux download-file`, which sends no Authorization header. The
+  // single-use short-TTL token is the credential.
+  registerModuleDownloadRoute(app, routeDeps);
 
   // Everything below requires a valid bearer token.
   app.use(auth.middleware);
