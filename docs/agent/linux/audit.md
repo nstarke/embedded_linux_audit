@@ -95,6 +95,14 @@ Filesystem rule IDs are stable and intended for automation:
 | `ELA-FS-006` | Writable init script/unit |
 | `ELA-FS-007` | Insecure device node permissions |
 | `ELA-FS-008` | Symlink escaping a trusted tree |
+| `ELA-FS-009` | World-writable directory without sticky bit |
+| `ELA-FS-010` | World-writable file |
+| `ELA-FS-011` | SUID/SGID outside allowlist |
+| `ELA-FS-012` | File capability outside allowlist |
+| `ELA-FS-013` | Writable library search path |
+| `ELA-FS-014` | Writable privileged PATH component |
+| `ELA-FS-015` | Overlay filesystem |
+| `ELA-FS-016` | Writable boot or firmware file |
 | `ELA-FS-900` | Scanner could not inspect a path |
 
 ## Persistence and service discovery
@@ -146,6 +154,14 @@ hashes or private-key contents.
 | `ELA-ID-006` | Permissive sudo rule |
 | `ELA-ID-007` | Private-key permissions |
 | `ELA-ID-008` | Permissive identity-file permissions |
+| `ELA-ID-009` | Duplicate username |
+| `ELA-ID-010` | Excessive password age |
+| `ELA-ID-011` | Unlocked interactive account |
+| `ELA-ID-012` | Privileged group membership |
+| `ELA-ID-013` | Weak SSH host key |
+| `ELA-ID-014` | Unrestricted authorized key |
+| `ELA-ID-015` | Sudo shell escape |
+| `ELA-ID-016` | PAM authentication controls |
 | `ELA-ID-900` | Identity data could not be inspected |
 
 ## Network exposure audit

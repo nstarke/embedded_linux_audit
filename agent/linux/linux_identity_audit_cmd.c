@@ -14,6 +14,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <time.h>
+#include <unistd.h>
 enum id_format { ID_TXT, ID_CSV, ID_JSON };
 struct id_finding {
 	const char *rule, *title, *severity, *status, *evidence, *remediation;
@@ -67,6 +68,8 @@ static void accounts(struct id_ctx *c)
 	FILE *fp;
 	unsigned long uid;
 	int uid0 = 0;
+	char seen_names[128][64] = {{0}};
+	size_t seen_count = 0;
 	if (!(fp = open_rel(c, "/etc/passwd", p, sizeof(p)))) {
 		finding(c, "ELA-ID-900", "Identity inspection", "low", "unknown", "unable to read /etc/passwd",
 			"Run the audit with access to the target filesystem.");
@@ -78,6 +81,18 @@ static void accounts(struct id_ctx *c)
 		if (!name || !pw || !us)
 			continue;
 		uid = strtoul(us, NULL, 10);
+		for (size_t n = 0; n < seen_count; n++) {
+			if (!strcmp(seen_names[n], name)) {
+				snprintf(e, sizeof(e), "duplicate username %s in /etc/passwd", name);
+				finding(c, "ELA-ID-009", "Duplicate username", "high", "fail", e,
+					"Keep each login name unique and remove ambiguous account entries.");
+				break;
+			}
+		}
+		if (seen_count < sizeof(seen_names) / sizeof(seen_names[0])) {
+			strncpy(seen_names[seen_count], name, sizeof(seen_names[0]) - 1);
+			seen_count++;
+		}
 		shell = strtok_r(NULL, ":", &save);
 		(void)strtok_r(NULL, ":", &save);
 		(void)strtok_r(NULL, ":", &save);
@@ -108,22 +123,55 @@ static void accounts(struct id_ctx *c)
 		return;
 	}
 	while (fgets(line, sizeof(line), fp)) {
-		char *colon = strchr(line, ':'), *hash;
+		char *colon = strchr(line, ':'), *hash, *last_change, *max_age;
 		if (!colon)
 			continue;
+		*colon = '\0';
 		hash = colon + 1;
 		if (*hash == ':') {
-			*colon = '\0';
 			snprintf(e, sizeof(e), "account %s has an empty password field", line);
 			finding(c, "ELA-ID-001", "Empty password", "high", "fail", e,
 				"Disable the account or set a strong password; password hashes are not reported.");
 		}
+		last_change = strchr(hash, ':');
+		if (last_change) {
+			*last_change++ = '\0';
+			(void)strtok(last_change, ":");
+			max_age = strtok(NULL, ":");
+			if (max_age && strtoul(max_age, NULL, 10) > 365) {
+				snprintf(e, sizeof(e), "account %s permits password age beyond 365 days", line);
+				finding(c, "ELA-ID-010", "Excessive password age", "medium", "fail", e,
+					"Enforce password rotation limits appropriate to the device threat model.");
+			}
+		}
+		if (hash[0] != '!' && hash[0] != '*' && hash[0] != '\0') {
+			char *passwd = strtok(hash, ":");
+			if (passwd && strchr(passwd, '$') && !strstr(line, "nologin")) {
+				snprintf(e, sizeof(e), "account %s has an unlocked password and may permit interactive login", line);
+				finding(c, "ELA-ID-011", "Unlocked interactive account", "medium", "fail", e,
+					"Lock service accounts or require an explicitly approved interactive identity.");
+			}
+		}
 	}
-	fclose(fp);
+	 fclose(fp);
+	if ((fp = open_rel(c, "/etc/group", p, sizeof(p))) != NULL) {
+		while (fgets(line, sizeof(line), fp)) {
+			char *group = strtok(line, ":"), *members = NULL;
+			(void)strtok(NULL, ":"); (void)strtok(NULL, ":"); members = strtok(NULL, "\n");
+			if (group && members && (!strcmp(group, "sudo") || !strcmp(group, "docker") ||
+					!strcmp(group, "disk") || !strcmp(group, "kmem") || !strcmp(group, "adm"))) {
+				snprintf(e, sizeof(e), "privileged group %s has members", group);
+				finding(c, "ELA-ID-012", "Privileged group membership", "medium", "fail", e,
+					"Review membership of groups that grant administrative or raw-device access.");
+			}
+		}
+		fclose(fp);
+	}
 }
 static void text_checks(struct id_ctx *c, const char *rel)
 {
 	char p[PATH_MAX], line[1024], e[512];
+	bool pam_control = false;
 	FILE *fp = open_rel(c, rel, p, sizeof(p));
 	if (!fp) {
 		if (errno != ENOENT)
@@ -132,6 +180,8 @@ static void text_checks(struct id_ctx *c, const char *rel)
 		return;
 	}
 	while (fgets(line, sizeof(line), fp)) {
+		if (strstr(rel, "/pam.d/") && (strstr(line, "pam_unix.so") || strstr(line, "pam_faillock.so")))
+			pam_control = true;
 		if (strstr(rel, "sshd_config")) {
 			if (strstr(line, "PermitRootLogin yes") || strstr(line, "PermitEmptyPasswords yes") ||
 			    strstr(line, "PasswordAuthentication yes") || strstr(line, "Protocol 1")) {
@@ -146,8 +196,16 @@ static void text_checks(struct id_ctx *c, const char *rel)
 			finding(c, "ELA-ID-006", "Permissive sudo rule", "high", "fail", e,
 				"Restrict sudo commands and avoid unrestricted NOPASSWD rules.");
 		}
+		if (strstr(rel, "sudoers") && (strstr(line, "SETENV") || strstr(line, "!/bin/sh") || strstr(line, "!/bin/bash"))) {
+			snprintf(e, sizeof(e), "sudo rule permits environment or shell escape in %s", rel);
+			finding(c, "ELA-ID-015", "Sudo shell escape", "high", "fail", e,
+				"Remove shell-escape commands and SETENV privileges from sudo rules.");
+		}
 	}
 	fclose(fp);
+	if (strstr(rel, "/pam.d/") && !pam_control)
+		finding(c, "ELA-ID-016", "PAM authentication controls", "medium", "fail", rel,
+			"Configure PAM authentication, account lockout, and session controls appropriate to the target.");
 }
 static void keys_dir(struct id_ctx *c, const char *rel, unsigned depth)
 {
@@ -170,6 +228,17 @@ static void keys_dir(struct id_ctx *c, const char *rel, unsigned depth)
 			keys_dir(c, child, depth + 1);
 		else if (S_ISREG(st.st_mode)) {
 			if (!strcmp(de->d_name, "authorized_keys")) {
+				FILE *keys = fopen(p, "r");
+				char keyline[2048];
+				if (keys) {
+					while (fgets(keyline, sizeof(keyline), keys)) {
+						if (keyline[0] != '#' && !strstr(keyline, "from=") && !strstr(keyline, "command=") &&
+							!strstr(keyline, "restrict") && !strstr(keyline, "no-pty"))
+							finding(c, "ELA-ID-014", "Unrestricted authorized key", "medium", "fail", child,
+								"Restrict authorized keys with from=, command=, restrict, and no-* options where appropriate.");
+					}
+					fclose(keys);
+				}
 				if (!c->quick && time(NULL) - st.st_mtime > 180 * 24 * 3600) {
 					finding(c, "ELA-ID-004", "Stale authorized key", "medium", "fail", child,
 						"Review and remove unused authorized keys regularly.");
@@ -272,6 +341,17 @@ int linux_identity_audit_main(int argc, char **argv)
 	check_mode(&c, "/etc/sudoers", "ELA-ID-006", "Permissive sudo file", 0440);
 	text_checks(&c, "/etc/ssh/sshd_config");
 	text_checks(&c, "/etc/sudoers");
+	text_checks(&c, "/etc/pam.d/common-auth");
+	text_checks(&c, "/etc/pam.d/system-auth");
+	{
+		const char *host_keys[] = { "/etc/ssh/ssh_host_rsa_key", "/etc/ssh/ssh_host_dsa_key", NULL };
+		for (i = 0; host_keys[i]; i++) {
+			char key_path[PATH_MAX];
+			if (fullpath(&c, host_keys[i], key_path, sizeof(key_path)) && access(key_path, F_OK) == 0)
+				finding(&c, "ELA-ID-013", "Weak SSH host key", "high", "fail", host_keys[i],
+					"Replace DSA or weak RSA host keys with modern Ed25519 or sufficiently strong RSA keys.");
+		}
+	}
 	keys_dir(&c, "/root/.ssh", 0);
 	keys_dir(&c, "/home", 0);
 	if (f == ID_CSV)

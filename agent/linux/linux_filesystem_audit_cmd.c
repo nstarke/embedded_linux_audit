@@ -162,12 +162,31 @@ static void scan_entry(struct fs_context *ctx, const char *path, const char *tre
 					  evidence,
 					  "Remove group/other write permissions from executable directories.");
 		}
+		if ((st.st_mode & 0002) && !(st.st_mode & S_ISVTX)) {
+			snprintf(evidence, sizeof(evidence), "world-writable directory %.400s mode=%04o", path,
+				 st.st_mode & 0777);
+			(void)add_finding(ctx, "ELA-FS-009", "World-writable directory", "high", ELA_LINUX_AUDIT_FAIL,
+					 evidence, "Restrict directory writes or set the sticky bit for shared temporary directories.");
+		}
 		if (!ctx->quick || depth < 1)
 			scan_directory(ctx, path, tree, depth + 1);
 		return;
 	}
 	if (!S_ISREG(st.st_mode))
 		return;
+	if (st.st_mode & 0002) {
+		snprintf(evidence, sizeof(evidence), "world-writable file %.420s mode=%04o", path, st.st_mode & 0777);
+		(void)add_finding(ctx, "ELA-FS-010", "World-writable file", "high", ELA_LINUX_AUDIT_FAIL,
+				  evidence, "Remove world-write permissions from files outside approved temporary storage.");
+	}
+	if (strstr(path, "/boot/") || strstr(path, "/firmware/")) {
+		if (st.st_mode & 0022) {
+			snprintf(evidence, sizeof(evidence), "writable boot or firmware file %.400s mode=%04o", path,
+					 st.st_mode & 0777);
+			(void)add_finding(ctx, "ELA-FS-016", "Writable boot or firmware file", "high", ELA_LINUX_AUDIT_FAIL,
+					 evidence, "Protect bootloader, kernel, device-tree, and firmware images from non-root writes.");
+		}
+	}
 	if ((strstr(path, "/etc/init.d/") || strstr(path, "/etc/rc.d/") || strstr(path, "/etc/systemd/system/")) &&
 	    (st.st_mode & 0022)) {
 		snprintf(evidence, sizeof(evidence), "writable init/service script %.400s mode=%04o", path,
@@ -184,11 +203,17 @@ static void scan_entry(struct fs_context *ctx, const char *path, const char *tre
 		snprintf(evidence, sizeof(evidence), "SUID/SGID file %.400s mode=%04o", path, st.st_mode & 07777);
 		(void)add_finding(ctx, "ELA-FS-002", "SUID/SGID file", "medium", ELA_LINUX_AUDIT_FAIL, evidence,
 				  "Review the binary and remove SUID/SGID unless it is explicitly required.");
+		if (!(strstr(path, "/bin/") || strstr(path, "/sbin/")))
+			(void)add_finding(ctx, "ELA-FS-011", "SUID/SGID outside allowlist", "high", ELA_LINUX_AUDIT_FAIL,
+					  evidence, "Remove the privilege bit or explicitly approve the binary location.");
 	}
 	if (getxattr(path, "security.capability", NULL, 0) > 0) {
 		snprintf(evidence, sizeof(evidence), "file capability present on %.430s", path);
 		(void)add_finding(ctx, "ELA-FS-003", "File capability", "medium", ELA_LINUX_AUDIT_FAIL, evidence,
 				  "Review file capabilities and remove unnecessary privilege grants.");
+		if (!(strstr(path, "/bin/") || strstr(path, "/sbin/")))
+			(void)add_finding(ctx, "ELA-FS-012", "File capability outside allowlist", "high", ELA_LINUX_AUDIT_FAIL,
+					  evidence, "Remove capabilities from files outside approved system binary paths.");
 	}
 }
 
@@ -226,6 +251,20 @@ static void scan_sensitive(struct fs_context *ctx)
 					  "trusted administrators.");
 		}
 	}
+	{
+		static const char *const library_dirs[] = { "/lib", "/lib64", "/usr/lib", "/usr/lib64", NULL };
+		for (i = 0; library_dirs[i]; i++) {
+			if (!fs_path(ctx->root, library_dirs[i], path, sizeof(path)) || stat(path, &st) != 0)
+				continue;
+			if (st.st_mode & 0022) {
+				snprintf(evidence, sizeof(evidence), "writable library search path %s mode=%04o", library_dirs[i], st.st_mode & 0777);
+				(void)add_finding(ctx, "ELA-FS-013", "Writable library search path", "high", ELA_LINUX_AUDIT_FAIL,
+						  evidence, "Restrict library directories to trusted root-owned writers.");
+				(void)add_finding(ctx, "ELA-FS-014", "Writable privileged PATH component", "high", ELA_LINUX_AUDIT_FAIL,
+						  evidence, "Ensure privileged service PATH components cannot be modified by unprivileged users.");
+			}
+		}
+	}
 }
 
 static void scan_mounts(struct fs_context *ctx)
@@ -249,6 +288,13 @@ static void scan_mounts(struct fs_context *ctx)
 			continue;
 		sensitive = !strcmp(mountpoint, "/tmp") || !strcmp(mountpoint, "/var/tmp") ||
 			    !strcmp(mountpoint, "/dev/shm");
+		if (!sensitive)
+			if (!strcmp(type, "overlay")) {
+				char evidence[512];
+				snprintf(evidence, sizeof(evidence), "overlay filesystem mounted at %.300s", mountpoint);
+				(void)add_finding(ctx, "ELA-FS-015", "Overlay filesystem", "medium", ELA_LINUX_AUDIT_FAIL,
+						  evidence, "Review writable overlay layers and ensure lower layers cannot be replaced.");
+			}
 		if (!sensitive)
 			continue;
 		for (i = 0; i < sizeof(required) / sizeof(required[0]); i++) {
