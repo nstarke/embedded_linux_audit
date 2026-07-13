@@ -38,6 +38,11 @@
 #if IS_ENABLED(CONFIG_MTD)
 # include <linux/mtd/mtd.h>
 #endif
+#if IS_ENABLED(CONFIG_USB)
+# include <linux/usb.h>
+# include <linux/usb/ch11.h>
+# include <linux/delay.h>
+#endif
 #if IS_ENABLED(CONFIG_BLOCK) && IS_ENABLED(CONFIG_MMC_BLOCK) && \
 	LINUX_VERSION_CODE >= KERNEL_VERSION(6, 9, 0)
 # include <linux/blkdev.h>
@@ -907,6 +912,343 @@ static void ela_copy_fixed_name(char *dst, size_t dst_len, const char *src)
 	dst[len] = '\0';
 }
 
+#if IS_ENABLED(CONFIG_USB)
+struct ela_usb_find_ctx {
+	u32 busnum;
+	u32 devnum;
+	struct usb_device *found;
+};
+
+static int ela_usb_find_cb(struct usb_device *udev, void *data)
+{
+	struct ela_usb_find_ctx *ctx = data;
+
+	if (udev->bus->busnum != ctx->busnum || udev->devnum != ctx->devnum)
+		return 0;
+	ctx->found = usb_get_dev(udev);
+	return 1;
+}
+
+static struct usb_device *ela_usb_find(u32 busnum, u32 devnum)
+{
+	struct ela_usb_find_ctx ctx = {
+		.busnum = busnum,
+		.devnum = devnum,
+	};
+
+	usb_for_each_dev(&ctx, ela_usb_find_cb);
+	return ctx.found;
+}
+
+struct ela_usb_get_ctx {
+	u32 wanted;
+	u32 position;
+	bool found;
+	struct ela_kmod_usb_device *record;
+};
+
+static int ela_usb_get_cb(struct usb_device *udev, void *data)
+{
+	struct ela_usb_get_ctx *ctx = data;
+	struct ela_kmod_usb_device *req = ctx->record;
+
+	if (ctx->position++ != ctx->wanted)
+		return 0;
+	req->busnum = udev->bus->busnum;
+	req->devnum = udev->devnum;
+	req->parent_busnum = udev->parent ? udev->parent->bus->busnum : 0;
+	req->parent_devnum = udev->parent ? udev->parent->devnum : 0;
+	req->portnum = udev->portnum;
+	req->speed = udev->speed;
+	req->vendor_id = le16_to_cpu(udev->descriptor.idVendor);
+	req->product_id = le16_to_cpu(udev->descriptor.idProduct);
+	req->device_class = udev->descriptor.bDeviceClass;
+	req->device_subclass = udev->descriptor.bDeviceSubClass;
+	req->device_protocol = udev->descriptor.bDeviceProtocol;
+	req->num_configurations = udev->descriptor.bNumConfigurations;
+	req->maxchild = udev->maxchild;
+	req->pad = 0;
+	memset(req->manufacturer, 0, sizeof(req->manufacturer));
+	memset(req->product, 0, sizeof(req->product));
+	memset(req->serial, 0, sizeof(req->serial));
+	if (udev->manufacturer)
+		ela_copy_fixed_name(req->manufacturer, sizeof(req->manufacturer),
+				    udev->manufacturer);
+	if (udev->product)
+		ela_copy_fixed_name(req->product, sizeof(req->product),
+				    udev->product);
+	if (udev->serial)
+		ela_copy_fixed_name(req->serial, sizeof(req->serial), udev->serial);
+	ctx->found = true;
+	return 1;
+}
+
+static long ela_ioctl_usb_get(unsigned long arg)
+{
+	struct ela_kmod_usb_device req;
+	struct ela_usb_get_ctx ctx;
+
+	if (copy_from_user(&req, (void __user *)arg, sizeof(req)))
+		return -EFAULT;
+	if (req.abi_version != ELA_KMOD_ABI_VERSION)
+		return -EINVAL;
+	memset(&ctx, 0, sizeof(ctx));
+	ctx.wanted = req.ordinal;
+	ctx.record = &req;
+	usb_for_each_dev(&ctx, ela_usb_get_cb);
+	if (!ctx.found)
+		return -ENOENT;
+	if (copy_to_user((void __user *)arg, &req, sizeof(req)))
+		return -EFAULT;
+	return 0;
+}
+
+static long ela_ioctl_usb_reset(unsigned long arg)
+{
+	struct ela_kmod_usb_reset req;
+	struct usb_device *udev;
+	int rc;
+
+	if (copy_from_user(&req, (void __user *)arg, sizeof(req)))
+		return -EFAULT;
+	if (req.abi_version != ELA_KMOD_ABI_VERSION || req.pad ||
+	    !req.busnum || !req.devnum)
+		return -EINVAL;
+	udev = ela_usb_find(req.busnum, req.devnum);
+	if (!udev)
+		return -ENODEV;
+	rc = usb_lock_device_for_reset(udev, NULL);
+	if (rc >= 0) {
+		rc = usb_reset_device(udev);
+		usb_unlock_device(udev);
+	}
+	usb_put_dev(udev);
+	return rc;
+}
+
+struct ela_usb_port_ctx {
+	u32 wanted;
+	u32 position;
+	bool found;
+	struct ela_kmod_usb_port *record;
+};
+
+static int ela_usb_port_get_status(struct usb_device *hub, u32 portnum,
+				   u32 *status, u32 *change)
+{
+	struct usb_port_status raw;
+	int rc;
+
+	usb_lock_device(hub);
+	rc = usb_control_msg(hub, usb_rcvctrlpipe(hub, 0), USB_REQ_GET_STATUS,
+			     USB_DIR_IN | USB_RT_PORT, 0, portnum, &raw,
+			     sizeof(raw), 1000);
+	usb_unlock_device(hub);
+	if (rc < 0)
+		return rc;
+	if (rc != sizeof(raw))
+		return -EIO;
+	*status = le16_to_cpu(raw.wPortStatus);
+	*change = le16_to_cpu(raw.wPortChange);
+	return 0;
+}
+
+static int ela_usb_port_get_cb(struct usb_device *hub, void *data)
+{
+	struct ela_usb_port_ctx *ctx = data;
+	u32 portnum;
+
+	for (portnum = 1; portnum <= hub->maxchild; portnum++) {
+		struct usb_device *child;
+		int rc;
+
+		if (ctx->position++ != ctx->wanted)
+			continue;
+		ctx->record->hub_busnum = hub->bus->busnum;
+		ctx->record->hub_devnum = hub->devnum;
+		ctx->record->portnum = portnum;
+		ctx->record->child_busnum = 0;
+		ctx->record->child_devnum = 0;
+		ctx->record->hub_speed = hub->speed;
+		usb_lock_device(hub);
+		child = usb_hub_find_child(hub, portnum);
+		if (child)
+			usb_get_dev(child);
+		usb_unlock_device(hub);
+		if (child) {
+			ctx->record->child_busnum = child->bus->busnum;
+			ctx->record->child_devnum = child->devnum;
+			usb_put_dev(child);
+		}
+		rc = ela_usb_port_get_status(hub, portnum,
+					     &ctx->record->status,
+					     &ctx->record->change);
+		if (rc)
+			return rc;
+		ctx->found = true;
+		return 1;
+	}
+	return 0;
+}
+
+static long ela_ioctl_usb_port_get(unsigned long arg)
+{
+	struct ela_kmod_usb_port req;
+	struct ela_usb_port_ctx ctx;
+	int rc;
+
+	if (copy_from_user(&req, (void __user *)arg, sizeof(req)))
+		return -EFAULT;
+	if (req.abi_version != ELA_KMOD_ABI_VERSION)
+		return -EINVAL;
+	memset(&ctx, 0, sizeof(ctx));
+	ctx.wanted = req.ordinal;
+	ctx.record = &req;
+	rc = usb_for_each_dev(&ctx, ela_usb_port_get_cb);
+	if (rc < 0)
+		return rc;
+	if (!ctx.found)
+		return -ENOENT;
+	if (copy_to_user((void __user *)arg, &req, sizeof(req)))
+		return -EFAULT;
+	return 0;
+}
+
+static long ela_ioctl_usb_port_action(unsigned long arg)
+{
+	struct ela_kmod_usb_port_action req;
+	struct usb_device *hub;
+	struct usb_device *child;
+	int rc;
+
+	if (copy_from_user(&req, (void __user *)arg, sizeof(req)))
+		return -EFAULT;
+	if (req.abi_version != ELA_KMOD_ABI_VERSION || req.pad ||
+	    !req.hub_busnum || !req.hub_devnum || !req.portnum ||
+	    (req.action != ELA_USB_PORT_ACTION_RESET &&
+	     req.action != ELA_USB_PORT_ACTION_POWER_CYCLE))
+		return -EINVAL;
+	hub = ela_usb_find(req.hub_busnum, req.hub_devnum);
+	if (!hub)
+		return -ENODEV;
+	if (req.portnum > hub->maxchild) {
+		rc = -EINVAL;
+		goto out_hub;
+	}
+	if (req.action == ELA_USB_PORT_ACTION_RESET) {
+		usb_lock_device(hub);
+		child = usb_hub_find_child(hub, req.portnum);
+		if (child)
+			usb_get_dev(child);
+		usb_unlock_device(hub);
+		if (!child) {
+			rc = -ENODEV;
+			goto out_hub;
+		}
+		rc = usb_lock_device_for_reset(child, NULL);
+		if (rc >= 0) {
+			rc = usb_reset_device(child);
+			usb_unlock_device(child);
+		}
+		usb_put_dev(child);
+		goto out_hub;
+	}
+
+	usb_lock_device(hub);
+	rc = usb_control_msg(hub, usb_sndctrlpipe(hub, 0),
+			     USB_REQ_CLEAR_FEATURE, USB_RT_PORT,
+			     USB_PORT_FEAT_POWER, req.portnum, NULL, 0, 1000);
+	if (rc >= 0) {
+		msleep(250);
+		rc = usb_control_msg(hub, usb_sndctrlpipe(hub, 0),
+				     USB_REQ_SET_FEATURE, USB_RT_PORT,
+				     USB_PORT_FEAT_POWER, req.portnum,
+				     NULL, 0, 1000);
+	}
+	usb_unlock_device(hub);
+out_hub:
+	usb_put_dev(hub);
+	return rc;
+}
+
+static long ela_ioctl_usb_descriptors(unsigned long arg)
+{
+	struct ela_kmod_usb_descriptors req;
+	struct usb_device *udev;
+	u8 *buf;
+	size_t total;
+	u32 i;
+	long rc = 0;
+
+	if (copy_from_user(&req, (void __user *)arg, sizeof(req)))
+		return -EFAULT;
+	if (req.abi_version != ELA_KMOD_ABI_VERSION || req.pad || !req.buf ||
+	    !req.length || req.length > ELA_KMOD_USB_DESC_MAX ||
+	    !req.busnum || !req.devnum)
+		return -EINVAL;
+	udev = ela_usb_find(req.busnum, req.devnum);
+	if (!udev)
+		return -ENODEV;
+	usb_lock_device(udev);
+	total = sizeof(udev->descriptor);
+	for (i = 0; i < udev->descriptor.bNumConfigurations; i++) {
+		size_t config_len;
+
+		if (!udev->config || !udev->rawdescriptors ||
+		    !udev->rawdescriptors[i]) {
+			rc = -ENODATA;
+			goto out_unlock;
+		}
+		config_len = le16_to_cpu(udev->config[i].desc.wTotalLength);
+		if (config_len > ELA_KMOD_USB_DESC_MAX - total) {
+			rc = -EOVERFLOW;
+			goto out_unlock;
+		}
+		total += config_len;
+	}
+	req.actual_length = total;
+	if (total > req.length) {
+		rc = -ENOSPC;
+		goto out_unlock_copy_req;
+	}
+	buf = kvmalloc(total, GFP_KERNEL);
+	if (!buf) {
+		rc = -ENOMEM;
+		goto out_unlock;
+	}
+	memcpy(buf, &udev->descriptor, sizeof(udev->descriptor));
+	total = sizeof(udev->descriptor);
+	for (i = 0; i < udev->descriptor.bNumConfigurations; i++) {
+		size_t config_len = le16_to_cpu(udev->config[i].desc.wTotalLength);
+
+		memcpy(buf + total, udev->rawdescriptors[i], config_len);
+		total += config_len;
+	}
+	usb_unlock_device(udev);
+	if (copy_to_user((void __user *)(uintptr_t)req.buf, buf, total))
+		rc = -EFAULT;
+	kvfree(buf);
+out_copy_req:
+	if (copy_to_user((void __user *)arg, &req, sizeof(req)) && !rc)
+		rc = -EFAULT;
+out_put:
+	usb_put_dev(udev);
+	return rc;
+out_unlock_copy_req:
+	usb_unlock_device(udev);
+	goto out_copy_req;
+out_unlock:
+	usb_unlock_device(udev);
+	goto out_put;
+}
+#else
+static long ela_ioctl_usb_get(unsigned long arg) { (void)arg; return -EOPNOTSUPP; }
+static long ela_ioctl_usb_reset(unsigned long arg) { (void)arg; return -EOPNOTSUPP; }
+static long ela_ioctl_usb_port_get(unsigned long arg) { (void)arg; return -EOPNOTSUPP; }
+static long ela_ioctl_usb_port_action(unsigned long arg) { (void)arg; return -EOPNOTSUPP; }
+static long ela_ioctl_usb_descriptors(unsigned long arg) { (void)arg; return -EOPNOTSUPP; }
+#endif
+
 #if IS_ENABLED(CONFIG_SPI)
 struct ela_spi_find_ctx {
 	u32 wanted;
@@ -1310,6 +1652,16 @@ static long ela_kmod_ioctl(struct file *file, unsigned int cmd, unsigned long ar
 		return ela_ioctl_orom_get(arg);
 	case ELA_IOC_OROM_READ:
 		return ela_ioctl_orom_read(arg);
+	case ELA_IOC_USB_GET:
+		return ela_ioctl_usb_get(arg);
+	case ELA_IOC_USB_RESET:
+		return ela_ioctl_usb_reset(arg);
+	case ELA_IOC_USB_PORT_GET:
+		return ela_ioctl_usb_port_get(arg);
+	case ELA_IOC_USB_PORT_ACTION:
+		return ela_ioctl_usb_port_action(arg);
+	case ELA_IOC_USB_DESCRIPTORS:
+		return ela_ioctl_usb_descriptors(arg);
 	default:
 		return -ENOTTY;
 	}
@@ -1405,4 +1757,4 @@ module_exit(ela_kmod_exit);
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Nicholas Starke");
 MODULE_DESCRIPTION("embedded_linux_audit host inspection module");
-MODULE_VERSION("0.7");
+MODULE_VERSION("0.8");

@@ -79,14 +79,17 @@ static void usage(const char *prog)
 		"  emmc dump <path> [index] Dump an eMMC user area through ela_kmod\n"
 		"  orom list           List kernel-mappable PCI option ROMs\n"
 		"  orom dump <path> [index] Dump a PCI option ROM through ela_kmod\n"
+		"  usb                Kernel USB inventory/reset/port/descriptor tools and usbmon pcap\n"
 		"  efi orom <pull|list> EFI option ROM utilities using PCI sysfs\n"
 		"  efi dump-vars      Dump EFI variables with txt/csv/json formatting\n"
 		"  bios orom <pull|list> BIOS option ROM utilities using PCI sysfs\n"
 		"  transfer <host:port>  Transfer (send) this binary to a receiver at host:port\n"
 		"\n"
 		"Kernel-backed hardware commands:\n"
-		"  spi, nand flash, emmc, and top-level orom require a loaded ela_kmod,\n"
-		"  /dev/ela_physmem, and CAP_SYS_RAWIO. Use index=N from list as the\n"
+		"  spi, nand flash, emmc, top-level orom, and USB hardware operations\n"
+		"  require a loaded ela_kmod, /dev/ela_physmem, and CAP_SYS_RAWIO.\n"
+		"  USB pcap uses the kernel usbmon capture interface instead of ela_kmod.\n"
+		"  Use index=N from list as the\n"
 		"  optional dump index. eMMC requires Linux 6.9 or newer.\n"
 		"\n"
 		"Interactive-only helper:\n"
@@ -131,13 +134,16 @@ static void usage(const char *prog)
 		"  %s emmc dump /tmp/emmc.bin 0\n"
 		"  %s orom list\n"
 		"  %s orom dump /tmp/orom.bin 0\n"
+		"  %s usb list\n"
+		"  %s usb descriptor dump /tmp/usb-desc.bin 1\n"
+		"  %s usb pcap /tmp/usb.pcap 1\n"
 		"  %s --quiet --output-http http://127.0.0.1:5000/orom efi orom pull\n"
 		"  %s --output-format json --output-http http://127.0.0.1:5000 efi dump-vars\n"
 		"  %s --quiet --output-tcp 127.0.0.1:5001 bios orom list\n"
 		"  %s --output-format json --script ./commands.txt\n"
 		"  %s --remote 192.168.1.10:4444\n"
 		"  %s transfer 192.168.1.10:4445\n",
-		prog, prog, prog, prog,
+		prog, prog, prog, prog, prog, prog, prog,
 		prog, prog, prog, prog,
 		prog, prog, prog, prog,
 		prog, prog, prog, prog,
@@ -807,6 +813,11 @@ int embedded_linux_audit_dispatch(int argc, char **argv)
 
 	if (!strcmp(argv[opts.cmd_idx], "orom")) {
 		ret = orom_main(argc - opts.cmd_idx, argv + opts.cmd_idx);
+		goto done;
+	}
+
+	if (!strcmp(argv[opts.cmd_idx], "usb")) {
+		ret = usb_main(argc - opts.cmd_idx, argv + opts.cmd_idx);
 		goto done;
 	}
 

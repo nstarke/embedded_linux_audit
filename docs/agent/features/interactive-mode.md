@@ -54,4 +54,5 @@ Several `set` commands are available to change options without restarting the pr
 - Interactive mode is the default when invoked with no arguments and no `--remote`, `--script`, or command group is provided.
 - Kernel-backed commands have the same requirements in interactive mode:
   `ela_kmod` must be loaded, `/dev/ela_physmem` must exist, and the process
-  must hold `CAP_SYS_RAWIO`.
+  must hold `CAP_SYS_RAWIO`. `usb pcap` instead requires access to the kernel
+  usbmon capture interface.

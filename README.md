@@ -97,12 +97,25 @@
 | `orom list` | Enumerate indexed PCI option ROMs that `ela_kmod` can map through the kernel PCI layer |
 | `orom dump <DUMP_FILE_PATH> [DEVICE_INDEX]` | Dump the selected mapped PCI option ROM; without an index, dump the largest unambiguous ROM |
 
+### `usb` — Kernel USB inspection and capture
+
+| Subcommand | Description |
+|---|---|
+| `usb list` | Enumerate the complete kernel USB device tree and print indices for the current snapshot |
+| `usb reset <DEVICE_INDEX>` | Reset a device selected from `usb list` through the kernel USB core |
+| `usb port list` | Enumerate hub ports, connection state, power state, and attached child devices |
+| `usb port reset <PORT_INDEX>` | Reset the attached device on a port selected from `usb port list` |
+| `usb port power-cycle <PORT_INDEX>` | Clear and restore a hub port's power feature; actual VBUS switching depends on the hub hardware |
+| `usb descriptor dump <DUMP_FILE_PATH> [DEVICE_INDEX]` | Dump cached raw device and configuration descriptors through `ela_kmod` |
+| `usb pcap <DUMP_FILE_PATH> [BUS_NUMBER]` | Capture kernel usbmon traffic to pcap until interrupted; omit the bus to capture all buses |
+
 ### Kernel-backed hardware command requirements
 
-The `spi`, `nand flash`, `emmc`, and top-level `orom` commands do not read
-sysfs or device nodes directly. They open `/dev/ela_physmem` and perform
-enumeration and reads through the `ela_kmod` ioctl interface. Build and load a
-module matching the running kernel before using them:
+The `spi`, `nand flash`, `emmc`, top-level `orom`, and USB hardware commands
+do not read sysfs or the underlying hardware device nodes directly. They open
+`/dev/ela_physmem` and perform their operations through the `ela_kmod` ioctl
+interface. Build and load a module matching the running kernel before using
+them:
 
 ```sh
 make -C kmod
@@ -128,6 +141,9 @@ when more than one device is present.
 ./embedded_linux_audit emmc dump /tmp/emmc.bin 0
 ./embedded_linux_audit orom list
 ./embedded_linux_audit orom dump /tmp/orom.bin 0
+./embedded_linux_audit usb list
+./embedded_linux_audit usb descriptor dump /tmp/usb-descriptors.bin 1
+./embedded_linux_audit usb port list
 ```
 
 The dump formats are deliberately different: SPI uses an SPI-backed MTD;
@@ -141,6 +157,13 @@ Top-level `orom` is distinct from `efi orom` and `bios orom`: the latter scan
 the sysfs PCI ROM attributes and filter images by firmware type, while
 top-level `orom` uses `pci_map_rom()` in `ela_kmod` and dumps the mapped ROM
 without EFI/legacy filtering.
+
+USB pcap capture is kernel-backed through `usbmon`, but does not use
+`ela_kmod`. The target kernel must enable `CONFIG_USB_MON`; load `usbmon` when
+it is modular and ensure the caller can open the usbmon capture interface.
+`BUS_NUMBER` is the numeric bus printed by `usb list`; omit it to use
+`usbmon0`, which captures every USB bus. Stop capture with `Ctrl-C` or
+`SIGTERM`. Capture files are created mode `0600` in libpcap format.
 
 ### `transfer` — Remote terminal and data exfiltration
 

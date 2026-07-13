@@ -60,7 +60,7 @@ This section contains documentation for the `embedded_linux_audit` agent, organi
 
 ### Kernel-Backed Hardware
 
-- [SPI, NAND, eMMC, and PCI option ROM commands](kernel-hardware.md)
+- [SPI, NAND, eMMC, PCI option ROM, and USB commands](kernel-hardware.md)
 
 ## Reference
 

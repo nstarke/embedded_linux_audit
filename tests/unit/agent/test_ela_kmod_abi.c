@@ -117,6 +117,15 @@ static void test_spi_struct_layouts(void)
 	ELA_ASSERT_INT_EQ(24, offsetof(struct ela_kmod_orom_read, offset));
 	ELA_ASSERT_INT_EQ(32, offsetof(struct ela_kmod_orom_read, length));
 	ELA_ASSERT_INT_EQ(40, offsetof(struct ela_kmod_orom_read, buf));
+
+	ELA_ASSERT_INT_EQ(256, sizeof(struct ela_kmod_usb_device));
+	ELA_ASSERT_INT_EQ(64, offsetof(struct ela_kmod_usb_device, manufacturer));
+	ELA_ASSERT_INT_EQ(16, sizeof(struct ela_kmod_usb_reset));
+	ELA_ASSERT_INT_EQ(40, sizeof(struct ela_kmod_usb_port));
+	ELA_ASSERT_INT_EQ(24, sizeof(struct ela_kmod_usb_port_action));
+	ELA_ASSERT_INT_EQ(40, sizeof(struct ela_kmod_usb_descriptors));
+	ELA_ASSERT_INT_EQ(16, offsetof(struct ela_kmod_usb_descriptors, buf));
+	ELA_ASSERT_INT_EQ(32, offsetof(struct ela_kmod_usb_descriptors, actual_length));
 }
 
 static void test_abi_constants(void)
@@ -128,6 +137,7 @@ static void test_abi_constants(void)
 	ELA_ASSERT_TRUE(ELA_KMOD_NAND_MAX_READ == 1024UL * 1024UL);
 	ELA_ASSERT_TRUE(ELA_KMOD_EMMC_MAX_READ == 1024UL * 1024UL);
 	ELA_ASSERT_TRUE(ELA_KMOD_OROM_MAX_READ == 1024UL * 1024UL);
+	ELA_ASSERT_TRUE(ELA_KMOD_USB_DESC_MAX == 1024UL * 1024UL);
 	ELA_ASSERT_STR_EQ("/dev/ela_physmem", ELA_KMOD_DEVICE_PATH);
 	/* All defined flags are inside the accepted mask. */
 	ELA_ASSERT_INT_EQ(ELA_KMOD_READ_F_ALL,
@@ -159,6 +169,11 @@ static void test_ioctl_number_is_stable(void)
 		{ ELA_IOC_EMMC_READ, 0x61 },
 		{ ELA_IOC_OROM_GET, 0x70 },
 		{ ELA_IOC_OROM_READ, 0x71 },
+		{ ELA_IOC_USB_GET, 0x80 },
+		{ ELA_IOC_USB_RESET, 0x81 },
+		{ ELA_IOC_USB_PORT_GET, 0x82 },
+		{ ELA_IOC_USB_PORT_ACTION, 0x83 },
+		{ ELA_IOC_USB_DESCRIPTORS, 0x84 },
 	};
 	size_t i;
 

@@ -1,8 +1,9 @@
 # Kernel-Backed Hardware Commands
 
-The `spi`, `nand flash`, `emmc`, and top-level `orom` command groups perform
-hardware enumeration and reads through `ela_kmod`. They do not use sysfs or
-open the underlying MTD/block devices from userspace.
+The `spi`, `nand flash`, `emmc`, top-level `orom`, and USB hardware command
+groups perform operations through `ela_kmod`. They do not use sysfs or open
+the underlying MTD/block/USB devices from userspace. `usb pcap` is the one
+exception: it uses the kernel usbmon capture interface through libpcap.
 
 ## Requirements
 
@@ -100,6 +101,49 @@ It can therefore help when the sysfs ROM attribute is missing or inaccessible,
 but it still cannot read a device for which the kernel cannot map a ROM
 resource.
 
+## USB
+
+```text
+usb list
+usb reset <DEVICE_INDEX>
+usb port list
+usb port reset <PORT_INDEX>
+usb port power-cycle <PORT_INDEX>
+usb descriptor dump <DUMP_FILE_PATH> [DEVICE_INDEX]
+usb pcap <DUMP_FILE_PATH> [BUS_NUMBER]
+```
+
+`usb list` walks the kernel USB device tree, including root hubs, and reports
+bus/device addresses, parent and port topology, speed, IDs, class information,
+and cached strings. Device indices are snapshots: enumerate again after a
+reset, disconnect, reconnect, or power cycle because USB device addresses and
+indices can change.
+
+`usb reset` invokes the coordinated kernel USB reset path for the selected
+device. `usb port list` provides a separate zero-based port index and reports
+the raw USB hub status/change words plus decoded connection, enable, and power
+state. Port reset resets the currently attached child. Port power-cycle sends
+hub class requests to clear and restore the port power feature. Many hubs gang
+power across several ports or do not physically switch VBUS, so support and
+electrical behavior are hardware-dependent. Both operations can disconnect
+devices and disrupt mounted storage, network links, input devices, and other
+active users.
+
+The descriptor dump is the cached binary device descriptor followed by each
+cached raw configuration descriptor blob. It avoids issuing descriptor reads
+to a potentially unstable device. Without an explicit device index, it only
+selects a target when exactly one non-root USB device exists. The output file
+is local, mode `0600`, and is truncated only after target selection and the
+kernel read succeed.
+
+`usb pcap` captures USB Request Blocks through the kernel usbmon facility and
+writes a standard libpcap savefile until `Ctrl-C` or `SIGTERM`. The kernel must
+enable `CONFIG_USB_MON`; load the `usbmon` module when applicable and provide
+the permissions needed by libpcap to open the monitor source. With no bus
+argument it captures `usbmon0` (all buses). Otherwise it captures
+`usbmonBUS_NUMBER`, where the number is the `bus=N` value from `usb list`.
+This command does not open `/dev/ela_physmem` and does not require `ela_kmod`.
+
 ## Examples
 
 ```sh
@@ -111,4 +155,9 @@ embedded_linux_audit emmc list
 embedded_linux_audit emmc dump /tmp/emmc.bin 0
 embedded_linux_audit orom list
 embedded_linux_audit orom dump /tmp/orom.bin 2
+embedded_linux_audit usb list
+embedded_linux_audit usb reset 3
+embedded_linux_audit usb port list
+embedded_linux_audit usb descriptor dump /tmp/usb-descriptors.bin 3
+embedded_linux_audit usb pcap /tmp/usb.pcap 1
 ```
