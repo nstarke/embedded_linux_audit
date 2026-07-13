@@ -97,6 +97,51 @@
 | `orom list` | Enumerate indexed PCI option ROMs that `ela_kmod` can map through the kernel PCI layer |
 | `orom dump <DUMP_FILE_PATH> [DEVICE_INDEX]` | Dump the selected mapped PCI option ROM; without an index, dump the largest unambiguous ROM |
 
+### Kernel-backed hardware command requirements
+
+The `spi`, `nand flash`, `emmc`, and top-level `orom` commands do not read
+sysfs or device nodes directly. They open `/dev/ela_physmem` and perform
+enumeration and reads through the `ela_kmod` ioctl interface. Build and load a
+module matching the running kernel before using them:
+
+```sh
+make -C kmod
+sudo insmod kmod/ela_kmod.ko
+```
+
+The module device is mode `0600`, and opening it also requires
+`CAP_SYS_RAWIO`. On systems without devtmpfs, create the `/dev/ela_physmem`
+misc-device node using the dynamic minor reported for `ela_physmem` in
+`/proc/misc`.
+
+`DEVICE_INDEX` is the zero-based `index=N` printed by the corresponding
+`list` command. When it is omitted, `dump` selects the unique largest readable
+candidate and refuses ambiguous ties. Run `list` and pass an explicit index
+when more than one device is present.
+
+```sh
+./embedded_linux_audit spi list
+./embedded_linux_audit spi dump /tmp/spi.bin 0
+./embedded_linux_audit nand flash list
+./embedded_linux_audit nand flash dump /tmp/nand.bin 0
+./embedded_linux_audit emmc list
+./embedded_linux_audit emmc dump /tmp/emmc.bin 0
+./embedded_linux_audit orom list
+./embedded_linux_audit orom dump /tmp/orom.bin 0
+```
+
+The dump formats are deliberately different: SPI uses an SPI-backed MTD;
+NAND returns corrected main-area data, preserves physical offsets by filling
+marked bad eraseblocks with `0xff`, and excludes OOB bytes; eMMC returns the
+whole managed user area while excluding SD cards, partitions, boot areas, and
+RPMB; `orom` returns the PCI expansion-ROM mapping supplied by the kernel PCI
+layer. The eMMC block-layer implementation requires Linux 6.9 or newer.
+
+Top-level `orom` is distinct from `efi orom` and `bios orom`: the latter scan
+the sysfs PCI ROM attributes and filter images by firmware type, while
+top-level `orom` uses `pci_map_rom()` in `ela_kmod` and dumps the mapped ROM
+without EFI/legacy filtering.
+
 ### `transfer` — Remote terminal and data exfiltration
 
 | Subcommand | Description |

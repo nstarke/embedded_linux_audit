@@ -23,7 +23,10 @@ static void orom_kmod_usage(const char *prog)
 		"       %s dump <DUMP_FILE_PATH> [DEVICE_INDEX]\n"
 		"  list  Enumerate kernel-mappable PCI option ROMs via ela_kmod\n"
 		"  dump  Read the selected PCI option ROM via ela_kmod\n"
-		"        DEVICE_INDEX defaults to the largest unambiguous ROM\n",
+		"        DEVICE_INDEX defaults to the largest unambiguous ROM\n"
+		"        Use the index=N value printed by list\n"
+		"  Unlike efi/bios orom, this uses pci_map_rom, not sysfs\n"
+		"  Requires loaded ela_kmod, /dev/ela_physmem, and CAP_SYS_RAWIO\n",
 		prog, prog);
 }
 

@@ -23,7 +23,9 @@ static void spi_usage(const char *prog)
 		"       %s dump <DUMP_FILE_PATH> [DEVICE_INDEX]\n"
 		"  list  Enumerate SPI and SPI-backed MTD devices via ela_kmod\n"
 		"  dump  Read the indexed SPI-backed MTD via ela_kmod; when omitted,\n"
-		"        DEVICE_INDEX defaults to the largest unambiguous device\n",
+		"        DEVICE_INDEX defaults to the largest unambiguous device\n"
+		"        Use the index=N value printed for an MTD entry by list\n"
+		"  Requires loaded ela_kmod, /dev/ela_physmem, and CAP_SYS_RAWIO\n",
 		prog, prog);
 }
 

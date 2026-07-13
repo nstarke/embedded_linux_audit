@@ -2,6 +2,10 @@
 
 EFI utilities for dumping variables and working with PCI sysfs option ROM nodes.
 
+These option-ROM commands depend on `/sys/bus/pci/devices/*/rom`. When those
+attributes are absent or cannot be read, use the kernel-backed top-level
+[`orom list` and `orom dump`](../kernel-hardware.md#pci-option-roms) commands.
+
 Documents in this directory:
 
 - [`embedded_linux_audit efi`](index.md)
@@ -40,8 +44,10 @@ Each emitted record includes:
 
 ## Constraints
 
-- exactly one transport output is required: `--output-tcp`, `--output-http`, or `--output-http`
-- use only one of `--output-http` and `--output-http`
+- exactly one transport output is required: `--output-tcp` or `--output-http`
+- `--output-http` accepts both `http://` and `https://` URLs
+- `efi orom` filters sysfs ROM images for EFI payloads; it is separate from
+  the unfiltered, kernel-mapped top-level `orom` command
 
 ## Examples
 

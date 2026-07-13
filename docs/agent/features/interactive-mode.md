@@ -26,6 +26,10 @@ Once in interactive mode, a prompt is displayed. Type any normal `embedded_linux
 > linux execute-command "uname -a"
 > uboot env
 > arch isa
+> spi list
+> nand flash dump /tmp/nand.bin 0
+> emmc list
+> orom dump /tmp/orom.bin 1
 ```
 
 Lines beginning with `#` are treated as comments and ignored.
@@ -48,3 +52,6 @@ Several `set` commands are available to change options without restarting the pr
 - Wrapper-level options passed before `--interactive` (or `-i`) apply to every command entered at the prompt.
 - `exit` terminates the process cleanly. If the agent is running under a `--remote` WebSocket session, a clean `exit` does **not** trigger a reconnect attempt.
 - Interactive mode is the default when invoked with no arguments and no `--remote`, `--script`, or command group is provided.
+- Kernel-backed commands have the same requirements in interactive mode:
+  `ela_kmod` must be loaded, `/dev/ela_physmem` must exist, and the process
+  must hold `CAP_SYS_RAWIO`.

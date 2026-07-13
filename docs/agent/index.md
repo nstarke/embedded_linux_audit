@@ -58,6 +58,10 @@ This section contains documentation for the `embedded_linux_audit` agent, organi
 - [BIOS Index](bios/index.md)
 - [`embedded_linux_audit bios orom`](bios/orom.md)
 
+### Kernel-Backed Hardware
+
+- [SPI, NAND, eMMC, and PCI option ROM commands](kernel-hardware.md)
+
 ## Reference
 
 - [Reference Index](reference/index.md)

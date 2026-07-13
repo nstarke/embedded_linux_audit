@@ -27,7 +27,9 @@ static void nand_usage(const char *prog)
 		"  list  Enumerate NAND MTD devices via ela_kmod\n"
 		"  dump  Read corrected main-area data via ela_kmod; marked bad\n"
 		"        eraseblocks are padded with 0xff and OOB is not included\n"
-		"        DEVICE_INDEX defaults to the largest unambiguous device\n",
+		"        DEVICE_INDEX defaults to the largest unambiguous device\n"
+		"        Use the index=N value printed by list\n"
+		"  Requires loaded ela_kmod, /dev/ela_physmem, and CAP_SYS_RAWIO\n",
 		prog, prog);
 }
 

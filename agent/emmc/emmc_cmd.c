@@ -21,9 +21,13 @@ static void emmc_usage(const char *prog)
 	fprintf(stderr,
 		"Usage: %s list\n"
 		"       %s dump <DUMP_FILE_PATH> [DEVICE_INDEX]\n"
-		"  list  Enumerate eMMC user-area block devices via ela_kmod\n"
+		"  list  Enumerate whole eMMC user areas; excludes SD, partitions,\n"
+		"        boot areas, and RPMB\n"
 		"  dump  Read an eMMC user area via ela_kmod\n"
-		"        DEVICE_INDEX defaults to the largest unambiguous device\n",
+		"        DEVICE_INDEX defaults to the largest unambiguous device\n"
+		"        Use the index=N value printed by list\n"
+		"  Requires Linux 6.9+, loaded ela_kmod, /dev/ela_physmem, and\n"
+		"  CAP_SYS_RAWIO\n",
 		prog, prog);
 }
 
