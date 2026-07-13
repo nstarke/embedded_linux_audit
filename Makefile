@@ -435,6 +435,10 @@ NCURSES_LIB   := $(NCURSES_LIB_DIR)/libncurses.a
 NCURSES_TINFO_LIB := $(NCURSES_LIB_DIR)/libtinfo.a
 READLINE_DIR  := third_party/readline
 READLINE_BUILD_STAMP := $(READLINE_DIR)/.ela-build-$(CC_TAG)
+# readline's source tree keeps headers at its top level; the conventional
+# readline/ include layout only exists after install-headers, so stage it
+# locally (readline configures/builds in-tree, hence a single staging dir).
+READLINE_INSTALL := $(READLINE_DIR)/.ela-install
 READLINE_LIB  := $(READLINE_DIR)/libreadline.a
 READLINE_HISTORY_LIB := $(READLINE_DIR)/libhistory.a
 READLINE_BUILD_CFLAGS ?= -O2 -Wno-incompatible-pointer-types
@@ -772,7 +776,7 @@ endif
 endif
 
 ifeq ($(ELA_USE_READLINE),1)
-CFLAGS += -DELA_HAS_READLINE -I$(READLINE_DIR)
+CFLAGS += -DELA_HAS_READLINE -I$(READLINE_INSTALL)/include
 LDLIBS += $(READLINE_LIB) $(READLINE_HISTORY_LIB) $(NCURSES_LIB) $(NCURSES_TINFO_LIB)
 READLINE_DEPS := $(NCURSES_BUILD_STAMP) $(READLINE_BUILD_STAMP)
 else
@@ -1258,6 +1262,8 @@ $(READLINE_BUILD_STAMP):
 	cd $(READLINE_DIR) && $(MAKE) distclean >/dev/null 2>&1 || true
 	cd $(READLINE_DIR) && bash_cv_termcap_lib=libtermcap ac_cv_type_signal=void bash_cv_void_sighandler=yes ./configure --disable-shared --enable-static CC='$(CC) -std=gnu89' CFLAGS='$(READLINE_BUILD_CFLAGS)' LDFLAGS='-L$(abspath $(NCURSES_LIB_DIR))'
 	$(MAKE) -C $(READLINE_DIR) -j$(JOBS) libreadline.a libhistory.a
+	rm -rf $(READLINE_INSTALL)
+	$(MAKE) -C $(READLINE_DIR) install-headers prefix=$(abspath $(READLINE_INSTALL))
 	touch $@
 
 TARGET_DEPS := $(SRC) $(ZLIB_LIB) $(LIBUBOOTENV_LIB) $(LIBEFIVAR_BUILD_STAMP) $(LIBEFIVAR_LINK_LIB) $(JSONC_LIB) $(LIBXML2_LIB) $(CURL_LIB) $(LIBSSH_LIB) $(LIBPCAP_LIB) $(OPENSSL_SSL_LIB) $(OPENSSL_LIB) $(READLINE_DEPS)
@@ -1420,6 +1426,7 @@ clean:
 	rm -f $(LIBEFIVAR_DIR)/.ela-build-*
 	rm -f $(NCURSES_DIR)/.ela-build-*
 	rm -f $(READLINE_DIR)/.ela-build-*
+	rm -rf $(READLINE_INSTALL)
 	rm -f generated/libefivar-link-*.a
 	rm -rf generated/libefivar-repack-*
 	rm -rf $(JSONC_DIR)/build*
