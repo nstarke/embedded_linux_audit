@@ -42,7 +42,7 @@ static void test_candidates_group_linux(void)
 	const char *const *candidates = ela_interactive_candidates_for_position(2, argv);
 
 	ELA_ASSERT_TRUE(candidates != NULL);
-	ELA_ASSERT_STR_EQ("dmesg", candidates[0]);
+	ELA_ASSERT_STR_EQ("audit", candidates[0]);
 }
 
 static void test_candidates_linux_includes_process_and_gdbserver(void)

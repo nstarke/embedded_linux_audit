@@ -17,8 +17,11 @@ static const char *const interactive_top_level_commands[] = {
 static const char *const interactive_group_arch[] = { "bit", "isa", "endianness", NULL };
 static const char *const interactive_group_uboot[] = { "env", "image", "audit", NULL };
 static const char *const interactive_group_linux[] = {
-	"dmesg", "download-file", "execute-command", "grep", "list-files", "list-symlinks", "remote-copy", "ssh", "process", "gdbserver", "ioport", NULL,
+	"audit",       "dmesg", "download-file", "execute-command", "grep",   "list-files", "list-symlinks",
+	"remote-copy", "ssh",	"process",	 "gdbserver",	    "ioport", NULL,
 };
+static const char *const interactive_group_linux_audit[] = { "filesystem", "persistence", "identity", "network",
+							     "integrity",  "secrets",	  "hardware", NULL };
 static const char *const interactive_group_linux_ioport[] = { "read", "write", NULL };
 static const char *const interactive_group_linux_gdbserver[] = { "tunnel", NULL };
 static const char *const interactive_group_linux_process[] = { "watch", NULL };
@@ -53,6 +56,8 @@ const char *const *ela_interactive_candidates_for_position(int argc, char **argv
 		return interactive_group_uboot;
 	if (!strcmp(argv[0], "linux")) {
 		if (argc >= 3) {
+			if (!strcmp(argv[1], "audit") && argc == 3)
+				return interactive_group_linux_audit;
 			if (!strcmp(argv[1], "process")) {
 				if (argc == 3)
 					return interactive_group_linux_process;

@@ -1,0 +1,5 @@
+# Interactive/script coverage for linux audit
+linux audit --help
+ela linux audit --list-rules
+embedded_linux_audit --output-format json linux audit --profile embedded --root /path/that/does/not/exist --no-fail
+embedded_linux_audit --output-format csv linux audit --profile hardened --rule ELA-LINUX-008 --root /path/that/does/not/exist --no-fail

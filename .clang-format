@@ -1,0 +1,19 @@
+# Linux-kernel-derived style matching the existing agent/ code:
+# tabs (8 wide), function braces on their own line, control-flow braces on the same line.
+BasedOnStyle: LLVM
+IndentWidth: 8
+UseTab: Always
+ContinuationIndentWidth: 8
+ColumnLimit: 120
+BreakBeforeBraces: Linux
+AllowShortIfStatementsOnASingleLine: false
+AllowShortLoopsOnASingleLine: false
+AllowShortFunctionsOnASingleLine: None
+AllowShortBlocksOnASingleLine: Never
+AllowShortCaseLabelsOnASingleLine: false
+AllowShortEnumsOnASingleLine: true
+IndentCaseLabels: false
+AlignAfterOpenBracket: Align
+Cpp11BracedListStyle: false
+SortIncludes: false
+KeepEmptyLinesAtTheStartOfBlocks: false

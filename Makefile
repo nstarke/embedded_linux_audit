@@ -495,6 +495,7 @@ AGENT_UNIT_TEST_SRC := \
 	tests/unit/agent/test_uboot_env_record_util.c \
 	tests/unit/agent/test_uboot_audit_util.c \
 	tests/unit/agent/test_linux_dmesg_util.c \
+	tests/unit/agent/test_linux_audit_util.c \
 	tests/unit/agent/test_http_ws_policy_util.c \
 	tests/unit/agent/test_uboot_security_audit_util.c \
 	tests/unit/agent/test_uboot_env_format_util.c \
@@ -589,6 +590,7 @@ AGENT_UNIT_TEST_DEPS := \
 	agent/util/transfer_parse_util.c \
 	agent/transfer/transfer_cmd_util.c \
 	agent/linux/linux_dmesg_util.c \
+	agent/linux/linux_audit_util.c \
 	agent/linux/remote_copy_cmd_util.c \
 	agent/linux/linux_grep_util.c \
 	agent/linux/linux_list_files_util.c \
@@ -671,6 +673,7 @@ AGENT_UNIT_TEST_DEPS := \
 	agent/util/transfer_parse_util.h \
 	agent/transfer/transfer_cmd_util.h \
 	agent/linux/linux_dmesg_util.h \
+	agent/linux/linux_audit_util.h \
 	agent/linux/linux_download_file_util.h \
 	agent/linux/linux_grep_util.h \
 	agent/linux/linux_list_files_util.h \
@@ -871,6 +874,15 @@ SRC := \
 	agent/linux/linux_dmesg_cmd.c \
 	agent/linux/linux_dmesg_util.c \
 	agent/linux/linux_dmesg_watch_cmd.c \
+	agent/linux/linux_audit_cmd.c \
+	agent/linux/linux_audit_util.c \
+	agent/linux/linux_filesystem_audit_cmd.c \
+	agent/linux/linux_persistence_audit_cmd.c \
+	agent/linux/linux_identity_audit_cmd.c \
+	agent/linux/linux_network_audit_cmd.c \
+	agent/linux/linux_integrity_audit_cmd.c \
+	agent/linux/linux_secrets_audit_cmd.c \
+	agent/linux/linux_hardware_audit_cmd.c \
 	agent/linux/linux_download_file_cmd.c \
 	agent/linux/linux_download_file_util.c \
 	agent/linux/linux_execute_command_cmd.c \
@@ -1292,6 +1304,7 @@ $(AGENT_UNIT_TEST_BIN): $(AGENT_UNIT_TEST_SRC) $(AGENT_UNIT_TEST_DEPS) $(TPM2_UN
 			agent/util/transfer_parse_util.c \
 			agent/transfer/transfer_cmd_util.c \
 			agent/linux/linux_dmesg_util.c \
+			agent/linux/linux_audit_util.c \
 			agent/linux/remote_copy_cmd_util.c \
 			agent/linux/linux_grep_util.c \
 			agent/linux/linux_list_files_util.c \

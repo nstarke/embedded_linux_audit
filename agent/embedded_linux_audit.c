@@ -27,7 +27,9 @@
 static void usage(const char *prog)
 {
 	fprintf(stderr,
-		"Usage: %s [--output-format <csv|json|txt>] [--quiet] [--insecure] [--output-tcp <IPv4:port>] [--output-http <http(s)://host:port/path>] [--script <path|http(s)://...>] <group> <subcommand> [options]\n"
+		"Usage: %s [--output-format <csv|json|txt>] [--quiet] [--insecure] [--output-tcp <IPv4:port>] "
+		"[--output-http <http(s)://host:port/path>] [--script <path|http(s)://...>] <group> <subcommand> "
+		"[options]\n"
 		"       %s --remote <host:port>\n"
 		"       %s --interactive\n"
 		"\n"
@@ -37,8 +39,8 @@ static void usage(const char *prog)
 		"  --output-format <csv|json|txt>  Set output format for subcommands\n"
 		"  --quiet                         Disable verbose mode for commands/subcommands\n"
 		"  --insecure                      Disable TLS certificate/hostname verification for HTTPS\n"
-	"  --api-key <key>                 Bearer token for Authorization header (also: ELA_API_KEY env,\n"
-	"                                  /tmp/ela.key file; multiple sources tried in order)\n"
+		"  --api-key <key>                 Bearer token for Authorization header (also: ELA_API_KEY env,\n"
+		"                                  /tmp/ela.key file; multiple sources tried in order)\n"
 		"  --output-tcp <IPv4:port>         Configure TCP remote output for commands/subcommands\n"
 		"  --output-http <http(s)://...>    Configure HTTP or HTTPS remote output for commands/subcommands\n"
 		"  --script <path|http(s)://...>    Execute commands from a local or remote script file\n"
@@ -51,6 +53,15 @@ static void usage(const char *prog)
 		"  uboot env          Scan for U-Boot environment candidates\n"
 		"  uboot image        Scan or extract U-Boot images\n"
 		"  uboot audit        Run U-Boot audit rules\n"
+		"  linux audit        Run native Linux host security rules\n"
+		"  linux audit filesystem  Audit mounts, permissions, devices, and symlinks\n"
+		"  linux audit all         Run every Linux audit category\n"
+		"  linux audit persistence Audit startup and persistence mechanisms\n"
+		"  linux audit identity   Audit accounts, SSH, sudo, and keys\n"
+		"  linux audit network    Audit network exposure and policy\n"
+		"  linux audit integrity  Audit IMA, EVM, TPM, and storage integrity\n"
+		"  linux audit secrets    Find secrets with redacted output\n"
+		"  linux audit hardware   Inventory embedded hardware attack surface\n"
 		"  linux dmesg        Dump kernel ring buffer output\n"
 		"  linux download-file Download a file from HTTP(S) to a local path\n"
 		"  linux execute-command Execute a shell command and capture/upload its output\n"
@@ -144,17 +155,9 @@ static void usage(const char *prog)
 		"  %s --output-format json --script ./commands.txt\n"
 		"  %s --remote 192.168.1.10:4444\n"
 		"  %s transfer 192.168.1.10:4445\n",
-		prog, prog, prog, prog, prog, prog, prog,
-		prog, prog, prog, prog,
-		prog, prog, prog, prog,
-		prog, prog, prog, prog,
-		prog, prog, prog, prog,
-		prog, prog, prog, prog,
-		prog, prog, prog, prog,
-		prog, prog, prog, prog, prog, prog, prog, prog,
-		prog, prog, prog, prog,
-		prog,
-		prog);
+		prog, prog, prog, prog, prog, prog, prog, prog, prog, prog, prog, prog, prog, prog, prog, prog, prog,
+		prog, prog, prog, prog, prog, prog, prog, prog, prog, prog, prog, prog, prog, prog, prog, prog, prog,
+		prog, prog, prog, prog, prog, prog, prog, prog, prog, prog, prog);
 }
 
 /* Declared non-static so interactive.c and script_exec.c can call it. */
@@ -644,6 +647,11 @@ int embedded_linux_audit_dispatch(int argc, char **argv)
 		    !strcmp(argv[sub_idx], "help")) {
 			usage(argv[0]);
 			ret = 0;
+			goto done;
+		}
+
+		if (!strcmp(argv[sub_idx], "audit")) {
+			ret = linux_audit_main(argc - sub_idx, argv + sub_idx);
 			goto done;
 		}
 
