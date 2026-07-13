@@ -623,11 +623,6 @@ static int run_special_rule(const struct ela_linux_audit_rule *rule, enum ela_li
 	}
 	n = read_probe_file(root, rule->path, text, sizeof(text), path, sizeof(path));
 	if (n < 0) {
-		if (rule->check_type == ELA_LINUX_AUDIT_CHECK_DEVICE_MODE && errno == ENOENT) {
-			result->status = ELA_LINUX_AUDIT_NOT_APPLICABLE;
-			snprintf(result->evidence, sizeof(result->evidence), "%.480s is absent", path);
-			return 0;
-		}
 		set_unknown(result, path);
 		return 0;
 	}

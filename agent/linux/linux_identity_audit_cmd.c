@@ -93,7 +93,7 @@ static void accounts(struct id_ctx *c)
 			strncpy(seen_names[seen_count], name, sizeof(seen_names[0]) - 1);
 			seen_count++;
 		}
-		shell = strtok_r(NULL, ":", &save);
+		(void)strtok_r(NULL, ":", &save);
 		(void)strtok_r(NULL, ":", &save);
 		(void)strtok_r(NULL, ":", &save);
 		shell = strtok_r(NULL, ":\n", &save);

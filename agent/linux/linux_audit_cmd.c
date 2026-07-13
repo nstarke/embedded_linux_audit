@@ -267,7 +267,7 @@ int linux_audit_main(int argc, char **argv)
 			else if (!strncmp(argv[i], "--root=", 7)) root = argv[i] + 7;
 			else return 2;
 		}
-		if (!root[0] || root[0] != '/') return 2;
+		if (root[0] != '/') return 2;
 		kernel_argv[1] = "--root"; kernel_argv[2] = (char *)root;
 		result = linux_audit_main(3, kernel_argv); if (result > rc) rc = result;
 		for (i = 0; i < (int)(sizeof(commands) / sizeof(commands[0])); i++) {

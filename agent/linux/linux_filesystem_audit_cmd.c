@@ -288,15 +288,15 @@ static void scan_mounts(struct fs_context *ctx)
 			continue;
 		sensitive = !strcmp(mountpoint, "/tmp") || !strcmp(mountpoint, "/var/tmp") ||
 			    !strcmp(mountpoint, "/dev/shm");
-		if (!sensitive)
+		if (!sensitive) {
 			if (!strcmp(type, "overlay")) {
 				char evidence[512];
 				snprintf(evidence, sizeof(evidence), "overlay filesystem mounted at %.300s", mountpoint);
 				(void)add_finding(ctx, "ELA-FS-015", "Overlay filesystem", "medium", ELA_LINUX_AUDIT_FAIL,
 						  evidence, "Review writable overlay layers and ensure lower layers cannot be replaced.");
 			}
-		if (!sensitive)
 			continue;
+		}
 		for (i = 0; i < sizeof(required) / sizeof(required[0]); i++) {
 			if (!strstr(options, required[i])) {
 				char evidence[512];
@@ -432,7 +432,7 @@ int linux_filesystem_audit_main(int argc, char **argv)
 			ctx.quick = true;
 		else if (opt == 'R')
 			ctx.root = optarg;
-		else if (opt != 'h') {
+		else {
 			fprintf(stderr, "Usage: %s [--quick] [--root <absolute-path>]\n", argv[0]);
 			return 2;
 		}
