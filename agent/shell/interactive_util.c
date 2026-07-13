@@ -12,7 +12,7 @@
 #include <unistd.h>
 
 static const char *const interactive_top_level_commands[] = {
-	"help", "quit", "exit", "set", "arch", "uboot", "linux", "efi", "bios", "tpm2", "transfer", NULL,
+	"help", "quit", "exit", "set", "arch", "uboot", "linux", "efi", "bios", "tpm2", "spi", "transfer", NULL,
 };
 static const char *const interactive_group_arch[] = { "bit", "isa", "endianness", NULL };
 static const char *const interactive_group_uboot[] = { "env", "image", "audit", NULL };
@@ -24,6 +24,7 @@ static const char *const interactive_group_linux_process[] = { "watch", NULL };
 static const char *const interactive_group_linux_process_watch[] = { "on", "off", "list", NULL };
 static const char *const interactive_group_efi[] = { "orom", "dump-vars", NULL };
 static const char *const interactive_group_bios[] = { "orom", NULL };
+static const char *const interactive_group_spi[] = { "list", "dump", NULL };
 static const char *const interactive_set_variables[] = {
 	"ELA_API_URL", "ELA_API_INSECURE", "ELA_QUIET", "ELA_OUTPUT_FORMAT", "ELA_OUTPUT_TCP", "ELA_SCRIPT",
 	"ELA_OUTPUT_HTTP", "ELA_OUTPUT_INSECURE", "ELA_API_KEY", "ELA_VERBOSE", "ELA_DEBUG", "ELA_WS_RETRY_ATTEMPTS", NULL,
@@ -60,6 +61,8 @@ const char *const *ela_interactive_candidates_for_position(int argc, char **argv
 		return interactive_group_efi;
 	if (!strcmp(argv[0], "bios"))
 		return interactive_group_bios;
+	if (!strcmp(argv[0], "spi"))
+		return interactive_group_spi;
 	if (!strcmp(argv[0], "set") && argc == 2)
 		return interactive_set_variables;
 	return NULL;

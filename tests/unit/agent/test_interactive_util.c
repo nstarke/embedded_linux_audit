@@ -133,6 +133,17 @@ static void test_candidates_group_bios(void)
 	ELA_ASSERT_TRUE(candidates[1] == NULL);
 }
 
+static void test_candidates_group_spi(void)
+{
+	char *argv[] = { "spi", NULL };
+	const char *const *candidates = ela_interactive_candidates_for_position(2, argv);
+
+	ELA_ASSERT_TRUE(candidates != NULL);
+	ELA_ASSERT_STR_EQ("list", candidates[0]);
+	ELA_ASSERT_STR_EQ("dump", candidates[1]);
+	ELA_ASSERT_TRUE(candidates[2] == NULL);
+}
+
 static void test_candidates_set_variables(void)
 {
 	char *argv[] = { "set", "ELA_" };
@@ -775,6 +786,7 @@ int run_interactive_util_tests(void)
 		{ "candidates_group_arch",                 test_candidates_group_arch },
 		{ "candidates_group_efi",                  test_candidates_group_efi },
 		{ "candidates_group_bios",                 test_candidates_group_bios },
+		{ "candidates_group_spi",                  test_candidates_group_spi },
 		{ "candidates_set_variables",              test_candidates_set_variables },
 		{ "candidates_set_argc_three_returns_null", test_candidates_set_argc_three_returns_null },
 		{ "candidates_unknown_group_returns_null", test_candidates_unknown_group_returns_null },

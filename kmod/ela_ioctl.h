@@ -167,6 +167,50 @@ struct ela_kmod_va2pa {
 	__u64 phys_addr;     /* out: physical address */
 };
 
+#define ELA_KMOD_SPI_NAME_LEN 32U
+#define ELA_KMOD_SPI_DRIVER_LEN 32U
+#define ELA_KMOD_MTD_NAME_LEN 64U
+#define ELA_KMOD_SPI_MAX_READ (1024UL * 1024UL)
+
+/* Return one kernel-enumerated SPI device by zero-based ordinal. ENOENT marks
+ * the end of the list. The strings are always NUL terminated. */
+struct ela_kmod_spi_device {
+	__u32 abi_version;   /* in: ELA_KMOD_ABI_VERSION */
+	__u32 ordinal;       /* in: zero-based enumeration position */
+	__u32 mode;          /* out: SPI mode flags */
+	__u32 max_speed_hz;  /* out: configured maximum clock */
+	__u32 bits_per_word; /* out */
+	__u32 pad;           /* zero */
+	char device_name[ELA_KMOD_SPI_NAME_LEN];
+	char modalias[ELA_KMOD_SPI_NAME_LEN];
+	char driver[ELA_KMOD_SPI_DRIVER_LEN];
+};
+
+/* Return one MTD device whose kernel device ancestry contains an SPI device.
+ * The mtd_index is the stable selector accepted by ELA_IOC_SPI_MTD_READ. */
+struct ela_kmod_spi_mtd {
+	__u32 abi_version;   /* in: ELA_KMOD_ABI_VERSION */
+	__u32 ordinal;       /* in: zero-based enumeration position */
+	__u32 mtd_index;     /* out */
+	__u32 writesize;     /* out */
+	__u32 erasesize;     /* out */
+	__u32 pad;           /* zero */
+	__u64 size;          /* out: bytes */
+	char spi_name[ELA_KMOD_SPI_NAME_LEN];
+	char mtd_name[ELA_KMOD_MTD_NAME_LEN];
+};
+
+/* Read bytes through the kernel MTD layer after verifying that mtd_index is
+ * still attached beneath an SPI device. Reads larger than the per-call limit
+ * are chunked by userspace. */
+struct ela_kmod_spi_mtd_read {
+	__u32 abi_version;   /* in: ELA_KMOD_ABI_VERSION */
+	__u32 mtd_index;     /* in: from ELA_IOC_SPI_MTD_GET */
+	__u64 offset;        /* in */
+	__u64 length;        /* in: 1..ELA_KMOD_SPI_MAX_READ */
+	__u64 buf;           /* in: userspace destination, cast to __u64 */
+};
+
 #define ELA_KMOD_IOC_MAGIC 0xE5
 
 /* Implemented operations. */
@@ -179,6 +223,9 @@ struct ela_kmod_va2pa {
 #define ELA_IOC_VA2PA      _IOWR(ELA_KMOD_IOC_MAGIC, 0x07, struct ela_kmod_va2pa)
 #define ELA_IOC_PCI_READ   _IOWR(ELA_KMOD_IOC_MAGIC, 0x20, struct ela_kmod_pci_cfg)
 #define ELA_IOC_PCI_WRITE  _IOW(ELA_KMOD_IOC_MAGIC, 0x21, struct ela_kmod_pci_cfg)
+#define ELA_IOC_SPI_GET      _IOWR(ELA_KMOD_IOC_MAGIC, 0x40, struct ela_kmod_spi_device)
+#define ELA_IOC_SPI_MTD_GET  _IOWR(ELA_KMOD_IOC_MAGIC, 0x41, struct ela_kmod_spi_mtd)
+#define ELA_IOC_SPI_MTD_READ _IOW(ELA_KMOD_IOC_MAGIC, 0x42, struct ela_kmod_spi_mtd_read)
 
 /*
  * Reserved operation numbers for x86-only chipsec-style ops (not portable

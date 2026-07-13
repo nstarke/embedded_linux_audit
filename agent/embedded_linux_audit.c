@@ -71,6 +71,8 @@ static void usage(const char *prog)
 		"  linux pcap         Capture packets from an interface as pcap data\n"
 		"  linux coredump     Configure kernel coredump generation to /tmp\n"
 		"  tpm2               Run built-in TPM2 commands through the TPM2-TSS library\n"
+		"  spi list           List SPI devices through ela_kmod\n"
+		"  spi dump <path> [index] Dump an indexed SPI-backed MTD through ela_kmod\n"
 		"  efi orom           EFI option ROM utilities (pull/list)\n"
 		"  efi dump-vars      Dump EFI variables with txt/csv/json formatting\n"
 		"  bios orom          BIOS option ROM utilities (pull/list)\n"
@@ -109,6 +111,9 @@ static void usage(const char *prog)
 		"  %s --output-http https://127.0.0.1:5443 linux remote-copy /tmp/fw.bin\n"
 		"  %s linux ssh client 192.168.1.10 --port 22\n"
 		"  %s tpm2 getcap properties-fixed\n"
+		"  %s spi list\n"
+		"  %s spi dump /tmp/spi.bin\n"
+		"  %s spi dump /tmp/spi1.bin 1\n"
 		"  %s --quiet --output-http http://127.0.0.1:5000/orom efi orom pull\n"
 		"  %s --output-format json --output-http http://127.0.0.1:5000 efi dump-vars\n"
 		"  %s --quiet --output-tcp 127.0.0.1:5001 bios orom list\n"
@@ -122,7 +127,7 @@ static void usage(const char *prog)
 		prog, prog, prog, prog,
 		prog, prog, prog, prog,
 		prog, prog, prog, prog,
-		prog, prog, prog, prog,
+		prog, prog, prog, prog, prog, prog, prog,
 		prog);
 }
 
@@ -763,6 +768,11 @@ int embedded_linux_audit_dispatch(int argc, char **argv)
 
 	if (!strcmp(argv[opts.cmd_idx], "arch")) {
 		ret = arch_main(argc - opts.cmd_idx, argv + opts.cmd_idx);
+		goto done;
+	}
+
+	if (!strcmp(argv[opts.cmd_idx], "spi")) {
+		ret = spi_main(argc - opts.cmd_idx, argv + opts.cmd_idx);
 		goto done;
 	}
 

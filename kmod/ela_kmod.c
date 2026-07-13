@@ -31,6 +31,12 @@
 #ifdef CONFIG_PCI
 # include <linux/pci.h>
 #endif
+#if IS_ENABLED(CONFIG_SPI)
+# include <linux/spi/spi.h>
+#endif
+#if IS_ENABLED(CONFIG_MTD)
+# include <linux/mtd/mtd.h>
+#endif
 /* Portable readq/writeq on 32-bit arches: split into two 32-bit accesses,
  * low word first (same order chipsec uses). 64-bit arches get native ops.
  * Upstream moved this wrapper from <asm-generic/...> to <linux/...> in 3.15,
@@ -564,6 +570,238 @@ static long ela_ioctl_va2pa(unsigned long arg)
 	return 0;
 }
 
+#if IS_ENABLED(CONFIG_SPI)
+struct ela_spi_find_ctx {
+	u32 wanted;
+	u32 position;
+	bool found;
+	struct ela_kmod_spi_device *record;
+};
+
+static void ela_copy_fixed_name(char *dst, size_t dst_len, const char *src)
+{
+	size_t len;
+
+	if (!dst_len)
+		return;
+	len = strnlen(src, dst_len - 1);
+	memcpy(dst, src, len);
+	dst[len] = '\0';
+}
+
+static int ela_spi_find_device(struct device *dev, void *data)
+{
+	struct ela_spi_find_ctx *ctx = data;
+	struct spi_device *spi;
+
+	if (ctx->position++ != ctx->wanted)
+		return 0;
+	spi = to_spi_device(dev);
+	ela_copy_fixed_name(ctx->record->device_name, ELA_KMOD_SPI_NAME_LEN,
+		dev_name(dev));
+	ela_copy_fixed_name(ctx->record->modalias, ELA_KMOD_SPI_NAME_LEN,
+		spi->modalias);
+	if (dev->driver)
+		ela_copy_fixed_name(ctx->record->driver,
+			ELA_KMOD_SPI_DRIVER_LEN, dev->driver->name);
+	ctx->record->mode = spi->mode;
+	ctx->record->max_speed_hz = spi->max_speed_hz;
+	ctx->record->bits_per_word = spi->bits_per_word;
+	ctx->found = true;
+	return 1;
+}
+
+static long ela_ioctl_spi_get(unsigned long arg)
+{
+	struct ela_kmod_spi_device req;
+	struct ela_spi_find_ctx ctx;
+
+	if (copy_from_user(&req, (void __user *)arg, sizeof(req)))
+		return -EFAULT;
+	if (req.abi_version != ELA_KMOD_ABI_VERSION)
+		return -EINVAL;
+
+	memset(req.device_name, 0, sizeof(req.device_name));
+	memset(req.modalias, 0, sizeof(req.modalias));
+	memset(req.driver, 0, sizeof(req.driver));
+	req.mode = 0;
+	req.max_speed_hz = 0;
+	req.bits_per_word = 0;
+	req.pad = 0;
+	memset(&ctx, 0, sizeof(ctx));
+	ctx.wanted = req.ordinal;
+	ctx.record = &req;
+	bus_for_each_dev(&spi_bus_type, NULL, &ctx, ela_spi_find_device);
+	if (!ctx.found)
+		return -ENOENT;
+	if (copy_to_user((void __user *)arg, &req, sizeof(req)))
+		return -EFAULT;
+	return 0;
+}
+#else
+static long ela_ioctl_spi_get(unsigned long arg)
+{
+	(void)arg;
+	return -EOPNOTSUPP;
+}
+#endif
+
+#if IS_ENABLED(CONFIG_SPI) && IS_ENABLED(CONFIG_MTD)
+static struct spi_device *ela_mtd_spi_parent(struct mtd_info *mtd)
+{
+	struct device *dev = mtd->dev.parent;
+
+	while (dev) {
+		if (dev->bus == &spi_bus_type)
+			return to_spi_device(dev);
+		dev = dev->parent;
+	}
+	return NULL;
+}
+
+struct ela_spi_mtd_find_ctx {
+	u32 wanted;
+	u32 position;
+	bool found;
+	struct ela_kmod_spi_mtd *record;
+};
+
+static int ela_spi_find_mtd_child(struct device *dev, void *data)
+{
+	struct ela_spi_mtd_find_ctx *ctx = data;
+	struct mtd_info *mtd;
+	struct spi_device *spi;
+	const char *name = dev_name(dev);
+	char *end;
+	long index;
+
+	if (strncmp(name, "mtd", 3) || name[3] < '0' || name[3] > '9')
+		return 0;
+	index = simple_strtol(name + 3, &end, 10);
+	if (*end || index < 0)
+		return 0;
+	mtd = get_mtd_device(NULL, (int)index);
+	if (IS_ERR(mtd))
+		return 0;
+	if (&mtd->dev != dev || !(spi = ela_mtd_spi_parent(mtd))) {
+		put_mtd_device(mtd);
+		return 0;
+	}
+	if (ctx->position++ != ctx->wanted) {
+		put_mtd_device(mtd);
+		return 0;
+	}
+
+	ctx->record->mtd_index = (u32)index;
+	ctx->record->size = mtd->size;
+	ctx->record->erasesize = mtd->erasesize;
+	ctx->record->writesize = mtd->writesize;
+	ela_copy_fixed_name(ctx->record->spi_name, ELA_KMOD_SPI_NAME_LEN,
+		dev_name(&spi->dev));
+	ela_copy_fixed_name(ctx->record->mtd_name, ELA_KMOD_MTD_NAME_LEN,
+		mtd->name);
+	ctx->found = true;
+	put_mtd_device(mtd);
+	return 1;
+}
+
+static int ela_spi_find_mtd_under_device(struct device *dev, void *data)
+{
+	struct ela_spi_mtd_find_ctx *ctx = data;
+
+	device_for_each_child(dev, ctx, ela_spi_find_mtd_child);
+	return ctx->found ? 1 : 0;
+}
+
+static long ela_ioctl_spi_mtd_get(unsigned long arg)
+{
+	struct ela_kmod_spi_mtd req;
+	struct ela_spi_mtd_find_ctx ctx;
+
+	if (copy_from_user(&req, (void __user *)arg, sizeof(req)))
+		return -EFAULT;
+	if (req.abi_version != ELA_KMOD_ABI_VERSION)
+		return -EINVAL;
+
+	memset(req.spi_name, 0, sizeof(req.spi_name));
+	memset(req.mtd_name, 0, sizeof(req.mtd_name));
+	req.mtd_index = 0;
+	req.writesize = 0;
+	req.erasesize = 0;
+	req.pad = 0;
+	req.size = 0;
+	memset(&ctx, 0, sizeof(ctx));
+	ctx.wanted = req.ordinal;
+	ctx.record = &req;
+	bus_for_each_dev(&spi_bus_type, NULL, &ctx,
+			 ela_spi_find_mtd_under_device);
+	if (!ctx.found)
+		return -ENOENT;
+	if (copy_to_user((void __user *)arg, &req, sizeof(req)))
+		return -EFAULT;
+	return 0;
+}
+
+static long ela_ioctl_spi_mtd_read(unsigned long arg)
+{
+	struct ela_kmod_spi_mtd_read req;
+	struct mtd_info *mtd;
+	u8 *buf;
+	size_t retlen = 0;
+	int rc;
+
+	if (copy_from_user(&req, (void __user *)arg, sizeof(req)))
+		return -EFAULT;
+	if (req.abi_version != ELA_KMOD_ABI_VERSION)
+		return -EINVAL;
+	if (!req.buf || !req.length || req.length > ELA_KMOD_SPI_MAX_READ ||
+	    req.offset + req.length < req.offset)
+		return -EINVAL;
+
+	mtd = get_mtd_device(NULL, (int)req.mtd_index);
+	if (IS_ERR(mtd))
+		return PTR_ERR(mtd);
+	if (!ela_mtd_spi_parent(mtd)) {
+		rc = -ENODEV;
+		goto out_put;
+	}
+	if (req.offset > mtd->size || req.length > mtd->size - req.offset) {
+		rc = -EINVAL;
+		goto out_put;
+	}
+	buf = kmalloc((size_t)req.length, GFP_KERNEL);
+	if (!buf) {
+		rc = -ENOMEM;
+		goto out_put;
+	}
+	rc = mtd_read(mtd, (loff_t)req.offset, (size_t)req.length,
+		      &retlen, buf);
+	if (mtd_is_bitflip(rc))
+		rc = 0;
+	if (!rc && retlen != (size_t)req.length)
+		rc = -EIO;
+	if (!rc && copy_to_user((void __user *)(uintptr_t)req.buf,
+				buf, (size_t)req.length))
+		rc = -EFAULT;
+	kfree(buf);
+out_put:
+	put_mtd_device(mtd);
+	return rc;
+}
+#else
+static long ela_ioctl_spi_mtd_get(unsigned long arg)
+{
+	(void)arg;
+	return -EOPNOTSUPP;
+}
+
+static long ela_ioctl_spi_mtd_read(unsigned long arg)
+{
+	(void)arg;
+	return -EOPNOTSUPP;
+}
+#endif
+
 static long ela_kmod_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
 	struct ela_file_state *state = file->private_data;
@@ -587,6 +825,12 @@ static long ela_kmod_ioctl(struct file *file, unsigned int cmd, unsigned long ar
 		return ela_ioctl_free_phys(state, arg);
 	case ELA_IOC_VA2PA:
 		return ela_ioctl_va2pa(arg);
+	case ELA_IOC_SPI_GET:
+		return ela_ioctl_spi_get(arg);
+	case ELA_IOC_SPI_MTD_GET:
+		return ela_ioctl_spi_mtd_get(arg);
+	case ELA_IOC_SPI_MTD_READ:
+		return ela_ioctl_spi_mtd_read(arg);
 	default:
 		return -ENOTTY;
 	}
@@ -669,4 +913,4 @@ module_exit(ela_kmod_exit);
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Nicholas Starke");
 MODULE_DESCRIPTION("embedded_linux_audit host inspection module");
-MODULE_VERSION("0.3");
+MODULE_VERSION("0.4");

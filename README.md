@@ -69,6 +69,13 @@
 | `tpm2 nvreadpublic` | Read NV index metadata |
 | `tpm2 createprimary` | Create a primary object and serialize the context |
 
+### `spi` — SPI device inspection
+
+| Subcommand | Description |
+|---|---|
+| `spi list` | Enumerate SPI devices and indexed SPI-backed MTD devices through `ela_kmod` |
+| `spi dump <DUMP_FILE_PATH> [DEVICE_INDEX]` | Dump the selected index from `spi list`; without an index, dump the largest unambiguous SPI-backed MTD device |
+
 ### `transfer` — Remote terminal and data exfiltration
 
 | Subcommand | Description |

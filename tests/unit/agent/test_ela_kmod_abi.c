@@ -74,11 +74,30 @@ static void test_physctl_struct_layouts(void)
 	ELA_ASSERT_INT_EQ(16, offsetof(struct ela_kmod_va2pa, phys_addr));
 }
 
+static void test_spi_struct_layouts(void)
+{
+	ELA_ASSERT_INT_EQ(120, sizeof(struct ela_kmod_spi_device));
+	ELA_ASSERT_INT_EQ(24, offsetof(struct ela_kmod_spi_device, device_name));
+	ELA_ASSERT_INT_EQ(56, offsetof(struct ela_kmod_spi_device, modalias));
+	ELA_ASSERT_INT_EQ(88, offsetof(struct ela_kmod_spi_device, driver));
+
+	ELA_ASSERT_INT_EQ(128, sizeof(struct ela_kmod_spi_mtd));
+	ELA_ASSERT_INT_EQ(24, offsetof(struct ela_kmod_spi_mtd, size));
+	ELA_ASSERT_INT_EQ(32, offsetof(struct ela_kmod_spi_mtd, spi_name));
+	ELA_ASSERT_INT_EQ(64, offsetof(struct ela_kmod_spi_mtd, mtd_name));
+
+	ELA_ASSERT_INT_EQ(32, sizeof(struct ela_kmod_spi_mtd_read));
+	ELA_ASSERT_INT_EQ(8, offsetof(struct ela_kmod_spi_mtd_read, offset));
+	ELA_ASSERT_INT_EQ(16, offsetof(struct ela_kmod_spi_mtd_read, length));
+	ELA_ASSERT_INT_EQ(24, offsetof(struct ela_kmod_spi_mtd_read, buf));
+}
+
 static void test_abi_constants(void)
 {
 	ELA_ASSERT_INT_EQ(1, ELA_KMOD_ABI_VERSION);
 	ELA_ASSERT_INT_EQ(0xE5, ELA_KMOD_IOC_MAGIC);
 	ELA_ASSERT_TRUE(ELA_KMOD_MAX_READ == 16UL * 1024UL * 1024UL);
+	ELA_ASSERT_TRUE(ELA_KMOD_SPI_MAX_READ == 1024UL * 1024UL);
 	ELA_ASSERT_STR_EQ("/dev/ela_physmem", ELA_KMOD_DEVICE_PATH);
 	/* All defined flags are inside the accepted mask. */
 	ELA_ASSERT_INT_EQ(ELA_KMOD_READ_F_ALL,
@@ -101,6 +120,9 @@ static void test_ioctl_number_is_stable(void)
 		{ ELA_IOC_VA2PA, 0x07 },
 		{ ELA_IOC_PCI_READ, 0x20 },
 		{ ELA_IOC_PCI_WRITE, 0x21 },
+		{ ELA_IOC_SPI_GET, 0x40 },
+		{ ELA_IOC_SPI_MTD_GET, 0x41 },
+		{ ELA_IOC_SPI_MTD_READ, 0x42 },
 	};
 	size_t i;
 
@@ -118,6 +140,7 @@ int run_ela_kmod_abi_tests(void)
 		{ "abi/mmio_layout", test_mmio_struct_layout },
 		{ "abi/pci_cfg_layout", test_pci_cfg_struct_layout },
 		{ "abi/physctl_layouts", test_physctl_struct_layouts },
+		{ "abi/spi_layouts", test_spi_struct_layouts },
 		{ "abi/constants", test_abi_constants },
 		{ "abi/ioctl_number", test_ioctl_number_is_stable },
 	};

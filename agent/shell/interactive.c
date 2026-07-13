@@ -81,6 +81,8 @@ static void interactive_usage(const char *prog)
 	       "  linux gdbserver\n"
 	       "  linux modules\n"
 	       "  tpm2\n"
+	       "  spi list\n"
+	       "  spi dump <DUMP_FILE_PATH> [DEVICE_INDEX]\n"
 	       "  efi orom\n"
 	       "  efi dump-vars\n"
 	       "  bios orom\n"

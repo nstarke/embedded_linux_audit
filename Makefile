@@ -526,6 +526,7 @@ AGENT_UNIT_TEST_SRC := \
 	tests/unit/agent/test_linux_kernel_buildinfo_util.c \
 	tests/unit/agent/test_ela_kmod_abi.c \
 	tests/unit/agent/test_linux_physmem_util.c \
+	tests/unit/agent/test_spi_util.c \
 	tests/unit/agent/test_device_scan.c \
 	tests/unit/agent/test_dispatch_util.c \
 	tests/unit/agent/test_dispatch_parse_util.c \
@@ -629,6 +630,7 @@ AGENT_UNIT_TEST_DEPS := \
 	agent/linux/linux_kernel_module_util.c \
 	agent/linux/linux_kernel_buildinfo_util.c \
 	agent/linux/linux_physmem_util.c \
+	agent/spi/spi_util.c \
 	agent/device/device_scan.c \
 	agent/shell/script_exec_util.c \
 	agent/shell/interactive_util.c \
@@ -890,6 +892,8 @@ SRC := \
 	agent/linux/linux_pcap_cmd.c \
 	agent/linux/linux_coredump_util.c \
 	agent/linux/linux_coredump_cmd.c \
+	agent/spi/spi_util.c \
+	agent/spi/spi_cmd.c \
 	agent/tpm2/tpm2_cmd.c \
 	agent/tpm2/tpm2_util.c \
 	agent/tpm2/tpm2_output.c \
@@ -1317,6 +1321,7 @@ $(AGENT_UNIT_TEST_BIN): $(AGENT_UNIT_TEST_SRC) $(AGENT_UNIT_TEST_DEPS) $(TPM2_UN
 			agent/linux/linux_kernel_module_util.c \
 			agent/linux/linux_kernel_buildinfo_util.c \
 			agent/linux/linux_physmem_util.c \
+			agent/spi/spi_util.c \
 			agent/device/device_scan.c \
 			agent/shell/script_exec_util.c \
 			agent/shell/interactive_util.c \
