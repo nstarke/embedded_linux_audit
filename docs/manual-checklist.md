@@ -161,7 +161,9 @@ This checklist is intended to guide a manual security assessment of an embedded 
 - [ ] Note any vendor-specific or debug EFI variables that suggest test/development firmware
 - [ ] List EFI option ROMs and extract any of interest
   ```
-  efi orom
+  efi orom list
+  orom list
+  orom dump /tmp/orom.bin 0
   ```
 
 ---
@@ -170,7 +172,9 @@ This checklist is intended to guide a manual security assessment of an embedded 
 
 - [ ] List and extract PCI option ROMs
   ```
-  bios orom
+  bios orom list
+  orom list
+  orom dump /tmp/orom.bin 0
   ```
 - [ ] Transfer extracted option ROMs to workstation for offline analysis
 

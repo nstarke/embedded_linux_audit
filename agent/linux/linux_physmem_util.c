@@ -228,6 +228,71 @@ int ela_mmio_prepare_request(int argc, char **argv,
 	return 0;
 }
 
+int ela_ioport_prepare_request(int argc, char **argv,
+			       struct ela_ioport_request *request,
+			       char *errbuf, size_t errbuf_len)
+{
+	uint64_t port;
+	uint64_t width;
+	uint64_t value = 0;
+
+	if (!request) {
+		set_err(errbuf, errbuf_len, "internal error: null ioport request");
+		return 2;
+	}
+	memset(request, 0, sizeof(*request));
+
+	if (argc < 2 || !argv || !argv[0] || !argv[1] ||
+	    !strcmp(argv[1], "-h") || !strcmp(argv[1], "--help") ||
+	    !strcmp(argv[1], "help")) {
+		request->show_help = true;
+		return argc >= 2 ? 0 : 2;
+	}
+	if (!strcmp(argv[1], "read"))
+		request->write = false;
+	else if (!strcmp(argv[1], "write"))
+		request->write = true;
+	else {
+		set_err(errbuf, errbuf_len, "Unknown ioport action");
+		return 2;
+	}
+
+	if (argc >= 3 && (!strcmp(argv[2], "-h") || !strcmp(argv[2], "--help"))) {
+		request->show_help = true;
+		return 0;
+	}
+	if (argc != (request->write ? 5 : 4)) {
+		set_err(errbuf, errbuf_len, request->write
+			? "ioport write requires a port, a width, and a value"
+			: "ioport read requires a port and a width");
+		return 2;
+	}
+	if (ela_physmem_parse_u64(argv[2], &port) != 0 || port > 0xffff) {
+		set_err(errbuf, errbuf_len, "I/O port must be between 0 and 0xffff");
+		return 2;
+	}
+	if (ela_physmem_parse_u64(argv[3], &width) != 0 ||
+	    (width != 1 && width != 2 && width != 4)) {
+		set_err(errbuf, errbuf_len, "Width must be 1, 2, or 4");
+		return 2;
+	}
+	if (request->write) {
+		if (ela_physmem_parse_u64(argv[4], &value) != 0) {
+			set_err(errbuf, errbuf_len, "Invalid ioport value");
+			return 2;
+		}
+		if (!ela_physmem_value_fits_width(value, (uint32_t)width)) {
+			set_err(errbuf, errbuf_len, "Value does not fit the access width");
+			return 2;
+		}
+	}
+
+	request->port = (uint32_t)port;
+	request->width = (uint32_t)width;
+	request->value = (uint32_t)value;
+	return 0;
+}
+
 int ela_pci_parse_bdf(const char *text, uint32_t *domain, uint8_t *bus,
 		      uint8_t *device, uint8_t *function)
 {

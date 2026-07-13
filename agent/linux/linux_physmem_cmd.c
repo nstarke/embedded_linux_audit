@@ -292,6 +292,59 @@ int linux_mmio_main(int argc, char **argv)
 	return 0;
 }
 
+static void ioport_usage(const char *prog)
+{
+	fprintf(stderr,
+		"Usage: %s read <port> <width>\n"
+		"       %s write <port> <width> <value>\n"
+		"  x86 I/O-port access through " ELA_KMOD_DEVICE_PATH "\n"
+		"  port is 0-0xffff; width is 1, 2, or 4 bytes\n"
+		"  write is DANGEROUS - port writes can alter hardware state\n",
+		prog, prog);
+}
+
+int linux_ioport_main(int argc, char **argv)
+{
+	struct ela_ioport_request request;
+	struct ela_kmod_ioport req;
+	char errbuf[256];
+	int ret;
+	int fd;
+
+	errbuf[0] = '\0';
+	ret = ela_ioport_prepare_request(argc, argv, &request,
+					errbuf, sizeof(errbuf));
+	if (ret != 0 || request.show_help) {
+		if (errbuf[0])
+			fprintf(stderr, "%s\n", errbuf);
+		ioport_usage(argv[0]);
+		return ret;
+	}
+
+	fd = physmem_open_device();
+	if (fd < 0)
+		return 1;
+	memset(&req, 0, sizeof(req));
+	req.abi_version = ELA_KMOD_ABI_VERSION;
+	req.port = request.port;
+	req.width = request.width;
+	req.value = request.value;
+	if (ioctl(fd, request.write ? ELA_IOC_PORT_WRITE : ELA_IOC_PORT_READ,
+		  &req) != 0) {
+		fprintf(stderr, "%s failed: %s%s\n",
+			request.write ? "ELA_IOC_PORT_WRITE" : "ELA_IOC_PORT_READ",
+			strerror(errno), errno == EOPNOTSUPP ? " (requires x86)" : "");
+		close(fd);
+		return 1;
+	}
+	close(fd);
+
+	printf("ioport %s 0x%04x width %u value 0x%0*x\n",
+	       request.write ? "write" : "read", request.port, request.width,
+	       (int)(request.width * 2), request.write ? request.value : req.value);
+	return 0;
+}
+
 static void pci_usage(const char *prog)
 {
 	fprintf(stderr,

@@ -127,6 +127,18 @@ struct ela_kmod_pci_cfg {
 };
 
 /*
+ * x86 I/O-port access. Each request emits exactly one IN or OUT instruction
+ * of the requested width. Port addresses are 16-bit; widths are 1, 2, or 4.
+ * Non-x86 kernels retain the ABI and return EOPNOTSUPP.
+ */
+struct ela_kmod_ioport {
+	__u32 abi_version;   /* in: ELA_KMOD_ABI_VERSION */
+	__u32 port;          /* in: I/O port number (0..0xffff) */
+	__u32 width;         /* in: access size in bytes: 1, 2, or 4 */
+	__u32 value;         /* in (write) / out (read): port value */
+};
+
+/*
  * Allocate a physically-contiguous, zeroed buffer inside the kernel
  * (chipsec ALLOC_PHYSMEM port). Used to stage DMA-visible scratch buffers
  * at known physical addresses. Only the physical address is returned —
@@ -167,6 +179,200 @@ struct ela_kmod_va2pa {
 	__u64 phys_addr;     /* out: physical address */
 };
 
+#define ELA_KMOD_SPI_NAME_LEN 32U
+#define ELA_KMOD_SPI_DRIVER_LEN 32U
+#define ELA_KMOD_MTD_NAME_LEN 64U
+#define ELA_KMOD_SPI_MAX_READ (1024UL * 1024UL)
+#define ELA_KMOD_NAND_MAX_READ (1024UL * 1024UL)
+#define ELA_KMOD_EMMC_NAME_LEN 32U
+#define ELA_KMOD_EMMC_MAX_READ (1024UL * 1024UL)
+#define ELA_KMOD_OROM_MAX_READ (1024UL * 1024UL)
+#define ELA_KMOD_USB_STRING_LEN 64U
+#define ELA_KMOD_USB_DESC_MAX (1024UL * 1024UL)
+
+/* Return one kernel-enumerated SPI device by zero-based ordinal. ENOENT marks
+ * the end of the list. The strings are always NUL terminated. */
+struct ela_kmod_spi_device {
+	__u32 abi_version;   /* in: ELA_KMOD_ABI_VERSION */
+	__u32 ordinal;       /* in: zero-based enumeration position */
+	__u32 mode;          /* out: SPI mode flags */
+	__u32 max_speed_hz;  /* out: configured maximum clock */
+	__u32 bits_per_word; /* out */
+	__u32 pad;           /* zero */
+	char device_name[ELA_KMOD_SPI_NAME_LEN];
+	char modalias[ELA_KMOD_SPI_NAME_LEN];
+	char driver[ELA_KMOD_SPI_DRIVER_LEN];
+};
+
+/* Return one MTD device whose kernel device ancestry contains an SPI device.
+ * The mtd_index is the stable selector accepted by ELA_IOC_SPI_MTD_READ. */
+struct ela_kmod_spi_mtd {
+	__u32 abi_version;   /* in: ELA_KMOD_ABI_VERSION */
+	__u32 ordinal;       /* in: zero-based enumeration position */
+	__u32 mtd_index;     /* out */
+	__u32 writesize;     /* out */
+	__u32 erasesize;     /* out */
+	__u32 pad;           /* zero */
+	__u64 size;          /* out: bytes */
+	char spi_name[ELA_KMOD_SPI_NAME_LEN];
+	char mtd_name[ELA_KMOD_MTD_NAME_LEN];
+};
+
+/* Read bytes through the kernel MTD layer after verifying that mtd_index is
+ * still attached beneath an SPI device. Reads larger than the per-call limit
+ * are chunked by userspace. */
+struct ela_kmod_spi_mtd_read {
+	__u32 abi_version;   /* in: ELA_KMOD_ABI_VERSION */
+	__u32 mtd_index;     /* in: from ELA_IOC_SPI_MTD_GET */
+	__u64 offset;        /* in */
+	__u64 length;        /* in: 1..ELA_KMOD_SPI_MAX_READ */
+	__u64 buf;           /* in: userspace destination, cast to __u64 */
+};
+
+/* Return one NAND/MLC-NAND MTD device by zero-based ordinal. This includes
+ * parallel raw NAND and SPI-NAND devices registered with the MTD core. */
+struct ela_kmod_nand_mtd {
+	__u32 abi_version;   /* in: ELA_KMOD_ABI_VERSION */
+	__u32 ordinal;       /* in: zero-based enumeration position */
+	__u32 mtd_index;     /* out */
+	__u32 type;          /* out: MTD_NANDFLASH or MTD_MLCNANDFLASH */
+	__u32 writesize;     /* out: main-area page size */
+	__u32 erasesize;     /* out: eraseblock size */
+	__u32 oobsize;       /* out: OOB bytes per page */
+	__u32 ecc_strength;  /* out: correctable bits per ECC step */
+	__u64 size;          /* out: main-area bytes */
+	char mtd_name[ELA_KMOD_MTD_NAME_LEN];
+};
+
+/* Read corrected NAND main-area bytes. Marked bad eraseblocks are represented
+ * by 0xff bytes so the output preserves physical offsets. bad_blocks reports
+ * how many distinct bad eraseblocks intersected this request. */
+struct ela_kmod_nand_mtd_read {
+	__u32 abi_version;   /* in: ELA_KMOD_ABI_VERSION */
+	__u32 mtd_index;     /* in: from ELA_IOC_NAND_MTD_GET */
+	__u64 offset;        /* in */
+	__u64 length;        /* in: 1..ELA_KMOD_NAND_MAX_READ */
+	__u64 buf;           /* in: userspace destination, cast to __u64 */
+	__u32 bad_blocks;    /* out */
+	__u32 pad;           /* zero */
+};
+
+/* Return one whole eMMC user-area block device by zero-based ordinal. SD
+ * cards, DOS/GPT partitions, eMMC boot areas, and RPMB are excluded. */
+struct ela_kmod_emmc_device {
+	__u32 abi_version;        /* in: ELA_KMOD_ABI_VERSION */
+	__u32 ordinal;            /* in: zero-based enumeration position */
+	__u32 major;              /* out: block device major */
+	__u32 minor;              /* out: whole-disk minor */
+	__u32 logical_block_size; /* out: bytes */
+	__u32 pad;                /* zero */
+	__u64 size;               /* out: user-area bytes */
+	char disk_name[ELA_KMOD_EMMC_NAME_LEN];
+};
+
+/* Read bytes from an eMMC user area through the kernel block layer. */
+struct ela_kmod_emmc_read {
+	__u32 abi_version; /* in: ELA_KMOD_ABI_VERSION */
+	__u32 major;       /* in: from ELA_IOC_EMMC_GET */
+	__u32 minor;       /* in: from ELA_IOC_EMMC_GET */
+	__u32 pad;         /* zero */
+	__u64 offset;      /* in */
+	__u64 length;      /* in: 1..ELA_KMOD_EMMC_MAX_READ */
+	__u64 buf;         /* in: userspace destination, cast to __u64 */
+};
+
+/* Return one PCI function whose expansion ROM can be mapped by the kernel. */
+struct ela_kmod_orom_device {
+	__u32 abi_version; /* in: ELA_KMOD_ABI_VERSION */
+	__u32 ordinal;     /* in: zero-based enumeration position */
+	__u32 domain;      /* out: PCI domain */
+	__u32 bus;         /* out */
+	__u32 device;      /* out */
+	__u32 function;    /* out */
+	__u32 vendor_id;   /* out */
+	__u32 device_id;   /* out */
+	__u32 class_code;  /* out: 24-bit PCI class */
+	__u32 pad;         /* zero */
+	__u64 size;        /* out: mapped ROM bytes */
+};
+
+/* Read bytes from a PCI expansion ROM through pci_map_rom(). */
+struct ela_kmod_orom_read {
+	__u32 abi_version; /* in: ELA_KMOD_ABI_VERSION */
+	__u32 domain;      /* in: from ELA_IOC_OROM_GET */
+	__u32 bus;         /* in */
+	__u32 device;      /* in */
+	__u32 function;    /* in */
+	__u32 pad;         /* zero */
+	__u64 offset;      /* in */
+	__u64 length;      /* in: 1..ELA_KMOD_OROM_MAX_READ */
+	__u64 buf;         /* in: userspace destination, cast to __u64 */
+};
+
+struct ela_kmod_usb_device {
+	__u32 abi_version;
+	__u32 ordinal;
+	__u32 busnum;
+	__u32 devnum;
+	__u32 parent_busnum;
+	__u32 parent_devnum;
+	__u32 portnum;
+	__u32 speed;
+	__u32 vendor_id;
+	__u32 product_id;
+	__u32 device_class;
+	__u32 device_subclass;
+	__u32 device_protocol;
+	__u32 num_configurations;
+	__u32 maxchild;
+	__u32 pad;
+	char manufacturer[ELA_KMOD_USB_STRING_LEN];
+	char product[ELA_KMOD_USB_STRING_LEN];
+	char serial[ELA_KMOD_USB_STRING_LEN];
+};
+
+struct ela_kmod_usb_reset {
+	__u32 abi_version;
+	__u32 busnum;
+	__u32 devnum;
+	__u32 pad;
+};
+
+struct ela_kmod_usb_port {
+	__u32 abi_version;
+	__u32 ordinal;
+	__u32 hub_busnum;
+	__u32 hub_devnum;
+	__u32 portnum;
+	__u32 status;
+	__u32 change;
+	__u32 child_busnum;
+	__u32 child_devnum;
+	__u32 hub_speed;
+};
+
+#define ELA_USB_PORT_ACTION_RESET       1U
+#define ELA_USB_PORT_ACTION_POWER_CYCLE 2U
+
+struct ela_kmod_usb_port_action {
+	__u32 abi_version;
+	__u32 hub_busnum;
+	__u32 hub_devnum;
+	__u32 portnum;
+	__u32 action;
+	__u32 pad;
+};
+
+struct ela_kmod_usb_descriptors {
+	__u32 abi_version;
+	__u32 busnum;
+	__u32 devnum;
+	__u32 pad;
+	__u64 buf;
+	__u64 length;
+	__u64 actual_length;
+};
+
 #define ELA_KMOD_IOC_MAGIC 0xE5
 
 /* Implemented operations. */
@@ -179,6 +385,22 @@ struct ela_kmod_va2pa {
 #define ELA_IOC_VA2PA      _IOWR(ELA_KMOD_IOC_MAGIC, 0x07, struct ela_kmod_va2pa)
 #define ELA_IOC_PCI_READ   _IOWR(ELA_KMOD_IOC_MAGIC, 0x20, struct ela_kmod_pci_cfg)
 #define ELA_IOC_PCI_WRITE  _IOW(ELA_KMOD_IOC_MAGIC, 0x21, struct ela_kmod_pci_cfg)
+#define ELA_IOC_PORT_READ  _IOWR(ELA_KMOD_IOC_MAGIC, 0x30, struct ela_kmod_ioport)
+#define ELA_IOC_PORT_WRITE _IOW(ELA_KMOD_IOC_MAGIC, 0x31, struct ela_kmod_ioport)
+#define ELA_IOC_SPI_GET      _IOWR(ELA_KMOD_IOC_MAGIC, 0x40, struct ela_kmod_spi_device)
+#define ELA_IOC_SPI_MTD_GET  _IOWR(ELA_KMOD_IOC_MAGIC, 0x41, struct ela_kmod_spi_mtd)
+#define ELA_IOC_SPI_MTD_READ _IOW(ELA_KMOD_IOC_MAGIC, 0x42, struct ela_kmod_spi_mtd_read)
+#define ELA_IOC_NAND_MTD_GET  _IOWR(ELA_KMOD_IOC_MAGIC, 0x50, struct ela_kmod_nand_mtd)
+#define ELA_IOC_NAND_MTD_READ _IOWR(ELA_KMOD_IOC_MAGIC, 0x51, struct ela_kmod_nand_mtd_read)
+#define ELA_IOC_EMMC_GET       _IOWR(ELA_KMOD_IOC_MAGIC, 0x60, struct ela_kmod_emmc_device)
+#define ELA_IOC_EMMC_READ      _IOW(ELA_KMOD_IOC_MAGIC, 0x61, struct ela_kmod_emmc_read)
+#define ELA_IOC_OROM_GET       _IOWR(ELA_KMOD_IOC_MAGIC, 0x70, struct ela_kmod_orom_device)
+#define ELA_IOC_OROM_READ      _IOW(ELA_KMOD_IOC_MAGIC, 0x71, struct ela_kmod_orom_read)
+#define ELA_IOC_USB_GET         _IOWR(ELA_KMOD_IOC_MAGIC, 0x80, struct ela_kmod_usb_device)
+#define ELA_IOC_USB_RESET       _IOW(ELA_KMOD_IOC_MAGIC, 0x81, struct ela_kmod_usb_reset)
+#define ELA_IOC_USB_PORT_GET    _IOWR(ELA_KMOD_IOC_MAGIC, 0x82, struct ela_kmod_usb_port)
+#define ELA_IOC_USB_PORT_ACTION _IOW(ELA_KMOD_IOC_MAGIC, 0x83, struct ela_kmod_usb_port_action)
+#define ELA_IOC_USB_DESCRIPTORS _IOWR(ELA_KMOD_IOC_MAGIC, 0x84, struct ela_kmod_usb_descriptors)
 
 /*
  * Reserved operation numbers for x86-only chipsec-style ops (not portable
@@ -186,8 +408,6 @@ struct ela_kmod_va2pa {
  * need appears):
  *   0x10  ELA_IOC_RDMSR        model-specific register read (x86)
  *   0x11  ELA_IOC_WRMSR        model-specific register write (x86)
- *   0x30  ELA_IOC_PORT_READ    port I/O read (x86)
- *   0x31  ELA_IOC_PORT_WRITE   port I/O write (x86)
  */
 
 #endif /* ELA_IOCTL_H */

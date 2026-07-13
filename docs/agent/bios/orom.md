@@ -2,6 +2,10 @@
 
 BIOS option ROM utilities for listing and pulling payloads from PCI sysfs ROM nodes.
 
+When PCI sysfs ROM attributes are absent or unreadable, use the kernel-backed
+top-level [`orom list` and `orom dump`](../kernel-hardware.md#pci-option-roms)
+commands instead.
+
 ## `bios orom` subcommands
 
 - `pull` — send matching BIOS option ROM payload bytes to remote output
@@ -17,8 +21,10 @@ BIOS option ROM utilities for listing and pulling payloads from PCI sysfs ROM no
 
 ## Constraints
 
-- exactly one transport output is required: `--output-tcp`, `--output-http`, or `--output-http`
-- use only one of `--output-http` and `--output-http`
+- exactly one transport output is required: `--output-tcp` or `--output-http`
+- `--output-http` accepts both `http://` and `https://` URLs
+- `bios orom` filters sysfs ROM images for legacy payloads; it is separate
+  from the unfiltered, kernel-mapped top-level `orom` command
 
 ## Examples
 

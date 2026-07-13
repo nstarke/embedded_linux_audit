@@ -104,6 +104,18 @@ static void test_candidates_linux_gdbserver_returns_linux_list(void)
 	ELA_ASSERT_TRUE(candidates[1] == NULL);
 }
 
+static void test_candidates_linux_ioport(void)
+{
+	char *argv[] = { "linux", "ioport" };
+	const char *const *candidates =
+		ela_interactive_candidates_for_position(3, argv);
+
+	ELA_ASSERT_TRUE(candidates != NULL);
+	ELA_ASSERT_STR_EQ("read", candidates[0]);
+	ELA_ASSERT_STR_EQ("write", candidates[1]);
+	ELA_ASSERT_TRUE(candidates[2] == NULL);
+}
+
 static void test_candidates_group_arch(void)
 {
 	char *argv[] = { "arch" };
@@ -131,6 +143,80 @@ static void test_candidates_group_bios(void)
 	ELA_ASSERT_TRUE(candidates != NULL);
 	ELA_ASSERT_STR_EQ("orom", candidates[0]);
 	ELA_ASSERT_TRUE(candidates[1] == NULL);
+}
+
+static void test_candidates_group_spi(void)
+{
+	char *argv[] = { "spi", NULL };
+	const char *const *candidates = ela_interactive_candidates_for_position(2, argv);
+
+	ELA_ASSERT_TRUE(candidates != NULL);
+	ELA_ASSERT_STR_EQ("list", candidates[0]);
+	ELA_ASSERT_STR_EQ("dump", candidates[1]);
+	ELA_ASSERT_TRUE(candidates[2] == NULL);
+}
+
+static void test_candidates_group_nand(void)
+{
+	char *nand_argv[] = { "nand", NULL };
+	char *flash_argv[] = { "nand", "flash", NULL };
+	const char *const *candidates;
+
+	candidates = ela_interactive_candidates_for_position(2, nand_argv);
+	ELA_ASSERT_TRUE(candidates != NULL);
+	ELA_ASSERT_STR_EQ("flash", candidates[0]);
+	ELA_ASSERT_TRUE(candidates[1] == NULL);
+
+	candidates = ela_interactive_candidates_for_position(3, flash_argv);
+	ELA_ASSERT_TRUE(candidates != NULL);
+	ELA_ASSERT_STR_EQ("list", candidates[0]);
+	ELA_ASSERT_STR_EQ("dump", candidates[1]);
+	ELA_ASSERT_TRUE(candidates[2] == NULL);
+}
+
+static void test_candidates_group_emmc(void)
+{
+	char *argv[] = { "emmc", NULL };
+	const char *const *candidates =
+		ela_interactive_candidates_for_position(2, argv);
+
+	ELA_ASSERT_TRUE(candidates != NULL);
+	ELA_ASSERT_STR_EQ("list", candidates[0]);
+	ELA_ASSERT_STR_EQ("dump", candidates[1]);
+	ELA_ASSERT_TRUE(candidates[2] == NULL);
+}
+
+static void test_candidates_group_orom(void)
+{
+	char *argv[] = { "orom", NULL };
+	const char *const *candidates =
+		ela_interactive_candidates_for_position(2, argv);
+
+	ELA_ASSERT_TRUE(candidates != NULL);
+	ELA_ASSERT_STR_EQ("list", candidates[0]);
+	ELA_ASSERT_STR_EQ("dump", candidates[1]);
+	ELA_ASSERT_TRUE(candidates[2] == NULL);
+}
+
+static void test_candidates_group_usb(void)
+{
+	char *usb_argv[] = { "usb", NULL };
+	char *port_argv[] = { "usb", "port", NULL };
+	char *descriptor_argv[] = { "usb", "descriptor", NULL };
+	const char *const *candidates;
+
+	candidates = ela_interactive_candidates_for_position(2, usb_argv);
+	ELA_ASSERT_TRUE(candidates != NULL);
+	ELA_ASSERT_STR_EQ("list", candidates[0]);
+	ELA_ASSERT_STR_EQ("pcap", candidates[4]);
+
+	candidates = ela_interactive_candidates_for_position(3, port_argv);
+	ELA_ASSERT_TRUE(candidates != NULL);
+	ELA_ASSERT_STR_EQ("power-cycle", candidates[2]);
+
+	candidates = ela_interactive_candidates_for_position(3, descriptor_argv);
+	ELA_ASSERT_TRUE(candidates != NULL);
+	ELA_ASSERT_STR_EQ("dump", candidates[0]);
 }
 
 static void test_candidates_set_variables(void)
@@ -772,9 +858,15 @@ int run_interactive_util_tests(void)
 		{ "candidates_linux_process_watch_subcommand", test_candidates_linux_process_watch_subcommand },
 		{ "candidates_linux_process_watch_arg_returns_null", test_candidates_linux_process_watch_arg_returns_null },
 		{ "candidates_linux_gdbserver_returns_linux_list", test_candidates_linux_gdbserver_returns_linux_list },
+		{ "candidates_linux_ioport",              test_candidates_linux_ioport },
 		{ "candidates_group_arch",                 test_candidates_group_arch },
 		{ "candidates_group_efi",                  test_candidates_group_efi },
 		{ "candidates_group_bios",                 test_candidates_group_bios },
+		{ "candidates_group_spi",                  test_candidates_group_spi },
+		{ "candidates_group_nand",                 test_candidates_group_nand },
+		{ "candidates_group_emmc",                 test_candidates_group_emmc },
+		{ "candidates_group_orom",                 test_candidates_group_orom },
+		{ "candidates_group_usb",                  test_candidates_group_usb },
 		{ "candidates_set_variables",              test_candidates_set_variables },
 		{ "candidates_set_argc_three_returns_null", test_candidates_set_argc_three_returns_null },
 		{ "candidates_unknown_group_returns_null", test_candidates_unknown_group_returns_null },

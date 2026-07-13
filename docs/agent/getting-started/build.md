@@ -21,6 +21,19 @@ git submodule update --init --recursive
 make
 ```
 
+Build the optional target-kernel module used by `spi`, `nand flash`, `emmc`,
+top-level `orom`, and the `linux memread`/MMIO/PCI helpers:
+
+```bash
+make -C kmod KDIR=/lib/modules/$(uname -r)/build
+sudo insmod kmod/ela_kmod.ko
+```
+
+The module must be built for the running target kernel. It creates the
+`/dev/ela_physmem` misc device when devtmpfs is available, and opening the
+device requires `CAP_SYS_RAWIO`. See [Kernel-Backed Hardware
+Commands](../kernel-hardware.md) for command behavior and requirements.
+
 Notes:
 
 - Project C sources and headers now live under `agent/`, grouped by command family:

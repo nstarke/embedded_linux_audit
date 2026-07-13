@@ -17,6 +17,8 @@ int run_ws_url_util_tests(void);
 int run_remote_copy_util_tests(void);
 int run_orom_util_tests(void);
 int run_orom_pull_cmd_util_tests(void);
+int run_orom_kmod_util_tests(void);
+int run_usb_util_tests(void);
 int run_http_protocol_util_tests(void);
 int run_tcp_parse_util_tests(void);
 int run_tcp_runtime_util_tests(void);
@@ -86,6 +88,9 @@ int run_linux_kernel_module_util_tests(void);
 int run_linux_kernel_buildinfo_util_tests(void);
 int run_ela_kmod_abi_tests(void);
 int run_linux_physmem_util_tests(void);
+int run_spi_util_tests(void);
+int run_nand_util_tests(void);
+int run_emmc_util_tests(void);
 
 int main(void)
 {
@@ -108,6 +113,8 @@ int main(void)
 	rc |= run_remote_copy_util_tests();
 	rc |= run_orom_util_tests();
 	rc |= run_orom_pull_cmd_util_tests();
+	rc |= run_orom_kmod_util_tests();
+	rc |= run_usb_util_tests();
 	rc |= run_http_protocol_util_tests();
 	rc |= run_tcp_parse_util_tests();
 	rc |= run_tcp_runtime_util_tests();
@@ -177,6 +184,9 @@ int main(void)
 	rc |= run_linux_kernel_buildinfo_util_tests();
 	rc |= run_ela_kmod_abi_tests();
 	rc |= run_linux_physmem_util_tests();
+	rc |= run_spi_util_tests();
+	rc |= run_nand_util_tests();
+	rc |= run_emmc_util_tests();
 
 	return rc;
 }

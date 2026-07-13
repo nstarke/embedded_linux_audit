@@ -467,12 +467,15 @@ AGENT_UNIT_TEST_SRC := \
 	tests/unit/agent/test_lifecycle_util.c \
 	tests/unit/agent/test_ela_conf_util.c \
 	tests/unit/agent/test_interactive_parse_util.c \
+	tests/unit/agent/test_emmc_util.c \
 	tests/unit/agent/test_file_scan_formatter.c \
 	tests/unit/agent/test_tpm2_pcr_parse_util.c \
 	tests/unit/agent/test_ws_url_util.c \
 	tests/unit/agent/test_remote_copy_util.c \
 	tests/unit/agent/test_orom_util.c \
 	tests/unit/agent/test_orom_pull_cmd_util.c \
+	tests/unit/agent/test_orom_kmod_util.c \
+	tests/unit/agent/test_usb_util.c \
 	tests/unit/agent/test_http_protocol_util.c \
 	tests/unit/agent/test_tcp_parse_util.c \
 	tests/unit/agent/test_tcp_runtime_util.c \
@@ -526,6 +529,8 @@ AGENT_UNIT_TEST_SRC := \
 	tests/unit/agent/test_linux_kernel_buildinfo_util.c \
 	tests/unit/agent/test_ela_kmod_abi.c \
 	tests/unit/agent/test_linux_physmem_util.c \
+	tests/unit/agent/test_spi_util.c \
+	tests/unit/agent/test_nand_util.c \
 	tests/unit/agent/test_device_scan.c \
 	tests/unit/agent/test_dispatch_util.c \
 	tests/unit/agent/test_dispatch_parse_util.c \
@@ -574,6 +579,8 @@ AGENT_UNIT_TEST_DEPS := \
 	agent/util/remote_copy_util.c \
 	agent/util/orom_util.c \
 	agent/orom/orom_pull_cmd_util.c \
+	agent/orom/orom_kmod_util.c \
+	agent/usb/usb_util.c \
 	agent/util/http_protocol_util.c \
 	agent/util/command_io_util.c \
 	agent/util/ssh_parse_util.c \
@@ -629,6 +636,9 @@ AGENT_UNIT_TEST_DEPS := \
 	agent/linux/linux_kernel_module_util.c \
 	agent/linux/linux_kernel_buildinfo_util.c \
 	agent/linux/linux_physmem_util.c \
+	agent/spi/spi_util.c \
+	agent/nand/nand_util.c \
+	agent/emmc/emmc_util.c \
 	agent/device/device_scan.c \
 	agent/shell/script_exec_util.c \
 	agent/shell/interactive_util.c \
@@ -890,6 +900,12 @@ SRC := \
 	agent/linux/linux_pcap_cmd.c \
 	agent/linux/linux_coredump_util.c \
 	agent/linux/linux_coredump_cmd.c \
+	agent/spi/spi_util.c \
+	agent/spi/spi_cmd.c \
+	agent/nand/nand_util.c \
+	agent/nand/nand_cmd.c \
+	agent/emmc/emmc_util.c \
+	agent/emmc/emmc_cmd.c \
 	agent/tpm2/tpm2_cmd.c \
 	agent/tpm2/tpm2_util.c \
 	agent/tpm2/tpm2_output.c \
@@ -898,6 +914,10 @@ SRC := \
 	agent/tpm2/tpm2_nvreadpublic.c \
 	agent/tpm2/tpm2_createprimary.c \
 	agent/orom/orom_pull_cmd_common.c \
+	agent/orom/orom_kmod_util.c \
+	agent/orom/orom_kmod_cmd.c \
+	agent/usb/usb_util.c \
+	agent/usb/usb_cmd.c \
 	agent/orom/orom_pull_cmd_util.c \
 	agent/efi/efi_pull_orom_cmd.c \
 	agent/efi/efi_dump_vars_cmd.c \
@@ -1262,6 +1282,8 @@ $(AGENT_UNIT_TEST_BIN): $(AGENT_UNIT_TEST_SRC) $(AGENT_UNIT_TEST_DEPS) $(TPM2_UN
 			agent/util/remote_copy_util.c \
 			agent/util/orom_util.c \
 			agent/orom/orom_pull_cmd_util.c \
+			agent/orom/orom_kmod_util.c \
+			agent/usb/usb_util.c \
 			agent/util/http_protocol_util.c \
 			agent/util/command_io_util.c \
 			agent/util/ssh_parse_util.c \
@@ -1317,6 +1339,9 @@ $(AGENT_UNIT_TEST_BIN): $(AGENT_UNIT_TEST_SRC) $(AGENT_UNIT_TEST_DEPS) $(TPM2_UN
 			agent/linux/linux_kernel_module_util.c \
 			agent/linux/linux_kernel_buildinfo_util.c \
 			agent/linux/linux_physmem_util.c \
+			agent/spi/spi_util.c \
+			agent/nand/nand_util.c \
+			agent/emmc/emmc_util.c \
 			agent/device/device_scan.c \
 			agent/shell/script_exec_util.c \
 			agent/shell/interactive_util.c \

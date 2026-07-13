@@ -38,6 +38,7 @@ This section contains documentation for the `embedded_linux_audit` agent, organi
 - [`embedded_linux_audit linux list-files`](linux/list-files.md)
 - [`embedded_linux_audit linux list-symlinks`](linux/list-symlinks.md)
 - [`embedded_linux_audit linux modules`](linux/modules.md)
+- [`embedded_linux_audit linux ioport`](linux/ioport.md)
 - [`embedded_linux_audit linux netstat`](linux/netstat.md)
 - [`embedded_linux_audit linux pcap`](linux/pcap.md)
 - [`embedded_linux_audit linux remote-copy`](linux/remote-copy.md)
@@ -57,6 +58,10 @@ This section contains documentation for the `embedded_linux_audit` agent, organi
 
 - [BIOS Index](bios/index.md)
 - [`embedded_linux_audit bios orom`](bios/orom.md)
+
+### Kernel-Backed Hardware
+
+- [SPI, NAND, eMMC, PCI option ROM, and USB commands](kernel-hardware.md)
 
 ## Reference
 

@@ -12,18 +12,27 @@
 #include <unistd.h>
 
 static const char *const interactive_top_level_commands[] = {
-	"help", "quit", "exit", "set", "arch", "uboot", "linux", "efi", "bios", "tpm2", "transfer", NULL,
+	"help", "quit", "exit", "set", "arch", "uboot", "linux", "efi", "bios", "tpm2", "spi", "nand", "emmc", "orom", "usb", "transfer", NULL,
 };
 static const char *const interactive_group_arch[] = { "bit", "isa", "endianness", NULL };
 static const char *const interactive_group_uboot[] = { "env", "image", "audit", NULL };
 static const char *const interactive_group_linux[] = {
-	"dmesg", "download-file", "execute-command", "grep", "list-files", "list-symlinks", "remote-copy", "ssh", "process", "gdbserver", NULL,
+	"dmesg", "download-file", "execute-command", "grep", "list-files", "list-symlinks", "remote-copy", "ssh", "process", "gdbserver", "ioport", NULL,
 };
+static const char *const interactive_group_linux_ioport[] = { "read", "write", NULL };
 static const char *const interactive_group_linux_gdbserver[] = { "tunnel", NULL };
 static const char *const interactive_group_linux_process[] = { "watch", NULL };
 static const char *const interactive_group_linux_process_watch[] = { "on", "off", "list", NULL };
 static const char *const interactive_group_efi[] = { "orom", "dump-vars", NULL };
 static const char *const interactive_group_bios[] = { "orom", NULL };
+static const char *const interactive_group_spi[] = { "list", "dump", NULL };
+static const char *const interactive_group_nand[] = { "flash", NULL };
+static const char *const interactive_group_nand_flash[] = { "list", "dump", NULL };
+static const char *const interactive_group_emmc[] = { "list", "dump", NULL };
+static const char *const interactive_group_orom[] = { "list", "dump", NULL };
+static const char *const interactive_group_usb[] = { "list", "reset", "port", "descriptor", "pcap", NULL };
+static const char *const interactive_group_usb_port[] = { "list", "reset", "power-cycle", NULL };
+static const char *const interactive_group_usb_descriptor[] = { "dump", NULL };
 static const char *const interactive_set_variables[] = {
 	"ELA_API_URL", "ELA_API_INSECURE", "ELA_QUIET", "ELA_OUTPUT_FORMAT", "ELA_OUTPUT_TCP", "ELA_SCRIPT",
 	"ELA_OUTPUT_HTTP", "ELA_OUTPUT_INSECURE", "ELA_API_KEY", "ELA_VERBOSE", "ELA_DEBUG", "ELA_WS_RETRY_ATTEMPTS", NULL,
@@ -52,6 +61,8 @@ const char *const *ela_interactive_candidates_for_position(int argc, char **argv
 			}
 			if (!strcmp(argv[1], "gdbserver") && argc == 3)
 				return interactive_group_linux_gdbserver;
+			if (!strcmp(argv[1], "ioport") && argc == 3)
+				return interactive_group_linux_ioport;
 			return NULL;
 		}
 		return interactive_group_linux;
@@ -60,6 +71,28 @@ const char *const *ela_interactive_candidates_for_position(int argc, char **argv
 		return interactive_group_efi;
 	if (!strcmp(argv[0], "bios"))
 		return interactive_group_bios;
+	if (!strcmp(argv[0], "spi"))
+		return interactive_group_spi;
+	if (!strcmp(argv[0], "nand")) {
+		if (argc == 2)
+			return interactive_group_nand;
+		if (argc == 3 && !strcmp(argv[1], "flash"))
+			return interactive_group_nand_flash;
+		return NULL;
+	}
+	if (!strcmp(argv[0], "emmc"))
+		return interactive_group_emmc;
+	if (!strcmp(argv[0], "orom"))
+		return interactive_group_orom;
+	if (!strcmp(argv[0], "usb")) {
+		if (argc == 2)
+			return interactive_group_usb;
+		if (argc == 3 && !strcmp(argv[1], "port"))
+			return interactive_group_usb_port;
+		if (argc == 3 && !strcmp(argv[1], "descriptor"))
+			return interactive_group_usb_descriptor;
+		return NULL;
+	}
 	if (!strcmp(argv[0], "set") && argc == 2)
 		return interactive_set_variables;
 	return NULL;

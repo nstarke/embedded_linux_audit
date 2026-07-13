@@ -33,6 +33,15 @@ struct ela_mmio_request {
 	bool show_help;
 };
 
+/* A parsed `ioport read|write` invocation (x86 IN/OUT access). */
+struct ela_ioport_request {
+	bool write;
+	uint32_t port;
+	uint32_t width;
+	uint32_t value;
+	bool show_help;
+};
+
 /* A parsed `pci read|write` invocation (config space access). */
 struct ela_pci_request {
 	bool write;
@@ -67,6 +76,12 @@ struct ela_physctl_request {
 int ela_mmio_prepare_request(int argc, char **argv,
 			     struct ela_mmio_request *request,
 			     char *errbuf, size_t errbuf_len);
+
+/* Parse `ioport read <port> <width>` /
+ * `ioport write <port> <width> <value>`. Widths are 1/2/4. */
+int ela_ioport_prepare_request(int argc, char **argv,
+			       struct ela_ioport_request *request,
+			       char *errbuf, size_t errbuf_len);
 
 /* Parse a PCI address written as [domain:]bus:device.function (hex fields,
  * e.g. "00:1f.3" or "0000:00:1f.3"). Returns 0 on success. */

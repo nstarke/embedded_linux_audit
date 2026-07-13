@@ -108,6 +108,7 @@ int linux_gdbserver_main(int argc, char **argv);
 int linux_kernel_module_main(int argc, char **argv);
 int linux_physmem_main(int argc, char **argv);
 int linux_mmio_main(int argc, char **argv);
+int linux_ioport_main(int argc, char **argv);
 int linux_pci_main(int argc, char **argv);
 int linux_physctl_main(int argc, char **argv);
 int linux_pcap_main(int argc, char **argv);
@@ -119,6 +120,11 @@ int efi_dump_vars_main(int argc, char **argv);
 int bios_orom_main(int argc, char **argv);
 int transfer_main(int argc, char **argv);
 int arch_main(int argc, char **argv);
+int spi_main(int argc, char **argv);
+int nand_main(int argc, char **argv);
+int emmc_main(int argc, char **argv);
+int orom_main(int argc, char **argv);
+int usb_main(int argc, char **argv);
 
 struct embedded_linux_audit_input {
 	const char *device;

@@ -46,6 +46,8 @@
 | `linux process watch list` | List all active needles and their current matching PIDs |
 | `linux gdbserver <PID> <PORT>` | Attach to a running process and expose a GDB remote stub on the given TCP port; connect with `target remote <agent-ip>:<PORT>` in `gdb-multiarch` |
 | `linux modules` | List, load, unload, and inspect kernel modules directly through `/proc/modules`, module files, and module syscalls |
+| `linux ioport read <PORT> <WIDTH>` | Read an 8-, 16-, or 32-bit x86 I/O port through `ela_kmod` |
+| `linux ioport write <PORT> <WIDTH> <VALUE>` | Write an x86 I/O port through `ela_kmod`; this can immediately alter hardware state |
 
 ### `efi` — EFI/UEFI inspection
 
@@ -68,6 +70,102 @@
 | `tpm2 pcrread` | Read PCR values |
 | `tpm2 nvreadpublic` | Read NV index metadata |
 | `tpm2 createprimary` | Create a primary object and serialize the context |
+
+### `spi` — SPI device inspection
+
+| Subcommand | Description |
+|---|---|
+| `spi list` | Enumerate SPI devices and indexed SPI-backed MTD devices through `ela_kmod` |
+| `spi dump <DUMP_FILE_PATH> [DEVICE_INDEX]` | Dump the selected index from `spi list`; without an index, dump the largest unambiguous SPI-backed MTD device |
+
+### `nand flash` — NAND flash inspection
+
+| Subcommand | Description |
+|---|---|
+| `nand flash list` | Enumerate indexed SLC/MLC/TLC NAND MTD devices and geometry through `ela_kmod` |
+| `nand flash dump <DUMP_FILE_PATH> [DEVICE_INDEX]` | Dump corrected main-area data through `ela_kmod`; bad eraseblocks are padded with `0xff` and OOB data is excluded |
+
+### `emmc` — eMMC inspection
+
+| Subcommand | Description |
+|---|---|
+| `emmc list` | Enumerate indexed whole eMMC user-area block devices through `ela_kmod`; SD cards, partitions, boot areas, and RPMB are excluded |
+| `emmc dump <DUMP_FILE_PATH> [DEVICE_INDEX]` | Dump the selected eMMC user area through `ela_kmod`; without an index, dump the largest unambiguous device |
+
+### `orom` — Kernel PCI option ROM inspection
+
+| Subcommand | Description |
+|---|---|
+| `orom list` | Enumerate indexed PCI option ROMs that `ela_kmod` can map through the kernel PCI layer |
+| `orom dump <DUMP_FILE_PATH> [DEVICE_INDEX]` | Dump the selected mapped PCI option ROM; without an index, dump the largest unambiguous ROM |
+
+### `usb` — Kernel USB inspection and capture
+
+| Subcommand | Description |
+|---|---|
+| `usb list` | Enumerate the complete kernel USB device tree and print indices for the current snapshot |
+| `usb reset <DEVICE_INDEX>` | Reset a device selected from `usb list` through the kernel USB core |
+| `usb port list` | Enumerate hub ports, connection state, power state, and attached child devices |
+| `usb port reset <PORT_INDEX>` | Reset the attached device on a port selected from `usb port list` |
+| `usb port power-cycle <PORT_INDEX>` | Clear and restore a hub port's power feature; actual VBUS switching depends on the hub hardware |
+| `usb descriptor dump <DUMP_FILE_PATH> [DEVICE_INDEX]` | Dump cached raw device and configuration descriptors through `ela_kmod` |
+| `usb pcap <DUMP_FILE_PATH> [BUS_NUMBER]` | Capture kernel usbmon traffic to pcap until interrupted; omit the bus to capture all buses |
+
+### Kernel-backed hardware command requirements
+
+The `spi`, `nand flash`, `emmc`, top-level `orom`, and USB hardware commands
+do not read sysfs or the underlying hardware device nodes directly. They open
+`/dev/ela_physmem` and perform their operations through the `ela_kmod` ioctl
+interface. Build and load a module matching the running kernel before using
+them:
+
+```sh
+make -C kmod
+sudo insmod kmod/ela_kmod.ko
+```
+
+The module device is mode `0600`, and opening it also requires
+`CAP_SYS_RAWIO`. On systems without devtmpfs, create the `/dev/ela_physmem`
+misc-device node using the dynamic minor reported for `ela_physmem` in
+`/proc/misc`.
+
+`DEVICE_INDEX` is the zero-based `index=N` printed by the corresponding
+`list` command. When it is omitted, `dump` selects the unique largest readable
+candidate and refuses ambiguous ties. Run `list` and pass an explicit index
+when more than one device is present.
+
+```sh
+./embedded_linux_audit spi list
+./embedded_linux_audit spi dump /tmp/spi.bin 0
+./embedded_linux_audit nand flash list
+./embedded_linux_audit nand flash dump /tmp/nand.bin 0
+./embedded_linux_audit emmc list
+./embedded_linux_audit emmc dump /tmp/emmc.bin 0
+./embedded_linux_audit orom list
+./embedded_linux_audit orom dump /tmp/orom.bin 0
+./embedded_linux_audit usb list
+./embedded_linux_audit usb descriptor dump /tmp/usb-descriptors.bin 1
+./embedded_linux_audit usb port list
+```
+
+The dump formats are deliberately different: SPI uses an SPI-backed MTD;
+NAND returns corrected main-area data, preserves physical offsets by filling
+marked bad eraseblocks with `0xff`, and excludes OOB bytes; eMMC returns the
+whole managed user area while excluding SD cards, partitions, boot areas, and
+RPMB; `orom` returns the PCI expansion-ROM mapping supplied by the kernel PCI
+layer. The eMMC block-layer implementation requires Linux 6.9 or newer.
+
+Top-level `orom` is distinct from `efi orom` and `bios orom`: the latter scan
+the sysfs PCI ROM attributes and filter images by firmware type, while
+top-level `orom` uses `pci_map_rom()` in `ela_kmod` and dumps the mapped ROM
+without EFI/legacy filtering.
+
+USB pcap capture is kernel-backed through `usbmon`, but does not use
+`ela_kmod`. The target kernel must enable `CONFIG_USB_MON`; load `usbmon` when
+it is modular and ensure the caller can open the usbmon capture interface.
+`BUS_NUMBER` is the numeric bus printed by `usb list`; omit it to use
+`usbmon0`, which captures every USB bus. Stop capture with `Ctrl-C` or
+`SIGTERM`. Capture files are created mode `0600` in libpcap format.
 
 ### `transfer` — Remote terminal and data exfiltration
 

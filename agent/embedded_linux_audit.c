@@ -66,15 +66,32 @@ static void usage(const char *prog)
 		"  linux memread      Read physical memory via the ela_kmod module and dump/upload it\n"
 		"  linux memwrite     Write physical memory via ela_kmod (DANGEROUS, no target validation)\n"
 		"  linux mmio         Sized MMIO register read/write via ela_kmod\n"
+		"  linux ioport       x86 I/O-port read/write via ela_kmod\n"
 		"  linux pci          PCI configuration space read/write via ela_kmod\n"
 		"  linux physmem      Physical-memory helpers via ela_kmod: alloc/free/va2pa\n"
 		"  linux pcap         Capture packets from an interface as pcap data\n"
 		"  linux coredump     Configure kernel coredump generation to /tmp\n"
 		"  tpm2               Run built-in TPM2 commands through the TPM2-TSS library\n"
-		"  efi orom           EFI option ROM utilities (pull/list)\n"
+		"  spi list           List SPI devices through ela_kmod\n"
+		"  spi dump <path> [index] Dump an indexed SPI-backed MTD through ela_kmod\n"
+		"  nand flash list     List NAND MTD devices through ela_kmod\n"
+		"  nand flash dump <path> [index] Dump corrected NAND main-area data\n"
+		"  emmc list           List eMMC user-area devices through ela_kmod\n"
+		"  emmc dump <path> [index] Dump an eMMC user area through ela_kmod\n"
+		"  orom list           List kernel-mappable PCI option ROMs\n"
+		"  orom dump <path> [index] Dump a PCI option ROM through ela_kmod\n"
+		"  usb                Kernel USB inventory/reset/port/descriptor tools and usbmon pcap\n"
+		"  efi orom <pull|list> EFI option ROM utilities using PCI sysfs\n"
 		"  efi dump-vars      Dump EFI variables with txt/csv/json formatting\n"
-		"  bios orom          BIOS option ROM utilities (pull/list)\n"
+		"  bios orom <pull|list> BIOS option ROM utilities using PCI sysfs\n"
 		"  transfer <host:port>  Transfer (send) this binary to a receiver at host:port\n"
+		"\n"
+		"Kernel-backed hardware commands:\n"
+		"  spi, nand flash, emmc, top-level orom, and USB hardware operations\n"
+		"  require a loaded ela_kmod, /dev/ela_physmem, and CAP_SYS_RAWIO.\n"
+		"  USB pcap uses the kernel usbmon capture interface instead of ela_kmod.\n"
+		"  Use index=N from list as the\n"
+		"  optional dump index. eMMC requires Linux 6.9 or newer.\n"
 		"\n"
 		"Interactive-only helper:\n"
 		"  set ELA_API_URL <http(s)://...>\n"
@@ -109,20 +126,34 @@ static void usage(const char *prog)
 		"  %s --output-http https://127.0.0.1:5443 linux remote-copy /tmp/fw.bin\n"
 		"  %s linux ssh client 192.168.1.10 --port 22\n"
 		"  %s tpm2 getcap properties-fixed\n"
+		"  %s spi list\n"
+		"  %s spi dump /tmp/spi.bin\n"
+		"  %s spi dump /tmp/spi1.bin 1\n"
+		"  %s nand flash list\n"
+		"  %s nand flash dump /tmp/nand.bin 0\n"
+		"  %s emmc list\n"
+		"  %s emmc dump /tmp/emmc.bin 0\n"
+		"  %s orom list\n"
+		"  %s orom dump /tmp/orom.bin 0\n"
+		"  %s usb list\n"
+		"  %s usb descriptor dump /tmp/usb-desc.bin 1\n"
+		"  %s usb pcap /tmp/usb.pcap 1\n"
 		"  %s --quiet --output-http http://127.0.0.1:5000/orom efi orom pull\n"
 		"  %s --output-format json --output-http http://127.0.0.1:5000 efi dump-vars\n"
 		"  %s --quiet --output-tcp 127.0.0.1:5001 bios orom list\n"
 		"  %s --output-format json --script ./commands.txt\n"
 		"  %s --remote 192.168.1.10:4444\n"
 		"  %s transfer 192.168.1.10:4445\n",
+		prog, prog, prog, prog, prog, prog, prog,
 		prog, prog, prog, prog,
 		prog, prog, prog, prog,
 		prog, prog, prog, prog,
 		prog, prog, prog, prog,
 		prog, prog, prog, prog,
 		prog, prog, prog, prog,
+		prog, prog, prog, prog, prog, prog, prog, prog,
 		prog, prog, prog, prog,
-		prog, prog, prog, prog,
+		prog,
 		prog);
 }
 
@@ -677,6 +708,8 @@ int embedded_linux_audit_dispatch(int argc, char **argv)
 			ret = linux_physmem_main(argc - sub_idx, argv + sub_idx);
 		else if (!strcmp(argv[sub_idx], "mmio"))
 			ret = linux_mmio_main(argc - sub_idx, argv + sub_idx);
+		else if (!strcmp(argv[sub_idx], "ioport"))
+			ret = linux_ioport_main(argc - sub_idx, argv + sub_idx);
 		else if (!strcmp(argv[sub_idx], "pci"))
 			ret = linux_pci_main(argc - sub_idx, argv + sub_idx);
 		else if (!strcmp(argv[sub_idx], "physmem"))
@@ -763,6 +796,31 @@ int embedded_linux_audit_dispatch(int argc, char **argv)
 
 	if (!strcmp(argv[opts.cmd_idx], "arch")) {
 		ret = arch_main(argc - opts.cmd_idx, argv + opts.cmd_idx);
+		goto done;
+	}
+
+	if (!strcmp(argv[opts.cmd_idx], "spi")) {
+		ret = spi_main(argc - opts.cmd_idx, argv + opts.cmd_idx);
+		goto done;
+	}
+
+	if (!strcmp(argv[opts.cmd_idx], "nand")) {
+		ret = nand_main(argc - opts.cmd_idx, argv + opts.cmd_idx);
+		goto done;
+	}
+
+	if (!strcmp(argv[opts.cmd_idx], "emmc")) {
+		ret = emmc_main(argc - opts.cmd_idx, argv + opts.cmd_idx);
+		goto done;
+	}
+
+	if (!strcmp(argv[opts.cmd_idx], "orom")) {
+		ret = orom_main(argc - opts.cmd_idx, argv + opts.cmd_idx);
+		goto done;
+	}
+
+	if (!strcmp(argv[opts.cmd_idx], "usb")) {
+		ret = usb_main(argc - opts.cmd_idx, argv + opts.cmd_idx);
 		goto done;
 	}
 

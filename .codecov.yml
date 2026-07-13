@@ -1,5 +1,14 @@
 ignore:
   - "tests/unit/agent"
+  # These files require a loaded target-kernel module and physical hardware.
+  # Their argument/dispatch paths are covered by shell tests, while the pure
+  # parsing and selection logic remains in the measured *_util.c files.
+  - "kmod/**"
+  - "agent/spi/spi_cmd.c"
+  - "agent/nand/nand_cmd.c"
+  - "agent/emmc/emmc_cmd.c"
+  - "agent/orom/orom_kmod_cmd.c"
+  - "agent/usb/usb_cmd.c"
 
 coverage:
   status:

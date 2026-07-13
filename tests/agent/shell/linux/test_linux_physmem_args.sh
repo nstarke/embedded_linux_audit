@@ -15,12 +15,17 @@ print_section "linux memread/memwrite argument coverage"
 run_exact_case "linux memread --help" 0 "$BIN" linux memread --help
 run_exact_case "linux memwrite --help" 0 "$BIN" linux memwrite --help
 run_exact_case "linux mmio --help" 0 "$BIN" linux mmio --help
+run_exact_case "linux ioport --help" 0 "$BIN" linux ioport --help
 run_exact_case "linux pci --help" 0 "$BIN" linux pci --help
 run_exact_case "linux physmem --help" 0 "$BIN" linux physmem --help
 run_exact_case "linux mmio read misaligned" 2 "$BIN" linux mmio read 0xfe000002 4
 run_exact_case "linux mmio read bad width" 2 "$BIN" linux mmio read 0xfe000000 3
 run_exact_case "linux mmio write value too big" 2 "$BIN" linux mmio write 0xfe000000 1 0x100
 run_exact_case "linux mmio unknown action" 2 "$BIN" linux mmio poke 0xfe000000 4
+run_exact_case "linux ioport read bad port" 2 "$BIN" linux ioport read 0x10000 1
+run_exact_case "linux ioport read bad width" 2 "$BIN" linux ioport read 0x80 8
+run_exact_case "linux ioport write value too big" 2 "$BIN" linux ioport write 0x80 1 0x100
+run_exact_case "linux ioport unknown action" 2 "$BIN" linux ioport poke 0x80 1
 run_exact_case "linux pci read bad bdf" 2 "$BIN" linux pci read nope 0 4
 run_exact_case "linux pci read bad offset" 2 "$BIN" linux pci read 00:1f.3 4096 4
 run_exact_case "linux pci read bad width" 2 "$BIN" linux pci read 00:1f.3 0 8
@@ -55,6 +60,7 @@ fi
 rm -f "$missing_dev_log"
 run_exact_case "linux memwrite missing device" 1 "$BIN" linux memwrite 0x1000 deadbeef
 run_exact_case "linux mmio read missing device" 1 "$BIN" linux mmio read 0xfe000000 4
+run_exact_case "linux ioport read missing device" 1 "$BIN" linux ioport read 0x80 1
 run_exact_case "linux pci read missing device" 1 "$BIN" linux pci read 00:1f.3 0 4
 run_exact_case "linux physmem alloc missing device" 1 "$BIN" linux physmem alloc 4096
 unset ELA_PHYSMEM_DEVICE
