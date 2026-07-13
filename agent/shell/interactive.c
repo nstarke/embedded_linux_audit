@@ -87,6 +87,8 @@ static void interactive_usage(const char *prog)
 	       "  nand flash dump <DUMP_FILE_PATH> [DEVICE_INDEX]\n"
 	       "  emmc list\n"
 	       "  emmc dump <DUMP_FILE_PATH> [DEVICE_INDEX]\n"
+	       "  orom list\n"
+	       "  orom dump <DUMP_FILE_PATH> [DEVICE_INDEX]\n"
 	       "  efi orom\n"
 	       "  efi dump-vars\n"
 	       "  bios orom\n"

@@ -174,6 +174,7 @@ struct ela_kmod_va2pa {
 #define ELA_KMOD_NAND_MAX_READ (1024UL * 1024UL)
 #define ELA_KMOD_EMMC_NAME_LEN 32U
 #define ELA_KMOD_EMMC_MAX_READ (1024UL * 1024UL)
+#define ELA_KMOD_OROM_MAX_READ (1024UL * 1024UL)
 
 /* Return one kernel-enumerated SPI device by zero-based ordinal. ENOENT marks
  * the end of the list. The strings are always NUL terminated. */
@@ -266,6 +267,34 @@ struct ela_kmod_emmc_read {
 	__u64 buf;         /* in: userspace destination, cast to __u64 */
 };
 
+/* Return one PCI function whose expansion ROM can be mapped by the kernel. */
+struct ela_kmod_orom_device {
+	__u32 abi_version; /* in: ELA_KMOD_ABI_VERSION */
+	__u32 ordinal;     /* in: zero-based enumeration position */
+	__u32 domain;      /* out: PCI domain */
+	__u32 bus;         /* out */
+	__u32 device;      /* out */
+	__u32 function;    /* out */
+	__u32 vendor_id;   /* out */
+	__u32 device_id;   /* out */
+	__u32 class_code;  /* out: 24-bit PCI class */
+	__u32 pad;         /* zero */
+	__u64 size;        /* out: mapped ROM bytes */
+};
+
+/* Read bytes from a PCI expansion ROM through pci_map_rom(). */
+struct ela_kmod_orom_read {
+	__u32 abi_version; /* in: ELA_KMOD_ABI_VERSION */
+	__u32 domain;      /* in: from ELA_IOC_OROM_GET */
+	__u32 bus;         /* in */
+	__u32 device;      /* in */
+	__u32 function;    /* in */
+	__u32 pad;         /* zero */
+	__u64 offset;      /* in */
+	__u64 length;      /* in: 1..ELA_KMOD_OROM_MAX_READ */
+	__u64 buf;         /* in: userspace destination, cast to __u64 */
+};
+
 #define ELA_KMOD_IOC_MAGIC 0xE5
 
 /* Implemented operations. */
@@ -285,6 +314,8 @@ struct ela_kmod_emmc_read {
 #define ELA_IOC_NAND_MTD_READ _IOWR(ELA_KMOD_IOC_MAGIC, 0x51, struct ela_kmod_nand_mtd_read)
 #define ELA_IOC_EMMC_GET       _IOWR(ELA_KMOD_IOC_MAGIC, 0x60, struct ela_kmod_emmc_device)
 #define ELA_IOC_EMMC_READ      _IOW(ELA_KMOD_IOC_MAGIC, 0x61, struct ela_kmod_emmc_read)
+#define ELA_IOC_OROM_GET       _IOWR(ELA_KMOD_IOC_MAGIC, 0x70, struct ela_kmod_orom_device)
+#define ELA_IOC_OROM_READ      _IOW(ELA_KMOD_IOC_MAGIC, 0x71, struct ela_kmod_orom_read)
 
 /*
  * Reserved operation numbers for x86-only chipsec-style ops (not portable

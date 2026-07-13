@@ -790,6 +790,112 @@ static long ela_ioctl_va2pa(unsigned long arg)
 	return 0;
 }
 
+#ifdef CONFIG_PCI
+static long ela_ioctl_orom_get(unsigned long arg)
+{
+	struct ela_kmod_orom_device req;
+	struct pci_dev *pdev = NULL;
+	u32 position = 0;
+
+	if (copy_from_user(&req, (void __user *)arg, sizeof(req)))
+		return -EFAULT;
+	if (req.abi_version != ELA_KMOD_ABI_VERSION)
+		return -EINVAL;
+
+	for_each_pci_dev(pdev) {
+		void __iomem *rom;
+		size_t rom_size = 0;
+
+		rom = pci_map_rom(pdev, &rom_size);
+		if (IS_ERR_OR_NULL(rom))
+			continue;
+		if (!rom_size) {
+			pci_unmap_rom(pdev, rom);
+			continue;
+		}
+		if (position++ != req.ordinal) {
+			pci_unmap_rom(pdev, rom);
+			continue;
+		}
+		req.domain = (u32)pci_domain_nr(pdev->bus);
+		req.bus = pdev->bus->number;
+		req.device = PCI_SLOT(pdev->devfn);
+		req.function = PCI_FUNC(pdev->devfn);
+		req.vendor_id = pdev->vendor;
+		req.device_id = pdev->device;
+		req.class_code = pdev->class;
+		req.pad = 0;
+		req.size = rom_size;
+		pci_unmap_rom(pdev, rom);
+		pci_dev_put(pdev);
+		if (copy_to_user((void __user *)arg, &req, sizeof(req)))
+			return -EFAULT;
+		return 0;
+	}
+	return -ENOENT;
+}
+
+static long ela_ioctl_orom_read(unsigned long arg)
+{
+	struct ela_kmod_orom_read req;
+	struct pci_dev *pdev;
+	void __iomem *rom;
+	void *buf;
+	size_t rom_size = 0;
+	long rc = 0;
+
+	if (copy_from_user(&req, (void __user *)arg, sizeof(req)))
+		return -EFAULT;
+	if (req.abi_version != ELA_KMOD_ABI_VERSION || req.pad ||
+	    req.domain > INT_MAX || req.bus > U8_MAX ||
+	    req.device > 31 || req.function > 7 || !req.buf || !req.length ||
+	    req.length > ELA_KMOD_OROM_MAX_READ ||
+	    req.offset + req.length < req.offset)
+		return -EINVAL;
+
+	pdev = pci_get_domain_bus_and_slot((int)req.domain, (u8)req.bus,
+					   PCI_DEVFN(req.device, req.function));
+	if (!pdev)
+		return -ENODEV;
+	rom = pci_map_rom(pdev, &rom_size);
+	if (IS_ERR_OR_NULL(rom)) {
+		rc = IS_ERR(rom) ? PTR_ERR(rom) : -ENODEV;
+		goto out_put;
+	}
+	if (req.offset > rom_size || req.length > rom_size - req.offset) {
+		rc = -EINVAL;
+		goto out_unmap;
+	}
+	buf = kvmalloc((size_t)req.length, GFP_KERNEL);
+	if (!buf) {
+		rc = -ENOMEM;
+		goto out_unmap;
+	}
+	memcpy_fromio(buf, rom + req.offset, (size_t)req.length);
+	if (copy_to_user((void __user *)(uintptr_t)req.buf, buf,
+			 (size_t)req.length))
+		rc = -EFAULT;
+	kvfree(buf);
+out_unmap:
+	pci_unmap_rom(pdev, rom);
+out_put:
+	pci_dev_put(pdev);
+	return rc;
+}
+#else
+static long ela_ioctl_orom_get(unsigned long arg)
+{
+	(void)arg;
+	return -EOPNOTSUPP;
+}
+
+static long ela_ioctl_orom_read(unsigned long arg)
+{
+	(void)arg;
+	return -EOPNOTSUPP;
+}
+#endif
+
 static void ela_copy_fixed_name(char *dst, size_t dst_len, const char *src)
 {
 	size_t len;
@@ -1200,6 +1306,10 @@ static long ela_kmod_ioctl(struct file *file, unsigned int cmd, unsigned long ar
 		return ela_ioctl_emmc_get(arg);
 	case ELA_IOC_EMMC_READ:
 		return ela_ioctl_emmc_read(arg);
+	case ELA_IOC_OROM_GET:
+		return ela_ioctl_orom_get(arg);
+	case ELA_IOC_OROM_READ:
+		return ela_ioctl_orom_read(arg);
 	default:
 		return -ENOTTY;
 	}
@@ -1295,4 +1405,4 @@ module_exit(ela_kmod_exit);
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Nicholas Starke");
 MODULE_DESCRIPTION("embedded_linux_audit host inspection module");
-MODULE_VERSION("0.6");
+MODULE_VERSION("0.7");

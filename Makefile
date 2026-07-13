@@ -474,6 +474,7 @@ AGENT_UNIT_TEST_SRC := \
 	tests/unit/agent/test_remote_copy_util.c \
 	tests/unit/agent/test_orom_util.c \
 	tests/unit/agent/test_orom_pull_cmd_util.c \
+	tests/unit/agent/test_orom_kmod_util.c \
 	tests/unit/agent/test_http_protocol_util.c \
 	tests/unit/agent/test_tcp_parse_util.c \
 	tests/unit/agent/test_tcp_runtime_util.c \
@@ -577,6 +578,7 @@ AGENT_UNIT_TEST_DEPS := \
 	agent/util/remote_copy_util.c \
 	agent/util/orom_util.c \
 	agent/orom/orom_pull_cmd_util.c \
+	agent/orom/orom_kmod_util.c \
 	agent/util/http_protocol_util.c \
 	agent/util/command_io_util.c \
 	agent/util/ssh_parse_util.c \
@@ -910,6 +912,8 @@ SRC := \
 	agent/tpm2/tpm2_nvreadpublic.c \
 	agent/tpm2/tpm2_createprimary.c \
 	agent/orom/orom_pull_cmd_common.c \
+	agent/orom/orom_kmod_util.c \
+	agent/orom/orom_kmod_cmd.c \
 	agent/orom/orom_pull_cmd_util.c \
 	agent/efi/efi_pull_orom_cmd.c \
 	agent/efi/efi_dump_vars_cmd.c \
@@ -1274,6 +1278,7 @@ $(AGENT_UNIT_TEST_BIN): $(AGENT_UNIT_TEST_SRC) $(AGENT_UNIT_TEST_DEPS) $(TPM2_UN
 			agent/util/remote_copy_util.c \
 			agent/util/orom_util.c \
 			agent/orom/orom_pull_cmd_util.c \
+			agent/orom/orom_kmod_util.c \
 			agent/util/http_protocol_util.c \
 			agent/util/command_io_util.c \
 			agent/util/ssh_parse_util.c \

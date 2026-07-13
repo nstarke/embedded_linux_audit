@@ -90,6 +90,13 @@
 | `emmc list` | Enumerate indexed whole eMMC user-area block devices through `ela_kmod`; SD cards, partitions, boot areas, and RPMB are excluded |
 | `emmc dump <DUMP_FILE_PATH> [DEVICE_INDEX]` | Dump the selected eMMC user area through `ela_kmod`; without an index, dump the largest unambiguous device |
 
+### `orom` — Kernel PCI option ROM inspection
+
+| Subcommand | Description |
+|---|---|
+| `orom list` | Enumerate indexed PCI option ROMs that `ela_kmod` can map through the kernel PCI layer |
+| `orom dump <DUMP_FILE_PATH> [DEVICE_INDEX]` | Dump the selected mapped PCI option ROM; without an index, dump the largest unambiguous ROM |
+
 ### `transfer` — Remote terminal and data exfiltration
 
 | Subcommand | Description |

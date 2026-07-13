@@ -77,6 +77,8 @@ static void usage(const char *prog)
 		"  nand flash dump <path> [index] Dump corrected NAND main-area data\n"
 		"  emmc list           List eMMC user-area devices through ela_kmod\n"
 		"  emmc dump <path> [index] Dump an eMMC user area through ela_kmod\n"
+		"  orom list           List kernel-mappable PCI option ROMs\n"
+		"  orom dump <path> [index] Dump a PCI option ROM through ela_kmod\n"
 		"  efi orom           EFI option ROM utilities (pull/list)\n"
 		"  efi dump-vars      Dump EFI variables with txt/csv/json formatting\n"
 		"  bios orom          BIOS option ROM utilities (pull/list)\n"
@@ -122,6 +124,8 @@ static void usage(const char *prog)
 		"  %s nand flash dump /tmp/nand.bin 0\n"
 		"  %s emmc list\n"
 		"  %s emmc dump /tmp/emmc.bin 0\n"
+		"  %s orom list\n"
+		"  %s orom dump /tmp/orom.bin 0\n"
 		"  %s --quiet --output-http http://127.0.0.1:5000/orom efi orom pull\n"
 		"  %s --output-format json --output-http http://127.0.0.1:5000 efi dump-vars\n"
 		"  %s --quiet --output-tcp 127.0.0.1:5001 bios orom list\n"
@@ -136,7 +140,7 @@ static void usage(const char *prog)
 		prog, prog, prog, prog,
 		prog, prog, prog, prog,
 		prog, prog, prog, prog, prog, prog, prog, prog,
-		prog, prog,
+		prog, prog, prog, prog,
 		prog,
 		prog);
 }
@@ -793,6 +797,11 @@ int embedded_linux_audit_dispatch(int argc, char **argv)
 
 	if (!strcmp(argv[opts.cmd_idx], "emmc")) {
 		ret = emmc_main(argc - opts.cmd_idx, argv + opts.cmd_idx);
+		goto done;
+	}
+
+	if (!strcmp(argv[opts.cmd_idx], "orom")) {
+		ret = orom_main(argc - opts.cmd_idx, argv + opts.cmd_idx);
 		goto done;
 	}
 
