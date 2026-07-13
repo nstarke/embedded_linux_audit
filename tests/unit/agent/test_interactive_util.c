@@ -104,6 +104,18 @@ static void test_candidates_linux_gdbserver_returns_linux_list(void)
 	ELA_ASSERT_TRUE(candidates[1] == NULL);
 }
 
+static void test_candidates_linux_ioport(void)
+{
+	char *argv[] = { "linux", "ioport" };
+	const char *const *candidates =
+		ela_interactive_candidates_for_position(3, argv);
+
+	ELA_ASSERT_TRUE(candidates != NULL);
+	ELA_ASSERT_STR_EQ("read", candidates[0]);
+	ELA_ASSERT_STR_EQ("write", candidates[1]);
+	ELA_ASSERT_TRUE(candidates[2] == NULL);
+}
+
 static void test_candidates_group_arch(void)
 {
 	char *argv[] = { "arch" };
@@ -846,6 +858,7 @@ int run_interactive_util_tests(void)
 		{ "candidates_linux_process_watch_subcommand", test_candidates_linux_process_watch_subcommand },
 		{ "candidates_linux_process_watch_arg_returns_null", test_candidates_linux_process_watch_arg_returns_null },
 		{ "candidates_linux_gdbserver_returns_linux_list", test_candidates_linux_gdbserver_returns_linux_list },
+		{ "candidates_linux_ioport",              test_candidates_linux_ioport },
 		{ "candidates_group_arch",                 test_candidates_group_arch },
 		{ "candidates_group_efi",                  test_candidates_group_efi },
 		{ "candidates_group_bios",                 test_candidates_group_bios },

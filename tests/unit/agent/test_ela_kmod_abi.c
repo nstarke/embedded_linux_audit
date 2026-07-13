@@ -59,6 +59,15 @@ static void test_pci_cfg_struct_layout(void)
 	ELA_ASSERT_INT_EQ(20, offsetof(struct ela_kmod_pci_cfg, value));
 }
 
+static void test_ioport_struct_layout(void)
+{
+	ELA_ASSERT_INT_EQ(16, sizeof(struct ela_kmod_ioport));
+	ELA_ASSERT_INT_EQ(0, offsetof(struct ela_kmod_ioport, abi_version));
+	ELA_ASSERT_INT_EQ(4, offsetof(struct ela_kmod_ioport, port));
+	ELA_ASSERT_INT_EQ(8, offsetof(struct ela_kmod_ioport, width));
+	ELA_ASSERT_INT_EQ(12, offsetof(struct ela_kmod_ioport, value));
+}
+
 static void test_physctl_struct_layouts(void)
 {
 	ELA_ASSERT_INT_EQ(32, sizeof(struct ela_kmod_alloc_phys));
@@ -160,6 +169,8 @@ static void test_ioctl_number_is_stable(void)
 		{ ELA_IOC_VA2PA, 0x07 },
 		{ ELA_IOC_PCI_READ, 0x20 },
 		{ ELA_IOC_PCI_WRITE, 0x21 },
+		{ ELA_IOC_PORT_READ, 0x30 },
+		{ ELA_IOC_PORT_WRITE, 0x31 },
 		{ ELA_IOC_SPI_GET, 0x40 },
 		{ ELA_IOC_SPI_MTD_GET, 0x41 },
 		{ ELA_IOC_SPI_MTD_READ, 0x42 },
@@ -190,6 +201,7 @@ int run_ela_kmod_abi_tests(void)
 		{ "abi/write_phys_layout", test_write_phys_struct_layout },
 		{ "abi/mmio_layout", test_mmio_struct_layout },
 		{ "abi/pci_cfg_layout", test_pci_cfg_struct_layout },
+		{ "abi/ioport_layout", test_ioport_struct_layout },
 		{ "abi/physctl_layouts", test_physctl_struct_layouts },
 		{ "abi/spi_layouts", test_spi_struct_layouts },
 		{ "abi/constants", test_abi_constants },

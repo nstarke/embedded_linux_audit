@@ -80,6 +80,7 @@ static void interactive_usage(const char *prog)
 	       "  linux process\n"
 	       "  linux gdbserver\n"
 	       "  linux modules\n"
+	       "  linux ioport <read|write> <port> <width> [value]\n"
 	       "  tpm2\n"
 	       "  spi list\n"
 	       "  spi dump <DUMP_FILE_PATH> [DEVICE_INDEX]\n"

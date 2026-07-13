@@ -17,8 +17,9 @@ static const char *const interactive_top_level_commands[] = {
 static const char *const interactive_group_arch[] = { "bit", "isa", "endianness", NULL };
 static const char *const interactive_group_uboot[] = { "env", "image", "audit", NULL };
 static const char *const interactive_group_linux[] = {
-	"dmesg", "download-file", "execute-command", "grep", "list-files", "list-symlinks", "remote-copy", "ssh", "process", "gdbserver", NULL,
+	"dmesg", "download-file", "execute-command", "grep", "list-files", "list-symlinks", "remote-copy", "ssh", "process", "gdbserver", "ioport", NULL,
 };
+static const char *const interactive_group_linux_ioport[] = { "read", "write", NULL };
 static const char *const interactive_group_linux_gdbserver[] = { "tunnel", NULL };
 static const char *const interactive_group_linux_process[] = { "watch", NULL };
 static const char *const interactive_group_linux_process_watch[] = { "on", "off", "list", NULL };
@@ -60,6 +61,8 @@ const char *const *ela_interactive_candidates_for_position(int argc, char **argv
 			}
 			if (!strcmp(argv[1], "gdbserver") && argc == 3)
 				return interactive_group_linux_gdbserver;
+			if (!strcmp(argv[1], "ioport") && argc == 3)
+				return interactive_group_linux_ioport;
 			return NULL;
 		}
 		return interactive_group_linux;

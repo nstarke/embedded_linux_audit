@@ -9,6 +9,7 @@ Documents in this directory:
 - [`embedded_linux_audit linux list-files`](list-files.md)
 - [`embedded_linux_audit linux list-symlinks`](list-symlinks.md)
 - [`embedded_linux_audit linux modules`](modules.md)
+- [`embedded_linux_audit linux ioport`](ioport.md)
 - [`embedded_linux_audit linux netstat`](netstat.md)
 - [`embedded_linux_audit linux pcap`](pcap.md)
 - `embedded_linux_audit linux coredump`

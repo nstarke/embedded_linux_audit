@@ -682,6 +682,43 @@ static long ela_ioctl_pci_cfg(unsigned long arg, bool write)
 #endif
 }
 
+static long ela_ioctl_ioport(unsigned long arg, bool write)
+{
+#ifdef CONFIG_X86
+	struct ela_kmod_ioport req;
+
+	if (copy_from_user(&req, (void __user *)arg, sizeof(req)))
+		return -EFAULT;
+	if (req.abi_version != ELA_KMOD_ABI_VERSION || req.port > 0xffff ||
+	    (req.width != 1 && req.width != 2 && req.width != 4))
+		return -EINVAL;
+	if (write && req.width < 4 && req.value >= (1U << (req.width * 8)))
+		return -EINVAL;
+
+	if (write) {
+		switch (req.width) {
+		case 1: outb((u8)req.value, (u16)req.port); break;
+		case 2: outw((u16)req.value, (u16)req.port); break;
+		case 4: outl(req.value, (u16)req.port); break;
+		}
+		return 0;
+	}
+
+	switch (req.width) {
+	case 1: req.value = inb((u16)req.port); break;
+	case 2: req.value = inw((u16)req.port); break;
+	case 4: req.value = inl((u16)req.port); break;
+	}
+	if (copy_to_user((void __user *)arg, &req, sizeof(req)))
+		return -EFAULT;
+	return 0;
+#else
+	(void)arg;
+	(void)write;
+	return -EOPNOTSUPP;
+#endif
+}
+
 static long ela_ioctl_alloc_phys(struct ela_file_state *state, unsigned long arg)
 {
 	struct ela_kmod_alloc_phys req;
@@ -1628,6 +1665,10 @@ static long ela_kmod_ioctl(struct file *file, unsigned int cmd, unsigned long ar
 		return ela_ioctl_pci_cfg(arg, false);
 	case ELA_IOC_PCI_WRITE:
 		return ela_ioctl_pci_cfg(arg, true);
+	case ELA_IOC_PORT_READ:
+		return ela_ioctl_ioport(arg, false);
+	case ELA_IOC_PORT_WRITE:
+		return ela_ioctl_ioport(arg, true);
 	case ELA_IOC_ALLOC_PHYS:
 		return ela_ioctl_alloc_phys(state, arg);
 	case ELA_IOC_FREE_PHYS:
@@ -1757,4 +1798,4 @@ module_exit(ela_kmod_exit);
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Nicholas Starke");
 MODULE_DESCRIPTION("embedded_linux_audit host inspection module");
-MODULE_VERSION("0.8");
+MODULE_VERSION("0.9");

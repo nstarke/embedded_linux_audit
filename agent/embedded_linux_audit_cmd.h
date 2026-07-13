@@ -108,6 +108,7 @@ int linux_gdbserver_main(int argc, char **argv);
 int linux_kernel_module_main(int argc, char **argv);
 int linux_physmem_main(int argc, char **argv);
 int linux_mmio_main(int argc, char **argv);
+int linux_ioport_main(int argc, char **argv);
 int linux_pci_main(int argc, char **argv);
 int linux_physctl_main(int argc, char **argv);
 int linux_pcap_main(int argc, char **argv);

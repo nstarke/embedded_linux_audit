@@ -46,6 +46,8 @@
 | `linux process watch list` | List all active needles and their current matching PIDs |
 | `linux gdbserver <PID> <PORT>` | Attach to a running process and expose a GDB remote stub on the given TCP port; connect with `target remote <agent-ip>:<PORT>` in `gdb-multiarch` |
 | `linux modules` | List, load, unload, and inspect kernel modules directly through `/proc/modules`, module files, and module syscalls |
+| `linux ioport read <PORT> <WIDTH>` | Read an 8-, 16-, or 32-bit x86 I/O port through `ela_kmod` |
+| `linux ioport write <PORT> <WIDTH> <VALUE>` | Write an x86 I/O port through `ela_kmod`; this can immediately alter hardware state |
 
 ### `efi` — EFI/UEFI inspection
 

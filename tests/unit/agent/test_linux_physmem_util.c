@@ -228,6 +228,42 @@ static void test_parse_bdf(void)
 	ELA_ASSERT_INT_EQ(-1, ela_pci_parse_bdf(NULL, &domain, &bus, &device, &function));
 }
 
+static void test_prepare_ioport(void)
+{
+	struct ela_ioport_request req;
+	char errbuf[256];
+	char *read_argv[] = { "ioport", "read", "0x80", "1" };
+	char *write_argv[] = { "ioport", "write", "0xcf8", "4", "0x80000000" };
+	char *help_argv[] = { "ioport", "--help" };
+	char *bad_port[] = { "ioport", "read", "0x10000", "1" };
+	char *bad_width[] = { "ioport", "read", "0x80", "8" };
+	char *too_big[] = { "ioport", "write", "0x80", "1", "0x100" };
+	char *unknown[] = { "ioport", "poke", "0x80", "1" };
+
+	ELA_ASSERT_INT_EQ(0, ela_ioport_prepare_request(
+		4, read_argv, &req, errbuf, sizeof(errbuf)));
+	ELA_ASSERT_TRUE(!req.write);
+	ELA_ASSERT_INT_EQ(0x80, req.port);
+	ELA_ASSERT_INT_EQ(1, req.width);
+	ELA_ASSERT_INT_EQ(0, ela_ioport_prepare_request(
+		5, write_argv, &req, errbuf, sizeof(errbuf)));
+	ELA_ASSERT_TRUE(req.write);
+	ELA_ASSERT_INT_EQ(0xcf8, req.port);
+	ELA_ASSERT_TRUE(req.value == 0x80000000U);
+	ELA_ASSERT_INT_EQ(0, ela_ioport_prepare_request(
+		2, help_argv, &req, errbuf, sizeof(errbuf)));
+	ELA_ASSERT_TRUE(req.show_help);
+	ELA_ASSERT_INT_EQ(2, ela_ioport_prepare_request(
+		4, bad_port, &req, errbuf, sizeof(errbuf)));
+	ELA_ASSERT_INT_EQ(2, ela_ioport_prepare_request(
+		4, bad_width, &req, errbuf, sizeof(errbuf)));
+	ELA_ASSERT_INT_EQ(2, ela_ioport_prepare_request(
+		5, too_big, &req, errbuf, sizeof(errbuf)));
+	ELA_ASSERT_TRUE(strstr(errbuf, "does not fit") != NULL);
+	ELA_ASSERT_INT_EQ(2, ela_ioport_prepare_request(
+		4, unknown, &req, errbuf, sizeof(errbuf)));
+}
+
 static void test_prepare_pci(void)
 {
 	struct ela_pci_request req;
@@ -318,6 +354,7 @@ int run_linux_physmem_util_tests(void)
 		{ "format/dump_line", test_format_dump_line },
 		{ "width/value_fits", test_value_fits_width },
 		{ "prepare/mmio", test_prepare_mmio },
+		{ "prepare/ioport", test_prepare_ioport },
 		{ "parse/bdf", test_parse_bdf },
 		{ "prepare/pci", test_prepare_pci },
 		{ "prepare/physctl", test_prepare_physctl },

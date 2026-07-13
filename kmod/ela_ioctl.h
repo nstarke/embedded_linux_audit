@@ -127,6 +127,18 @@ struct ela_kmod_pci_cfg {
 };
 
 /*
+ * x86 I/O-port access. Each request emits exactly one IN or OUT instruction
+ * of the requested width. Port addresses are 16-bit; widths are 1, 2, or 4.
+ * Non-x86 kernels retain the ABI and return EOPNOTSUPP.
+ */
+struct ela_kmod_ioport {
+	__u32 abi_version;   /* in: ELA_KMOD_ABI_VERSION */
+	__u32 port;          /* in: I/O port number (0..0xffff) */
+	__u32 width;         /* in: access size in bytes: 1, 2, or 4 */
+	__u32 value;         /* in (write) / out (read): port value */
+};
+
+/*
  * Allocate a physically-contiguous, zeroed buffer inside the kernel
  * (chipsec ALLOC_PHYSMEM port). Used to stage DMA-visible scratch buffers
  * at known physical addresses. Only the physical address is returned —
@@ -373,6 +385,8 @@ struct ela_kmod_usb_descriptors {
 #define ELA_IOC_VA2PA      _IOWR(ELA_KMOD_IOC_MAGIC, 0x07, struct ela_kmod_va2pa)
 #define ELA_IOC_PCI_READ   _IOWR(ELA_KMOD_IOC_MAGIC, 0x20, struct ela_kmod_pci_cfg)
 #define ELA_IOC_PCI_WRITE  _IOW(ELA_KMOD_IOC_MAGIC, 0x21, struct ela_kmod_pci_cfg)
+#define ELA_IOC_PORT_READ  _IOWR(ELA_KMOD_IOC_MAGIC, 0x30, struct ela_kmod_ioport)
+#define ELA_IOC_PORT_WRITE _IOW(ELA_KMOD_IOC_MAGIC, 0x31, struct ela_kmod_ioport)
 #define ELA_IOC_SPI_GET      _IOWR(ELA_KMOD_IOC_MAGIC, 0x40, struct ela_kmod_spi_device)
 #define ELA_IOC_SPI_MTD_GET  _IOWR(ELA_KMOD_IOC_MAGIC, 0x41, struct ela_kmod_spi_mtd)
 #define ELA_IOC_SPI_MTD_READ _IOW(ELA_KMOD_IOC_MAGIC, 0x42, struct ela_kmod_spi_mtd_read)
@@ -394,8 +408,6 @@ struct ela_kmod_usb_descriptors {
  * need appears):
  *   0x10  ELA_IOC_RDMSR        model-specific register read (x86)
  *   0x11  ELA_IOC_WRMSR        model-specific register write (x86)
- *   0x30  ELA_IOC_PORT_READ    port I/O read (x86)
- *   0x31  ELA_IOC_PORT_WRITE   port I/O write (x86)
  */
 
 #endif /* ELA_IOCTL_H */

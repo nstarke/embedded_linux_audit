@@ -66,6 +66,7 @@ static void usage(const char *prog)
 		"  linux memread      Read physical memory via the ela_kmod module and dump/upload it\n"
 		"  linux memwrite     Write physical memory via ela_kmod (DANGEROUS, no target validation)\n"
 		"  linux mmio         Sized MMIO register read/write via ela_kmod\n"
+		"  linux ioport       x86 I/O-port read/write via ela_kmod\n"
 		"  linux pci          PCI configuration space read/write via ela_kmod\n"
 		"  linux physmem      Physical-memory helpers via ela_kmod: alloc/free/va2pa\n"
 		"  linux pcap         Capture packets from an interface as pcap data\n"
@@ -707,6 +708,8 @@ int embedded_linux_audit_dispatch(int argc, char **argv)
 			ret = linux_physmem_main(argc - sub_idx, argv + sub_idx);
 		else if (!strcmp(argv[sub_idx], "mmio"))
 			ret = linux_mmio_main(argc - sub_idx, argv + sub_idx);
+		else if (!strcmp(argv[sub_idx], "ioport"))
+			ret = linux_ioport_main(argc - sub_idx, argv + sub_idx);
 		else if (!strcmp(argv[sub_idx], "pci"))
 			ret = linux_pci_main(argc - sub_idx, argv + sub_idx);
 		else if (!strcmp(argv[sub_idx], "physmem"))
