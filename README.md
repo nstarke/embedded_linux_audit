@@ -76,6 +76,20 @@
 | `spi list` | Enumerate SPI devices and indexed SPI-backed MTD devices through `ela_kmod` |
 | `spi dump <DUMP_FILE_PATH> [DEVICE_INDEX]` | Dump the selected index from `spi list`; without an index, dump the largest unambiguous SPI-backed MTD device |
 
+### `nand flash` — NAND flash inspection
+
+| Subcommand | Description |
+|---|---|
+| `nand flash list` | Enumerate indexed SLC/MLC/TLC NAND MTD devices and geometry through `ela_kmod` |
+| `nand flash dump <DUMP_FILE_PATH> [DEVICE_INDEX]` | Dump corrected main-area data through `ela_kmod`; bad eraseblocks are padded with `0xff` and OOB data is excluded |
+
+### `emmc` — eMMC inspection
+
+| Subcommand | Description |
+|---|---|
+| `emmc list` | Enumerate indexed whole eMMC user-area block devices through `ela_kmod`; SD cards, partitions, boot areas, and RPMB are excluded |
+| `emmc dump <DUMP_FILE_PATH> [DEVICE_INDEX]` | Dump the selected eMMC user area through `ela_kmod`; without an index, dump the largest unambiguous device |
+
 ### `transfer` — Remote terminal and data exfiltration
 
 | Subcommand | Description |

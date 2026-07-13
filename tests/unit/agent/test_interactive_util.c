@@ -144,6 +144,36 @@ static void test_candidates_group_spi(void)
 	ELA_ASSERT_TRUE(candidates[2] == NULL);
 }
 
+static void test_candidates_group_nand(void)
+{
+	char *nand_argv[] = { "nand", NULL };
+	char *flash_argv[] = { "nand", "flash", NULL };
+	const char *const *candidates;
+
+	candidates = ela_interactive_candidates_for_position(2, nand_argv);
+	ELA_ASSERT_TRUE(candidates != NULL);
+	ELA_ASSERT_STR_EQ("flash", candidates[0]);
+	ELA_ASSERT_TRUE(candidates[1] == NULL);
+
+	candidates = ela_interactive_candidates_for_position(3, flash_argv);
+	ELA_ASSERT_TRUE(candidates != NULL);
+	ELA_ASSERT_STR_EQ("list", candidates[0]);
+	ELA_ASSERT_STR_EQ("dump", candidates[1]);
+	ELA_ASSERT_TRUE(candidates[2] == NULL);
+}
+
+static void test_candidates_group_emmc(void)
+{
+	char *argv[] = { "emmc", NULL };
+	const char *const *candidates =
+		ela_interactive_candidates_for_position(2, argv);
+
+	ELA_ASSERT_TRUE(candidates != NULL);
+	ELA_ASSERT_STR_EQ("list", candidates[0]);
+	ELA_ASSERT_STR_EQ("dump", candidates[1]);
+	ELA_ASSERT_TRUE(candidates[2] == NULL);
+}
+
 static void test_candidates_set_variables(void)
 {
 	char *argv[] = { "set", "ELA_" };
@@ -787,6 +817,8 @@ int run_interactive_util_tests(void)
 		{ "candidates_group_efi",                  test_candidates_group_efi },
 		{ "candidates_group_bios",                 test_candidates_group_bios },
 		{ "candidates_group_spi",                  test_candidates_group_spi },
+		{ "candidates_group_nand",                 test_candidates_group_nand },
+		{ "candidates_group_emmc",                 test_candidates_group_emmc },
 		{ "candidates_set_variables",              test_candidates_set_variables },
 		{ "candidates_set_argc_three_returns_null", test_candidates_set_argc_three_returns_null },
 		{ "candidates_unknown_group_returns_null", test_candidates_unknown_group_returns_null },

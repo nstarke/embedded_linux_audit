@@ -90,6 +90,25 @@ static void test_spi_struct_layouts(void)
 	ELA_ASSERT_INT_EQ(8, offsetof(struct ela_kmod_spi_mtd_read, offset));
 	ELA_ASSERT_INT_EQ(16, offsetof(struct ela_kmod_spi_mtd_read, length));
 	ELA_ASSERT_INT_EQ(24, offsetof(struct ela_kmod_spi_mtd_read, buf));
+
+	ELA_ASSERT_INT_EQ(104, sizeof(struct ela_kmod_nand_mtd));
+	ELA_ASSERT_INT_EQ(32, offsetof(struct ela_kmod_nand_mtd, size));
+	ELA_ASSERT_INT_EQ(40, offsetof(struct ela_kmod_nand_mtd, mtd_name));
+
+	ELA_ASSERT_INT_EQ(40, sizeof(struct ela_kmod_nand_mtd_read));
+	ELA_ASSERT_INT_EQ(8, offsetof(struct ela_kmod_nand_mtd_read, offset));
+	ELA_ASSERT_INT_EQ(16, offsetof(struct ela_kmod_nand_mtd_read, length));
+	ELA_ASSERT_INT_EQ(24, offsetof(struct ela_kmod_nand_mtd_read, buf));
+	ELA_ASSERT_INT_EQ(32, offsetof(struct ela_kmod_nand_mtd_read, bad_blocks));
+
+	ELA_ASSERT_INT_EQ(64, sizeof(struct ela_kmod_emmc_device));
+	ELA_ASSERT_INT_EQ(24, offsetof(struct ela_kmod_emmc_device, size));
+	ELA_ASSERT_INT_EQ(32, offsetof(struct ela_kmod_emmc_device, disk_name));
+
+	ELA_ASSERT_INT_EQ(40, sizeof(struct ela_kmod_emmc_read));
+	ELA_ASSERT_INT_EQ(16, offsetof(struct ela_kmod_emmc_read, offset));
+	ELA_ASSERT_INT_EQ(24, offsetof(struct ela_kmod_emmc_read, length));
+	ELA_ASSERT_INT_EQ(32, offsetof(struct ela_kmod_emmc_read, buf));
 }
 
 static void test_abi_constants(void)
@@ -98,6 +117,8 @@ static void test_abi_constants(void)
 	ELA_ASSERT_INT_EQ(0xE5, ELA_KMOD_IOC_MAGIC);
 	ELA_ASSERT_TRUE(ELA_KMOD_MAX_READ == 16UL * 1024UL * 1024UL);
 	ELA_ASSERT_TRUE(ELA_KMOD_SPI_MAX_READ == 1024UL * 1024UL);
+	ELA_ASSERT_TRUE(ELA_KMOD_NAND_MAX_READ == 1024UL * 1024UL);
+	ELA_ASSERT_TRUE(ELA_KMOD_EMMC_MAX_READ == 1024UL * 1024UL);
 	ELA_ASSERT_STR_EQ("/dev/ela_physmem", ELA_KMOD_DEVICE_PATH);
 	/* All defined flags are inside the accepted mask. */
 	ELA_ASSERT_INT_EQ(ELA_KMOD_READ_F_ALL,
@@ -123,6 +144,10 @@ static void test_ioctl_number_is_stable(void)
 		{ ELA_IOC_SPI_GET, 0x40 },
 		{ ELA_IOC_SPI_MTD_GET, 0x41 },
 		{ ELA_IOC_SPI_MTD_READ, 0x42 },
+		{ ELA_IOC_NAND_MTD_GET, 0x50 },
+		{ ELA_IOC_NAND_MTD_READ, 0x51 },
+		{ ELA_IOC_EMMC_GET, 0x60 },
+		{ ELA_IOC_EMMC_READ, 0x61 },
 	};
 	size_t i;
 

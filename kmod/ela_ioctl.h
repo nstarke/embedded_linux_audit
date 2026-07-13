@@ -171,6 +171,9 @@ struct ela_kmod_va2pa {
 #define ELA_KMOD_SPI_DRIVER_LEN 32U
 #define ELA_KMOD_MTD_NAME_LEN 64U
 #define ELA_KMOD_SPI_MAX_READ (1024UL * 1024UL)
+#define ELA_KMOD_NAND_MAX_READ (1024UL * 1024UL)
+#define ELA_KMOD_EMMC_NAME_LEN 32U
+#define ELA_KMOD_EMMC_MAX_READ (1024UL * 1024UL)
 
 /* Return one kernel-enumerated SPI device by zero-based ordinal. ENOENT marks
  * the end of the list. The strings are always NUL terminated. */
@@ -211,6 +214,58 @@ struct ela_kmod_spi_mtd_read {
 	__u64 buf;           /* in: userspace destination, cast to __u64 */
 };
 
+/* Return one NAND/MLC-NAND MTD device by zero-based ordinal. This includes
+ * parallel raw NAND and SPI-NAND devices registered with the MTD core. */
+struct ela_kmod_nand_mtd {
+	__u32 abi_version;   /* in: ELA_KMOD_ABI_VERSION */
+	__u32 ordinal;       /* in: zero-based enumeration position */
+	__u32 mtd_index;     /* out */
+	__u32 type;          /* out: MTD_NANDFLASH or MTD_MLCNANDFLASH */
+	__u32 writesize;     /* out: main-area page size */
+	__u32 erasesize;     /* out: eraseblock size */
+	__u32 oobsize;       /* out: OOB bytes per page */
+	__u32 ecc_strength;  /* out: correctable bits per ECC step */
+	__u64 size;          /* out: main-area bytes */
+	char mtd_name[ELA_KMOD_MTD_NAME_LEN];
+};
+
+/* Read corrected NAND main-area bytes. Marked bad eraseblocks are represented
+ * by 0xff bytes so the output preserves physical offsets. bad_blocks reports
+ * how many distinct bad eraseblocks intersected this request. */
+struct ela_kmod_nand_mtd_read {
+	__u32 abi_version;   /* in: ELA_KMOD_ABI_VERSION */
+	__u32 mtd_index;     /* in: from ELA_IOC_NAND_MTD_GET */
+	__u64 offset;        /* in */
+	__u64 length;        /* in: 1..ELA_KMOD_NAND_MAX_READ */
+	__u64 buf;           /* in: userspace destination, cast to __u64 */
+	__u32 bad_blocks;    /* out */
+	__u32 pad;           /* zero */
+};
+
+/* Return one whole eMMC user-area block device by zero-based ordinal. SD
+ * cards, DOS/GPT partitions, eMMC boot areas, and RPMB are excluded. */
+struct ela_kmod_emmc_device {
+	__u32 abi_version;        /* in: ELA_KMOD_ABI_VERSION */
+	__u32 ordinal;            /* in: zero-based enumeration position */
+	__u32 major;              /* out: block device major */
+	__u32 minor;              /* out: whole-disk minor */
+	__u32 logical_block_size; /* out: bytes */
+	__u32 pad;                /* zero */
+	__u64 size;               /* out: user-area bytes */
+	char disk_name[ELA_KMOD_EMMC_NAME_LEN];
+};
+
+/* Read bytes from an eMMC user area through the kernel block layer. */
+struct ela_kmod_emmc_read {
+	__u32 abi_version; /* in: ELA_KMOD_ABI_VERSION */
+	__u32 major;       /* in: from ELA_IOC_EMMC_GET */
+	__u32 minor;       /* in: from ELA_IOC_EMMC_GET */
+	__u32 pad;         /* zero */
+	__u64 offset;      /* in */
+	__u64 length;      /* in: 1..ELA_KMOD_EMMC_MAX_READ */
+	__u64 buf;         /* in: userspace destination, cast to __u64 */
+};
+
 #define ELA_KMOD_IOC_MAGIC 0xE5
 
 /* Implemented operations. */
@@ -226,6 +281,10 @@ struct ela_kmod_spi_mtd_read {
 #define ELA_IOC_SPI_GET      _IOWR(ELA_KMOD_IOC_MAGIC, 0x40, struct ela_kmod_spi_device)
 #define ELA_IOC_SPI_MTD_GET  _IOWR(ELA_KMOD_IOC_MAGIC, 0x41, struct ela_kmod_spi_mtd)
 #define ELA_IOC_SPI_MTD_READ _IOW(ELA_KMOD_IOC_MAGIC, 0x42, struct ela_kmod_spi_mtd_read)
+#define ELA_IOC_NAND_MTD_GET  _IOWR(ELA_KMOD_IOC_MAGIC, 0x50, struct ela_kmod_nand_mtd)
+#define ELA_IOC_NAND_MTD_READ _IOWR(ELA_KMOD_IOC_MAGIC, 0x51, struct ela_kmod_nand_mtd_read)
+#define ELA_IOC_EMMC_GET       _IOWR(ELA_KMOD_IOC_MAGIC, 0x60, struct ela_kmod_emmc_device)
+#define ELA_IOC_EMMC_READ      _IOW(ELA_KMOD_IOC_MAGIC, 0x61, struct ela_kmod_emmc_read)
 
 /*
  * Reserved operation numbers for x86-only chipsec-style ops (not portable

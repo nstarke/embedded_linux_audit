@@ -25,6 +25,7 @@
 #include <linux/list.h>
 #include <linux/gfp.h>
 #include <linux/slab.h>
+#include <linux/vmalloc.h>
 #include <linux/uaccess.h>
 #include <linux/capability.h>
 #include <linux/version.h>
@@ -37,6 +38,16 @@
 #if IS_ENABLED(CONFIG_MTD)
 # include <linux/mtd/mtd.h>
 #endif
+#if IS_ENABLED(CONFIG_BLOCK) && IS_ENABLED(CONFIG_MMC_BLOCK) && \
+	LINUX_VERSION_CODE >= KERNEL_VERSION(6, 9, 0)
+# include <linux/blkdev.h>
+# include <linux/mmc/card.h>
+# include <linux/major.h>
+#endif
+
+#include "ela_ioctl.h"
+
+static void ela_copy_fixed_name(char *dst, size_t dst_len, const char *src);
 /* Portable readq/writeq on 32-bit arches: split into two 32-bit accesses,
  * low word first (same order chipsec uses). 64-bit arches get native ops.
  * Upstream moved this wrapper from <asm-generic/...> to <linux/...> in 3.15,
@@ -57,6 +68,152 @@
 # include <asm-generic/io-64-nonatomic-lo-hi.h>
 #else
 # define ELA_INLINE_IO64 1
+#endif
+
+#if IS_ENABLED(CONFIG_BLOCK) && IS_ENABLED(CONFIG_MMC_BLOCK) && \
+	LINUX_VERSION_CODE >= KERNEL_VERSION(6, 9, 0)
+#define ELA_MMC_MAX_MINORS 256U
+
+static bool ela_emmc_disk_name(const char *name)
+{
+	const char *p;
+
+	if (strncmp(name, "mmcblk", 6))
+		return false;
+	p = name + 6;
+	if (!*p)
+		return false;
+	for (; *p; p++) {
+		if (*p < '0' || *p > '9')
+			return false;
+	}
+	return true;
+}
+
+static bool ela_bdev_is_emmc_user_area(struct block_device *bdev)
+{
+	struct device *parent;
+	struct mmc_card *card;
+
+	if (!bdev || bdev_is_partition(bdev) ||
+	    !ela_emmc_disk_name(bdev->bd_disk->disk_name))
+		return false;
+	parent = disk_to_dev(bdev->bd_disk)->parent;
+	if (!parent)
+		return false;
+	card = container_of(parent, struct mmc_card, dev);
+	return mmc_card_mmc(card);
+}
+
+static struct file *ela_emmc_open(dev_t dev)
+{
+	struct file *file;
+
+	file = bdev_file_open_by_dev(dev, BLK_OPEN_READ, NULL, NULL);
+	if (IS_ERR(file))
+		return file;
+	if (!ela_bdev_is_emmc_user_area(file_bdev(file))) {
+		bdev_fput(file);
+		return ERR_PTR(-ENODEV);
+	}
+	return file;
+}
+
+static long ela_ioctl_emmc_get(unsigned long arg)
+{
+	struct ela_kmod_emmc_device req;
+	u32 position = 0;
+	u32 minor;
+
+	if (copy_from_user(&req, (void __user *)arg, sizeof(req)))
+		return -EFAULT;
+	if (req.abi_version != ELA_KMOD_ABI_VERSION)
+		return -EINVAL;
+
+	for (minor = 0; minor < ELA_MMC_MAX_MINORS; minor++) {
+		struct file *file;
+		struct block_device *bdev;
+
+		file = ela_emmc_open(MKDEV(MMC_BLOCK_MAJOR, minor));
+		if (IS_ERR(file))
+			continue;
+		bdev = file_bdev(file);
+		if (position++ != req.ordinal) {
+			bdev_fput(file);
+			continue;
+		}
+		req.major = MMC_BLOCK_MAJOR;
+		req.minor = minor;
+		req.logical_block_size = bdev_logical_block_size(bdev);
+		req.pad = 0;
+		req.size = bdev_nr_bytes(bdev);
+		memset(req.disk_name, 0, sizeof(req.disk_name));
+		ela_copy_fixed_name(req.disk_name, ELA_KMOD_EMMC_NAME_LEN,
+				    bdev->bd_disk->disk_name);
+		bdev_fput(file);
+		if (copy_to_user((void __user *)arg, &req, sizeof(req)))
+			return -EFAULT;
+		return 0;
+	}
+	return -ENOENT;
+}
+
+static long ela_ioctl_emmc_read(unsigned long arg)
+{
+	struct ela_kmod_emmc_read req;
+	struct file *file;
+	void *buf;
+	loff_t position;
+	ssize_t got;
+	long rc = 0;
+
+	if (copy_from_user(&req, (void __user *)arg, sizeof(req)))
+		return -EFAULT;
+	if (req.abi_version != ELA_KMOD_ABI_VERSION || req.pad ||
+	    req.major != MMC_BLOCK_MAJOR || !req.buf || !req.length ||
+	    req.length > ELA_KMOD_EMMC_MAX_READ ||
+	    req.offset + req.length < req.offset)
+		return -EINVAL;
+
+	file = ela_emmc_open(MKDEV(req.major, req.minor));
+	if (IS_ERR(file))
+		return PTR_ERR(file);
+	if (req.offset > bdev_nr_bytes(file_bdev(file)) ||
+	    req.length > bdev_nr_bytes(file_bdev(file)) - req.offset) {
+		rc = -EINVAL;
+		goto out_file;
+	}
+	buf = kvmalloc((size_t)req.length, GFP_KERNEL);
+	if (!buf) {
+		rc = -ENOMEM;
+		goto out_file;
+	}
+	position = (loff_t)req.offset;
+	got = kernel_read(file, buf, (size_t)req.length, &position);
+	if (got < 0)
+		rc = got;
+	else if ((u64)got != req.length)
+		rc = -EIO;
+	else if (copy_to_user((void __user *)(uintptr_t)req.buf, buf,
+			      (size_t)req.length))
+		rc = -EFAULT;
+	kvfree(buf);
+out_file:
+	bdev_fput(file);
+	return rc;
+}
+#else
+static long ela_ioctl_emmc_get(unsigned long arg)
+{
+	(void)arg;
+	return -EOPNOTSUPP;
+}
+
+static long ela_ioctl_emmc_read(unsigned long arg)
+{
+	(void)arg;
+	return -EOPNOTSUPP;
+}
 #endif
 
 #ifdef ELA_INLINE_IO64
@@ -81,8 +238,6 @@ static inline void writeq(u64 val, volatile void __iomem *addr)
 }
 # endif
 #endif
-
-#include "ela_ioctl.h"
 
 /* memremap() replaced cached ioremap variants in 4.3 (declared in io.h). */
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 3, 0)
@@ -131,6 +286,71 @@ struct ela_phys_alloc {
 	unsigned long virt;
 	unsigned int order;
 };
+
+#if IS_ENABLED(CONFIG_MTD)
+struct ela_nand_entry {
+	struct list_head node;
+	int mtd_index;
+};
+
+static LIST_HEAD(ela_nand_entries);
+static DEFINE_MUTEX(ela_nand_lock);
+
+static bool ela_mtd_is_nand(const struct mtd_info *mtd)
+{
+	return mtd->type == MTD_NANDFLASH ||
+	       mtd->type == MTD_MLCNANDFLASH;
+}
+
+static void ela_nand_mtd_add(struct mtd_info *mtd)
+{
+	struct ela_nand_entry *entry;
+
+	if (!ela_mtd_is_nand(mtd))
+		return;
+	entry = kmalloc(sizeof(*entry), GFP_KERNEL);
+	if (!entry)
+		return;
+	entry->mtd_index = mtd->index;
+	mutex_lock(&ela_nand_lock);
+	list_add_tail(&entry->node, &ela_nand_entries);
+	mutex_unlock(&ela_nand_lock);
+}
+
+static void ela_nand_mtd_remove(struct mtd_info *mtd)
+{
+	struct ela_nand_entry *entry;
+	struct ela_nand_entry *tmp;
+
+	mutex_lock(&ela_nand_lock);
+	list_for_each_entry_safe(entry, tmp, &ela_nand_entries, node) {
+		if (entry->mtd_index == mtd->index) {
+			list_del(&entry->node);
+			kfree(entry);
+			break;
+		}
+	}
+	mutex_unlock(&ela_nand_lock);
+}
+
+static struct mtd_notifier ela_nand_mtd_notifier = {
+	.add = ela_nand_mtd_add,
+	.remove = ela_nand_mtd_remove,
+};
+
+static void ela_nand_entries_clear(void)
+{
+	struct ela_nand_entry *entry;
+	struct ela_nand_entry *tmp;
+
+	mutex_lock(&ela_nand_lock);
+	list_for_each_entry_safe(entry, tmp, &ela_nand_entries, node) {
+		list_del(&entry->node);
+		kfree(entry);
+	}
+	mutex_unlock(&ela_nand_lock);
+}
+#endif
 
 /* One mapped window of physical memory plus the bookkeeping to unmap it with
  * the API that created it (memunmap vs iounmap). */
@@ -570,14 +790,6 @@ static long ela_ioctl_va2pa(unsigned long arg)
 	return 0;
 }
 
-#if IS_ENABLED(CONFIG_SPI)
-struct ela_spi_find_ctx {
-	u32 wanted;
-	u32 position;
-	bool found;
-	struct ela_kmod_spi_device *record;
-};
-
 static void ela_copy_fixed_name(char *dst, size_t dst_len, const char *src)
 {
 	size_t len;
@@ -588,6 +800,14 @@ static void ela_copy_fixed_name(char *dst, size_t dst_len, const char *src)
 	memcpy(dst, src, len);
 	dst[len] = '\0';
 }
+
+#if IS_ENABLED(CONFIG_SPI)
+struct ela_spi_find_ctx {
+	u32 wanted;
+	u32 position;
+	bool found;
+	struct ela_kmod_spi_device *record;
+};
 
 static int ela_spi_find_device(struct device *dev, void *data)
 {
@@ -802,6 +1022,147 @@ static long ela_ioctl_spi_mtd_read(unsigned long arg)
 }
 #endif
 
+#if IS_ENABLED(CONFIG_MTD)
+static long ela_ioctl_nand_mtd_get(unsigned long arg)
+{
+	struct ela_kmod_nand_mtd req;
+	struct ela_nand_entry *entry;
+	struct mtd_info *mtd;
+	u32 position = 0;
+	int mtd_index = -1;
+
+	if (copy_from_user(&req, (void __user *)arg, sizeof(req)))
+		return -EFAULT;
+	if (req.abi_version != ELA_KMOD_ABI_VERSION)
+		return -EINVAL;
+
+	mutex_lock(&ela_nand_lock);
+	list_for_each_entry(entry, &ela_nand_entries, node) {
+		if (position++ == req.ordinal) {
+			mtd_index = entry->mtd_index;
+			break;
+		}
+	}
+	mutex_unlock(&ela_nand_lock);
+	if (mtd_index < 0)
+		return -ENOENT;
+
+	mtd = get_mtd_device(NULL, mtd_index);
+	if (IS_ERR(mtd))
+		return PTR_ERR(mtd);
+	if (!ela_mtd_is_nand(mtd)) {
+		put_mtd_device(mtd);
+		return -ENODEV;
+	}
+	req.mtd_index = (u32)mtd_index;
+	req.type = mtd->type;
+	req.writesize = mtd->writesize;
+	req.erasesize = mtd->erasesize;
+	req.oobsize = mtd->oobsize;
+	req.ecc_strength = mtd->ecc_strength;
+	req.size = mtd->size;
+	memset(req.mtd_name, 0, sizeof(req.mtd_name));
+	ela_copy_fixed_name(req.mtd_name, ELA_KMOD_MTD_NAME_LEN, mtd->name);
+	put_mtd_device(mtd);
+
+	if (copy_to_user((void __user *)arg, &req, sizeof(req)))
+		return -EFAULT;
+	return 0;
+}
+
+static long ela_ioctl_nand_mtd_read(unsigned long arg)
+{
+	struct ela_kmod_nand_mtd_read req;
+	struct mtd_info *mtd;
+	u8 *buf;
+	u64 position;
+	u64 remaining;
+	size_t output_offset = 0;
+	int rc = 0;
+
+	if (copy_from_user(&req, (void __user *)arg, sizeof(req)))
+		return -EFAULT;
+	if (req.abi_version != ELA_KMOD_ABI_VERSION)
+		return -EINVAL;
+	if (!req.buf || !req.length || req.length > ELA_KMOD_NAND_MAX_READ ||
+	    req.offset + req.length < req.offset)
+		return -EINVAL;
+
+	mtd = get_mtd_device(NULL, (int)req.mtd_index);
+	if (IS_ERR(mtd))
+		return PTR_ERR(mtd);
+	if (!ela_mtd_is_nand(mtd)) {
+		rc = -ENODEV;
+		goto out_put;
+	}
+	if (!mtd->erasesize || req.offset > mtd->size ||
+	    req.length > mtd->size - req.offset) {
+		rc = -EINVAL;
+		goto out_put;
+	}
+	buf = kmalloc((size_t)req.length, GFP_KERNEL);
+	if (!buf) {
+		rc = -ENOMEM;
+		goto out_put;
+	}
+
+	req.bad_blocks = 0;
+	req.pad = 0;
+	position = req.offset;
+	remaining = req.length;
+	while (remaining) {
+		u64 block_start = position - (position % mtd->erasesize);
+		u64 block_remaining = mtd->erasesize - (position - block_start);
+		size_t chunk = (size_t)min_t(u64, remaining, block_remaining);
+		size_t retlen = 0;
+		int bad = mtd_block_isbad(mtd, (loff_t)block_start);
+
+		if (bad < 0) {
+			rc = bad;
+			break;
+		}
+		if (bad) {
+			memset(buf + output_offset, 0xff, chunk);
+			req.bad_blocks++;
+		} else {
+			rc = mtd_read(mtd, (loff_t)position, chunk, &retlen,
+				      buf + output_offset);
+			if (mtd_is_bitflip(rc))
+				rc = 0;
+			if (rc || retlen != chunk) {
+				if (!rc)
+					rc = -EIO;
+				break;
+			}
+		}
+		position += chunk;
+		remaining -= chunk;
+		output_offset += chunk;
+	}
+	if (!rc && copy_to_user((void __user *)(uintptr_t)req.buf,
+				buf, (size_t)req.length))
+		rc = -EFAULT;
+	if (!rc && copy_to_user((void __user *)arg, &req, sizeof(req)))
+		rc = -EFAULT;
+	kfree(buf);
+out_put:
+	put_mtd_device(mtd);
+	return rc;
+}
+#else
+static long ela_ioctl_nand_mtd_get(unsigned long arg)
+{
+	(void)arg;
+	return -EOPNOTSUPP;
+}
+
+static long ela_ioctl_nand_mtd_read(unsigned long arg)
+{
+	(void)arg;
+	return -EOPNOTSUPP;
+}
+#endif
+
 static long ela_kmod_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
 	struct ela_file_state *state = file->private_data;
@@ -831,6 +1192,14 @@ static long ela_kmod_ioctl(struct file *file, unsigned int cmd, unsigned long ar
 		return ela_ioctl_spi_mtd_get(arg);
 	case ELA_IOC_SPI_MTD_READ:
 		return ela_ioctl_spi_mtd_read(arg);
+	case ELA_IOC_NAND_MTD_GET:
+		return ela_ioctl_nand_mtd_get(arg);
+	case ELA_IOC_NAND_MTD_READ:
+		return ela_ioctl_nand_mtd_read(arg);
+	case ELA_IOC_EMMC_GET:
+		return ela_ioctl_emmc_get(arg);
+	case ELA_IOC_EMMC_READ:
+		return ela_ioctl_emmc_read(arg);
 	default:
 		return -ENOTTY;
 	}
@@ -890,9 +1259,18 @@ static struct miscdevice ela_kmod_dev = {
 
 static int __init ela_kmod_init(void)
 {
-	int rc = misc_register(&ela_kmod_dev);
+	int rc;
+
+#if IS_ENABLED(CONFIG_MTD)
+	register_mtd_user(&ela_nand_mtd_notifier);
+#endif
+	rc = misc_register(&ela_kmod_dev);
 
 	if (rc) {
+#if IS_ENABLED(CONFIG_MTD)
+		unregister_mtd_user(&ela_nand_mtd_notifier);
+		ela_nand_entries_clear();
+#endif
 		pr_err("ela_kmod: misc_register failed: %d\n", rc);
 		return rc;
 	}
@@ -904,6 +1282,10 @@ static int __init ela_kmod_init(void)
 static void __exit ela_kmod_exit(void)
 {
 	misc_deregister(&ela_kmod_dev);
+#if IS_ENABLED(CONFIG_MTD)
+	unregister_mtd_user(&ela_nand_mtd_notifier);
+	ela_nand_entries_clear();
+#endif
 	pr_info("ela_kmod: unloaded\n");
 }
 
@@ -913,4 +1295,4 @@ module_exit(ela_kmod_exit);
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Nicholas Starke");
 MODULE_DESCRIPTION("embedded_linux_audit host inspection module");
-MODULE_VERSION("0.4");
+MODULE_VERSION("0.6");

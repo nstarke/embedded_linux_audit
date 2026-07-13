@@ -87,6 +87,8 @@ int run_linux_kernel_buildinfo_util_tests(void);
 int run_ela_kmod_abi_tests(void);
 int run_linux_physmem_util_tests(void);
 int run_spi_util_tests(void);
+int run_nand_util_tests(void);
+int run_emmc_util_tests(void);
 
 int main(void)
 {
@@ -179,6 +181,8 @@ int main(void)
 	rc |= run_ela_kmod_abi_tests();
 	rc |= run_linux_physmem_util_tests();
 	rc |= run_spi_util_tests();
+	rc |= run_nand_util_tests();
+	rc |= run_emmc_util_tests();
 
 	return rc;
 }

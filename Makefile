@@ -467,6 +467,7 @@ AGENT_UNIT_TEST_SRC := \
 	tests/unit/agent/test_lifecycle_util.c \
 	tests/unit/agent/test_ela_conf_util.c \
 	tests/unit/agent/test_interactive_parse_util.c \
+	tests/unit/agent/test_emmc_util.c \
 	tests/unit/agent/test_file_scan_formatter.c \
 	tests/unit/agent/test_tpm2_pcr_parse_util.c \
 	tests/unit/agent/test_ws_url_util.c \
@@ -527,6 +528,7 @@ AGENT_UNIT_TEST_SRC := \
 	tests/unit/agent/test_ela_kmod_abi.c \
 	tests/unit/agent/test_linux_physmem_util.c \
 	tests/unit/agent/test_spi_util.c \
+	tests/unit/agent/test_nand_util.c \
 	tests/unit/agent/test_device_scan.c \
 	tests/unit/agent/test_dispatch_util.c \
 	tests/unit/agent/test_dispatch_parse_util.c \
@@ -631,6 +633,8 @@ AGENT_UNIT_TEST_DEPS := \
 	agent/linux/linux_kernel_buildinfo_util.c \
 	agent/linux/linux_physmem_util.c \
 	agent/spi/spi_util.c \
+	agent/nand/nand_util.c \
+	agent/emmc/emmc_util.c \
 	agent/device/device_scan.c \
 	agent/shell/script_exec_util.c \
 	agent/shell/interactive_util.c \
@@ -894,6 +898,10 @@ SRC := \
 	agent/linux/linux_coredump_cmd.c \
 	agent/spi/spi_util.c \
 	agent/spi/spi_cmd.c \
+	agent/nand/nand_util.c \
+	agent/nand/nand_cmd.c \
+	agent/emmc/emmc_util.c \
+	agent/emmc/emmc_cmd.c \
 	agent/tpm2/tpm2_cmd.c \
 	agent/tpm2/tpm2_util.c \
 	agent/tpm2/tpm2_output.c \
@@ -1322,6 +1330,8 @@ $(AGENT_UNIT_TEST_BIN): $(AGENT_UNIT_TEST_SRC) $(AGENT_UNIT_TEST_DEPS) $(TPM2_UN
 			agent/linux/linux_kernel_buildinfo_util.c \
 			agent/linux/linux_physmem_util.c \
 			agent/spi/spi_util.c \
+			agent/nand/nand_util.c \
+			agent/emmc/emmc_util.c \
 			agent/device/device_scan.c \
 			agent/shell/script_exec_util.c \
 			agent/shell/interactive_util.c \
