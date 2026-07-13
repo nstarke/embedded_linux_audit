@@ -333,8 +333,12 @@ ZLIB_EXTRA_CFLAGS :=
 LIBUBOOTENV_EXTRA_CFLAGS := -I$(abspath compat) -I$(abspath $(ZLIB_DIR)) -I$(abspath $(ZLIB_BUILD)) -Wno-switch
 JSONC_DIR     := third_party/json-c
 JSONC_BUILD   := $(JSONC_DIR)/build-$(CC_TAG)
-JSONC_LIB     := $(JSONC_BUILD)/libjson-c.a
-JSONC_CFLAGS  := -Ithird_party -I$(JSONC_DIR) -I$(JSONC_BUILD)
+# json-c only provides the conventional include/json-c/ header layout (and the
+# generated json.h at all) at install time, so stage an install tree inside the
+# build dir and compile/link against that.
+JSONC_INSTALL := $(JSONC_BUILD)/install
+JSONC_LIB     := $(JSONC_INSTALL)/lib/libjson-c.a
+JSONC_CFLAGS  := -I$(JSONC_INSTALL)/include
 LIBXML2_DIR   := third_party/libxml2
 LIBXML2_BUILD := $(LIBXML2_DIR)/build-$(CC_TAG)
 LIBXML2_LIB   := $(LIBXML2_BUILD)/libxml2.a
@@ -1062,8 +1066,9 @@ $(TARGET): | check-zig
 
 $(JSONC_LIB):
 	rm -rf $(JSONC_BUILD)
-	cmake -S $(JSONC_DIR) -B $(JSONC_BUILD) $(JSONC_CMAKE_ARGS) -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DBUILD_STATIC_LIBS=ON -DBUILD_TESTING=OFF -DBUILD_APPS=OFF -DDISABLE_EXTRA_LIBS=ON -DENABLE_RDRAND=OFF -DENABLE_THREADING=OFF -DDISABLE_JSON_POINTER=ON -DDISABLE_THREAD_LOCAL_STORAGE=ON
+	cmake -S $(JSONC_DIR) -B $(JSONC_BUILD) $(JSONC_CMAKE_ARGS) -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DBUILD_STATIC_LIBS=ON -DBUILD_TESTING=OFF -DBUILD_APPS=OFF -DDISABLE_EXTRA_LIBS=ON -DENABLE_RDRAND=OFF -DENABLE_THREADING=OFF -DDISABLE_JSON_POINTER=ON -DDISABLE_THREAD_LOCAL_STORAGE=ON -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_INSTALL_PREFIX=$(abspath $(JSONC_INSTALL))
 	cmake --build $(JSONC_BUILD) --parallel $(JOBS) --target json-c
+	cmake --install $(JSONC_BUILD)
 
 $(LIBXML2_LIB):
 	rm -rf $(LIBXML2_BUILD)
@@ -1275,7 +1280,7 @@ $(TARGET): $(TARGET_DEPS)
 static: all
 
 $(AGENT_UNIT_TEST_BIN): $(AGENT_UNIT_TEST_SRC) $(AGENT_UNIT_TEST_DEPS) $(TPM2_UNIT_DEPS) $(JSONC_LIB) | $(GENERATED_DIR)
-	$(UNIT_TEST_CC) $(UNIT_TEST_CFLAGS) $(TPM2_UNIT_CFLAGS) -I. -Iagent -Ithird_party -Ithird_party/libcsv -I$(JSONC_DIR) -I$(JSONC_BUILD) \
+	$(UNIT_TEST_CC) $(UNIT_TEST_CFLAGS) $(TPM2_UNIT_CFLAGS) -I. -Iagent -Ithird_party -Ithird_party/libcsv $(JSONC_CFLAGS) \
 		-o $@ \
 		$(AGENT_UNIT_TEST_SRC) \
 		third_party/libcsv/libcsv.c \

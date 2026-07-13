@@ -2,7 +2,7 @@
 
 #include "file_scan_formatter.h"
 
-#include <json.h>
+#include <json-c/json.h>
 #include <stdio.h>
 #include <string.h>
 

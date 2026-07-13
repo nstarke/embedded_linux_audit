@@ -3,7 +3,7 @@
 #include "linux_process_watch_util.h"
 
 #include <csv.h>
-#include <json.h>
+#include <json-c/json.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>

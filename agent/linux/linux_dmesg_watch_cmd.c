@@ -6,7 +6,7 @@
 
 #include <csv.h>
 #include <errno.h>
-#include <json.h>
+#include <json-c/json.h>
 #include <signal.h>
 #include <stdbool.h>
 #include <stdio.h>

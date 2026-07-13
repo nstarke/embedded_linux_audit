@@ -5,7 +5,7 @@
 #include "../../util/str_util.h"
 
 #include <csv.h>
-#include <json.h>
+#include <json-c/json.h>
 #include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>

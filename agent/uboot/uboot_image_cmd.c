@@ -25,7 +25,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
-#include <json.h>
+#include <json-c/json.h>
 #include <csv.h>
 
 /* Global state definitions (authoritative) */

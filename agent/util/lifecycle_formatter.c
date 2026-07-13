@@ -4,7 +4,7 @@
 
 #include "str_util.h"
 
-#include <json.h>
+#include <json-c/json.h>
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
