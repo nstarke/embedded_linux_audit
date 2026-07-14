@@ -504,6 +504,7 @@ AGENT_UNIT_TEST_SRC := \
 	tests/unit/agent/test_uboot_audit_util.c \
 	tests/unit/agent/test_linux_dmesg_util.c \
 	tests/unit/agent/test_linux_audit_util.c \
+	tests/unit/agent/test_linux_secrets_audit_util.c \
 	tests/unit/agent/test_http_ws_policy_util.c \
 	tests/unit/agent/test_uboot_security_audit_util.c \
 	tests/unit/agent/test_uboot_env_format_util.c \
@@ -600,6 +601,7 @@ AGENT_UNIT_TEST_DEPS := \
 	agent/transfer/transfer_cmd_util.c \
 	agent/linux/linux_dmesg_util.c \
 	agent/linux/linux_audit_util.c \
+	agent/linux/linux_secrets_audit_util.c \
 	agent/linux/remote_copy_cmd_util.c \
 	agent/linux/linux_grep_util.c \
 	agent/linux/linux_list_files_util.c \
@@ -892,6 +894,7 @@ SRC := \
 	agent/linux/linux_network_audit_cmd.c \
 	agent/linux/linux_integrity_audit_cmd.c \
 	agent/linux/linux_secrets_audit_cmd.c \
+	agent/linux/linux_secrets_audit_util.c \
 	agent/linux/linux_hardware_audit_cmd.c \
 	agent/linux/linux_download_file_cmd.c \
 	agent/linux/linux_download_file_util.c \
@@ -1336,6 +1339,7 @@ $(AGENT_UNIT_TEST_BIN): $(AGENT_UNIT_TEST_SRC) $(AGENT_UNIT_TEST_DEPS) $(TPM2_UN
 			agent/transfer/transfer_cmd_util.c \
 			agent/linux/linux_dmesg_util.c \
 			agent/linux/linux_audit_util.c \
+			agent/linux/linux_secrets_audit_util.c \
 			agent/linux/remote_copy_cmd_util.c \
 			agent/linux/linux_grep_util.c \
 			agent/linux/linux_list_files_util.c \

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "linux_secrets_audit_cmd.h"
+#include "linux_secrets_audit_util.h"
 #include "util/output_buffer.h"
 #include <dirent.h>
 #include <errno.h>
@@ -58,16 +59,10 @@ static void add(struct secret_ctx *c, const char *rule, const char *title, const
 	if (!strcmp(status, "unknown"))
 		c->unknown++;
 }
-static bool candidate(const char *name)
-{
-	return strstr(name, ".conf") || strstr(name, ".cfg") || strstr(name, ".ini") || strstr(name, ".env") ||
-	       strstr(name, ".yaml") || strstr(name, ".yml") || strstr(name, ".json") || strstr(name, ".xml") ||
-	       strstr(name, ".toml") || strstr(name, ".key") || strstr(name, ".pem") || strstr(name, ".crt") ||
-	       strstr(name, ".service") || !strcmp(name, "passwd") || !strcmp(name, "shadow");
-}
 static void inspect_file(struct secret_ctx *c, const char *rel)
 {
 	char path[PATH_MAX], line[2048];
+	unsigned char magic[4];
 	FILE *f;
 	unsigned line_no = 0;
 	if (!path_for(c, rel, path, sizeof(path)) || !(f = fopen(path, "r"))) {
@@ -75,46 +70,18 @@ static void inspect_file(struct secret_ctx *c, const char *rel)
 			add(c, "ELA-SEC-900", "Secret inspection", "unknown", rel, "unreadable");
 		return;
 	}
+	if (ela_secrets_compressed_magic(magic, fread(magic, 1, sizeof(magic), f))) {
+		fclose(f);
+		return;
+	}
+	rewind(f);
 	while (fgets(line, sizeof(line), f)) {
 		char *s = line;
-		bool hit = false;
-		const char *rule = "ELA-SEC-001", *title = "Potential secret";
+		const char *rule, *title;
 		line_no++;
 		while (*s == ' ' || *s == '\t')
 			s++;
-		if (strstr(s, "-----BEGIN") && strstr(s, "PRIVATE KEY-----")) {
-			hit = true;
-			rule = "ELA-SEC-002";
-			title = "Private key material";
-		} else if (strstr(s, "AKIA") || strstr(s, "Authorization: Bearer") || strstr(s, "api_key") ||
-			   strstr(s, "apikey") || strstr(s, "access_token") || strstr(s, "client_secret")) {
-			hit = true;
-			rule = "ELA-SEC-001";
-			title = "API key or token";
-		} else if ((strstr(s, "password=") || strstr(s, "passwd=") || strstr(s, "default_password")) &&
-			   !strstr(s, "${")) {
-			hit = true;
-			rule = "ELA-SEC-003";
-			title = "Default or embedded credential";
-		} else {
-			size_t n = strlen(s);
-			bool upper = false, lower = false, digit = false;
-			size_t i;
-			for (i = 0; i < n && i < 160; i++) {
-				if (s[i] >= 'A' && s[i] <= 'Z')
-					upper = true;
-				if (s[i] >= 'a' && s[i] <= 'z')
-					lower = true;
-				if (s[i] >= '0' && s[i] <= '9')
-					digit = true;
-			}
-			if (n >= 40 && upper && lower && digit) {
-				hit = true;
-				rule = "ELA-SEC-004";
-				title = "High-entropy string";
-			}
-		}
-		if (hit) {
+		if (ela_secrets_classify_line(s, &rule, &title)) {
 			char location[PATH_MAX + 32];
 			snprintf(location, sizeof(location), "%s:%u", rel, line_no);
 			add(c, rule, title, "fail", location, s);
@@ -139,7 +106,7 @@ static void scan_dir(struct secret_ctx *c, const char *rel, unsigned depth)
 			continue;
 		if (S_ISDIR(st.st_mode) && (!c->quick || depth < 1))
 			scan_dir(c, child, depth + 1);
-		else if (S_ISREG(st.st_mode) && candidate(e->d_name))
+		else if (S_ISREG(st.st_mode) && ela_secrets_candidate(e->d_name))
 			inspect_file(c, child);
 	}
 	closedir(d);
