@@ -358,12 +358,15 @@ static void test_get_gateway_from_route_file_returns_neg1_for_null(void)
 static void test_get_gateway_from_route_file_skips_non_default_and_finds_default(void)
 {
 	/* First entry is a host route; second is the default */
-	const char *content =
-		"Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n"
-		"eth0\t0001A8C0\t00000000\t0001\t0\t0\t0\t00FFFFFF\t0\t0\t0\n"
-		"eth0\t00000000\t0101A8C0\t0003\t0\t0\t0\t00000000\t0\t0\t0\n";
-	char gw[32];
-	FILE *f = fmemopen((void *)content, strlen(content), "r");
+	char gw[32], hex[9], content[320];
+	FILE *f;
+
+	route_gw_hex("192.168.1.1", hex, sizeof(hex));
+	snprintf(content, sizeof(content),
+		 "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n"
+		 "eth0\t0001A8C0\t00000000\t0001\t0\t0\t0\t00FFFFFF\t0\t0\t0\n"
+		 "eth0\t00000000\t%s\t0003\t0\t0\t0\t00000000\t0\t0\t0\n", hex);
+	f = fmemopen((void *)content, strlen(content), "r");
 
 	ELA_ASSERT_TRUE(f != NULL);
 	ELA_ASSERT_INT_EQ(0, ela_tcp_get_gateway_from_route_file(f, gw, sizeof(gw)));
@@ -379,14 +382,17 @@ static void test_get_gateway_from_route_file_skips_tunnel_default_route(void)
 	 * second is the real internet interface (flags=0x0003, has RTF_GATEWAY).
 	 * The tunnel entry must be skipped; the real gateway must be returned.
 	 *
-	 * 192.168.35.1 in little-endian hex = 0x0123A8C0
+	 * (gateway hex is host-order; route_gw_hex builds it per endianness)
 	 */
-	const char *content =
-		"Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n"
-		"tun0\t00000000\t00000000\t0001\t0\t0\t0\t00000000\t0\t0\t0\n"
-		"br0\t00000000\t0123A8C0\t0003\t0\t0\t100\t00000000\t0\t0\t0\n";
-	char gw[32];
-	FILE *f = fmemopen((void *)content, strlen(content), "r");
+	char gw[32], hex[9], content[320];
+	FILE *f;
+
+	route_gw_hex("192.168.35.1", hex, sizeof(hex));
+	snprintf(content, sizeof(content),
+		 "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n"
+		 "tun0\t00000000\t00000000\t0001\t0\t0\t0\t00000000\t0\t0\t0\n"
+		 "br0\t00000000\t%s\t0003\t0\t0\t100\t00000000\t0\t0\t0\n", hex);
+	f = fmemopen((void *)content, strlen(content), "r");
 
 	ELA_ASSERT_TRUE(f != NULL);
 	ELA_ASSERT_INT_EQ(0, ela_tcp_get_gateway_from_route_file(f, gw, sizeof(gw)));
@@ -406,15 +412,18 @@ static void test_highmetric_gateway_picks_highest_metric_default_route(void)
 	 * Both have valid gateway IPs with RTF_GATEWAY (flags=0x0003).
 	 * The physical gateway must be returned because it has the higher metric.
 	 *
-	 * 10.8.0.1 in LE hex = 0x0100080A
-	 * 192.168.1.1 in LE hex = 0x0101A8C0
+	 * (gateway hex is host-order; route_gw_hex builds it per endianness)
 	 */
-	const char *content =
-		"Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n"
-		"tun0\t00000000\t0100080A\t0003\t0\t0\t0\t00000000\t0\t0\t0\n"
-		"eth0\t00000000\t0101A8C0\t0003\t0\t0\t100\t00000000\t0\t0\t0\n";
-	char gw[32];
-	FILE *f = fmemopen((void *)content, strlen(content), "r");
+	char gw[32], tun_hex[9], eth_hex[9], content[320];
+	FILE *f;
+
+	route_gw_hex("10.8.0.1", tun_hex, sizeof(tun_hex));
+	route_gw_hex("192.168.1.1", eth_hex, sizeof(eth_hex));
+	snprintf(content, sizeof(content),
+		 "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n"
+		 "tun0\t00000000\t%s\t0003\t0\t0\t0\t00000000\t0\t0\t0\n"
+		 "eth0\t00000000\t%s\t0003\t0\t0\t100\t00000000\t0\t0\t0\n", tun_hex, eth_hex);
+	f = fmemopen((void *)content, strlen(content), "r");
 
 	ELA_ASSERT_TRUE(f != NULL);
 	ELA_ASSERT_INT_EQ(0, ela_tcp_get_highmetric_gateway_from_route_file(f, gw, sizeof(gw)));
@@ -424,11 +433,14 @@ static void test_highmetric_gateway_picks_highest_metric_default_route(void)
 
 static void test_highmetric_gateway_returns_only_route_when_one_default(void)
 {
-	const char *content =
-		"Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n"
-		"eth0\t00000000\t0101A8C0\t0003\t0\t0\t0\t00000000\t0\t0\t0\n";
-	char gw[32];
-	FILE *f = fmemopen((void *)content, strlen(content), "r");
+	char gw[32], hex[9], content[320];
+	FILE *f;
+
+	route_gw_hex("192.168.1.1", hex, sizeof(hex));
+	snprintf(content, sizeof(content),
+		 "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n"
+		 "eth0\t00000000\t%s\t0003\t0\t0\t0\t00000000\t0\t0\t0\n", hex);
+	f = fmemopen((void *)content, strlen(content), "r");
 
 	ELA_ASSERT_TRUE(f != NULL);
 	ELA_ASSERT_INT_EQ(0, ela_tcp_get_highmetric_gateway_from_route_file(f, gw, sizeof(gw)));
@@ -439,12 +451,15 @@ static void test_highmetric_gateway_returns_only_route_when_one_default(void)
 static void test_highmetric_gateway_skips_zero_gateway_tunnel_entry(void)
 {
 	/* tun0 with gw=0 (flags has no RTF_GATEWAY) must be skipped entirely */
-	const char *content =
-		"Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n"
-		"tun0\t00000000\t00000000\t0001\t0\t0\t0\t00000000\t0\t0\t0\n"
-		"br0\t00000000\t0123A8C0\t0003\t0\t0\t100\t00000000\t0\t0\t0\n";
-	char gw[32];
-	FILE *f = fmemopen((void *)content, strlen(content), "r");
+	char gw[32], hex[9], content[320];
+	FILE *f;
+
+	route_gw_hex("192.168.35.1", hex, sizeof(hex));
+	snprintf(content, sizeof(content),
+		 "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n"
+		 "tun0\t00000000\t00000000\t0001\t0\t0\t0\t00000000\t0\t0\t0\n"
+		 "br0\t00000000\t%s\t0003\t0\t0\t100\t00000000\t0\t0\t0\n", hex);
+	f = fmemopen((void *)content, strlen(content), "r");
 
 	ELA_ASSERT_TRUE(f != NULL);
 	ELA_ASSERT_INT_EQ(0, ela_tcp_get_highmetric_gateway_from_route_file(f, gw, sizeof(gw)));
@@ -490,12 +505,13 @@ static void test_highmetric_gateway_returns_neg1_for_empty_file(void)
 
 static void test_parse_default_gateway_line_with_metric_valid(void)
 {
-	/* 192.168.1.1 in LE hex = 0x0101A8C0, metric 100 */
-	const char *line =
-		"eth0\t00000000\t0101A8C0\t0003\t0\t0\t100\t00000000\t0\t0\t0\n";
-	char gw[32];
+	/* gateway hex is host-order; route_gw_hex builds it per endianness */
+	char gw[32], hex[9], line[128];
 	unsigned int metric = 0;
 
+	route_gw_hex("192.168.1.1", hex, sizeof(hex));
+	snprintf(line, sizeof(line),
+		 "eth0\t00000000\t%s\t0003\t0\t0\t100\t00000000\t0\t0\t0\n", hex);
 	ELA_ASSERT_INT_EQ(0, ela_tcp_parse_default_gateway_line_with_metric(
 				    line, gw, sizeof(gw), &metric));
 	ELA_ASSERT_STR_EQ("192.168.1.1", gw);

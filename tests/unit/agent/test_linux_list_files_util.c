@@ -526,6 +526,16 @@ static void test_list_files_prepare_help_and_name_lookups(void)
 	char *argv_help[] = { "list-files", "--help" };
 	struct passwd *pw = getpwuid(getuid());
 	struct group *gr = getgrgid(getgid());
+	char uname[64] = "", gname[64] = "";
+
+	/* Copy out of the libc static buffers: prepare_request calls
+	 * getpwnam()/getgrnam(), which reuse the same storage that pw->pw_name /
+	 * gr->gr_name point to, corrupting the lookup name mid-search (seen on
+	 * musl static builds). */
+	if (pw && pw->pw_name)
+		snprintf(uname, sizeof(uname), "%s", pw->pw_name);
+	if (gr && gr->gr_name)
+		snprintf(gname, sizeof(gname), "%s", gr->gr_name);
 
 	/* --help short-circuits parsing. */
 	reset_prepare_fakes();
@@ -534,8 +544,8 @@ static void test_list_files_prepare_help_and_name_lookups(void)
 	ELA_ASSERT_TRUE(request.show_help);
 
 	/* --user / --group by name exercise the getpwnam()/getgrnam() branches. */
-	if (pw && pw->pw_name) {
-		char *argv_user[] = { "list-files", "--user", pw->pw_name, "/tmp/tree" };
+	if (uname[0]) {
+		char *argv_user[] = { "list-files", "--user", uname, "/tmp/tree" };
 
 		reset_prepare_fakes();
 		ELA_ASSERT_INT_EQ(0, ela_list_files_prepare_request(4, argv_user, &env, &ops,
@@ -543,8 +553,8 @@ static void test_list_files_prepare_help_and_name_lookups(void)
 		ELA_ASSERT_TRUE(request.filters.user_set);
 		ELA_ASSERT_INT_EQ((int)getuid(), (int)request.filters.uid);
 	}
-	if (gr && gr->gr_name) {
-		char *argv_group[] = { "list-files", "--group", gr->gr_name, "/tmp/tree" };
+	if (gname[0]) {
+		char *argv_group[] = { "list-files", "--group", gname, "/tmp/tree" };
 
 		reset_prepare_fakes();
 		ELA_ASSERT_INT_EQ(0, ela_list_files_prepare_request(4, argv_group, &env, &ops,
