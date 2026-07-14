@@ -252,6 +252,10 @@ static int emit_remote(const struct output_buffer *out, enum audit_output_format
 	return 0;
 }
 
+/* Entry point for `audit ...`: `audit all` fans out to the kernel rule engine
+ * plus every subsystem auditor and returns the worst exit code seen; a named
+ * subsystem argument delegates to that auditor directly; with no subcommand
+ * the kernel rule engine runs against the options parsed below. */
 int linux_audit_main(int argc, char **argv)
 {
 	if (argc > 1 && !strcmp(argv[1], "all")) {
@@ -273,6 +277,7 @@ int linux_audit_main(int argc, char **argv)
 		for (i = 0; i < (int)(sizeof(commands) / sizeof(commands[0])); i++) {
 			int n = 0;
 			sub_argv[n++] = (char *)commands[i];
+			/* --quick is only forwarded to auditors where a reduced scan is meaningful. */
 			if (quick && strcmp(commands[i], "network") != 0 && strcmp(commands[i], "integrity") != 0 && strcmp(commands[i], "hardware") != 0) sub_argv[n++] = "--quick";
 			sub_argv[n++] = "--root"; sub_argv[n++] = (char *)root; sub_argv[n] = NULL;
 			if (!strcmp(commands[i], "filesystem")) result = linux_filesystem_audit_main(n, sub_argv);

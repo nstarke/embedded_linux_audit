@@ -4,6 +4,7 @@
 #include "util/output_buffer.h"
 #include <dirent.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <getopt.h>
 #include <json-c/json.h>
 #include <limits.h>
@@ -62,6 +63,10 @@ static void check_mode(struct id_ctx *c, const char *rel, const char *rule, cons
 			"Restrict credential files to their owner (and required administrative group) only.");
 	}
 }
+/* Single pass over /etc/passwd flagging duplicate usernames, additional
+ * UID 0 accounts, and service accounts left with interactive shells, then
+ * over /etc/shadow for empty password fields and lax aging policy. Only
+ * account names are quoted in findings; hash values never leave here. */
 static void accounts(struct id_ctx *c)
 {
 	char p[PATH_MAX], line[1024], e[512];
@@ -228,21 +233,29 @@ static void keys_dir(struct id_ctx *c, const char *rel, unsigned depth)
 			keys_dir(c, child, depth + 1);
 		else if (S_ISREG(st.st_mode)) {
 			if (!strcmp(de->d_name, "authorized_keys")) {
-				FILE *keys = fopen(p, "r");
+				/* Open before stat'ing and refuse symlinks so the file we
+				 * read is the same one the mtime check sees (avoids a
+				 * check-to-use race in attacker-writable home dirs). */
+				struct stat kst;
 				char keyline[2048];
-				if (keys) {
+				int fd = open(p, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+				FILE *keys = fd >= 0 ? fdopen(fd, "r") : NULL;
+				if (fd >= 0 && !keys)
+					close(fd);
+				if (keys && fstat(fd, &kst) == 0 && S_ISREG(kst.st_mode)) {
 					while (fgets(keyline, sizeof(keyline), keys)) {
 						if (keyline[0] != '#' && !strstr(keyline, "from=") && !strstr(keyline, "command=") &&
 							!strstr(keyline, "restrict") && !strstr(keyline, "no-pty"))
 							finding(c, "ELA-ID-014", "Unrestricted authorized key", "medium", "fail", child,
 								"Restrict authorized keys with from=, command=, restrict, and no-* options where appropriate.");
 					}
+					if (!c->quick && time(NULL) - kst.st_mtime > 180 * 24 * 3600) {
+						finding(c, "ELA-ID-004", "Stale authorized key", "medium", "fail", child,
+							"Review and remove unused authorized keys regularly.");
+					}
+				}
+				if (keys)
 					fclose(keys);
-				}
-				if (!c->quick && time(NULL) - st.st_mtime > 180 * 24 * 3600) {
-					finding(c, "ELA-ID-004", "Stale authorized key", "medium", "fail", child,
-						"Review and remove unused authorized keys regularly.");
-				}
 			} else if (!strncmp(de->d_name, "id_", 3) && (st.st_mode & 0077)) {
 				char e[512];
 				snprintf(e, sizeof(e), "private key %s mode=%04o", child, st.st_mode & 0777);

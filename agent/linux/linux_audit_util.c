@@ -593,6 +593,11 @@ static int run_config_option(const struct ela_linux_audit_rule *rule, const char
 	return 0;
 }
 
+/* Evaluates rules that don't fit the plain read-and-compare probe pattern:
+ * kernel config options resolve against whichever config source the target
+ * exposes, device-mode rules stat a filesystem node instead of reading it,
+ * and the remaining check types each parse the probe file's text their own
+ * way (forbidden cmdline tokens, lockdown state, sysctl values, ...). */
 static int run_special_rule(const struct ela_linux_audit_rule *rule, enum ela_linux_audit_profile profile,
 			    const char *root, struct ela_linux_audit_result *result)
 {
