@@ -83,6 +83,27 @@ static void test_physctl_struct_layouts(void)
 	ELA_ASSERT_INT_EQ(16, offsetof(struct ela_kmod_va2pa, phys_addr));
 }
 
+static void test_wlan_struct_layouts(void)
+{
+	ELA_ASSERT_INT_EQ(8, sizeof(struct ela_kmod_wlan_attach));
+	ELA_ASSERT_INT_EQ(0, offsetof(struct ela_kmod_wlan_attach, abi_version));
+	ELA_ASSERT_INT_EQ(4, offsetof(struct ela_kmod_wlan_attach, driver));
+
+	ELA_ASSERT_INT_EQ(40, sizeof(struct ela_kmod_wlan_status));
+	ELA_ASSERT_INT_EQ(4, offsetof(struct ela_kmod_wlan_status, driver));
+	ELA_ASSERT_INT_EQ(8, offsetof(struct ela_kmod_wlan_status, captured));
+	ELA_ASSERT_INT_EQ(12, offsetof(struct ela_kmod_wlan_status, last_cmd_id));
+	ELA_ASSERT_INT_EQ(16, offsetof(struct ela_kmod_wlan_status, send_count));
+	ELA_ASSERT_INT_EQ(24, offsetof(struct ela_kmod_wlan_status, inject_count));
+	ELA_ASSERT_INT_EQ(32, offsetof(struct ela_kmod_wlan_status, restart_count));
+
+	ELA_ASSERT_INT_EQ(24, sizeof(struct ela_kmod_wlan_inject));
+	ELA_ASSERT_INT_EQ(4, offsetof(struct ela_kmod_wlan_inject, cmd_id));
+	ELA_ASSERT_INT_EQ(8, offsetof(struct ela_kmod_wlan_inject, len));
+	ELA_ASSERT_INT_EQ(12, offsetof(struct ela_kmod_wlan_inject, send_ret));
+	ELA_ASSERT_INT_EQ(16, offsetof(struct ela_kmod_wlan_inject, data));
+}
+
 static void test_spi_struct_layouts(void)
 {
 	ELA_ASSERT_INT_EQ(120, sizeof(struct ela_kmod_spi_device));
@@ -185,6 +206,10 @@ static void test_ioctl_number_is_stable(void)
 		{ ELA_IOC_USB_PORT_GET, 0x82 },
 		{ ELA_IOC_USB_PORT_ACTION, 0x83 },
 		{ ELA_IOC_USB_DESCRIPTORS, 0x84 },
+		{ ELA_IOC_WLAN_ATTACH, 0x90 },
+		{ ELA_IOC_WLAN_STATUS, 0x91 },
+		{ ELA_IOC_WLAN_INJECT, 0x92 },
+		{ ELA_IOC_WLAN_DETACH, 0x93 },
 	};
 	size_t i;
 
@@ -204,6 +229,7 @@ int run_ela_kmod_abi_tests(void)
 		{ "abi/ioport_layout", test_ioport_struct_layout },
 		{ "abi/physctl_layouts", test_physctl_struct_layouts },
 		{ "abi/spi_layouts", test_spi_struct_layouts },
+		{ "abi/wlan_layouts", test_wlan_struct_layouts },
 		{ "abi/constants", test_abi_constants },
 		{ "abi/ioctl_number", test_ioctl_number_is_stable },
 	};

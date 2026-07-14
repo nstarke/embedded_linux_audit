@@ -14,6 +14,7 @@ Documents in this directory:
 - [`embedded_linux_audit linux ioport`](ioport.md)
 - [`embedded_linux_audit linux netstat`](netstat.md)
 - [`embedded_linux_audit linux pcap`](pcap.md)
+- [`embedded_linux_audit linux wlan`](wlan-fuzz.md) (`list`, `fuzz`)
 - `embedded_linux_audit linux coredump`
 - [`embedded_linux_audit linux remote-copy`](remote-copy.md)
 - [`embedded_linux_audit linux gdbserver`](gdbserver.md)

@@ -30,6 +30,7 @@
 # include <sys/ioctl.h>
 typedef uint64_t __u64;
 typedef uint32_t __u32;
+typedef int32_t __s32;
 typedef uint8_t __u8;
 #endif
 
@@ -373,6 +374,59 @@ struct ela_kmod_usb_descriptors {
 	__u64 actual_length;
 };
 
+/* ---------------------------------------------------------------------- *
+ * WLAN firmware-command injection shim (authorized fuzzing).
+ *
+ * Reaches the host->firmware command path of a WLAN NIC driven by an
+ * in-kernel driver, for NICs whose command ring lives in kernel/device
+ * memory and is not reachable from userspace (PCIe/SDIO parts, unlike USB
+ * dongles that can be driven through usbfs). The shim installs a kprobe on
+ * the driver's firmware command-send function to (a) capture the live
+ * driver-private context from the driver's own traffic and (b) resolve the
+ * send function's address, then calls that function with an
+ * attacker-supplied command buffer. A second kprobe on the driver's
+ * firmware-restart entry counts firmware crashes -- the liveness oracle.
+ *
+ * AUTHORIZED USE ONLY. Injecting malformed firmware commands crashes device
+ * firmware by design and can wedge or panic the host kernel. Gated on
+ * CAP_SYS_RAWIO (module open) like every other ela_kmod facility, and only
+ * built when the kernel has CONFIG_KPROBES.
+ * ---------------------------------------------------------------------- */
+
+enum ela_kmod_wlan_driver {
+	ELA_WLAN_DRV_NONE     = 0,
+	ELA_WLAN_DRV_ATH10K   = 1, /* ath10k_wmi_cmd_send / ath10k_core_restart */
+	ELA_WLAN_DRV_ATH11K   = 2, /* ath11k_wmi_cmd_send / ath11k_core_restart */
+	ELA_WLAN_DRV_ATH12K   = 3, /* ath12k_wmi_cmd_send / ath12k_core_restart */
+	ELA_WLAN_DRV_MT76     = 4, /* mt76_mcu_send_and_get_msg / *_mac_reset_work */
+	ELA_WLAN_DRV_BRCMFMAC = 5, /* brcmf_fil_cmd_data / brcmf firmware-crash work */
+};
+
+#define ELA_KMOD_WLAN_MAX_CMD 2048U   /* injected command payload ceiling */
+
+struct ela_kmod_wlan_attach {
+	__u32 abi_version;   /* in: ELA_KMOD_ABI_VERSION */
+	__u32 driver;        /* in: enum ela_kmod_wlan_driver */
+};
+
+struct ela_kmod_wlan_status {
+	__u32 abi_version;   /* in: ELA_KMOD_ABI_VERSION */
+	__u32 driver;        /* out: attached driver (0 = none) */
+	__u32 captured;      /* out: 1 once the driver context has been captured */
+	__u32 last_cmd_id;   /* out: most recent firmware cmd id observed */
+	__u64 send_count;    /* out: driver send calls observed */
+	__u64 inject_count;  /* out: injections performed */
+	__u64 restart_count; /* out: firmware restarts observed (crash oracle) */
+};
+
+struct ela_kmod_wlan_inject {
+	__u32 abi_version;   /* in: ELA_KMOD_ABI_VERSION */
+	__u32 cmd_id;        /* in: firmware command id (driver/ABI specific) */
+	__u32 len;           /* in: payload bytes (0..ELA_KMOD_WLAN_MAX_CMD) */
+	__s32 send_ret;      /* out: driver send function return value */
+	__u64 data;          /* in: userspace pointer to payload, cast to __u64 */
+};
+
 #define ELA_KMOD_IOC_MAGIC 0xE5
 
 /* Implemented operations. */
@@ -401,6 +455,10 @@ struct ela_kmod_usb_descriptors {
 #define ELA_IOC_USB_PORT_GET    _IOWR(ELA_KMOD_IOC_MAGIC, 0x82, struct ela_kmod_usb_port)
 #define ELA_IOC_USB_PORT_ACTION _IOW(ELA_KMOD_IOC_MAGIC, 0x83, struct ela_kmod_usb_port_action)
 #define ELA_IOC_USB_DESCRIPTORS _IOWR(ELA_KMOD_IOC_MAGIC, 0x84, struct ela_kmod_usb_descriptors)
+#define ELA_IOC_WLAN_ATTACH _IOW(ELA_KMOD_IOC_MAGIC, 0x90, struct ela_kmod_wlan_attach)
+#define ELA_IOC_WLAN_STATUS _IOWR(ELA_KMOD_IOC_MAGIC, 0x91, struct ela_kmod_wlan_status)
+#define ELA_IOC_WLAN_INJECT _IOWR(ELA_KMOD_IOC_MAGIC, 0x92, struct ela_kmod_wlan_inject)
+#define ELA_IOC_WLAN_DETACH _IOW(ELA_KMOD_IOC_MAGIC, 0x93, struct ela_kmod_wlan_attach)
 
 /*
  * Reserved operation numbers for x86-only chipsec-style ops (not portable

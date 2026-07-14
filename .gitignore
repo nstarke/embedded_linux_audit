@@ -25,3 +25,4 @@ ela-aliases.json
 .claude
 *.o
 ref
+crashes/

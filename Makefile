@@ -537,6 +537,7 @@ AGENT_UNIT_TEST_SRC := \
 	tests/unit/agent/test_linux_kernel_module_util.c \
 	tests/unit/agent/test_linux_kernel_buildinfo_util.c \
 	tests/unit/agent/test_ela_kmod_abi.c \
+	tests/unit/agent/test_linux_wlan_util.c \
 	tests/unit/agent/test_linux_physmem_util.c \
 	tests/unit/agent/test_spi_util.c \
 	tests/unit/agent/test_nand_util.c \
@@ -646,6 +647,7 @@ AGENT_UNIT_TEST_DEPS := \
 	agent/linux/linux_kernel_module_util.c \
 	agent/linux/linux_kernel_buildinfo_util.c \
 	agent/linux/linux_physmem_util.c \
+	agent/linux/linux_wlan_util.c \
 	agent/spi/spi_util.c \
 	agent/nand/nand_util.c \
 	agent/emmc/emmc_util.c \
@@ -920,6 +922,24 @@ SRC := \
 	agent/linux/linux_pcap_cmd.c \
 	agent/linux/linux_coredump_util.c \
 	agent/linux/linux_coredump_cmd.c \
+	agent/linux/linux_wlan_util.c \
+	agent/linux/linux_wlan_cmd.c \
+	agent/linux/wlan/wlan_fuzz_grammar.c \
+	agent/linux/wlan/wlan_fuzz_engine.c \
+	agent/linux/wlan/wlan_fuzz_selftest.c \
+	agent/linux/wlan/wlan_fuzz_usbfs.c \
+	agent/linux/wlan/wlan_fuzz_target_ath9k_htc.c \
+	agent/linux/wlan/wlan_fuzz_target_rtw88.c \
+	agent/linux/wlan/wlan_fuzz_target_mwifiex.c \
+	agent/linux/wlan/wlan_fuzz_target_mt7601u.c \
+	agent/linux/wlan/wlan_fuzz_target_carl9170.c \
+	agent/linux/wlan/wlan_fuzz_target_rtl8xxxu.c \
+	agent/linux/wlan/wlan_fuzz_kmod.c \
+	agent/linux/wlan/wlan_fuzz_target_ath10k.c \
+	agent/linux/wlan/wlan_fuzz_target_ath11k.c \
+	agent/linux/wlan/wlan_fuzz_target_ath12k.c \
+	agent/linux/wlan/wlan_fuzz_target_mt76.c \
+	agent/linux/wlan/wlan_fuzz_target_brcmfmac.c \
 	agent/spi/spi_util.c \
 	agent/spi/spi_cmd.c \
 	agent/nand/nand_util.c \
@@ -1363,6 +1383,7 @@ $(AGENT_UNIT_TEST_BIN): $(AGENT_UNIT_TEST_SRC) $(AGENT_UNIT_TEST_DEPS) $(TPM2_UN
 			agent/linux/linux_kernel_module_util.c \
 			agent/linux/linux_kernel_buildinfo_util.c \
 			agent/linux/linux_physmem_util.c \
+			agent/linux/linux_wlan_util.c \
 			agent/spi/spi_util.c \
 			agent/nand/nand_util.c \
 			agent/emmc/emmc_util.c \
