@@ -8,11 +8,13 @@
  * payload) replayable with --replay.
  */
 #include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <time.h>
+#include <unistd.h>
 
 #include "wlan_fuzz.h"
 
@@ -35,7 +37,7 @@ struct stored_case {
 
 struct fuzz_ctx {
 	struct target *t;
-	const struct fuzz_opts *o;
+	struct fuzz_opts o;	/* copied by value; caller's opts may be on its stack */
 	struct stored_case window[WINDOW_MAX];
 	int nwindow;
 	struct stored_case history[WINDOW_MAX * HISTORY_MULT];
@@ -78,15 +80,19 @@ static void save_crash(struct fuzz_ctx *fc, const struct stored_case *seq,
 {
 	char path[512];
 	FILE *f;
-	int i, j;
+	int i, j, fd;
 
 	fc->crashes++;
 	snprintf(path, sizeof(path), "%s/crash_%04ld_%s.txt",
-		 fc->o->out_dir, fc->crashes, tag);
-	f = fopen(path, "w");
-	if (!f) {
+		 fc->o.out_dir, fc->crashes, tag);
+	/* Create 0600, not fopen()'s world-writable 0666: crash files can hold
+	 * captured firmware state and should not be readable/writable by all. */
+	fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+	if (fd < 0 || !(f = fdopen(fd, "w"))) {
 		fprintf(stderr, "[!] cannot write %s: %s\n", path,
 			strerror(errno));
+		if (fd >= 0)
+			close(fd);
 		return;
 	}
 	fprintf(f, "# target=%s cases=%d\n", fc->t->name, n);
@@ -156,7 +162,7 @@ static void triage(struct fuzz_ctx *fc)
 
 static void roll_history(struct fuzz_ctx *fc)
 {
-	int cap = fc->o->probe_every * HISTORY_MULT;
+	int cap = fc->o.probe_every * HISTORY_MULT;
 	int excess;
 
 	if (cap > WINDOW_MAX * HISTORY_MULT)
@@ -206,9 +212,10 @@ static int replay_file(struct fuzz_ctx *fc, const char *path)
 		if (seq[n].len > CASE_MAX_BYTES)
 			seq[n].len = CASE_MAX_BYTES;
 		for (j = 0; j < seq[n].len; j++) {
-			unsigned int b;
+			unsigned int b = 0;
 
-			sscanf(hex + 2 * j, "%2x", &b);
+			if (sscanf(hex + 2 * j, "%2x", &b) != 1)
+				b = 0;
 			seq[n].payload[j] = (uint8_t)b;
 		}
 		snprintf(seq[n].note, sizeof(seq[n].note), "%s", note);
@@ -232,7 +239,7 @@ int wlan_fuzz_run(struct target *t, const struct fuzz_opts *o)
 	if (!fc)
 		return 1;
 	fc->t = t;
-	fc->o = o;
+	fc->o = *o;
 	if (probe_every > WINDOW_MAX)
 		probe_every = WINDOW_MAX;
 
@@ -431,9 +438,10 @@ int wlan_fuzz_show(struct target *t, const char *path)
 		if (plen > CASE_MAX_BYTES)
 			plen = CASE_MAX_BYTES;
 		for (j = 0; j < plen; j++) {
-			unsigned int b;
+			unsigned int b = 0;
 
-			sscanf(hex + 2 * j, "%2x", &b);
+			if (sscanf(hex + 2 * j, "%2x", &b) != 1)
+				b = 0;
 			pl[j] = (uint8_t)b;
 		}
 		printf("\ncase %d: %s (%d bytes)\n", ++caseno, name, plen);

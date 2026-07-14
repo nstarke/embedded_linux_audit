@@ -33,6 +33,11 @@ int ela_parse_u32(const char *text, uint32_t *value)
 
 	if (!text || !*text || !value)
 		return -1;
+	/* strtoul silently negates a leading '-' (e.g. "-1" -> ULONG_MAX);
+	 * reject it explicitly, since the `> UINT32_MAX` guard below cannot
+	 * catch the wrap where unsigned long is itself 32 bits (ILP32). */
+	if (text[0] == '-')
+		return -1;
 
 	errno = 0;
 	parsed = strtoul(text, &end, 0);
