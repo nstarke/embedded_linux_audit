@@ -27,6 +27,7 @@
 
 | Subcommand | Description |
 |---|---|
+| `linux audit` | Run native Linux posture rules with stable IDs, severities, evidence, remediation, profiles, and structured summaries |
 | `linux dmesg` | Capture the kernel ring buffer; `dmesg watch` for continuous streaming |
 | `linux execute-command` | Run an arbitrary shell command and collect output |
 | `linux list-files` | Enumerate files under a path (optionally recursive) |

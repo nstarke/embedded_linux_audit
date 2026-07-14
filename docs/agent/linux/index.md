@@ -2,6 +2,8 @@
 
 Documents in this directory:
 
+- [`embedded_linux_audit linux audit`](audit.md)
+- [Linux audit engine rule format](audit-engine.md)
 - [`embedded_linux_audit linux dmesg`](dmesg.md)
 - [`embedded_linux_audit linux download-file`](download-file.md)
 - [`embedded_linux_audit linux execute-command`](execute-command.md)

@@ -63,6 +63,10 @@ This checklist is intended to guide a manual security assessment of an embedded 
 
 ### Kernel configuration and boot
 
+- [ ] Run the native Linux posture rules and review all failed or unknown findings
+  ```
+  linux audit --profile hardened
+  ```
 - [ ] Capture the kernel ring buffer and review for security-relevant messages
   ```
   linux dmesg

@@ -333,8 +333,12 @@ ZLIB_EXTRA_CFLAGS :=
 LIBUBOOTENV_EXTRA_CFLAGS := -I$(abspath compat) -I$(abspath $(ZLIB_DIR)) -I$(abspath $(ZLIB_BUILD)) -Wno-switch
 JSONC_DIR     := third_party/json-c
 JSONC_BUILD   := $(JSONC_DIR)/build-$(CC_TAG)
-JSONC_LIB     := $(JSONC_BUILD)/libjson-c.a
-JSONC_CFLAGS  := -Ithird_party -I$(JSONC_DIR) -I$(JSONC_BUILD)
+# json-c only provides the conventional include/json-c/ header layout (and the
+# generated json.h at all) at install time, so stage an install tree inside the
+# build dir and compile/link against that.
+JSONC_INSTALL := $(JSONC_BUILD)/install
+JSONC_LIB     := $(JSONC_INSTALL)/lib/libjson-c.a
+JSONC_CFLAGS  := -I$(JSONC_INSTALL)/include
 LIBXML2_DIR   := third_party/libxml2
 LIBXML2_BUILD := $(LIBXML2_DIR)/build-$(CC_TAG)
 LIBXML2_LIB   := $(LIBXML2_BUILD)/libxml2.a
@@ -431,6 +435,10 @@ NCURSES_LIB   := $(NCURSES_LIB_DIR)/libncurses.a
 NCURSES_TINFO_LIB := $(NCURSES_LIB_DIR)/libtinfo.a
 READLINE_DIR  := third_party/readline
 READLINE_BUILD_STAMP := $(READLINE_DIR)/.ela-build-$(CC_TAG)
+# readline's source tree keeps headers at its top level; the conventional
+# readline/ include layout only exists after install-headers, so stage it
+# locally (readline configures/builds in-tree, hence a single staging dir).
+READLINE_INSTALL := $(READLINE_DIR)/.ela-install
 READLINE_LIB  := $(READLINE_DIR)/libreadline.a
 READLINE_HISTORY_LIB := $(READLINE_DIR)/libhistory.a
 READLINE_BUILD_CFLAGS ?= -O2 -Wno-incompatible-pointer-types
@@ -495,6 +503,7 @@ AGENT_UNIT_TEST_SRC := \
 	tests/unit/agent/test_uboot_env_record_util.c \
 	tests/unit/agent/test_uboot_audit_util.c \
 	tests/unit/agent/test_linux_dmesg_util.c \
+	tests/unit/agent/test_linux_audit_util.c \
 	tests/unit/agent/test_http_ws_policy_util.c \
 	tests/unit/agent/test_uboot_security_audit_util.c \
 	tests/unit/agent/test_uboot_env_format_util.c \
@@ -589,6 +598,7 @@ AGENT_UNIT_TEST_DEPS := \
 	agent/util/transfer_parse_util.c \
 	agent/transfer/transfer_cmd_util.c \
 	agent/linux/linux_dmesg_util.c \
+	agent/linux/linux_audit_util.c \
 	agent/linux/remote_copy_cmd_util.c \
 	agent/linux/linux_grep_util.c \
 	agent/linux/linux_list_files_util.c \
@@ -671,6 +681,7 @@ AGENT_UNIT_TEST_DEPS := \
 	agent/util/transfer_parse_util.h \
 	agent/transfer/transfer_cmd_util.h \
 	agent/linux/linux_dmesg_util.h \
+	agent/linux/linux_audit_util.h \
 	agent/linux/linux_download_file_util.h \
 	agent/linux/linux_grep_util.h \
 	agent/linux/linux_list_files_util.h \
@@ -765,7 +776,7 @@ endif
 endif
 
 ifeq ($(ELA_USE_READLINE),1)
-CFLAGS += -DELA_HAS_READLINE -I$(READLINE_DIR)
+CFLAGS += -DELA_HAS_READLINE -I$(READLINE_INSTALL)/include
 LDLIBS += $(READLINE_LIB) $(READLINE_HISTORY_LIB) $(NCURSES_LIB) $(NCURSES_TINFO_LIB)
 READLINE_DEPS := $(NCURSES_BUILD_STAMP) $(READLINE_BUILD_STAMP)
 else
@@ -871,6 +882,15 @@ SRC := \
 	agent/linux/linux_dmesg_cmd.c \
 	agent/linux/linux_dmesg_util.c \
 	agent/linux/linux_dmesg_watch_cmd.c \
+	agent/linux/linux_audit_cmd.c \
+	agent/linux/linux_audit_util.c \
+	agent/linux/linux_filesystem_audit_cmd.c \
+	agent/linux/linux_persistence_audit_cmd.c \
+	agent/linux/linux_identity_audit_cmd.c \
+	agent/linux/linux_network_audit_cmd.c \
+	agent/linux/linux_integrity_audit_cmd.c \
+	agent/linux/linux_secrets_audit_cmd.c \
+	agent/linux/linux_hardware_audit_cmd.c \
 	agent/linux/linux_download_file_cmd.c \
 	agent/linux/linux_download_file_util.c \
 	agent/linux/linux_execute_command_cmd.c \
@@ -1050,8 +1070,9 @@ $(TARGET): | check-zig
 
 $(JSONC_LIB):
 	rm -rf $(JSONC_BUILD)
-	cmake -S $(JSONC_DIR) -B $(JSONC_BUILD) $(JSONC_CMAKE_ARGS) -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DBUILD_STATIC_LIBS=ON -DBUILD_TESTING=OFF -DBUILD_APPS=OFF -DDISABLE_EXTRA_LIBS=ON -DENABLE_RDRAND=OFF -DENABLE_THREADING=OFF -DDISABLE_JSON_POINTER=ON -DDISABLE_THREAD_LOCAL_STORAGE=ON
+	cmake -S $(JSONC_DIR) -B $(JSONC_BUILD) $(JSONC_CMAKE_ARGS) -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DBUILD_STATIC_LIBS=ON -DBUILD_TESTING=OFF -DBUILD_APPS=OFF -DDISABLE_EXTRA_LIBS=ON -DENABLE_RDRAND=OFF -DENABLE_THREADING=OFF -DDISABLE_JSON_POINTER=ON -DDISABLE_THREAD_LOCAL_STORAGE=ON -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_INSTALL_PREFIX=$(abspath $(JSONC_INSTALL))
 	cmake --build $(JSONC_BUILD) --parallel $(JOBS) --target json-c
+	cmake --install $(JSONC_BUILD)
 
 $(LIBXML2_LIB):
 	rm -rf $(LIBXML2_BUILD)
@@ -1241,6 +1262,8 @@ $(READLINE_BUILD_STAMP):
 	cd $(READLINE_DIR) && $(MAKE) distclean >/dev/null 2>&1 || true
 	cd $(READLINE_DIR) && bash_cv_termcap_lib=libtermcap ac_cv_type_signal=void bash_cv_void_sighandler=yes ./configure --disable-shared --enable-static CC='$(CC) -std=gnu89' CFLAGS='$(READLINE_BUILD_CFLAGS)' LDFLAGS='-L$(abspath $(NCURSES_LIB_DIR))'
 	$(MAKE) -C $(READLINE_DIR) -j$(JOBS) libreadline.a libhistory.a
+	rm -rf $(READLINE_INSTALL)
+	$(MAKE) -C $(READLINE_DIR) install-headers prefix=$(abspath $(READLINE_INSTALL))
 	touch $@
 
 TARGET_DEPS := $(SRC) $(ZLIB_LIB) $(LIBUBOOTENV_LIB) $(LIBEFIVAR_BUILD_STAMP) $(LIBEFIVAR_LINK_LIB) $(JSONC_LIB) $(LIBXML2_LIB) $(CURL_LIB) $(LIBSSH_LIB) $(LIBPCAP_LIB) $(OPENSSL_SSL_LIB) $(OPENSSL_LIB) $(READLINE_DEPS)
@@ -1263,7 +1286,7 @@ $(TARGET): $(TARGET_DEPS)
 static: all
 
 $(AGENT_UNIT_TEST_BIN): $(AGENT_UNIT_TEST_SRC) $(AGENT_UNIT_TEST_DEPS) $(TPM2_UNIT_DEPS) $(JSONC_LIB) | $(GENERATED_DIR)
-	$(UNIT_TEST_CC) $(UNIT_TEST_CFLAGS) $(TPM2_UNIT_CFLAGS) -I. -Iagent -Ithird_party -Ithird_party/libcsv -I$(JSONC_DIR) -I$(JSONC_BUILD) \
+	$(UNIT_TEST_CC) $(UNIT_TEST_CFLAGS) $(TPM2_UNIT_CFLAGS) -I. -Iagent -Ithird_party -Ithird_party/libcsv $(JSONC_CFLAGS) \
 		-o $@ \
 		$(AGENT_UNIT_TEST_SRC) \
 		third_party/libcsv/libcsv.c \
@@ -1292,6 +1315,7 @@ $(AGENT_UNIT_TEST_BIN): $(AGENT_UNIT_TEST_SRC) $(AGENT_UNIT_TEST_DEPS) $(TPM2_UN
 			agent/util/transfer_parse_util.c \
 			agent/transfer/transfer_cmd_util.c \
 			agent/linux/linux_dmesg_util.c \
+			agent/linux/linux_audit_util.c \
 			agent/linux/remote_copy_cmd_util.c \
 			agent/linux/linux_grep_util.c \
 			agent/linux/linux_list_files_util.c \
@@ -1402,6 +1426,7 @@ clean:
 	rm -f $(LIBEFIVAR_DIR)/.ela-build-*
 	rm -f $(NCURSES_DIR)/.ela-build-*
 	rm -f $(READLINE_DIR)/.ela-build-*
+	rm -rf $(READLINE_INSTALL)
 	rm -f generated/libefivar-link-*.a
 	rm -rf generated/libefivar-repack-*
 	rm -rf $(JSONC_DIR)/build*

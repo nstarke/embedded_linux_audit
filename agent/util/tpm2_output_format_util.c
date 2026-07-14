@@ -4,7 +4,7 @@
 
 #include "../embedded_linux_audit_cmd.h"
 
-#include <json.h>
+#include <json-c/json.h>
 #include <string.h>
 
 int ela_tpm2_is_valid_output_format(const char *format)

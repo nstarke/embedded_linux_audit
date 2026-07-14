@@ -9,12 +9,19 @@ name: "ELA CodeQL config (C agent)"
 # Under this threat model the operator is trusted and the agent runs with their
 # authority, so CodeQL's path-injection and system-data-exposure queries fire on
 # the tool's intended core behavior — they are false positives here and would
-# otherwise drown out genuine findings. Exclude just those two query IDs; every
-# other security-and-quality query stays active. This config is applied ONLY to
-# the C/C++ analysis (see .github/workflows/codeql.yml); the network-facing
-# JavaScript API is analyzed without it and keeps full coverage.
+# otherwise drown out genuine findings. The same applies to
+# user-controlled-bypass ("authentication bypass by spoofing"): the audit
+# subcommands exist to read untrusted target files (init scripts, passwd,
+# mount tables) and branch on their contents to produce findings — no
+# authentication decision is ever derived from them. Exclude just those three
+# query IDs; every other security-and-quality query stays active. This config
+# is applied ONLY to the C/C++ analysis (see .github/workflows/codeql.yml);
+# the network-facing JavaScript API is analyzed without it and keeps full
+# coverage.
 query-filters:
   - exclude:
       id: cpp/path-injection
   - exclude:
       id: cpp/system-data-exposure
+  - exclude:
+      id: cpp/user-controlled-bypass

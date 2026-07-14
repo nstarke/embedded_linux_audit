@@ -12,6 +12,7 @@ const VALID_UPLOAD_TYPES = new Set([
   'file-list',
   'grep',
   'kernel-config',
+  'linux-audit',
   'log',
   'logs',
   'module-buildinfo',
