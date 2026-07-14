@@ -27,6 +27,17 @@ run_exact_case "linux wlan fuzz unknown target" 2 "$BIN" linux wlan fuzz --targe
 run_exact_case "linux wlan fuzz extra arg" 2 "$BIN" linux wlan fuzz --target ath9k-htc extra
 run_exact_case "linux wlan fuzz bad probe-every" 2 "$BIN" linux wlan fuzz --target ath9k-htc --probe-every 0
 
+# usb-generic needs a VID:PID for a hardware run; a malformed one is rejected.
+# Both fail before touching hardware, so they are safe on any host.
+run_exact_case "linux wlan fuzz usb-generic missing --usb-id" 2 "$BIN" linux wlan fuzz --target usb-generic
+run_exact_case "linux wlan fuzz usb-generic bad --usb-id" 2 "$BIN" linux wlan fuzz --target usb-generic --usb-id nothex
+# --show decodes offline, so usb-generic needs no --usb-id there.
+USB_CRASH="$(mktemp /tmp/ela-wlan-usbg.XXXXXX)"
+printf '# target=usb-generic cases=1\n' > "$USB_CRASH"
+printf 'VENDOR_WRITE 40050001000010 # data=len:1\n' >> "$USB_CRASH"
+run_exact_case "linux wlan fuzz --show usb-generic (no --usb-id)" 0 "$BIN" linux wlan fuzz --show "$USB_CRASH"
+rm -f "$USB_CRASH"
+
 # The offline engine self-test exercises the mutator, renderer, and triage
 # loop with a mock transport -- no hardware required, must pass everywhere.
 run_exact_case "linux wlan fuzz --selftest" 0 "$BIN" linux wlan fuzz --selftest

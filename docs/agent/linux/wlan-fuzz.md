@@ -30,11 +30,15 @@ from the Linux driver headers).
 | `ath12k` | Qualcomm WCN7850/QCN9274 Wi-Fi 7 (WMI-TLV) | PCIe via the `ela_kmod` kernel shim |
 | `mt76` | MediaTek mt7615/mt7915/mt7921/mt7996 (connac MCU) | PCIe/SDIO via the `ela_kmod` kernel shim |
 | `brcmfmac` | Broadcom BCM43xx/4356/4359/4373 (BCDC ioctls) | SDIO/PCIe/USB via the `ela_kmod` kernel shim |
+| `usb-generic` | Any USB NIC by VID:PID (proprietary/unknown) | USB (raw usbfs), **blind** &mdash; no command grammar |
 
 The USB targets drive the dongle directly through usbfs and need no kernel
 module. The kernel-shim targets reach a command ring that lives in
 kernel/device memory (unreachable from userspace) by injecting through the
 in-kernel driver &mdash; see [Fuzzing a shim-backed NIC](#fuzzing-a-shim-backed-nic).
+The `usb-generic` target is the fallback for a USB NIC that maps to none of the
+class-directed targets &mdash; see
+[Blind-fuzzing a proprietary USB NIC](#blind-fuzzing-a-proprietary-usb-nic).
 
 ## Listing NICs (`wlan list`)
 
@@ -47,18 +51,40 @@ embedded_linux_audit linux wlan list
 ```
 
 ```text
-INTERFACE    PHY    DRIVER           BUS   FUZZER TARGET  TRANSPORT
-wlan0        phy0   ath11k_pci       pci   ath11k         ela_kmod shim
-wlan1        phy1   rtl8xxxu         usb   rtl8xxxu       usbfs
-wlo1         phy2   iwlwifi          pci   (unsupported)  -
+INTERFACE    PHY    DRIVER           BUS   USBID      DETECT   FUZZER TARGET  TRANSPORT
+wlan0        phy0   ath11k_pci       pci   -          phy80211 ath11k         ela_kmod shim
+wlan1        phy1   rtl8xxxu         usb   0bda:8179  phy80211 rtl8xxxu       usbfs
+wlo1         phy2   iwlwifi          pci   -          phy80211 (unsupported)  -
+wlan2        phy3   (proprietary)    usb   0e8d:7612  phy80211 (unsupported)  -
+ath0         -      qca_wmac         soc   -          name?    (unsupported)  -
 
-3 WLAN interface(s), 2 fuzzable with `linux wlan fuzz --target <name>`.
+5 WLAN interface(s) (1 name-only guess(es), no kernel wireless marker), 2 fuzzable with `linux wlan fuzz --target <name>`.
+
+1 USB NIC(s) with no class-directed target -- blind-fuzz with `--target usb-generic` (shallow coverage):
+  wlan2        linux wlan fuzz --target usb-generic --usb-id 0e8d:7612
 ```
 
-An interface is listed if it has a `phy80211`; the bound driver and bus come
-from sysfs and map to a fuzzer target. `TRANSPORT` shows how that target
-reaches the device (`usbfs` for USB dongles, `ela_kmod shim` for the PCIe/SDIO
-targets). `(unsupported)` means no target covers that driver yet.
+The `USBID` column shows the USB `VID:PID` for every NIC on the USB bus (`-` for
+PCIe/SDIO/SoC radios), so the id needed by `--target usb-generic --usb-id` is
+visible directly in the table.
+
+An interface is listed when any kernel wireless marker identifies it &mdash; a
+`phy80211` link, a `wireless/` sysfs dir, a `/proc/net/wireless` row, or
+`DEVTYPE=wlan` in its `uevent` &mdash; and, failing all of those, when its name
+matches a wireless pattern (`wlan*`, `wlp*`, `wlx*`, `wifi*`, `ath*`, `ra*`,
+`mlan*`). The `DETECT` column names the signal that matched; `name?` flags a
+name-only guess, the fallback for proprietary/vendor stacks (Aruba, some SoC
+radios) that register no cfg80211/WEXT node. The bound driver comes from the
+`device/driver` symlink, or `DRIVER=` in `device/uevent` when that symlink is
+absent; the driver and bus map to a fuzzer target. `TRANSPORT` shows how that
+target reaches the device (`usbfs` for USB dongles, `ela_kmod shim` for the
+PCIe/SDIO targets). `(unsupported)` means no target covers that driver yet.
+
+Any listed NIC on the **USB** bus with no class-directed target is still
+reachable for a blind sweep, so `wlan list` follows the table with a
+copy-pasteable `--target usb-generic --usb-id <VID:PID>` line for each (the
+VID:PID read from the parent USB device in sysfs). PCIe/SoC NICs with no target
+get no such hint &mdash; there is no userspace command transport to reach them.
 
 ## Options
 
@@ -70,6 +96,7 @@ targets). `(unsupported)` means no target covers that driver yet.
 | `--seed <N>` | `1234` | RNG seed; the same seed replays the same case stream |
 | `--out <dir>` | `crashes` | Directory for crash artifacts |
 | `--fw <path>` | &mdash; | Firmware image (target-specific; unused by most targets) |
+| `--usb-id <V:P>` | &mdash; | `usb-generic` only: target USB device by hex VID:PID (e.g. `0bda:8179`; product `*` or omitted = match any) |
 | `--replay <file>` | &mdash; | Reproduce a saved crash on hardware instead of fuzzing |
 | `--show <file>` | &mdash; | Decode a crash file into a readable command/field breakdown for triage (offline, no hardware) |
 | `--selftest` | &mdash; | Run the offline engine self-tests (no hardware) |
@@ -156,6 +183,41 @@ When ath10k firmware crashes it triggers a driver-level restart; the fuzzer
 observes the restart, minimizes the responsible sequence, saves it, waits for
 the driver to re-initialize (which re-captures the context automatically), and
 continues.
+
+## Blind-fuzzing a proprietary USB NIC
+
+When `wlan list` shows a USB interface whose driver maps to no class-directed
+target &mdash; a proprietary or simply not-yet-modeled dongle &mdash; the
+`usb-generic` target can still exercise it. Take the VID:PID from the hint
+`wlan list` prints (or from `lsusb`) and pass it with `--usb-id`:
+
+```sh
+sudo ./embedded_linux_audit linux wlan fuzz --target usb-generic --usb-id 0e8d:7612
+```
+
+This target has **no firmware command grammar**. Rather than mutating known
+command fields, it structurally fuzzes the USB transport itself &mdash; the
+`bRequest`/`wValue`/`wIndex` and payload length of vendor control transfers, and
+bulk-OUT writes to data endpoints. Coverage is therefore far shallower than a
+class-directed target: it will not know the device's command framing, so most
+traffic is rejected at the transport layer. It is a first-look tool for hardware
+the fuzzer has no model of, not a substitute for a real target.
+
+Because a blind sweep provokes STALLs and endpoint errors constantly, those are
+**not** treated as firmware death. Liveness is judged out-of-band by a standard
+`GET_DESCRIPTOR` probe on endpoint 0, which a healthy device always answers; a
+device that stops answering (or vanishes from the bus) is the crash signal, and
+recovery waits for it to re-enumerate exactly as the other USB targets do.
+
+Crash files record `target=usb-generic`, so `--replay` reproduces them &mdash;
+but replay still needs `--usb-id` (the VID:PID is not stored in the crash file).
+`--show` decodes a `usb-generic` crash offline without a device or `--usb-id`.
+
+**Scope:** USB only. A proprietary **PCIe or SoC** radio exposes no userspace
+command transport, and its driver's internal symbols are unknown to the
+`ela_kmod` shim (which hooks named send functions), so there is no way to reach
+its firmware command interface blindly. Those NICs get no `usb-generic` hint in
+`wlan list`.
 
 ## How results are reported
 

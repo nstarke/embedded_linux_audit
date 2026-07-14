@@ -937,6 +937,7 @@ SRC := \
 	agent/linux/wlan/wlan_fuzz_target_mt7601u.c \
 	agent/linux/wlan/wlan_fuzz_target_carl9170.c \
 	agent/linux/wlan/wlan_fuzz_target_rtl8xxxu.c \
+	agent/linux/wlan/wlan_fuzz_target_usb_generic.c \
 	agent/linux/wlan/wlan_fuzz_kmod.c \
 	agent/linux/wlan/wlan_fuzz_target_ath10k.c \
 	agent/linux/wlan/wlan_fuzz_target_ath11k.c \
