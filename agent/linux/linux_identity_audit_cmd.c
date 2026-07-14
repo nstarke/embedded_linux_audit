@@ -80,6 +80,8 @@ static void accounts(struct id_ctx *c)
 			"Run the audit with access to the target filesystem.");
 		return;
 	}
+	/* Pass 1: /etc/passwd — duplicate names, extra UID 0 entries, and
+	 * service accounts left with interactive shells. */
 	while (fgets(line, sizeof(line), fp)) {
 		char *save = NULL, *name = strtok_r(line, ":", &save), *pw = strtok_r(NULL, ":", &save),
 		     *us = strtok_r(NULL, ":", &save), *shell;
@@ -121,6 +123,8 @@ static void accounts(struct id_ctx *c)
 		}
 	}
 	fclose(fp);
+	/* Pass 2: /etc/shadow — empty password fields and lax aging policy.
+	 * Hash values are parsed but never copied into findings. */
 	if (!(fp = open_rel(c, "/etc/shadow", p, sizeof(p)))) {
 		finding(c, "ELA-ID-900", "Identity inspection", "low", "unknown",
 			"unable to read /etc/shadow (hashes are never emitted)",
@@ -227,41 +231,45 @@ static void keys_dir(struct id_ctx *c, const char *rel, unsigned depth)
 		if (!strcmp(de->d_name, ".") || !strcmp(de->d_name, ".."))
 			continue;
 		snprintf(child, sizeof(child), "%s/%s", rel, de->d_name);
-		if (!fullpath(c, child, p, sizeof(p)) || lstat(p, &st))
+		if (!fullpath(c, child, p, sizeof(p)))
+			continue;
+		if (!strcmp(de->d_name, "authorized_keys")) {
+			/* Opened with no prior path check: O_NOFOLLOW refuses
+			 * symlinks and the fstat on the descriptor is the sole
+			 * regular-file/mtime source, so the file inspected is
+			 * exactly the file read (no check-to-use race in
+			 * attacker-writable home dirs). */
+			struct stat kst;
+			char keyline[2048];
+			int fd = open(p, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+			FILE *keys = fd >= 0 ? fdopen(fd, "r") : NULL;
+			if (fd >= 0 && !keys)
+				close(fd);
+			if (keys && fstat(fd, &kst) == 0 && S_ISREG(kst.st_mode)) {
+				while (fgets(keyline, sizeof(keyline), keys)) {
+					if (keyline[0] != '#' && !strstr(keyline, "from=") && !strstr(keyline, "command=") &&
+						!strstr(keyline, "restrict") && !strstr(keyline, "no-pty"))
+						finding(c, "ELA-ID-014", "Unrestricted authorized key", "medium", "fail", child,
+							"Restrict authorized keys with from=, command=, restrict, and no-* options where appropriate.");
+				}
+				if (!c->quick && time(NULL) - kst.st_mtime > 180 * 24 * 3600) {
+					finding(c, "ELA-ID-004", "Stale authorized key", "medium", "fail", child,
+						"Review and remove unused authorized keys regularly.");
+				}
+			}
+			if (keys)
+				fclose(keys);
+			continue;
+		}
+		if (lstat(p, &st))
 			continue;
 		if (S_ISDIR(st.st_mode) && depth == 0)
 			keys_dir(c, child, depth + 1);
-		else if (S_ISREG(st.st_mode)) {
-			if (!strcmp(de->d_name, "authorized_keys")) {
-				/* Open before stat'ing and refuse symlinks so the file we
-				 * read is the same one the mtime check sees (avoids a
-				 * check-to-use race in attacker-writable home dirs). */
-				struct stat kst;
-				char keyline[2048];
-				int fd = open(p, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
-				FILE *keys = fd >= 0 ? fdopen(fd, "r") : NULL;
-				if (fd >= 0 && !keys)
-					close(fd);
-				if (keys && fstat(fd, &kst) == 0 && S_ISREG(kst.st_mode)) {
-					while (fgets(keyline, sizeof(keyline), keys)) {
-						if (keyline[0] != '#' && !strstr(keyline, "from=") && !strstr(keyline, "command=") &&
-							!strstr(keyline, "restrict") && !strstr(keyline, "no-pty"))
-							finding(c, "ELA-ID-014", "Unrestricted authorized key", "medium", "fail", child,
-								"Restrict authorized keys with from=, command=, restrict, and no-* options where appropriate.");
-					}
-					if (!c->quick && time(NULL) - kst.st_mtime > 180 * 24 * 3600) {
-						finding(c, "ELA-ID-004", "Stale authorized key", "medium", "fail", child,
-							"Review and remove unused authorized keys regularly.");
-					}
-				}
-				if (keys)
-					fclose(keys);
-			} else if (!strncmp(de->d_name, "id_", 3) && (st.st_mode & 0077)) {
-				char e[512];
-				snprintf(e, sizeof(e), "private key %s mode=%04o", child, st.st_mode & 0777);
-				finding(c, "ELA-ID-007", "Private key permissions", "high", "fail", e,
-					"Set private keys to mode 0600 or stricter.");
-			}
+		else if (S_ISREG(st.st_mode) && !strncmp(de->d_name, "id_", 3) && (st.st_mode & 0077)) {
+			char e[512];
+			snprintf(e, sizeof(e), "private key %s mode=%04o", child, st.st_mode & 0777);
+			finding(c, "ELA-ID-007", "Private key permissions", "high", "fail", e,
+				"Set private keys to mode 0600 or stricter.");
 		}
 	}
 	closedir(d);

@@ -259,6 +259,8 @@ static int emit_remote(const struct output_buffer *out, enum audit_output_format
 int linux_audit_main(int argc, char **argv)
 {
 	if (argc > 1 && !strcmp(argv[1], "all")) {
+		/* Fan-out mode: run the kernel rule engine, then every subsystem
+		 * auditor against the same root, and report the worst exit status. */
 		const char *root = "/";
 		bool quick = false;
 		int i, rc = 0, result;
@@ -291,6 +293,7 @@ int linux_audit_main(int argc, char **argv)
 		}
 		return rc;
 	}
+	/* A named subsystem delegates wholesale to that auditor's own main. */
 	if (argc > 1 && !strcmp(argv[1], "filesystem"))
 		return linux_filesystem_audit_main(argc - 1, argv + 1);
 	if (argc > 1 && !strcmp(argv[1], "persistence"))
@@ -377,6 +380,8 @@ int linux_audit_main(int argc, char **argv)
 				&out, "record,rule_id,title,status,severity,category,profile,evidence,remediation\n");
 	}
 
+	/* Evaluate every rule in the selected profile (or just --rule),
+	 * tallying per-status counts for the trailing summary record. */
 	for (i = 0; i < ela_linux_audit_rule_count; i++) {
 		const struct ela_linux_audit_rule *rule = &ela_linux_audit_rules[i];
 		struct ela_linux_audit_result result;
@@ -416,6 +421,7 @@ int linux_audit_main(int argc, char **argv)
 	if (out.len && fwrite(out.data, 1, out.len, stdout) != out.len)
 		goto output_error;
 	rc = emit_remote(&out, format);
+	/* --no-fail keeps exit 0 for scripted runs even with failed findings. */
 	if (!rc && !list_rules && fail && !no_fail)
 		rc = 1;
 	free(out.data);

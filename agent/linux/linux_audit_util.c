@@ -606,9 +606,12 @@ static int run_special_rule(const struct ela_linux_audit_rule *rule, enum ela_li
 	int n;
 
 	(void)profile;
+	/* Kernel config rules resolve against whichever config source the
+	 * target exposes (/proc/config.gz, /boot/config-*, ...). */
 	if (rule->check_type == ELA_LINUX_AUDIT_CHECK_CONFIG_OPTION)
 		return run_config_option(rule, root, result);
 	if (rule->check_type == ELA_LINUX_AUDIT_CHECK_DEVICE_MODE) {
+		/* Device rules check the node's permissions, not its contents. */
 		struct stat st;
 		if (build_probe_path(root, rule->path, path, sizeof(path)) != 0)
 			return -1;
@@ -632,6 +635,8 @@ static int run_special_rule(const struct ela_linux_audit_rule *rule, enum ela_li
 		return 0;
 	}
 
+	/* The remaining check types each interpret the probe file's text
+	 * their own way (forbidden cmdline tokens, lockdown state, ...). */
 	switch (rule->check_type) {
 	case ELA_LINUX_AUDIT_CHECK_CMDLINE_FORBIDDEN:
 		result->status =
