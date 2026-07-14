@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: MIT - Copyright (c) 2026 Nicholas Starke
 #
 # Compile the kmod/ kernel module against an upstream kernel tree matching a
-# target device's kernel, using plain kernel headers (modules_prepare) — no
-# buildroot, no full kernel build.
+# target device's kernel. The tree is configured, then built to vmlinux so it
+# yields a Module.symvers for modpost; no buildroot, no target image.
 #
 # Inputs (env):
 #   ELA_KMOD_KERNEL_VERSION  upstream base version, e.g. "6.1.0" or "3.12.19" (required)
@@ -17,11 +17,12 @@
 #
 # Cache layout:
 #   $CACHE/tarballs/linux-<ver>.tar.xz
-#   $CACHE/trees/<ver>-<arch>-<confighash>/linux-<ver>/   (configured, modules_prepare'd)
+#   $CACHE/trees/<ver>-<arch>-<confighash>/linux-<ver>/   (configured, vmlinux-built)
 #
-# The prepared tree is the expensive artifact (minutes); the module compile
-# afterward is seconds. Trees are keyed by (version, arch, config hash) so a
-# device with a different config never reuses a mismatched tree.
+# The prepared tree is the expensive artifact (a vmlinux build — minutes to tens
+# of minutes and up to a few GB per tree); the module compile afterward is
+# seconds. Trees are keyed by (version, arch, config hash) so a device with a
+# different config never reuses a mismatched tree.
 
 set -eu
 
@@ -37,6 +38,9 @@ OUT_DIR="${ELA_KMOD_OUT_DIR:-}"
 CACHE_DIR="${ELA_KMOD_CACHE_DIR:-/var/cache/ela-kmod}"
 REPO_ROOT="${ELA_BUILD_REPO_ROOT:-/src}"
 SRC_DIR="${ELA_KMOD_SRC_DIR:-$REPO_ROOT/kmod}"
+# Parallelism for the compile-heavy steps (modules_prepare, the vmlinux build
+# that produces Module.symvers, and the module link). Config steps stay serial.
+JOBS="$(nproc 2>/dev/null || echo 1)"
 # Vermagic-derived defconfig flags (set by runModuleBuild when the device has a
 # vermagic; absent otherwise). Default to empty so `set -u` doesn't abort on the
 # no-vermagic / non-ARM paths — empty means "leave the defconfig default".
@@ -159,7 +163,12 @@ ela_oldconfig() {
 }
 
 # --- 3. Unpack + configure + modules_prepare (cached) ----------------------
-if [ ! -f "$PREPARED_STAMP" ]; then
+# A prepared tree is only reusable if it also carries Module.symvers: trees
+# prepared by an older revision of this script stopped at modules_prepare and
+# have no symbol table, so the out-of-tree modpost below would fail against
+# them. Requiring the file here self-invalidates those stale trees (for both
+# the device-config and defconfig paths) without a manual cache wipe.
+if [ ! -f "$PREPARED_STAMP" ] || [ ! -f "$TREE/Module.symvers" ]; then
     rm -rf "$TREE_PARENT"
     mkdir -p "$TREE_PARENT"
     log "unpacking linux-$KERNEL_VERSION"
@@ -352,17 +361,51 @@ if [ ! -f "$PREPARED_STAMP" ]; then
         ela_oldconfig
     fi
 
+    # Neutralize build-time-only options before the vmlinux build below (both
+    # the device-config and defconfig paths reach here). We build vmlinux to
+    # generate Module.symvers — modpost needs it to resolve the module's vmlinux
+    # imports, and modules_prepare alone never creates it. A vmlinux link, unlike
+    # modules_prepare, trips over options that need tooling or key material we
+    # don't have: kernel BTF wants pahole, full DWARF debug info balloons the
+    # tree to multiple GB, module signing wants keys, and an embedded initramfs
+    # wants a source path. None of these are in the module ABI or the vermagic
+    # string, so force them off. MODVERSIONS is deliberately left as the device
+    # set it — it IS part of vermagic, and its symbol CRCs come from this build.
+    cfg -d DEBUG_INFO_BTF -e DEBUG_INFO_NONE \
+        -d MODULE_SIG -d MODULE_SIG_FORCE -d MODULE_SIG_ALL \
+        -d INITRAMFS_SOURCE
+    ela_oldconfig
+
     grep -q '^CONFIG_MODULES=y' "$TREE/.config" \
         || die "target kernel config does not enable loadable modules"
 
     log "running modules_prepare (this is the slow step on a cold cache)"
-    kmake modules_prepare
+    kmake -j"$JOBS" modules_prepare
     # PowerPC modules link against arch/powerpc/lib/crtsavres.o (GCC register
     # save/restore stubs). modules_prepare doesn't build it, so the module link
     # fails with "cannot find crtsavres.o" — build it explicitly.
     if [ "$ARCH" = powerpc ]; then
-        kmake arch/powerpc/lib/crtsavres.o
+        kmake -j"$JOBS" arch/powerpc/lib/crtsavres.o
     fi
+
+    # Build vmlinux to produce the kernel's exported-symbol table (name + CRC).
+    # Without it, modpost cannot resolve the module's imports (misc_register,
+    # _printk, kmalloc, ...) and on kernels >= ~5.19 turns them into hard
+    # "ERROR: modpost: <sym> undefined!" failures instead of warnings. Kbuild
+    # >= ~5.8 writes the built-in exports to vmlinux.symvers and only names the
+    # file Module.symvers once in-tree modules are built; the out-of-tree module
+    # build reads $(objtree)/Module.symvers, so seed it from vmlinux.symvers.
+    log "building vmlinux to generate Module.symvers (cold-cache only)"
+    kmake -j"$JOBS" vmlinux
+    if [ ! -f "$TREE/Module.symvers" ] && [ -f "$TREE/vmlinux.symvers" ]; then
+        cp "$TREE/vmlinux.symvers" "$TREE/Module.symvers"
+    fi
+    [ -f "$TREE/Module.symvers" ] || die "vmlinux build produced no Module.symvers"
+    # Reclaim the largest build-only artifacts. The out-of-tree module build
+    # needs Module.symvers + the generated headers + scripts/, never the linked
+    # image, so drop it and its aggregate object.
+    rm -f "$TREE/vmlinux" "$TREE/vmlinux.o" "$TREE"/.tmp_vmlinux*
+
     touch "$PREPARED_STAMP"
 else
     log "prepared tree cache hit: $TREE_KEY"
@@ -375,7 +418,7 @@ cp "$SRC_DIR"/* "$BUILD_DIR/"
 
 log "building module for $ARCH against linux-$KERNEL_VERSION"
 # KCFLAGS=-fno-pic -fno-PIE is applied by kmake() for all target compilation.
-kmake M="$BUILD_DIR" modules
+kmake -j"$JOBS" M="$BUILD_DIR" modules
 
 [ -f "$BUILD_DIR/ela_kmod.ko" ] || die "build produced no ela_kmod.ko"
 
