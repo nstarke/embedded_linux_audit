@@ -521,6 +521,23 @@ jobs:
             qemu-user-static \
             xz-utils
 
+      - name: Pin qemu-armeb 7.2 for arm32-be (avoids qemu 8.2 armeb VDSO crash)
+        if: matrix.isa == 'arm32-be'
+        run: |
+          set -euo pipefail
+          # Ubuntu's qemu-user-static 8.2 has a broken big-endian ARM VDSO:
+          # musl's clock_gettime() (e.g. reached via mkdtemp -> __randname)
+          # jumps into an invalid VDSO page and the statically-linked test
+          # binary segfaults. qemu 7.2 predates the VDSO and uses the syscall
+          # path (10.x fixed it). Pin the 7.2 static build, which is verified
+          # to run both the release and unit-test binaries correctly.
+          url="https://github.com/multiarch/qemu-user-static/releases/download/v7.2.0-1/qemu-armeb-static"
+          sha="dc7eda696889d16134666694f041ce706f7c36798a1140ffa62262f50e05da39"
+          curl -fsSL "$url" -o /tmp/qemu-armeb-static
+          echo "$sha  /tmp/qemu-armeb-static" | sha256sum -c -
+          sudo install -m 0755 /tmp/qemu-armeb-static /usr/bin/qemu-armeb-static
+          qemu-armeb-static --version | head -1
+
       - name: Download cross-build artifacts from triggering workflow
         if: ${{ github.event_name == 'workflow_run' }}
         uses: actions/download-artifact@v4

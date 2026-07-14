@@ -5,6 +5,12 @@ groups perform operations through `ela_kmod`. They do not use sysfs or open
 the underlying MTD/block/USB devices from userspace. `usb pcap` is the one
 exception: it uses the kernel usbmon capture interface through libpcap.
 
+`ela_kmod` also hosts the WLAN firmware-command injection shim used by
+[`linux wlan fuzz --target ath10k`](linux/wlan-fuzz.md) (a kprobe-based
+facility, built only when the kernel has `CONFIG_KPROBES`). Loading the module
+is the same as below; the shim is armed at runtime by the fuzzer and is
+otherwise inert.
+
 ## Requirements
 
 Build the module against the headers for the running target kernel and load

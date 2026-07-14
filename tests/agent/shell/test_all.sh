@@ -60,6 +60,7 @@ for test_script in \
     "$SCRIPT_DIR/linux/test_linux_physmem_args.sh" \
     "$SCRIPT_DIR/test_kernel_hardware_args.sh" \
     "$SCRIPT_DIR/linux/test_linux_pcap_args.sh" \
+    "$SCRIPT_DIR/linux/test_linux_wlan_args.sh" \
     "$SCRIPT_DIR/linux/test_linux_remote_copy_args.sh" \
     "$SCRIPT_DIR/linux/test_linux_ssh_args.sh" \
     "$SCRIPT_DIR/tpm2/test_tpm2_args.sh" \

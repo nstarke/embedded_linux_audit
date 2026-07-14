@@ -49,6 +49,11 @@
 # include <linux/mmc/card.h>
 # include <linux/major.h>
 #endif
+#if IS_ENABLED(CONFIG_KPROBES)
+# include <linux/kprobes.h>
+# include <linux/skbuff.h>
+# include <linux/ptrace.h>
+#endif
 
 #include "ela_ioctl.h"
 
@@ -1648,6 +1653,361 @@ static long ela_ioctl_nand_mtd_read(unsigned long arg)
 }
 #endif
 
+/* ---- WLAN firmware-command injection shim ------------------------------- *
+ *
+ * A kprobe on the driver's firmware command-send function captures the live
+ * driver-private context from the driver's own traffic and resolves the send
+ * address; ELA_IOC_WLAN_INJECT then calls that function with an
+ * attacker-supplied command buffer. A second kprobe on the driver's
+ * firmware-restart entry counts crashes -- the fuzzer's liveness oracle.
+ * See kmod/ela_ioctl.h for the ABI and the authorized-use warning.
+ */
+#if IS_ENABLED(CONFIG_KPROBES)
+
+#define ELA_WLAN_SKB_HEADROOM 64	/* room for the WMI/HTC headers the
+					 * driver push()es onto the skb */
+
+typedef int (*ela_wmi_skb_send_t)(void *ctx, struct sk_buff *skb, u32 cmd_id);
+
+/* WMI-over-skb drivers (ath10k, ath11k) all take (ctx, skb, cmd_id): build a
+ * skb with headroom, copy the fuzzed body in, and call the captured send. */
+static int ela_wlan_inject_wmi_skb(void *ctx, void *send_fn, u32 cmd_id,
+				   const void *data, u32 len)
+{
+	struct sk_buff *skb;
+	u32 round = round_up(len, 4);
+	int ret;
+
+	skb = __dev_alloc_skb(ELA_WLAN_SKB_HEADROOM + round, GFP_KERNEL);
+	if (!skb)
+		return -ENOMEM;
+	skb_reserve(skb, ELA_WLAN_SKB_HEADROOM);
+	skb_put(skb, round);
+	memset(skb->data, 0, round);
+	if (len)
+		memcpy(skb->data, data, len);
+	ret = ((ela_wmi_skb_send_t)send_fn)(ctx, skb, cmd_id);
+	if (ret)
+		kfree_skb(skb);		/* not queued to hardware: reclaim */
+	return ret;
+}
+
+/* mt76: mt76_mcu_send_and_get_msg(dev, cmd, data, len, wait_resp, ret_skb).
+ * It allocates the skb and prepends the MCU txd itself, so we hand it the raw
+ * command body. wait_resp=false so it does not block waiting for a response. */
+typedef int (*ela_mt76_send_t)(void *dev, int cmd, const void *data, int len,
+			       bool wait_resp, void *ret_skb);
+static int ela_wlan_inject_mt76(void *ctx, void *send_fn, u32 cmd_id,
+				const void *data, u32 len)
+{
+	return ((ela_mt76_send_t)send_fn)(ctx, (int)cmd_id, data, (int)len,
+					  false, NULL);
+}
+
+/* brcmfmac: brcmf_fil_cmd_data_set(ifp, cmd, data, len) sends a BCDC firmware
+ * ioctl (set path). It copies the buffer and takes its own proto lock. */
+typedef int (*ela_brcmf_send_t)(void *ifp, u32 cmd, void *data, u32 len);
+static int ela_wlan_inject_brcmfmac(void *ctx, void *send_fn, u32 cmd_id,
+				    const void *data, u32 len)
+{
+	return ((ela_brcmf_send_t)send_fn)(ctx, cmd_id, (void *)data, len);
+}
+
+#define ELA_WLAN_MAX_RESTART_SYMS 5
+
+struct ela_wlan_driver_desc {
+	u32 id;
+	const char *name;
+	const char *send_symbol;	/* firmware command-send function */
+	/* candidate firmware-restart/crash entries; the first that resolves is
+	 * hooked for the liveness oracle. Some drivers name it per-chip. */
+	const char *restart_symbols[ELA_WLAN_MAX_RESTART_SYMS];
+	int ctx_arg;			/* send arg index holding the driver ctx */
+	int cmd_arg;			/* send arg index holding the command id */
+	int (*inject)(void *ctx, void *send_fn, u32 cmd_id,
+		      const void *data, u32 len);
+};
+
+static const struct ela_wlan_driver_desc ela_wlan_drivers[] = {
+	{
+		.id = ELA_WLAN_DRV_ATH10K,
+		.name = "ath10k",
+		.send_symbol = "ath10k_wmi_cmd_send",
+		.restart_symbols = { "ath10k_core_restart" },
+		.ctx_arg = 0, .cmd_arg = 2,
+		.inject = ela_wlan_inject_wmi_skb,
+	},
+	{
+		.id = ELA_WLAN_DRV_ATH11K,
+		.name = "ath11k",
+		.send_symbol = "ath11k_wmi_cmd_send",
+		.restart_symbols = { "ath11k_core_restart" },
+		.ctx_arg = 0, .cmd_arg = 2,
+		.inject = ela_wlan_inject_wmi_skb,
+	},
+	{
+		.id = ELA_WLAN_DRV_ATH12K,
+		.name = "ath12k",
+		.send_symbol = "ath12k_wmi_cmd_send",
+		.restart_symbols = { "ath12k_core_restart" },
+		.ctx_arg = 0, .cmd_arg = 2,
+		.inject = ela_wlan_inject_wmi_skb,
+	},
+	{
+		.id = ELA_WLAN_DRV_MT76,
+		.name = "mt76",
+		.send_symbol = "mt76_mcu_send_and_get_msg",
+		/* per-chip crash workers; whichever chip is bound resolves */
+		.restart_symbols = {
+			"mt7921_mac_reset_work", "mt7915_mac_reset_work",
+			"mt7996_mac_reset_work", "mt7615_mac_reset_work",
+		},
+		.ctx_arg = 0, .cmd_arg = 1,
+		.inject = ela_wlan_inject_mt76,
+	},
+	{
+		.id = ELA_WLAN_DRV_BRCMFMAC,
+		.name = "brcmfmac",
+		.send_symbol = "brcmf_fil_cmd_data_set",
+		.restart_symbols = { "brcmf_fw_crashed" },
+		.ctx_arg = 0, .cmd_arg = 1,
+		.inject = ela_wlan_inject_brcmfmac,
+	},
+};
+
+static DEFINE_MUTEX(ela_wlan_mutex);	/* serialises attach/detach */
+static DEFINE_SPINLOCK(ela_wlan_lock);	/* guards the fields below */
+static struct {
+	const struct ela_wlan_driver_desc *desc;
+	void *ctx;
+	void *send_fn;
+	u32 captured;
+	u32 last_cmd_id;
+	u64 send_count;
+	u64 inject_count;
+	u64 restart_count;
+} ela_wlan;
+static struct kprobe ela_wlan_kp_send;
+static struct kprobe ela_wlan_kp_restart;
+static bool ela_wlan_armed;
+static bool ela_wlan_restart_armed;	/* restart kprobe is best-effort */
+
+static int ela_wlan_send_pre(struct kprobe *p, struct pt_regs *regs)
+{
+	unsigned long flags;
+
+	spin_lock_irqsave(&ela_wlan_lock, flags);
+	if (ela_wlan.desc) {
+		ela_wlan.ctx = (void *)regs_get_kernel_argument(regs,
+					ela_wlan.desc->ctx_arg);
+		ela_wlan.send_fn = (void *)p->addr;
+		ela_wlan.last_cmd_id = (u32)regs_get_kernel_argument(regs,
+					ela_wlan.desc->cmd_arg);
+		ela_wlan.captured = 1;
+		ela_wlan.send_count++;
+	}
+	spin_unlock_irqrestore(&ela_wlan_lock, flags);
+	return 0;
+}
+
+static int ela_wlan_restart_pre(struct kprobe *p, struct pt_regs *regs)
+{
+	unsigned long flags;
+
+	(void)p;
+	(void)regs;
+	spin_lock_irqsave(&ela_wlan_lock, flags);
+	ela_wlan.restart_count++;
+	ela_wlan.captured = 0;	/* context torn down: require re-capture */
+	spin_unlock_irqrestore(&ela_wlan_lock, flags);
+	return 0;
+}
+
+/* caller holds ela_wlan_mutex */
+static void ela_wlan_teardown_locked(void)
+{
+	unsigned long flags;
+
+	if (!ela_wlan_armed)
+		return;
+	unregister_kprobe(&ela_wlan_kp_send);
+	if (ela_wlan_restart_armed) {
+		unregister_kprobe(&ela_wlan_kp_restart);
+		ela_wlan_restart_armed = false;
+	}
+	ela_wlan_armed = false;
+	spin_lock_irqsave(&ela_wlan_lock, flags);
+	memset(&ela_wlan, 0, sizeof(ela_wlan));
+	spin_unlock_irqrestore(&ela_wlan_lock, flags);
+}
+
+static void ela_wlan_shutdown(void)
+{
+	mutex_lock(&ela_wlan_mutex);
+	ela_wlan_teardown_locked();
+	mutex_unlock(&ela_wlan_mutex);
+}
+
+static const struct ela_wlan_driver_desc *ela_wlan_find(u32 id)
+{
+	size_t i;
+
+	for (i = 0; i < ARRAY_SIZE(ela_wlan_drivers); i++)
+		if (ela_wlan_drivers[i].id == id)
+			return &ela_wlan_drivers[i];
+	return NULL;
+}
+
+static long ela_ioctl_wlan_attach(unsigned long arg)
+{
+	struct ela_kmod_wlan_attach req;
+	const struct ela_wlan_driver_desc *desc;
+	unsigned long flags;
+	int ret, i;
+
+	if (copy_from_user(&req, (void __user *)arg, sizeof(req)))
+		return -EFAULT;
+	if (req.abi_version != ELA_KMOD_ABI_VERSION)
+		return -EINVAL;
+	desc = ela_wlan_find(req.driver);
+	if (!desc)
+		return -ENODEV;
+
+	mutex_lock(&ela_wlan_mutex);
+	if (ela_wlan_armed) {
+		ret = (ela_wlan.desc == desc) ? 0 : -EBUSY;
+		goto out;
+	}
+	memset(&ela_wlan_kp_send, 0, sizeof(ela_wlan_kp_send));
+	ela_wlan_kp_send.symbol_name = desc->send_symbol;
+	ela_wlan_kp_send.pre_handler = ela_wlan_send_pre;
+
+	spin_lock_irqsave(&ela_wlan_lock, flags);
+	memset(&ela_wlan, 0, sizeof(ela_wlan));
+	ela_wlan.desc = desc;
+	spin_unlock_irqrestore(&ela_wlan_lock, flags);
+
+	ret = register_kprobe(&ela_wlan_kp_send);
+	if (ret)		/* driver not loaded / symbol absent */
+		goto fail;
+
+	/* Best-effort: hook the first restart/crash symbol that resolves for
+	 * the loaded chip. Without it, injection still works but the crash
+	 * oracle (restart_count) stays at zero. */
+	ela_wlan_restart_armed = false;
+	for (i = 0; i < ELA_WLAN_MAX_RESTART_SYMS && desc->restart_symbols[i]; i++) {
+		memset(&ela_wlan_kp_restart, 0, sizeof(ela_wlan_kp_restart));
+		ela_wlan_kp_restart.symbol_name = desc->restart_symbols[i];
+		ela_wlan_kp_restart.pre_handler = ela_wlan_restart_pre;
+		if (register_kprobe(&ela_wlan_kp_restart) == 0) {
+			ela_wlan_restart_armed = true;
+			break;
+		}
+	}
+	ela_wlan_armed = true;
+	ret = 0;
+	goto out;
+fail:
+	spin_lock_irqsave(&ela_wlan_lock, flags);
+	ela_wlan.desc = NULL;
+	spin_unlock_irqrestore(&ela_wlan_lock, flags);
+out:
+	mutex_unlock(&ela_wlan_mutex);
+	return ret;
+}
+
+static long ela_ioctl_wlan_detach(unsigned long arg)
+{
+	struct ela_kmod_wlan_attach req;
+
+	if (copy_from_user(&req, (void __user *)arg, sizeof(req)))
+		return -EFAULT;
+	if (req.abi_version != ELA_KMOD_ABI_VERSION)
+		return -EINVAL;
+	ela_wlan_shutdown();
+	return 0;
+}
+
+static long ela_ioctl_wlan_status(unsigned long arg)
+{
+	struct ela_kmod_wlan_status req;
+	unsigned long flags;
+
+	if (copy_from_user(&req, (void __user *)arg, sizeof(req)))
+		return -EFAULT;
+	if (req.abi_version != ELA_KMOD_ABI_VERSION)
+		return -EINVAL;
+	memset(&req, 0, sizeof(req));
+	req.abi_version = ELA_KMOD_ABI_VERSION;
+	spin_lock_irqsave(&ela_wlan_lock, flags);
+	req.driver = ela_wlan.desc ? ela_wlan.desc->id : 0;
+	req.captured = ela_wlan.captured;
+	req.last_cmd_id = ela_wlan.last_cmd_id;
+	req.send_count = ela_wlan.send_count;
+	req.inject_count = ela_wlan.inject_count;
+	req.restart_count = ela_wlan.restart_count;
+	spin_unlock_irqrestore(&ela_wlan_lock, flags);
+	if (copy_to_user((void __user *)arg, &req, sizeof(req)))
+		return -EFAULT;
+	return 0;
+}
+
+static long ela_ioctl_wlan_inject(unsigned long arg)
+{
+	struct ela_kmod_wlan_inject req;
+	const struct ela_wlan_driver_desc *desc;
+	void *ctx, *send_fn, *kbuf;
+	unsigned long flags;
+	int ret;
+
+	if (copy_from_user(&req, (void __user *)arg, sizeof(req)))
+		return -EFAULT;
+	if (req.abi_version != ELA_KMOD_ABI_VERSION)
+		return -EINVAL;
+	if (req.len > ELA_KMOD_WLAN_MAX_CMD)
+		return -EINVAL;
+
+	kbuf = NULL;
+	if (req.len) {
+		kbuf = memdup_user((const void __user *)(uintptr_t)req.data,
+				   req.len);
+		if (IS_ERR(kbuf))
+			return PTR_ERR(kbuf);
+	}
+
+	spin_lock_irqsave(&ela_wlan_lock, flags);
+	desc = ela_wlan.desc;
+	ctx = ela_wlan.ctx;
+	send_fn = ela_wlan.send_fn;
+	if (!desc || !ela_wlan.captured || !ctx || !send_fn) {
+		spin_unlock_irqrestore(&ela_wlan_lock, flags);
+		kfree(kbuf);
+		return -EAGAIN;		/* not captured: generate driver traffic */
+	}
+	ela_wlan.inject_count++;
+	spin_unlock_irqrestore(&ela_wlan_lock, flags);
+
+	/* Call outside the lock: the driver send path may sleep on tx credits
+	 * and will re-enter our send kprobe. */
+	ret = desc->inject(ctx, send_fn, req.cmd_id, kbuf, req.len);
+	kfree(kbuf);
+
+	req.send_ret = ret;
+	if (copy_to_user((void __user *)arg, &req, sizeof(req)))
+		return -EFAULT;
+	return 0;
+}
+
+#else /* !CONFIG_KPROBES: shim needs kprobes to resolve/capture the driver */
+
+static long ela_ioctl_wlan_attach(unsigned long arg) { (void)arg; return -EOPNOTSUPP; }
+static long ela_ioctl_wlan_detach(unsigned long arg) { (void)arg; return -EOPNOTSUPP; }
+static long ela_ioctl_wlan_status(unsigned long arg) { (void)arg; return -EOPNOTSUPP; }
+static long ela_ioctl_wlan_inject(unsigned long arg) { (void)arg; return -EOPNOTSUPP; }
+static inline void ela_wlan_shutdown(void) {}
+
+#endif /* CONFIG_KPROBES */
+
 static long ela_kmod_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
 	struct ela_file_state *state = file->private_data;
@@ -1703,6 +2063,14 @@ static long ela_kmod_ioctl(struct file *file, unsigned int cmd, unsigned long ar
 		return ela_ioctl_usb_port_action(arg);
 	case ELA_IOC_USB_DESCRIPTORS:
 		return ela_ioctl_usb_descriptors(arg);
+	case ELA_IOC_WLAN_ATTACH:
+		return ela_ioctl_wlan_attach(arg);
+	case ELA_IOC_WLAN_DETACH:
+		return ela_ioctl_wlan_detach(arg);
+	case ELA_IOC_WLAN_STATUS:
+		return ela_ioctl_wlan_status(arg);
+	case ELA_IOC_WLAN_INJECT:
+		return ela_ioctl_wlan_inject(arg);
 	default:
 		return -ENOTTY;
 	}
@@ -1784,6 +2152,7 @@ static int __init ela_kmod_init(void)
 
 static void __exit ela_kmod_exit(void)
 {
+	ela_wlan_shutdown();	/* unregister any WLAN-shim kprobes */
 	misc_deregister(&ela_kmod_dev);
 #if IS_ENABLED(CONFIG_MTD)
 	unregister_mtd_user(&ela_nand_mtd_notifier);

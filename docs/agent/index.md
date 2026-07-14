@@ -41,6 +41,7 @@ This section contains documentation for the `embedded_linux_audit` agent, organi
 - [`embedded_linux_audit linux ioport`](linux/ioport.md)
 - [`embedded_linux_audit linux netstat`](linux/netstat.md)
 - [`embedded_linux_audit linux pcap`](linux/pcap.md)
+- [`embedded_linux_audit linux wlan`](linux/wlan-fuzz.md) (`list`, `fuzz`)
 - [`embedded_linux_audit linux remote-copy`](linux/remote-copy.md)
 - [`embedded_linux_audit linux gdbserver`](linux/gdbserver.md)
 - [`embedded_linux_audit linux process`](linux/process.md)

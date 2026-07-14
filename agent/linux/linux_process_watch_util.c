@@ -135,6 +135,10 @@ static int format_record(const char *record_type,
 		if (!fn)
 			return -1;
 		wn = csv_write(fn, needle_sz, needle, strlen(needle));
+		/* csv_write() writes wn bytes but does not NUL-terminate; the
+		 * "%s" uses below would otherwise read past it into
+		 * uninitialised heap (benign on LE, garbage on big-endian). */
+		fn[wn] = '\0';
 
 		if (field2_name && field2_val && field3_name && field3_val) {
 			/* record_type,needle,field1_val,field2_val,field3_val\n */

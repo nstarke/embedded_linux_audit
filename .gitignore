@@ -25,3 +25,13 @@ ela-aliases.json
 .claude
 *.o
 ref
+crashes/
+
+# kernel module build artifacts (kmod/): keep only the sources
+kmod/*.ko
+kmod/*.mod
+kmod/*.mod.c
+kmod/.*.cmd
+kmod/Module.symvers
+kmod/modules.order
+kmod/.tmp_versions/

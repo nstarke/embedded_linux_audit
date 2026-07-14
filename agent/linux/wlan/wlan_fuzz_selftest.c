@@ -1,0 +1,344 @@
+// SPDX-License-Identifier: GPL-3.0-or-later - Copyright (c) 2026 Nicholas Starke
+
+/*
+ * Offline self-tests: no hardware, no usbfs. A mock target with a planted
+ * sequence-dependent bug lets the engine be validated on any host.
+ *
+ * Checks:
+ *  1. struct render sizes match the audit-verified wire layouts
+ *  2. mutation engine generates every bug-class trigger
+ *  3. full fuzz loop finds a planted sequence-dependent crash and the
+ *     triage minimizes it to a reproducing sequence (mock transport)
+ */
+#include <dirent.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+
+#include "wlan_fuzz.h"
+
+/* ---- pull in the ath9k grammar via its target constructor ---------------- */
+
+static const struct msg *find_msg(struct target *t, const char *name)
+{
+	int i;
+
+	for (i = 0; i < t->nmsgs; i++)
+		if (!strcmp(t->msgs[i].name, name))
+			return &t->msgs[i];
+	return NULL;
+}
+
+struct size_expect {
+	const char *name;
+	int want;
+};
+
+/* Render each named message at its defaults and confirm the wire size
+ * matches the driver's own struct-size constant. */
+static int check_sizes(struct target *t, const struct size_expect *sizes,
+		       int n, const char *label)
+{
+	struct fcase c;
+	uint8_t buf[CASE_MAX_BYTES];
+	int i, j, len, fail = 0;
+
+	for (i = 0; i < n; i++) {
+		const struct msg *m = find_msg(t, sizes[i].name);
+
+		if (!m) {
+			printf("FAIL: msg %s missing\n", sizes[i].name);
+			fail = 1;
+			continue;
+		}
+		/* defaults: build the case by hand */
+		memset(&c, 0, sizeof(c));
+		for (j = 0; j < m->nfields; j++) {
+			if (m->fields[j].type == FT_BYTES)
+				c.blen[j] = m->fields[j].size;
+			else
+				c.ints[j] = m->fields[j].dflt;
+		}
+		len = msg_build(m, &c, t->big_endian, buf, sizeof(buf));
+		if (len != sizes[i].want) {
+			printf("FAIL: %s %s renders %d, want %d\n",
+			       label, sizes[i].name, len, sizes[i].want);
+			fail = 1;
+		}
+	}
+	printf("%s: %s render sizes\n", fail ? "FAIL" : "OK", label);
+	return fail;
+}
+
+static int test_render_sizes(void)
+{
+	static const struct size_expect ath9k[] = {
+		{ "NODE_CREATE", 22 },	/* NODE_TARGET_SIZE */
+		{ "VAP_CREATE", 12 },	/* VAP_TARGET_SIZE  */
+		{ "RC_RATE_UPDATE", 70 },
+		{ "BITRATE_MASK", 8 },
+		{ "DRAIN_TXQ", 4 },
+	};
+	static const struct size_expect carl9170[] = {
+		{ "EKEY", 28 },		/* CARL9170_SET_KEY_CMD_SIZE     */
+		{ "DKEY", 4 },		/* CARL9170_DISABLE_KEY_CMD_SIZE */
+		{ "BCN_CTRL", 16 },	/* CARL9170_BCN_CTRL_CMD_SIZE    */
+		{ "RX_FILTER", 4 },	/* CARL9170_RX_FILTER_CMD_SIZE   */
+		{ "RF_INIT", 28 },	/* CARL9170_RF_INIT_SIZE         */
+		{ "PSM", 4 },		/* CARL9170_PSM_SIZE             */
+		{ "WOL", 60 },		/* CARL9170_WOL_CMD_SIZE         */
+	};
+	static const struct size_expect ath10k[] = {
+		{ "VDEV_CREATE", 20 },	/* wmi_vdev_create_cmd      */
+		{ "VDEV_DELETE", 4 },	/* wmi_vdev_delete_cmd      */
+		{ "VDEV_SET_PARAM", 12 }, /* wmi_vdev_set_param_cmd  */
+		{ "PEER_CREATE", 16 },	/* wmi_peer_create_cmd      */
+		{ "PEER_DELETE", 12 },	/* wmi_peer_delete_cmd      */
+		{ "PEER_SET_PARAM", 20 }, /* wmi_peer_set_param_cmd  */
+		{ "PDEV_SET_PARAM", 8 },  /* wmi_pdev_set_param_cmd  */
+	};
+	static const struct size_expect ath11k[] = {	/* TLV structs (u32 tlv_header) */
+		{ "VDEV_CREATE", 40 },	/* wmi_vdev_create_cmd      */
+		{ "VDEV_DELETE", 8 },	/* wmi_vdev_delete_cmd      */
+		{ "VDEV_SET_PARAM", 16 }, /* wmi_vdev_set_param_cmd  */
+		{ "PDEV_SET_PARAM", 16 }, /* wmi_pdev_set_param_cmd  */
+		{ "PEER_CREATE", 20 },	/* wmi_peer_create_cmd      */
+		{ "PEER_DELETE", 16 },	/* wmi_peer_delete_cmd      */
+	};
+	static const struct size_expect ath12k[] = {	/* ath12k TLV structs */
+		{ "VDEV_CREATE", 48 },	/* wmi_vdev_create_cmd (Wi-Fi 7) */
+		{ "VDEV_DELETE", 8 },
+		{ "VDEV_SET_PARAM", 16 },
+		{ "PDEV_SET_PARAM", 16 },
+		{ "PEER_CREATE", 20 },
+		{ "PEER_DELETE", 16 },
+	};
+	static const struct size_expect mt76[] = {	/* connac hdr(8) + TLV(4) + body(16) */
+		{ "STA_REC_UPDATE", 28 },	/* sta_req_hdr + one TLV */
+		{ "WTBL_UPDATE", 28 },		/* wtbl_req_hdr + one TLV */
+	};
+	static const struct size_expect brcmfmac[] = {	/* fwil_types.h _le structs */
+		{ "SET_KEY", 164 },	/* brcmf_wsec_key_le      */
+		{ "SET_SSID", 52 },	/* brcmf_join_params      */
+		{ "SCAN", 64 },		/* brcmf_scan_params_le fixed */
+		{ "SET_WSEC_PMK", 132 }, /* brcmf_wsec_pmk_le     */
+		{ "SET_COUNTRY", 12 },	/* brcmf_fil_country_le   */
+	};
+	int fail = 0;
+
+	fail |= check_sizes(target_ath9k_htc(NULL), ath9k,
+			    (int)(sizeof(ath9k) / sizeof(ath9k[0])), "ath9k-htc");
+	fail |= check_sizes(target_carl9170(), carl9170,
+			    (int)(sizeof(carl9170) / sizeof(carl9170[0])),
+			    "carl9170");
+	fail |= check_sizes(target_ath10k(), ath10k,
+			    (int)(sizeof(ath10k) / sizeof(ath10k[0])),
+			    "ath10k");
+	fail |= check_sizes(target_ath11k(), ath11k,
+			    (int)(sizeof(ath11k) / sizeof(ath11k[0])),
+			    "ath11k");
+	fail |= check_sizes(target_ath12k(), ath12k,
+			    (int)(sizeof(ath12k) / sizeof(ath12k[0])),
+			    "ath12k");
+	fail |= check_sizes(target_mt76(), mt76,
+			    (int)(sizeof(mt76) / sizeof(mt76[0])), "mt76");
+	fail |= check_sizes(target_brcmfmac(), brcmfmac,
+			    (int)(sizeof(brcmfmac) / sizeof(brcmfmac[0])),
+			    "brcmfmac");
+	return fail;
+}
+
+/* rtl8xxxu H2C messages must fit the fixed 8-byte mailbox box. */
+static int test_rtl8xxxu_box_size(void)
+{
+	struct target *t = target_rtl8xxxu();
+	struct fcase c;
+	uint8_t buf[CASE_MAX_BYTES];
+	int i, j, len, fail = 0;
+
+	for (i = 0; i < t->nmsgs; i++) {
+		const struct msg *m = &t->msgs[i];
+
+		memset(&c, 0, sizeof(c));
+		for (j = 0; j < m->nfields; j++) {
+			if (m->fields[j].type == FT_BYTES)
+				c.blen[j] = m->fields[j].size;
+			else
+				c.ints[j] = m->fields[j].dflt;
+		}
+		len = msg_build(m, &c, t->big_endian, buf, sizeof(buf));
+		if (len < 1 || len > 8) {
+			printf("FAIL: rtl8xxxu %s renders %d bytes (box is 8)\n",
+			       m->name, len);
+			fail = 1;
+		}
+	}
+	printf("%s: rtl8xxxu box sizes (<=8)\n", fail ? "FAIL" : "OK");
+	return fail;
+}
+
+static int test_mutation_coverage(void)
+{
+	struct target *t = target_ath9k_htc(NULL);
+	long off_by_one = 0, deep_oob = 0, echo_over = 0, count_lie = 0,
+	     wide_idx = 0;
+	struct fcase c;
+	int r, i;
+
+	rng_seed(1234);
+	for (r = 0; r < 20000; r++) {
+		const struct msg *m;
+
+		case_generate(t->msgs, t->nmsgs, &c);
+		m = &t->msgs[c.msg_idx];
+		for (i = 0; i < m->nfields; i++) {
+			const struct field *f = &m->fields[i];
+
+			if (f->klass == FC_INDEX && f->type == FT_U8 &&
+			    f->valid_max == 7) {
+				if (c.ints[i] == 8)
+					off_by_one++;
+				else if (c.ints[i] > 8)
+					deep_oob++;
+			}
+			if (f->klass == FC_COUNT && c.ints[i] > f->valid_max)
+				count_lie++;
+			if (f->klass == FC_INDEX && f->type == FT_U32 &&
+			    c.ints[i] > 0xFFFF)
+				wide_idx++;
+			if (f->klass == FC_LENGTH && f->type == FT_BYTES &&
+			    c.blen[i] > 112)
+				echo_over++;
+		}
+	}
+	printf("coverage: off_by_one=%ld deep_oob=%ld echo_overflow=%ld "
+	       "count_lie=%ld wide_idx=%ld\n",
+	       off_by_one, deep_oob, echo_over, count_lie, wide_idx);
+	if (off_by_one && deep_oob && echo_over && count_lie && wide_idx) {
+		printf("OK: all audit bug-class triggers generated\n");
+		return 0;
+	}
+	printf("FAIL: a bug-class trigger was never generated\n");
+	return 1;
+}
+
+/* ---- mock target: sequence-dependent planted bug -------------------------- */
+
+static const struct field mock_vap[] = {
+	{ "vapindex", FT_U8, FC_INDEX, 0, 1, 0 },
+};
+static const struct field mock_node[] = {
+	{ "nodeindex", FT_U8, FC_INDEX, 0, 7, 0 },
+};
+static const struct msg mock_msgs[] = {
+	{ "VAP_CREATE", 1.0, 1, mock_vap, 0 },
+	{ "NODE_CREATE", 1.0, 1, mock_node, 1 },
+};
+
+static struct {
+	int armed, dead, sends;
+} mock;
+
+static int mock_attach(struct target *t)
+{
+	(void)t;
+	mock.armed = 0;
+	mock.dead = 0;
+	return 0;
+}
+
+static int mock_send(struct target *t, const struct msg *m,
+		     const uint8_t *payload, int len)
+{
+	(void)t;
+	mock.sends++;
+	if (mock.dead)
+		return -1;
+	if (m->cmd_id == 0)	/* VAP_CREATE arms */
+		mock.armed = 1;
+	if (m->cmd_id == 1 && len >= 1 && payload[0] == 8 && mock.armed)
+		mock.dead = 1;	/* NODE_CREATE idx 8 after arming kills */
+	return 0;
+}
+
+static int mock_probe(struct target *t)
+{
+	(void)t;
+	return !mock.dead;
+}
+
+static int mock_recover(struct target *t)
+{
+	(void)t;
+	mock.armed = 0;
+	mock.dead = 0;
+	return 1;
+}
+
+static void mock_close(struct target *t)
+{
+	(void)t;
+}
+
+/* Count crash_* artifacts in dir and unlink them (test cleanup). */
+static int drain_crashes(const char *dir)
+{
+	DIR *d = opendir(dir);
+	struct dirent *de;
+	char path[512];
+	int n = 0;
+
+	if (!d)
+		return 0;
+	while ((de = readdir(d))) {
+		if (strncmp(de->d_name, "crash_", 6) != 0)
+			continue;
+		n++;
+		snprintf(path, sizeof(path), "%s/%s", dir, de->d_name);
+		unlink(path);
+	}
+	closedir(d);
+	return n;
+}
+
+static int test_fuzz_loop(void)
+{
+	static struct target t = {
+		.name = "mock",
+		.big_endian = 0,
+		.msgs = mock_msgs,
+		.nmsgs = 2,
+		.attach = mock_attach,
+		.send = mock_send,
+		.probe_alive = mock_probe,
+		.recover = mock_recover,
+		.close = mock_close,
+	};
+	struct fuzz_opts o = {
+		.iterations = 500,
+		.probe_every = 4,
+		.seed = 7,
+		.out_dir = "/tmp/ela-wlan-fuzz-selftest",
+	};
+	int n;
+
+	drain_crashes(o.out_dir);	/* clear stale artifacts */
+	wlan_fuzz_run(&t, &o);
+	n = drain_crashes(o.out_dir);
+	printf("%s: fuzz loop found planted sequence bug (%d crash files, "
+	       "expect >=1, all *_min)\n", n >= 1 ? "OK" : "FAIL", n);
+	return n < 1;
+}
+
+int wlan_fuzz_selftest_run(void)
+{
+	int fail = 0;
+
+	fail |= test_render_sizes();
+	fail |= test_rtl8xxxu_box_size();
+	fail |= test_mutation_coverage();
+	fail |= test_fuzz_loop();
+	printf(fail ? "SELFTEST FAILED\n" : "SELFTEST PASSED\n");
+	return fail;
+}
