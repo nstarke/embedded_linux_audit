@@ -178,6 +178,43 @@ static int test_rtl8xxxu_box_size(void)
 	return fail;
 }
 
+/*
+ * usb-generic is a blind target with no chip grammar; still, every generated
+ * case must render within bounds and carry the fixed transport header (6 bytes
+ * for the control messages, 1 for bulk) that gen_send() parses back out.
+ */
+static int test_usb_generic_grammar(void)
+{
+	struct target *t = target_usb_generic(0x0bda, 0x8179);
+	struct fcase c;
+	uint8_t buf[CASE_MAX_BYTES];
+	int r, len, fail = 0;
+
+	if (t->nmsgs != 3 || t->big_endian != 0) {
+		printf("FAIL: usb-generic shape (nmsgs=%d be=%d)\n",
+		       t->nmsgs, t->big_endian);
+		fail = 1;
+	}
+	rng_seed(99);
+	for (r = 0; r < 5000 && !fail; r++) {
+		const struct msg *m;
+		int min_hdr;
+
+		case_generate(t->msgs, t->nmsgs, &c);
+		m = &t->msgs[c.msg_idx];
+		len = msg_build(m, &c, t->big_endian, buf, sizeof(buf));
+		min_hdr = (m->cmd_id == 2) ? 1 : 6;	/* BULK vs CTRL header */
+		if (len < min_hdr || len > CASE_MAX_BYTES) {
+			printf("FAIL: usb-generic %s renders %d bytes (hdr %d)\n",
+			       m->name, len, min_hdr);
+			fail = 1;
+		}
+	}
+	printf("%s: usb-generic grammar renders within transport bounds\n",
+	       fail ? "FAIL" : "OK");
+	return fail;
+}
+
 static int test_mutation_coverage(void)
 {
 	struct target *t = target_ath9k_htc(NULL);
@@ -337,6 +374,7 @@ int wlan_fuzz_selftest_run(void)
 
 	fail |= test_render_sizes();
 	fail |= test_rtl8xxxu_box_size();
+	fail |= test_usb_generic_grammar();
 	fail |= test_mutation_coverage();
 	fail |= test_fuzz_loop();
 	printf(fail ? "SELFTEST FAILED\n" : "SELFTEST PASSED\n");

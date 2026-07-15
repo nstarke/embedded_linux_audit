@@ -16,6 +16,7 @@
 
 #include <dirent.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <getopt.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -31,7 +32,10 @@ static void fuzz_usage(const char *prog)
 		"\n"
 		"  targets: ath9k-htc rtw88-usb mwifiex-usb mt7601u carl9170 rtl8xxxu\n"
 		"           ath10k ath11k ath12k mt76 brcmfmac (PCIe/SDIO via ela_kmod shim)\n"
+		"           usb-generic (blind fuzz any USB NIC by VID:PID; needs --usb-id)\n"
 		"  --target NAME    NIC target to fuzz (required)\n"
+		"  --usb-id V:P     usb-generic only: target USB device by hex VID:PID\n"
+		"                   (e.g. 0bda:8179; product '*' or omitted = any)\n"
 		"  --iterations N   cases to run (default 100000)\n"
 		"  --probe-every N  liveness probe interval (default 8)\n"
 		"  --seed N         rng seed (default 1234)\n"
@@ -45,8 +49,11 @@ static void fuzz_usage(const char *prog)
 		prog);
 }
 
-static struct target *resolve_target(const char *tname, const char *fw)
+static struct target *resolve_target(const char *tname, const char *fw,
+				     uint16_t usb_vid, uint16_t usb_pid)
 {
+	if (!strcmp(tname, "usb-generic"))
+		return target_usb_generic(usb_vid, usb_pid);
 	if (!strcmp(tname, "ath9k-htc"))
 		return target_ath9k_htc(fw);
 	if (!strcmp(tname, "rtw88-usb"))
@@ -76,7 +83,7 @@ static int wlan_fuzz_cmd_main(int argc, char **argv)
 {
 	enum {
 		OPT_TARGET = 1, OPT_ITERATIONS, OPT_PROBE_EVERY, OPT_SEED,
-		OPT_OUT, OPT_FW, OPT_REPLAY, OPT_SELFTEST, OPT_SHOW,
+		OPT_OUT, OPT_FW, OPT_REPLAY, OPT_SELFTEST, OPT_SHOW, OPT_USB_ID,
 	};
 	static const struct option long_opts[] = {
 		{ "target",      required_argument, NULL, OPT_TARGET },
@@ -87,6 +94,7 @@ static int wlan_fuzz_cmd_main(int argc, char **argv)
 		{ "fw",          required_argument, NULL, OPT_FW },
 		{ "replay",      required_argument, NULL, OPT_REPLAY },
 		{ "show",        required_argument, NULL, OPT_SHOW },
+		{ "usb-id",      required_argument, NULL, OPT_USB_ID },
 		{ "selftest",    no_argument,       NULL, OPT_SELFTEST },
 		{ "help",        no_argument,       NULL, 'h' },
 		{ 0, 0, 0, 0 }
@@ -101,6 +109,8 @@ static int wlan_fuzz_cmd_main(int argc, char **argv)
 	const char *tname = NULL;
 	const char *fw = NULL;
 	const char *show_path = NULL;
+	const char *usb_id = NULL;
+	uint16_t usb_vid = 0, usb_pid = 0;
 	char inferred[32];
 	struct target *t;
 	int opt;
@@ -131,6 +141,9 @@ static int wlan_fuzz_cmd_main(int argc, char **argv)
 			break;
 		case OPT_SHOW:
 			show_path = optarg;
+			break;
+		case OPT_USB_ID:
+			usb_id = optarg;
 			break;
 		case OPT_SELFTEST:
 			return wlan_fuzz_selftest_run();
@@ -172,7 +185,22 @@ static int wlan_fuzz_cmd_main(int argc, char **argv)
 		return 2;
 	}
 
-	t = resolve_target(tname, fw);
+	/* usb-generic addresses a device by VID:PID. --show decodes offline and
+	 * needs no device, so the id is only required for hardware runs. */
+	if (usb_id && wlan_parse_usb_id(usb_id, &usb_vid, &usb_pid) != 0) {
+		fprintf(stderr,
+			"wlan fuzz: bad --usb-id '%s' (want hex VID:PID, e.g. 0bda:8179)\n",
+			usb_id);
+		return 2;
+	}
+	if (!strcmp(tname, "usb-generic") && !usb_id && !show_path) {
+		fprintf(stderr,
+			"wlan fuzz: --target usb-generic requires --usb-id <VID:PID>\n");
+		fuzz_usage("embedded_linux_audit");
+		return 2;
+	}
+
+	t = resolve_target(tname, fw, usb_vid, usb_pid);
 	if (!t) {
 		fprintf(stderr, "wlan fuzz: unknown target: %s\n", tname);
 		fuzz_usage("embedded_linux_audit");
@@ -215,16 +243,127 @@ static int read_link_base(const char *path, char *out, size_t outsz)
 	return 0;
 }
 
+/* LCOV_EXCL_START -- thin sysfs/procfs I/O wrappers; exercised only in the field */
+
+/* Read up to bufsz-1 bytes of a (small) file, NUL-terminate. 0 ok, -1 fail. */
+static int read_text_file(const char *path, char *buf, size_t bufsz)
+{
+	int fd;
+	ssize_t n;
+
+	if (bufsz == 0)
+		return -1;
+	fd = open(path, O_RDONLY);
+	if (fd < 0)
+		return -1;
+	n = read(fd, buf, bufsz - 1);
+	close(fd);
+	if (n < 0)
+		return -1;
+	buf[n] = '\0';
+	return 0;
+}
+
+/*
+ * True if `iface` appears as an interface column in a /proc/net/wireless dump
+ * (a line "  <iface>: ..."). Matches the name only when bounded by whitespace
+ * on the left and ':' on the right, so "wlan0" does not match "wlan01".
+ */
+static int proc_wireless_has(const char *buf, const char *iface)
+{
+	size_t ilen = strlen(iface);
+	const char *p = buf;
+
+	while ((p = strstr(p, iface))) {
+		char before = (p == buf) ? '\n' : p[-1];
+		char after = p[ilen];
+
+		if (after == ':' &&
+		    (before == ' ' || before == '\t' || before == '\n'))
+			return 1;
+		p += ilen;
+	}
+	return 0;
+}
+
+/* True if the netdev's own uevent advertises DEVTYPE=wlan. */
+static int uevent_is_wlan(const char *iface)
+{
+	char path[512], text[4096], val[32];
+
+	snprintf(path, sizeof(path), "/sys/class/net/%s/uevent", iface);
+	if (read_text_file(path, text, sizeof(text)) != 0)
+		return 0;
+	if (wlan_uevent_value(text, "DEVTYPE", val, sizeof(val)) != 0)
+		return 0;
+	return !strcmp(val, "wlan");
+}
+
+/*
+ * Resolve the bound driver name for a netdev: prefer the device/driver
+ * symlink, falling back to DRIVER= in device/uevent (present for some
+ * out-of-tree modules that do not expose the symlink). "?" if unknown.
+ */
+static void read_iface_driver(const char *iface, char *out, size_t outsz)
+{
+	char path[512], text[4096];
+
+	snprintf(path, sizeof(path), "/sys/class/net/%s/device/driver", iface);
+	if (read_link_base(path, out, outsz) == 0)
+		return;
+	snprintf(path, sizeof(path), "/sys/class/net/%s/device/uevent", iface);
+	if (read_text_file(path, text, sizeof(text)) == 0 &&
+	    wlan_uevent_value(text, "DRIVER", out, outsz) == 0)
+		return;
+	snprintf(out, outsz, "?");
+}
+
+/*
+ * Read the parent USB device's VID:PID for a netdev into "vvvv:pppp". The
+ * device symlink points at the USB *interface*; its parent (..) is the USB
+ * device, which carries idVendor/idProduct. Returns 0 on success, -1 if not a
+ * USB device or the attrs are unreadable.
+ */
+static int read_iface_usb_id(const char *iface, char *out, size_t outsz)
+{
+	char path[512], vid[8], pid[8];	/* idVendor/idProduct are 4 hex digits */
+
+	snprintf(path, sizeof(path), "/sys/class/net/%s/device/../idVendor",
+		 iface);
+	if (read_text_file(path, vid, sizeof(vid)) != 0)
+		return -1;
+	snprintf(path, sizeof(path), "/sys/class/net/%s/device/../idProduct",
+		 iface);
+	if (read_text_file(path, pid, sizeof(pid)) != 0)
+		return -1;
+	vid[strcspn(vid, "\r\n")] = '\0';
+	pid[strcspn(pid, "\r\n")] = '\0';
+	if (!*vid || !*pid)
+		return -1;
+	snprintf(out, outsz, "%s:%s", vid, pid);
+	return 0;
+}
+/* LCOV_EXCL_STOP */
+
 /*
  * linux_wlan_list_main enumerates wireless NICs from sysfs. A netdev is
- * wireless iff it has a phy80211 link; for each we read the bound driver and
- * bus and map them to a fuzzer target.
+ * treated as wireless when any kernel marker says so -- a phy80211 link, a
+ * wireless/ dir, a /proc/net/wireless row, or DEVTYPE=wlan -- and, failing
+ * all of those, when its name matches a wireless pattern (proprietary stacks
+ * that register no cfg80211/WEXT node; flagged "name?" and low-confidence).
+ * For each we read the bound driver and bus and map them to a fuzzer target.
  */
 static int linux_wlan_list_main(int argc, char **argv)
 {
+	struct blind_cand {
+		char name[32];
+		char id[20];	/* "vvvv:pppp", or empty if VID:PID unreadable */
+	} cand[32] = { { { 0 }, { 0 } } };
+	char procwl[8192];
+	int have_procwl;
 	DIR *d;
 	struct dirent *de;
-	int found = 0, supported = 0;
+	int found = 0, supported = 0, guessed = 0, ncand = 0, i;
 
 	if (argc > 1) {
 		if (!strcmp(argv[1], "-h") || !strcmp(argv[1], "--help") ||
@@ -245,29 +384,58 @@ static int linux_wlan_list_main(int argc, char **argv)
 			strerror(errno));
 		return 1;
 	}
-	printf("%-12s %-6s %-16s %-5s %-14s %s\n",
-	       "INTERFACE", "PHY", "DRIVER", "BUS", "FUZZER TARGET", "TRANSPORT");
+
+	/* Read /proc/net/wireless once; it lists every WEXT/cfg80211 iface. */
+	have_procwl = read_text_file("/proc/net/wireless", procwl,
+				     sizeof(procwl)) == 0;
+
+	printf("%-12s %-6s %-16s %-5s %-10s %-8s %-14s %s\n",
+	       "INTERFACE", "PHY", "DRIVER", "BUS", "USBID", "DETECT",
+	       "FUZZER TARGET", "TRANSPORT");
 	while ((de = readdir(d))) {
-		char path[512], phy[64], drv[64], bus[32];
-		const char *target, *transport;
+		char path[512], phy[64], drv[64], bus[32], usbid[20];
+		int has_phy, has_wext, in_procwl, is_wlan;
+		enum wlan_wireless_confidence conf;
+		const char *target, *transport, *detect;
 
 		if (de->d_name[0] == '.')
 			continue;
+
 		snprintf(path, sizeof(path), "/sys/class/net/%s/phy80211",
 			 de->d_name);
-		if (access(path, F_OK) != 0)
+		has_phy = access(path, F_OK) == 0;
+		snprintf(path, sizeof(path), "/sys/class/net/%s/wireless",
+			 de->d_name);
+		has_wext = access(path, F_OK) == 0;
+		in_procwl = have_procwl && proc_wireless_has(procwl, de->d_name);
+		is_wlan = uevent_is_wlan(de->d_name);
+
+		conf = wlan_classify_wireless(has_phy, has_wext, in_procwl,
+					      is_wlan, de->d_name);
+		if (conf == WLAN_WIRELESS_NO)
 			continue;	/* not a wireless interface */
 		found++;
-		if (read_link_base(path, phy, sizeof(phy)) != 0)
-			snprintf(phy, sizeof(phy), "?");
-		snprintf(path, sizeof(path), "/sys/class/net/%s/device/driver",
+		if (conf == WLAN_WIRELESS_NAME) {
+			guessed++;
+			detect = "name?";
+		} else {
+			detect = has_phy ? "phy80211" :
+				 has_wext ? "wext" :
+				 in_procwl ? "proc" : "devtype";
+		}
+
+		snprintf(path, sizeof(path), "/sys/class/net/%s/phy80211",
 			 de->d_name);
-		if (read_link_base(path, drv, sizeof(drv)) != 0)
-			snprintf(drv, sizeof(drv), "?");
+		if (read_link_base(path, phy, sizeof(phy)) != 0)
+			snprintf(phy, sizeof(phy), "-");
+		read_iface_driver(de->d_name, drv, sizeof(drv));
 		snprintf(path, sizeof(path), "/sys/class/net/%s/device/subsystem",
 			 de->d_name);
 		if (read_link_base(path, bus, sizeof(bus)) != 0)
 			snprintf(bus, sizeof(bus), "?");
+		if (strcmp(bus, "usb") != 0 ||
+		    read_iface_usb_id(de->d_name, usbid, sizeof(usbid)) != 0)
+			snprintf(usbid, sizeof(usbid), "-");
 
 		target = wlan_target_for_driver(drv, bus);
 		if (target)
@@ -275,8 +443,20 @@ static int linux_wlan_list_main(int argc, char **argv)
 		transport = target ?
 			(wlan_target_uses_kmod(target) ? "ela_kmod shim" : "usbfs") :
 			"-";
-		printf("%-12s %-6s %-16s %-5s %-14s %s\n", de->d_name, phy, drv,
-		       bus, target ? target : "(unsupported)", transport);
+		printf("%-12s %-6s %-16s %-5s %-10s %-8s %-14s %s\n", de->d_name,
+		       phy, drv, bus, usbid, detect,
+		       target ? target : "(unsupported)", transport);
+
+		/* No class-directed target but on the USB bus: reachable for a
+		 * blind `usb-generic` sweep. Record it for the hint block. */
+		if (!target && !strcmp(bus, "usb") && ncand < (int)(sizeof(cand) /
+								   sizeof(cand[0]))) {
+			snprintf(cand[ncand].name, sizeof(cand[ncand].name), "%s",
+				 de->d_name);
+			snprintf(cand[ncand].id, sizeof(cand[ncand].id), "%s",
+				 strcmp(usbid, "-") ? usbid : "");
+			ncand++;
+		}
 	}
 	closedir(d);
 
@@ -284,8 +464,28 @@ static int linux_wlan_list_main(int argc, char **argv)
 		printf("No WLAN interfaces found.\n");
 		return 0;
 	}
-	printf("\n%d WLAN interface(s), %d fuzzable with `linux wlan fuzz --target <name>`.\n",
-	       found, supported);
+	if (guessed)
+		printf("\n%d WLAN interface(s) (%d name-only guess(es), no kernel"
+		       " wireless marker), %d fuzzable with `linux wlan fuzz"
+		       " --target <name>`.\n", found, guessed, supported);
+	else
+		printf("\n%d WLAN interface(s), %d fuzzable with `linux wlan fuzz --target <name>`.\n",
+		       found, supported);
+
+	/* Point the operator at the blind fallback for USB NICs with no
+	 * class-directed target (proprietary/unknown firmware). */
+	if (ncand) {
+		printf("\n%d USB NIC(s) with no class-directed target -- blind-fuzz"
+		       " with `--target usb-generic` (shallow coverage):\n", ncand);
+		for (i = 0; i < ncand; i++) {
+			if (cand[i].id[0])
+				printf("  %-12s linux wlan fuzz --target usb-generic --usb-id %s\n",
+				       cand[i].name, cand[i].id);
+			else
+				printf("  %-12s (VID:PID unreadable; pass --usb-id <VID:PID> from lsusb)\n",
+				       cand[i].name);
+		}
+	}
 	return 0;
 	/* LCOV_EXCL_STOP */
 }

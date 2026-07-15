@@ -99,6 +99,15 @@ struct target *target_ath12k(void);	/* PCIe/SDIO via the ela_kmod shim */
 struct target *target_mt76(void);	/* PCIe/SDIO via the ela_kmod shim */
 struct target *target_brcmfmac(void);	/* SDIO/PCIe/USB via the ela_kmod shim */
 
+/*
+ * Blind usbfs fuzzer for a USB NIC addressed by VID:PID, for proprietary /
+ * unknown dongles that map to no class-directed target. It has no firmware
+ * command grammar -- it structurally mutates raw vendor control transfers and
+ * bulk-OUT writes -- so coverage is far shallower than the driver-specific
+ * targets. USB only: proprietary PCIe/SoC radios are not reachable this way.
+ */
+struct target *target_usb_generic(uint16_t vid, uint16_t pid);
+
 /* shared USB recovery: close, wait for re-enumeration, re-attach+probe */
 int usb_recover_generic(struct target *t, int tries, int wait_ms);
 
