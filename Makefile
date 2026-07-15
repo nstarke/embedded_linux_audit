@@ -964,6 +964,17 @@ SRC := \
 	agent/linux/linux_bt_util.c \
 	agent/linux/linux_bt_cmd.c \
 	agent/linux/bt/bt_fuzz_target_hci.c \
+	agent/linux/linux_cpu_cmd.c \
+	agent/linux/cpu/cpu_fuzz_engine.c \
+	agent/linux/cpu/cpu_fuzz_harness.c \
+	agent/linux/cpu/cpu_fuzz_x86.c \
+	agent/linux/cpu/cpu_fuzz_fixed.c \
+	agent/linux/cpu/cpu_fuzz_arm64.c \
+	agent/linux/cpu/cpu_fuzz_arm32.c \
+	agent/linux/cpu/cpu_fuzz_mips.c \
+	agent/linux/cpu/cpu_fuzz_powerpc.c \
+	agent/linux/cpu/cpu_fuzz_riscv.c \
+	agent/linux/cpu/cpu_fuzz_stream.c \
 	agent/spi/spi_util.c \
 	agent/spi/spi_cmd.c \
 	agent/nand/nand_util.c \
