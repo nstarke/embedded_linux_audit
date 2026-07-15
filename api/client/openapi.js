@@ -563,8 +563,12 @@ const openapiSpec = {
         name: 'mac',
         in: 'query',
         required: false,
+        // No `example`/`default`: Swagger UI prefills those into the input box,
+        // and with tryItOutEnabled the field is editable+sent as-is, so a stray
+        // example MAC would make "Execute" filter to an unassociated device and
+        // return nothing. Leave it empty so the default is "all your devices".
         description: 'Optional device MAC filter (any separator or none, any case). Restricts results to that device; unknown or unassociated MACs return no results.',
-        schema: { type: 'string', example: 'aa:bb:cc:dd:ee:ff' },
+        schema: { type: 'string' },
       },
       Pid: {
         name: 'pid',
