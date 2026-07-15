@@ -261,28 +261,46 @@ is acceptable (a test device, not a bastion). Crash files record
 `target=wext-generic`; `--replay` needs `--iface`, and `--show` decodes offline
 without one.
 
-### Remote crash capture (survives a host panic)
+### Remote crash capture
 
-Because a WEXT bug can hard-panic the host, the agent may die before it can
-write the offending case to a local crash file &mdash; the on-device triage in
-the previous sections is lost with the machine. To capture the killer anyway,
-`wext-generic` streams each payload to the agent API **before** executing it,
-whenever an API endpoint is configured (`--output-http`, the same option the
-`linux pcap` stream uses):
+Set `--output-http` (the same option the `linux pcap` stream uses) and the
+fuzzer uploads crashes to the agent API. This has two parts, described in detail
+[below](#how-results-are-reported): **confirmed crashes are uploaded live for
+any target**, and the host-kernel targets add a **panic dead-man's-switch**.
+
+Because a WEXT bug can hard-panic the host, the agent may die before it can even
+write the offending case locally &mdash; the on-device triage is lost with the
+machine. So `wext-generic` streams each payload to the agent API **before**
+executing it:
 
 ```sh
 sudo ./embedded_linux_audit --output-http https://ela.example.com \
     linux wlan fuzz --target wext-generic --iface wlan0
 ```
 
-The API holds only the **latest** payload. On a clean run the agent sends a
-"done" marker and the API discards it. But if the host panics, the agent dies,
-the socket drops without that marker, and the API writes the last-streamed
-payload out as a `wlan-fuzz` triage artifact &mdash; a normal, replayable crash
-file (`# target=wext-generic` + the case line). That artifact lands under the
-device's data directory (`<data>/<mac>/wlan-fuzz/crash_*.txt`) and in the
-`uploads` table, exactly like a captured pcap. Fetch it and reproduce with
-`wlan fuzz --replay` (or decode offline with `--show`).
+There are two ways a crash reaches the API:
+
+1. **Confirmed crashes (all targets).** Whenever the fuzzer's oracle detects a
+   crash and the triage loop saves a minimized crash file locally, it also
+   uploads that complete crash file to the API immediately (an `X` frame). This
+   works for **any** target &mdash; not just the host-panic ones &mdash; and is
+   the normal path for firmware crashes the agent survives. Just set
+   `--output-http`; no other flag is needed.
+2. **Host-panic capture (host-kernel targets).** The targets that run in the
+   host kernel *additionally* stream every payload before it executes:
+   `wext-generic` (driver ioctls) and the **`ela_kmod`-shim targets**
+   (`ath10k`/`ath11k`/`ath12k`/`mt76`/`brcmfmac` &mdash; the inject runs in
+   kernel context), matching the ethernet firmware and Bluetooth targets. (The
+   usbfs targets drive the device from userspace, so they get crash upload only.)
+   The API holds only the latest streamed payload; if the host panics and the
+   agent dies before triage can run, the socket drops without the "done" marker
+   and the API writes that last payload out as a `_panic` crash file.
+
+Either way the artifact lands under the device's data directory
+(`<data>/<mac>/wlan-fuzz/crash_*.txt`) and in the `uploads` table, exactly like a
+captured pcap &mdash; a normal, replayable crash file (`# target=...` + case
+lines). Fetch it and reproduce with `wlan fuzz --replay` (or decode offline with
+`--show`).
 
 Add `--insecure` to skip TLS verification against a self-signed endpoint. If no
 `--output-http` is set, fuzzing proceeds with local-only triage and a warning.

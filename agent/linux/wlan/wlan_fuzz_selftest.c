@@ -18,6 +18,7 @@
 
 #include "wlan_fuzz.h"
 #include "linux/eth/eth_fuzz.h"
+#include "linux/bt/bt_fuzz.h"
 
 /* ---- pull in the ath9k grammar via its target constructor ---------------- */
 
@@ -324,6 +325,40 @@ static int test_eth_firmware_grammars(void)
 	return fail;
 }
 
+/*
+ * hci-generic (Bluetooth): each HCI command case must carry at least the
+ * opcode(2) + parameter-length(1) header and render within bounds.
+ */
+static int test_hci_grammar(void)
+{
+	struct target *t = target_hci_generic(0);
+	struct fcase c;
+	uint8_t buf[CASE_MAX_BYTES];
+	int r, len, fail = 0;
+
+	if (t->nmsgs < 10 || t->big_endian != 0) {
+		printf("FAIL: hci-generic shape (nmsgs=%d be=%d)\n",
+		       t->nmsgs, t->big_endian);
+		fail = 1;
+	}
+	rng_seed(0xB7);
+	for (r = 0; r < 5000 && !fail; r++) {
+		const struct msg *m;
+
+		case_generate(t->msgs, t->nmsgs, &c);
+		m = &t->msgs[c.msg_idx];
+		len = msg_build(m, &c, t->big_endian, buf, sizeof(buf));
+		if (len < 3 || len > CASE_MAX_BYTES) {	/* opcode+plen minimum */
+			printf("FAIL: hci-generic %s renders %d bytes\n",
+			       m->name, len);
+			fail = 1;
+		}
+	}
+	printf("%s: hci-generic grammar renders within HCI packet bounds\n",
+	       fail ? "FAIL" : "OK");
+	return fail;
+}
+
 static int test_mutation_coverage(void)
 {
 	struct target *t = target_ath9k_htc(NULL);
@@ -448,6 +483,18 @@ static int drain_crashes(const char *dir)
 	return n;
 }
 
+/* Count crash-file uploads the engine pushes to the sink, and sanity-check the
+ * text is a real crash file, so the save-crash -> sink->crash path is covered. */
+static int mock_sink_crashes;
+static int mock_sink_bad;
+static void mock_sink_crash(void *ctx, const char *text, int len)
+{
+	(void)ctx;
+	mock_sink_crashes++;
+	if (!text || len < 12 || strncmp(text, "# target=mock", 13) != 0)
+		mock_sink_bad++;
+}
+
 static int test_fuzz_loop(void)
 {
 	static struct target t = {
@@ -461,20 +508,27 @@ static int test_fuzz_loop(void)
 		.recover = mock_recover,
 		.close = mock_close,
 	};
+	static struct fuzz_payload_sink sink = { .crash = mock_sink_crash };
 	struct fuzz_opts o = {
 		.iterations = 500,
 		.probe_every = 4,
 		.seed = 7,
 		.out_dir = "/tmp/ela-wlan-fuzz-selftest",
+		.sink = &sink,
 	};
-	int n;
+	int n, ok;
 
+	mock_sink_crashes = 0;
+	mock_sink_bad = 0;
 	drain_crashes(o.out_dir);	/* clear stale artifacts */
 	wlan_fuzz_run(&t, &o);
 	n = drain_crashes(o.out_dir);
-	printf("%s: fuzz loop found planted sequence bug (%d crash files, "
-	       "expect >=1, all *_min)\n", n >= 1 ? "OK" : "FAIL", n);
-	return n < 1;
+	/* every saved crash is uploaded to the sink exactly once, as a valid file */
+	ok = n >= 1 && mock_sink_crashes == n && mock_sink_bad == 0;
+	printf("%s: fuzz loop found planted bug (%d crash files, %d uploaded to "
+	       "sink, %d malformed)\n", ok ? "OK" : "FAIL", n, mock_sink_crashes,
+	       mock_sink_bad);
+	return !ok;
 }
 
 int wlan_fuzz_selftest_run(void)
@@ -487,6 +541,7 @@ int wlan_fuzz_selftest_run(void)
 	fail |= test_wext_grammar();
 	fail |= test_ethtool_grammar();
 	fail |= test_eth_firmware_grammars();
+	fail |= test_hci_grammar();
 	fail |= test_mutation_coverage();
 	fail |= test_fuzz_loop();
 	printf(fail ? "SELFTEST FAILED\n" : "SELFTEST PASSED\n");

@@ -131,8 +131,15 @@ int usb_recover_generic(struct target *t, int tries, int wait_ms);
  */
 struct fuzz_payload_sink {
 	void *ctx;
+	/* Optional: called with each case's wire bytes JUST BEFORE the target
+	 * executes it (the host-panic dead-man's-switch). NULL to disable. */
 	void (*emit)(void *ctx, const char *msg_name, const uint8_t *payload,
 		     int len, const char *note);
+	/* Optional: called when a crash is confirmed and saved locally, with the
+	 * complete crash-file text (the "# target=" header + minimized case
+	 * lines) so the API can persist it immediately. Best-effort; NULL to
+	 * disable. */
+	void (*crash)(void *ctx, const char *crashfile, int len);
 };
 
 struct fuzz_opts {

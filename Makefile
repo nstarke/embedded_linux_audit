@@ -540,6 +540,7 @@ AGENT_UNIT_TEST_SRC := \
 	tests/unit/agent/test_ela_kmod_abi.c \
 	tests/unit/agent/test_linux_wlan_util.c \
 	tests/unit/agent/test_linux_eth_util.c \
+	tests/unit/agent/test_linux_bt_util.c \
 	tests/unit/agent/test_linux_physmem_util.c \
 	tests/unit/agent/test_spi_util.c \
 	tests/unit/agent/test_nand_util.c \
@@ -652,6 +653,7 @@ AGENT_UNIT_TEST_DEPS := \
 	agent/linux/linux_physmem_util.c \
 	agent/linux/linux_wlan_util.c \
 	agent/linux/linux_eth_util.c \
+	agent/linux/linux_bt_util.c \
 	agent/linux/wlan/wlan_fuzz_stream_fmt.c \
 	agent/spi/spi_util.c \
 	agent/nand/nand_util.c \
@@ -959,6 +961,9 @@ SRC := \
 	agent/linux/eth/eth_fuzz_target_ice.c \
 	agent/linux/eth/eth_fuzz_target_cxgb4.c \
 	agent/linux/eth/eth_fuzz_target_mlx5.c \
+	agent/linux/linux_bt_util.c \
+	agent/linux/linux_bt_cmd.c \
+	agent/linux/bt/bt_fuzz_target_hci.c \
 	agent/spi/spi_util.c \
 	agent/spi/spi_cmd.c \
 	agent/nand/nand_util.c \
@@ -1405,6 +1410,7 @@ $(AGENT_UNIT_TEST_BIN): $(AGENT_UNIT_TEST_SRC) $(AGENT_UNIT_TEST_DEPS) $(TPM2_UN
 			agent/linux/linux_physmem_util.c \
 			agent/linux/linux_wlan_util.c \
 			agent/linux/linux_eth_util.c \
+			agent/linux/linux_bt_util.c \
 			agent/linux/wlan/wlan_fuzz_stream_fmt.c \
 			agent/spi/spi_util.c \
 			agent/nand/nand_util.c \

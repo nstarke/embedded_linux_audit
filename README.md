@@ -41,6 +41,8 @@
 | `linux wlan fuzz` | Class-directed firmware fuzzer for WLAN NIC command interfaces (USB dongles via usbfs; `ath10k`/`ath11k`/`ath12k`/`mt76`/`brcmfmac` PCIe/SDIO via the `ela_kmod` kernel shim), plus blind fallbacks: `usb-generic` (proprietary USB NICs by VID:PID) and `wext-generic` (legacy Wireless Extensions driver ioctls by interface name). See [docs](docs/agent/linux/wlan-fuzz.md) |
 | `linux eth list` | Enumerate the host's ethernet NICs (interface, driver, bus) and show which `eth fuzz` target supports each |
 | `linux eth fuzz` | Class-directed fuzzer for ethernet NIC command interfaces: `ethtool-generic` (blind `SIOCETHTOOL` ioctl fuzz of any NIC by interface name), plus firmware mailbox/admin-queue targets `bnxt`/`i40e`/`ice`/`cxgb4`/`mlx5` via the `ela_kmod` kernel shim. See [docs](docs/agent/linux/eth-fuzz.md) |
+| `linux bt list` | Enumerate the host's Bluetooth controllers (hciN, address, bus) |
+| `linux bt fuzz` | Class-directed fuzzer for the Bluetooth HCI command interface (`hci-generic`: opcode/length/params fuzzing over a raw HCI User Channel socket by controller index). See [docs](docs/agent/linux/bt-fuzz.md) |
 | `linux coredump` | Configure kernel coredump collection to `/tmp`; with `--output-http`, POST captured cores to the agent API |
 | `linux ssh client` | Open an interactive SSH session (via libssh) |
 | `linux ssh copy` | Transfer files over SFTP |

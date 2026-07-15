@@ -120,6 +120,36 @@ describe('agent wlan-fuzz websocket receiver', () => {
     fs.rmSync(dataDir, { recursive: true, force: true });
   });
 
+  test('an X frame persists a confirmed crash immediately, independent of close', async () => {
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ela-wlanfuzz-ws-'));
+    const persistUpload = jest.fn().mockResolvedValue({});
+    const ws = connect(dataDir, persistUpload);
+
+    ws.handlers.get('message')(Buffer.from('T ath10k'));
+    const crashFile = '# target=ath10k cases=2\nVDEV_CREATE 0800 #a\nPEER_DELETE 01 #b\n';
+    ws.handlers.get('message')(Buffer.from(`X ${crashFile}`));
+
+    for (let i = 0; i < 20 && persistUpload.mock.calls.length === 0; i += 1) {
+      await flush();
+    }
+    // saved on receipt of X -- before any close, and even though the agent
+    // survives (a locally-detected, minimized crash uploaded live)
+    expect(persistUpload).toHaveBeenCalledWith(expect.objectContaining({
+      uploadType: 'wlan-fuzz',
+      localArtifactPath: expect.stringMatching(/crash_.*\.txt$/),
+    }));
+    expect(fs.readFileSync(persistUpload.mock.calls[0][0].localArtifactPath, 'utf8'))
+      .toBe(crashFile);
+
+    // a subsequent graceful close saves nothing more (no held C payload)
+    ws.handlers.get('message')(Buffer.from('D'));
+    ws.handlers.get('close')();
+    for (let i = 0; i < 10; i += 1) await flush();
+    expect(persistUpload).toHaveBeenCalledTimes(1);
+
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  });
+
   test('a graceful "done" frame means a clean run: nothing is saved on close', async () => {
     const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ela-wlanfuzz-ws-'));
     const persistUpload = jest.fn().mockResolvedValue({});
