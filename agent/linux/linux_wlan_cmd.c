@@ -358,7 +358,7 @@ static int linux_wlan_list_main(int argc, char **argv)
 	struct blind_cand {
 		char name[32];
 		char id[20];	/* "vvvv:pppp", or empty if VID:PID unreadable */
-	} cand[32];
+	} cand[32] = { { { 0 }, { 0 } } };
 	char procwl[8192];
 	int have_procwl;
 	DIR *d;
