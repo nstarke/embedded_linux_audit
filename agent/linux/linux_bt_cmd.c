@@ -15,6 +15,7 @@
 #include "linux/bt/bt_fuzz.h"
 #include "linux/wlan/wlan_fuzz_stream.h"
 #include "linux/linux_bt_util.h"
+#include "linux/fuzz_daemon.h"
 
 #include <dirent.h>
 #include <errno.h>
@@ -88,6 +89,8 @@ static void fuzz_usage(void)
 		"  --show FILE      decode a crash file for triage (offline, no hardware)\n"
 		"  --insecure       skip TLS verification when streaming payloads to the\n"
 		"                   agent API (--output-http) for remote crash capture\n"
+		"  --daemon         detach and run in the background (for API spawn);\n"
+		"                   logs to <out>/bt-fuzz-daemon.log\n"
 		"  --selftest       run offline engine self-tests (no hardware)\n");
 }
 
@@ -96,7 +99,7 @@ static int bt_fuzz_cmd_main(int argc, char **argv)
 	enum {
 		OPT_TARGET = 1, OPT_ITERATIONS, OPT_PROBE_EVERY, OPT_SEED,
 		OPT_OUT, OPT_REPLAY, OPT_SHOW, OPT_HCI, OPT_INSECURE,
-		OPT_SELFTEST,
+		OPT_SELFTEST, OPT_DAEMON,
 	};
 	static const struct option long_opts[] = {
 		{ "target",      required_argument, NULL, OPT_TARGET },
@@ -109,6 +112,7 @@ static int bt_fuzz_cmd_main(int argc, char **argv)
 		{ "hci",         required_argument, NULL, OPT_HCI },
 		{ "insecure",    no_argument,       NULL, OPT_INSECURE },
 		{ "selftest",    no_argument,       NULL, OPT_SELFTEST },
+		{ "daemon",      no_argument,       NULL, OPT_DAEMON },
 		{ "help",        no_argument,       NULL, 'h' },
 		{ 0, 0, 0, 0 }
 	};
@@ -124,7 +128,7 @@ static int bt_fuzz_cmd_main(int argc, char **argv)
 	const char *show_path = NULL;
 	char inferred[32];
 	struct target *t;
-	int insecure = 0, dev_index = 0, opt;
+	int insecure = 0, dev_index = 0, daemon_mode = 0, opt;
 
 	optind = 1;
 	while ((opt = getopt_long(argc, argv, "h", long_opts, NULL)) != -1) {
@@ -138,6 +142,7 @@ static int bt_fuzz_cmd_main(int argc, char **argv)
 		case OPT_SHOW: show_path = optarg; break;
 		case OPT_HCI: hci = optarg; break;
 		case OPT_INSECURE: insecure = 1; break;
+		case OPT_DAEMON: daemon_mode = 1; break;
 		case OPT_SELFTEST: return wlan_fuzz_selftest_run();
 		case 'h': fuzz_usage(); return 0;
 		default: fuzz_usage(); return 2;
@@ -188,6 +193,9 @@ static int bt_fuzz_cmd_main(int argc, char **argv)
 	if (!o.replay_path) {
 		struct wlan_fuzz_stream stream;
 		int rc;
+
+		if (daemon_mode && ela_fuzz_daemonize("bt-fuzz", o.out_dir) == 1)
+			return 0;	/* parent detached; child runs the fuzz */
 
 		if (wlan_fuzz_stream_open(&stream, tname, "bt-fuzz", 1, insecure) == 0)
 			o.sink = &stream.sink;

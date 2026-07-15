@@ -14,6 +14,7 @@
 #include "linux/wlan/wlan_fuzz.h"
 #include "linux/wlan/wlan_fuzz_stream.h"
 #include "linux/linux_wlan_util.h"
+#include "linux/fuzz_daemon.h"
 
 #include <dirent.h>
 #include <errno.h>
@@ -40,6 +41,8 @@ static void fuzz_usage(const char *prog)
 		"  --usb-id V:P     usb-generic only: target USB device by hex VID:PID\n"
 		"                   (e.g. 0bda:8179; product '*' or omitted = any)\n"
 		"  --iface NAME     wext-generic only: network interface to fuzz (e.g. wlan0)\n"
+		"  --daemon         detach and run in the background (for API spawn);\n"
+		"                     logs to <out>/wlan-fuzz-daemon.log\n"
 		"  --insecure       wext-generic only: skip TLS verification when streaming\n"
 		"                   payloads to the agent API (--output-http) for remote\n"
 		"                   crash capture (the host can panic; the API keeps the\n"
@@ -95,7 +98,7 @@ static int wlan_fuzz_cmd_main(int argc, char **argv)
 	enum {
 		OPT_TARGET = 1, OPT_ITERATIONS, OPT_PROBE_EVERY, OPT_SEED,
 		OPT_OUT, OPT_FW, OPT_REPLAY, OPT_SELFTEST, OPT_SHOW, OPT_USB_ID,
-		OPT_IFACE, OPT_INSECURE,
+		OPT_IFACE, OPT_INSECURE, OPT_DAEMON,
 	};
 	static const struct option long_opts[] = {
 		{ "target",      required_argument, NULL, OPT_TARGET },
@@ -110,6 +113,7 @@ static int wlan_fuzz_cmd_main(int argc, char **argv)
 		{ "iface",       required_argument, NULL, OPT_IFACE },
 		{ "insecure",    no_argument,       NULL, OPT_INSECURE },
 		{ "selftest",    no_argument,       NULL, OPT_SELFTEST },
+		{ "daemon",      no_argument,       NULL, OPT_DAEMON },
 		{ "help",        no_argument,       NULL, 'h' },
 		{ 0, 0, 0, 0 }
 	};
@@ -127,6 +131,7 @@ static int wlan_fuzz_cmd_main(int argc, char **argv)
 	const char *iface = NULL;
 	uint16_t usb_vid = 0, usb_pid = 0;
 	int insecure = 0;
+	int daemon_mode = 0;
 	char inferred[32];
 	struct target *t;
 	int opt;
@@ -166,6 +171,9 @@ static int wlan_fuzz_cmd_main(int argc, char **argv)
 			break;
 		case OPT_INSECURE:
 			insecure = 1;
+			break;
+		case OPT_DAEMON:
+			daemon_mode = 1;
 			break;
 		case OPT_SELFTEST:
 			return wlan_fuzz_selftest_run();
@@ -261,6 +269,9 @@ static int wlan_fuzz_cmd_main(int argc, char **argv)
 		int stream_payloads = !strcmp(tname, "wext-generic") ||
 				      wlan_target_uses_kmod(tname);
 		int rc;
+
+		if (daemon_mode && ela_fuzz_daemonize("wlan-fuzz", o.out_dir) == 1)
+			return 0;	/* parent detached; child runs the fuzz */
 
 		if (wlan_fuzz_stream_open(&stream, tname, "wlan-fuzz",
 					  stream_payloads, insecure) == 0)

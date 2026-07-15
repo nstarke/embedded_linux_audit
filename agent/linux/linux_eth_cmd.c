@@ -16,6 +16,7 @@
 #include "linux/wlan/wlan_fuzz_stream.h"
 #include "linux/linux_eth_util.h"
 #include "linux/linux_wlan_util.h"
+#include "linux/fuzz_daemon.h"
 
 #include <dirent.h>
 #include <errno.h>
@@ -151,6 +152,8 @@ static void fuzz_usage(void)
 		"  --out DIR        crash output dir (default crashes)\n"
 		"  --replay FILE    reproduce a saved crash on hardware\n"
 		"  --show FILE      decode a crash file for triage (offline, no hardware)\n"
+		"  --daemon         detach and run in the background (for API spawn);\n"
+		"                   logs to <out>/eth-fuzz-daemon.log\n"
 		"  --insecure       skip TLS verification when streaming payloads to the\n"
 		"                   agent API (--output-http) for remote crash capture\n"
 		"  --selftest       run offline engine self-tests (no hardware)\n");
@@ -171,7 +174,7 @@ static int eth_fuzz_cmd_main(int argc, char **argv)
 	enum {
 		OPT_TARGET = 1, OPT_ITERATIONS, OPT_PROBE_EVERY, OPT_SEED,
 		OPT_OUT, OPT_REPLAY, OPT_SHOW, OPT_IFACE, OPT_INSECURE,
-		OPT_SELFTEST,
+		OPT_SELFTEST, OPT_DAEMON,
 	};
 	/* Long-option schema for getopt_long; keep in sync with fuzz_usage(). */
 	static const struct option long_opts[] = {
@@ -185,6 +188,7 @@ static int eth_fuzz_cmd_main(int argc, char **argv)
 		{ "iface",       required_argument, NULL, OPT_IFACE },
 		{ "insecure",    no_argument,       NULL, OPT_INSECURE },
 		{ "selftest",    no_argument,       NULL, OPT_SELFTEST },
+		{ "daemon",      no_argument,       NULL, OPT_DAEMON },
 		{ "help",        no_argument,       NULL, 'h' },
 		{ 0, 0, 0, 0 }
 	};
@@ -202,7 +206,7 @@ static int eth_fuzz_cmd_main(int argc, char **argv)
 	const char *show_path = NULL;
 	char inferred[32];
 	struct target *t;
-	int insecure = 0, opt;
+	int insecure = 0, daemon_mode = 0, opt;
 
 	optind = 1;
 	while ((opt = getopt_long(argc, argv, "h", long_opts, NULL)) != -1) {
@@ -216,6 +220,7 @@ static int eth_fuzz_cmd_main(int argc, char **argv)
 		case OPT_SHOW: show_path = optarg; break;
 		case OPT_IFACE: iface = optarg; break;
 		case OPT_INSECURE: insecure = 1; break;
+		case OPT_DAEMON: daemon_mode = 1; break;
 		case OPT_SELFTEST: return wlan_fuzz_selftest_run();
 		case 'h': fuzz_usage(); return 0;
 		default: fuzz_usage(); return 2;
@@ -280,6 +285,9 @@ static int eth_fuzz_cmd_main(int argc, char **argv)
 	if (!o.replay_path) {
 		struct wlan_fuzz_stream stream;
 		int rc;
+
+		if (daemon_mode && ela_fuzz_daemonize("eth-fuzz", o.out_dir) == 1)
+			return 0;	/* parent detached; child runs the fuzz */
 
 		if (wlan_fuzz_stream_open(&stream, tname, "eth-fuzz", 1, insecure) == 0)
 			o.sink = &stream.sink;

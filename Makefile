@@ -930,6 +930,7 @@ SRC := \
 	agent/linux/linux_pcap_cmd.c \
 	agent/linux/linux_coredump_util.c \
 	agent/linux/linux_coredump_cmd.c \
+	agent/linux/fuzz_daemon.c \
 	agent/linux/linux_wlan_util.c \
 	agent/linux/linux_wlan_cmd.c \
 	agent/linux/wlan/wlan_fuzz_grammar.c \

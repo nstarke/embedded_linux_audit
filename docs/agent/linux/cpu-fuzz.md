@@ -111,6 +111,7 @@ Executing attacker-controlled code is dangerous; four layers contain it:
 | `--seed N` | rng seed / sweep base (default 1) |
 | `--out DIR` | finding output directory (default `crashes`) |
 | `--thumb` | ARM32 host only: fuzz the Thumb (T32) instruction set instead of A32 |
+| `--daemon` | detach and run in the background, logging to `<out>/cpu-fuzz-daemon.log` — so an agent-API `.../ela/spawn` returns immediately instead of waiting for the whole run |
 | `--replay FILE` | re-execute a saved/returned finding on this CPU |
 | `--show FILE` | decode a finding offline (no execution) |
 | `--insecure` | skip TLS verification when streaming to `--output-http` |

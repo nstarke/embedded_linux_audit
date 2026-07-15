@@ -21,6 +21,7 @@
 #include "arch/arch_target.h"
 #include "linux/cpu/cpu_fuzz.h"
 #include "linux/cpu/cpu_fuzz_stream.h"
+#include "linux/fuzz_daemon.h"
 
 #include <getopt.h>
 #include <stdio.h>
@@ -79,6 +80,8 @@ static void fuzz_usage(void)
 		"                     (ISA taken from the file header; must match host)\n"
 		"  --show FILE      decode a finding offline (no execution)\n"
 		"  --thumb          ARM32 host: fuzz the Thumb (T32) set instead of A32\n"
+		"  --daemon         detach and run in the background (for API spawn);\n"
+		"                     logs to <out>/cpu-fuzz-daemon.log\n"
 		"  --insecure       skip TLS verify when streaming to --output-http\n"
 		"  --selftest       run offline engine self-tests (no execution)\n",
 		host_isa_name());
@@ -89,7 +92,7 @@ static int cpu_fuzz_cmd_main(int argc, char **argv)
 	enum {
 		OPT_MODE = 1, OPT_ITERATIONS, OPT_LENGTH, OPT_PROBE_EVERY,
 		OPT_SEED, OPT_OUT, OPT_REPLAY, OPT_SHOW, OPT_INSECURE,
-		OPT_SELFTEST, OPT_THUMB,
+		OPT_SELFTEST, OPT_THUMB, OPT_DAEMON,
 	};
 	static const struct option long_opts[] = {
 		{ "mode",        required_argument, NULL, OPT_MODE },
@@ -103,6 +106,7 @@ static int cpu_fuzz_cmd_main(int argc, char **argv)
 		{ "insecure",    no_argument,       NULL, OPT_INSECURE },
 		{ "selftest",    no_argument,       NULL, OPT_SELFTEST },
 		{ "thumb",       no_argument,       NULL, OPT_THUMB },
+		{ "daemon",      no_argument,       NULL, OPT_DAEMON },
 		{ "help",        no_argument,       NULL, 'h' },
 		{ 0, 0, 0, 0 }
 	};
@@ -117,7 +121,7 @@ static int cpu_fuzz_cmd_main(int argc, char **argv)
 	const char *isa_name = host_isa_name();
 	struct cpu_isa *isa;
 	char inferred[32];	/* function-scoped: isa_name may point at it below */
-	int insecure = 0, thumb = 0, opt;
+	int insecure = 0, thumb = 0, daemon_mode = 0, opt;
 
 	optind = 1;
 	while ((opt = getopt_long(argc, argv, "h", long_opts, NULL)) != -1) {
@@ -138,6 +142,7 @@ static int cpu_fuzz_cmd_main(int argc, char **argv)
 		case OPT_SHOW:       show_path = optarg; break;
 		case OPT_INSECURE:   insecure = 1; break;
 		case OPT_THUMB:      thumb = 1; break;
+		case OPT_DAEMON:     daemon_mode = 1; break;
 		case OPT_SELFTEST:   return cpu_fuzz_selftest_run();
 		case 'h':            fuzz_usage(); return 0;
 		default:             fuzz_usage(); return 2;
@@ -214,6 +219,9 @@ static int cpu_fuzz_cmd_main(int argc, char **argv)
 		struct cpu_fuzz_stream stream;
 		char tag[48];
 		int rc;
+
+		if (daemon_mode && ela_fuzz_daemonize("cpu-fuzz", o.out_dir) == 1)
+			return 0;	/* parent detached; child runs the fuzz */
 
 		snprintf(tag, sizeof(tag), "cpu-%s", isa->name);
 		if (cpu_fuzz_stream_open(&stream, tag, 1, insecure) == 0)
