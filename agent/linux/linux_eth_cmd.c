@@ -158,11 +158,22 @@ static void fuzz_usage(void)
 
 static int eth_fuzz_cmd_main(int argc, char **argv)
 {
+	/*
+	 * Top-level command handler for:
+	 *   embedded_linux_audit linux eth fuzz ...
+	 *
+	 * Responsibilities:
+	 *   1) define accepted CLI switches and defaults,
+	 *   2) parse and validate user input,
+	 *   3) resolve the requested NIC fuzz target,
+	 *   4) dispatch to offline modes (show/selftest), replay, or live fuzzing.
+	 */
 	enum {
 		OPT_TARGET = 1, OPT_ITERATIONS, OPT_PROBE_EVERY, OPT_SEED,
 		OPT_OUT, OPT_REPLAY, OPT_SHOW, OPT_IFACE, OPT_INSECURE,
 		OPT_SELFTEST,
 	};
+	/* Long-option schema for getopt_long; keep in sync with fuzz_usage(). */
 	static const struct option long_opts[] = {
 		{ "target",      required_argument, NULL, OPT_TARGET },
 		{ "iterations",  required_argument, NULL, OPT_ITERATIONS },
@@ -177,6 +188,7 @@ static int eth_fuzz_cmd_main(int argc, char **argv)
 		{ "help",        no_argument,       NULL, 'h' },
 		{ 0, 0, 0, 0 }
 	};
+	/* Default run configuration; may be overridden by CLI options below. */
 	struct fuzz_opts o = {
 		.iterations = 100000,
 		.probe_every = 8,
@@ -184,6 +196,7 @@ static int eth_fuzz_cmd_main(int argc, char **argv)
 		.out_dir = "crashes",
 		.replay_path = NULL,
 	};
+	/* Required selector for target backend (ethtool-generic, bnxt, i40e, ...). */
 	const char *tname = NULL;
 	const char *iface = NULL;
 	const char *show_path = NULL;
