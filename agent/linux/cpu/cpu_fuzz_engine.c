@@ -93,6 +93,7 @@ static enum cpu_outcome outcome_from_name(const char *s)
 	return CPU_OUT_UNKNOWN;
 }
 
+/* LCOV_EXCL_START -- only used by the live finding-file / run paths below */
 static const char *mode_name(enum cpu_mode m)
 {
 	switch (m) {
@@ -103,6 +104,7 @@ static const char *mode_name(enum cpu_mode m)
 	default:              return "?";
 	}
 }
+/* LCOV_EXCL_STOP */
 
 static int hex_bytes(const uint8_t *b, int len, char *out, size_t outsz)
 {
@@ -146,6 +148,9 @@ static int parse_hex(const char *s, uint8_t *out, int cap)
 	}
 	return n;
 }
+
+/* LCOV_EXCL_START -- finding-file I/O, ring, and the fork/exec supervisor:
+ * reached only during a live fuzz run (hardware), not by the offline tests. */
 
 /* Is this executed candidate worth saving as a finding? */
 static int is_finding(struct cpu_isa *isa, const struct cpu_result *r)
@@ -271,8 +276,6 @@ static void ring_push(struct cpu_shared *sh, const struct cpu_result *r)
 	sh->ring_head = head + 1;	/* publish */
 	sh->findings++;
 }
-
-/* LCOV_EXCL_START -- forks and executes machine code; hardware-only */
 
 static void child_run(struct cpu_isa *isa, const struct cpu_fuzz_opts *o,
 		      struct cpu_shared *sh)
@@ -637,6 +640,7 @@ int cpu_fuzz_show(struct cpu_isa *isa, const char *path)
 
 /* ---- run entry ---------------------------------------------------------- */
 
+/* LCOV_EXCL_START -- entry to the live fuzz run / replay; hardware-only */
 int cpu_fuzz_run(struct cpu_isa *isa, const struct cpu_fuzz_opts *o)
 {
 	struct cpu_shared *sh;
@@ -644,14 +648,13 @@ int cpu_fuzz_run(struct cpu_isa *isa, const struct cpu_fuzz_opts *o)
 	int fd, rc;
 
 	if (o->replay_path)
-		return replay(isa, o->replay_path);	/* LCOV_EXCL_LINE */
+		return replay(isa, o->replay_path);
 
 	if (o->iterations <= 0) {
 		fprintf(stderr, "cpu fuzz: --iterations must be > 0\n");
 		return 2;
 	}
 
-	/* LCOV_EXCL_START -- live fuzzing path, hardware-only */
 	sh = mmap(NULL, sizeof(*sh), PROT_READ | PROT_WRITE,
 		  MAP_SHARED | MAP_ANONYMOUS, -1, 0);
 	if (sh == MAP_FAILED) {

@@ -92,6 +92,7 @@ int run_ela_kmod_abi_tests(void);
 int run_linux_wlan_util_tests(void);
 int run_linux_eth_util_tests(void);
 int run_linux_bt_util_tests(void);
+int run_cpu_fuzz_tests(void);
 int run_linux_physmem_util_tests(void);
 int run_spi_util_tests(void);
 int run_nand_util_tests(void);
@@ -193,6 +194,7 @@ int main(void)
 	rc |= run_linux_wlan_util_tests();
 	rc |= run_linux_eth_util_tests();
 	rc |= run_linux_bt_util_tests();
+	rc |= run_cpu_fuzz_tests();
 	rc |= run_linux_physmem_util_tests();
 	rc |= run_spi_util_tests();
 	rc |= run_nand_util_tests();

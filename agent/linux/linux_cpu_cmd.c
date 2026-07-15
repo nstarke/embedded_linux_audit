@@ -211,10 +211,12 @@ static int cpu_fuzz_cmd_main(int argc, char **argv)
 	if (show_path)
 		return cpu_fuzz_show(isa, show_path);
 	if (o.replay_path)
-		return cpu_fuzz_run(isa, &o);
+		return cpu_fuzz_run(isa, &o);	/* LCOV_EXCL_LINE */
 
 	/* Live fuzz: open the remote dead-man's-switch stream if --output-http is
-	 * set (a wedged core can take the host down before local triage runs). */
+	 * set (a wedged core can take the host down before local triage runs).
+	 * Streaming, daemonization, and the run itself are hardware paths. */
+	/* LCOV_EXCL_START */
 	{
 		struct cpu_fuzz_stream stream;
 		char tag[48];
@@ -231,6 +233,7 @@ static int cpu_fuzz_cmd_main(int argc, char **argv)
 			cpu_fuzz_stream_done(&stream);
 		return rc;
 	}
+	/* LCOV_EXCL_STOP */
 }
 
 static int cpu_list_main(int argc, char **argv)

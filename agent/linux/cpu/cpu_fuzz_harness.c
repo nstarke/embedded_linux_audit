@@ -323,8 +323,6 @@ int cpu_harness_exec(struct cpu_harness *h, const uint8_t *bytes, int len,
 	return 0;
 }
 
-/* LCOV_EXCL_STOP */
-
 struct cpu_harness *cpu_harness_new(struct cpu_isa *isa)
 {
 	struct cpu_harness *h;
@@ -435,3 +433,5 @@ int cpu_harness_seccomp_lockdown(void)
 	return -1;
 #endif
 }
+
+/* LCOV_EXCL_STOP */
