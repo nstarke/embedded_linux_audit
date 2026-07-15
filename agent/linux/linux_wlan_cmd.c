@@ -251,12 +251,15 @@ static int wlan_fuzz_cmd_main(int argc, char **argv)
 		return wlan_fuzz_show(t, show_path);
 
 	/* When an agent API is configured, connect so confirmed crashes are
-	 * uploaded as they are found. wext-generic additionally streams every
-	 * payload before it executes (the host-panic dead-man's-switch), since it
-	 * fuzzes the host kernel and a panic would kill local triage. */
+	 * uploaded as they are found. The host-kernel targets additionally stream
+	 * every payload before it executes (the host-panic dead-man's-switch),
+	 * since a panic would kill local triage: wext-generic (driver ioctls) and
+	 * the ela_kmod-shim targets (inject runs in kernel context). The usbfs
+	 * targets stay crash-upload-only -- they drive the device from userspace. */
 	if (!o.replay_path) {
 		struct wlan_fuzz_stream stream;
-		int stream_payloads = !strcmp(tname, "wext-generic");
+		int stream_payloads = !strcmp(tname, "wext-generic") ||
+				      wlan_target_uses_kmod(tname);
 		int rc;
 
 		if (wlan_fuzz_stream_open(&stream, tname, "wlan-fuzz",

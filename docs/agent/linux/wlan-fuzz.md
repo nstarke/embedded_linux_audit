@@ -286,11 +286,15 @@ There are two ways a crash reaches the API:
    works for **any** target &mdash; not just the host-panic ones &mdash; and is
    the normal path for firmware crashes the agent survives. Just set
    `--output-http`; no other flag is needed.
-2. **Host-panic capture (host-kernel targets).** `wext-generic` (and the
-   ethernet/Bluetooth host-kernel targets) *additionally* stream every payload
-   before it executes. The API holds only the latest one; if the host panics and
-   the agent dies before triage can run, the socket drops without the "done"
-   marker and the API writes that last payload out as a `_panic` crash file.
+2. **Host-panic capture (host-kernel targets).** The targets that run in the
+   host kernel *additionally* stream every payload before it executes:
+   `wext-generic` (driver ioctls) and the **`ela_kmod`-shim targets**
+   (`ath10k`/`ath11k`/`ath12k`/`mt76`/`brcmfmac` &mdash; the inject runs in
+   kernel context), matching the ethernet firmware and Bluetooth targets. (The
+   usbfs targets drive the device from userspace, so they get crash upload only.)
+   The API holds only the latest streamed payload; if the host panics and the
+   agent dies before triage can run, the socket drops without the "done" marker
+   and the API writes that last payload out as a `_panic` crash file.
 
 Either way the artifact lands under the device's data directory
 (`<data>/<mac>/wlan-fuzz/crash_*.txt`) and in the `uploads` table, exactly like a
