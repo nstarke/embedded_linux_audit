@@ -77,4 +77,12 @@ int wlan_target_uses_kmod(const char *target);
  */
 int wlan_parse_usb_id(const char *s, uint16_t *vid, uint16_t *pid);
 
+/*
+ * 1 if `name` is a usable Linux network-interface name for the `wext-generic`
+ * fuzz target: non-empty, at most 15 chars (IFNAMSIZ-1), and free of '/',
+ * whitespace, and control characters. 0 otherwise. Guards the `--iface`
+ * argument before it is copied into an ifreq.
+ */
+int wlan_valid_iface(const char *name);
+
 #endif

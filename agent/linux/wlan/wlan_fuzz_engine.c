@@ -286,6 +286,13 @@ int wlan_fuzz_run(struct target *t, const struct fuzz_opts *o)
 		fc->nwindow++;
 		fc->cases++;
 
+		/* Stream the payload out BEFORE executing it: if this case panics
+		 * the host and kills us, the remote sink still holds it for triage. */
+		if (fc->o.sink && fc->o.sink->emit)
+			fc->o.sink->emit(fc->o.sink->ctx,
+					 t->msgs[c.msg_idx].name, buf, len,
+					 c.note);
+
 		if (t->send(t, &t->msgs[c.msg_idx], buf, len) < 0)
 			dead = 1;
 

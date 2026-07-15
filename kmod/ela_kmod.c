@@ -32,10 +32,19 @@
 #ifdef CONFIG_PCI
 # include <linux/pci.h>
 #endif
-#if IS_ENABLED(CONFIG_SPI)
+/*
+ * MTD/SPI support is gated on IS_BUILTIN, not IS_ENABLED: IS_ENABLED is also
+ * true for =m, but those subsystems export their symbols (get_mtd_device,
+ * spi_bus_type, ...) from loadable modules, not vmlinux. Building this
+ * out-of-tree module against a kernel whose Module.symvers lacks them (the
+ * builder only prepares the target kernel, it does not build its modules) then
+ * fails at MODPOST with "undefined!". When MTD/SPI are modular or absent the
+ * #else stubs below return -EOPNOTSUPP instead.
+ */
+#if IS_BUILTIN(CONFIG_SPI)
 # include <linux/spi/spi.h>
 #endif
-#if IS_ENABLED(CONFIG_MTD)
+#if IS_BUILTIN(CONFIG_MTD)
 # include <linux/mtd/mtd.h>
 #endif
 #if IS_ENABLED(CONFIG_USB)
@@ -297,7 +306,7 @@ struct ela_phys_alloc {
 	unsigned int order;
 };
 
-#if IS_ENABLED(CONFIG_MTD)
+#if IS_BUILTIN(CONFIG_MTD)
 struct ela_nand_entry {
 	struct list_head node;
 	int mtd_index;
@@ -1291,7 +1300,7 @@ static long ela_ioctl_usb_port_action(unsigned long arg) { (void)arg; return -EO
 static long ela_ioctl_usb_descriptors(unsigned long arg) { (void)arg; return -EOPNOTSUPP; }
 #endif
 
-#if IS_ENABLED(CONFIG_SPI)
+#if IS_BUILTIN(CONFIG_SPI)
 struct ela_spi_find_ctx {
 	u32 wanted;
 	u32 position;
@@ -1356,7 +1365,7 @@ static long ela_ioctl_spi_get(unsigned long arg)
 }
 #endif
 
-#if IS_ENABLED(CONFIG_SPI) && IS_ENABLED(CONFIG_MTD)
+#if IS_BUILTIN(CONFIG_SPI) && IS_BUILTIN(CONFIG_MTD)
 static struct spi_device *ela_mtd_spi_parent(struct mtd_info *mtd)
 {
 	struct device *dev = mtd->dev.parent;
@@ -1512,7 +1521,7 @@ static long ela_ioctl_spi_mtd_read(unsigned long arg)
 }
 #endif
 
-#if IS_ENABLED(CONFIG_MTD)
+#if IS_BUILTIN(CONFIG_MTD)
 static long ela_ioctl_nand_mtd_get(unsigned long arg)
 {
 	struct ela_kmod_nand_mtd req;
@@ -2132,13 +2141,13 @@ static int __init ela_kmod_init(void)
 {
 	int rc;
 
-#if IS_ENABLED(CONFIG_MTD)
+#if IS_BUILTIN(CONFIG_MTD)
 	register_mtd_user(&ela_nand_mtd_notifier);
 #endif
 	rc = misc_register(&ela_kmod_dev);
 
 	if (rc) {
-#if IS_ENABLED(CONFIG_MTD)
+#if IS_BUILTIN(CONFIG_MTD)
 		unregister_mtd_user(&ela_nand_mtd_notifier);
 		ela_nand_entries_clear();
 #endif
@@ -2154,7 +2163,7 @@ static void __exit ela_kmod_exit(void)
 {
 	ela_wlan_shutdown();	/* unregister any WLAN-shim kprobes */
 	misc_deregister(&ela_kmod_dev);
-#if IS_ENABLED(CONFIG_MTD)
+#if IS_BUILTIN(CONFIG_MTD)
 	unregister_mtd_user(&ela_nand_mtd_notifier);
 	ela_nand_entries_clear();
 #endif

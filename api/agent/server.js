@@ -16,6 +16,7 @@ const { loadApiKeyHashes } = require('../lib/db/deviceRegistry');
 const { VALID_UPLOAD_TYPES } = require('../lib/uploadTypes');
 const { createApp } = require('./app');
 const { createPcapWebSocketServer } = require('./pcapWebSocket');
+const { createWlanFuzzWebSocketServer } = require('./wlanFuzzWebSocket');
 const {
   findProjectRoot,
   isValidMacAddress,
@@ -228,6 +229,13 @@ async function main() {
   }
 
   createPcapWebSocketServer({
+    server,
+    dataDir,
+    persistUpload,
+    verbose: args.verbose,
+  });
+
+  createWlanFuzzWebSocketServer({
     server,
     dataDir,
     persistUpload,

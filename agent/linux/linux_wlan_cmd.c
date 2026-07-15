@@ -12,6 +12,7 @@
  */
 #include "embedded_linux_audit_cmd.h"
 #include "linux/wlan/wlan_fuzz.h"
+#include "linux/wlan/wlan_fuzz_stream.h"
 #include "linux/linux_wlan_util.h"
 
 #include <dirent.h>
@@ -33,9 +34,16 @@ static void fuzz_usage(const char *prog)
 		"  targets: ath9k-htc rtw88-usb mwifiex-usb mt7601u carl9170 rtl8xxxu\n"
 		"           ath10k ath11k ath12k mt76 brcmfmac (PCIe/SDIO via ela_kmod shim)\n"
 		"           usb-generic (blind fuzz any USB NIC by VID:PID; needs --usb-id)\n"
+		"           wext-generic (blind fuzz a WEXT driver's ioctls; needs --iface,\n"
+		"                        root; targets the HOST KERNEL -- can panic it)\n"
 		"  --target NAME    NIC target to fuzz (required)\n"
 		"  --usb-id V:P     usb-generic only: target USB device by hex VID:PID\n"
 		"                   (e.g. 0bda:8179; product '*' or omitted = any)\n"
+		"  --iface NAME     wext-generic only: network interface to fuzz (e.g. wlan0)\n"
+		"  --insecure       wext-generic only: skip TLS verification when streaming\n"
+		"                   payloads to the agent API (--output-http) for remote\n"
+		"                   crash capture (the host can panic; the API keeps the\n"
+		"                   last payload and saves it as a triage result on drop)\n"
 		"  --iterations N   cases to run (default 100000)\n"
 		"  --probe-every N  liveness probe interval (default 8)\n"
 		"  --seed N         rng seed (default 1234)\n"
@@ -50,10 +58,13 @@ static void fuzz_usage(const char *prog)
 }
 
 static struct target *resolve_target(const char *tname, const char *fw,
-				     uint16_t usb_vid, uint16_t usb_pid)
+				     uint16_t usb_vid, uint16_t usb_pid,
+				     const char *iface)
 {
 	if (!strcmp(tname, "usb-generic"))
 		return target_usb_generic(usb_vid, usb_pid);
+	if (!strcmp(tname, "wext-generic"))
+		return target_wext_generic(iface);
 	if (!strcmp(tname, "ath9k-htc"))
 		return target_ath9k_htc(fw);
 	if (!strcmp(tname, "rtw88-usb"))
@@ -84,6 +95,7 @@ static int wlan_fuzz_cmd_main(int argc, char **argv)
 	enum {
 		OPT_TARGET = 1, OPT_ITERATIONS, OPT_PROBE_EVERY, OPT_SEED,
 		OPT_OUT, OPT_FW, OPT_REPLAY, OPT_SELFTEST, OPT_SHOW, OPT_USB_ID,
+		OPT_IFACE, OPT_INSECURE,
 	};
 	static const struct option long_opts[] = {
 		{ "target",      required_argument, NULL, OPT_TARGET },
@@ -95,6 +107,8 @@ static int wlan_fuzz_cmd_main(int argc, char **argv)
 		{ "replay",      required_argument, NULL, OPT_REPLAY },
 		{ "show",        required_argument, NULL, OPT_SHOW },
 		{ "usb-id",      required_argument, NULL, OPT_USB_ID },
+		{ "iface",       required_argument, NULL, OPT_IFACE },
+		{ "insecure",    no_argument,       NULL, OPT_INSECURE },
 		{ "selftest",    no_argument,       NULL, OPT_SELFTEST },
 		{ "help",        no_argument,       NULL, 'h' },
 		{ 0, 0, 0, 0 }
@@ -110,7 +124,9 @@ static int wlan_fuzz_cmd_main(int argc, char **argv)
 	const char *fw = NULL;
 	const char *show_path = NULL;
 	const char *usb_id = NULL;
+	const char *iface = NULL;
 	uint16_t usb_vid = 0, usb_pid = 0;
+	int insecure = 0;
 	char inferred[32];
 	struct target *t;
 	int opt;
@@ -144,6 +160,12 @@ static int wlan_fuzz_cmd_main(int argc, char **argv)
 			break;
 		case OPT_USB_ID:
 			usb_id = optarg;
+			break;
+		case OPT_IFACE:
+			iface = optarg;
+			break;
+		case OPT_INSECURE:
+			insecure = 1;
 			break;
 		case OPT_SELFTEST:
 			return wlan_fuzz_selftest_run();
@@ -200,7 +222,24 @@ static int wlan_fuzz_cmd_main(int argc, char **argv)
 		return 2;
 	}
 
-	t = resolve_target(tname, fw, usb_vid, usb_pid);
+	/* wext-generic addresses a driver by interface name; likewise only
+	 * needed for a hardware run (not offline --show). */
+	if (!strcmp(tname, "wext-generic") && !show_path) {
+		if (!iface) {
+			fprintf(stderr,
+				"wlan fuzz: --target wext-generic requires --iface <name>\n");
+			fuzz_usage("embedded_linux_audit");
+			return 2;
+		}
+		if (!wlan_valid_iface(iface)) {
+			fprintf(stderr,
+				"wlan fuzz: bad --iface '%s' (1-15 chars, no '/' or whitespace)\n",
+				iface);
+			return 2;
+		}
+	}
+
+	t = resolve_target(tname, fw, usb_vid, usb_pid, iface);
 	if (!t) {
 		fprintf(stderr, "wlan fuzz: unknown target: %s\n", tname);
 		fuzz_usage("embedded_linux_audit");
@@ -210,6 +249,21 @@ static int wlan_fuzz_cmd_main(int argc, char **argv)
 	/* --show decodes a crash file offline (no hardware) for triage. */
 	if (show_path)
 		return wlan_fuzz_show(t, show_path);
+
+	/* wext-generic fuzzes the host kernel and can panic it, killing local
+	 * triage. Stream each payload to the agent API first so the last one
+	 * survives a panic; a clean run ends the stream gracefully. */
+	if (!o.replay_path && !strcmp(tname, "wext-generic")) {
+		struct wlan_fuzz_stream stream;
+		int rc;
+
+		if (wlan_fuzz_stream_open(&stream, tname, insecure) == 0)
+			o.sink = &stream.sink;
+		rc = wlan_fuzz_run(t, &o);
+		if (o.sink)
+			wlan_fuzz_stream_done(&stream);
+		return rc;
+	}
 
 	return wlan_fuzz_run(t, &o);
 }
@@ -356,9 +410,10 @@ static int read_iface_usb_id(const char *iface, char *out, size_t outsz)
 static int linux_wlan_list_main(int argc, char **argv)
 {
 	struct blind_cand {
+		int  kind;	/* 0 = usb-generic (by id), 1 = wext-generic */
 		char name[32];
-		char id[20];	/* "vvvv:pppp", or empty if VID:PID unreadable */
-	} cand[32] = { { { 0 }, { 0 } } };
+		char id[20];	/* usb: "vvvv:pppp" or empty; wext: unused */
+	} cand[64] = { { 0, { 0 }, { 0 } } };
 	char procwl[8192];
 	int have_procwl;
 	DIR *d;
@@ -447,14 +502,23 @@ static int linux_wlan_list_main(int argc, char **argv)
 		       phy, drv, bus, usbid, detect,
 		       target ? target : "(unsupported)", transport);
 
-		/* No class-directed target but on the USB bus: reachable for a
-		 * blind `usb-generic` sweep. Record it for the hint block. */
-		if (!target && !strcmp(bus, "usb") && ncand < (int)(sizeof(cand) /
-								   sizeof(cand[0]))) {
+		/* No class-directed target, but reachable for a blind sweep:
+		 * a USB NIC via `usb-generic`, and/or a WEXT driver (DETECT=wext)
+		 * via `wext-generic`. Record each applicable option for the hints. */
+		if (!target && !strcmp(bus, "usb") &&
+		    ncand < (int)(sizeof(cand) / sizeof(cand[0]))) {
+			cand[ncand].kind = 0;
 			snprintf(cand[ncand].name, sizeof(cand[ncand].name), "%s",
 				 de->d_name);
 			snprintf(cand[ncand].id, sizeof(cand[ncand].id), "%s",
 				 strcmp(usbid, "-") ? usbid : "");
+			ncand++;
+		}
+		if (!target && has_wext &&
+		    ncand < (int)(sizeof(cand) / sizeof(cand[0]))) {
+			cand[ncand].kind = 1;
+			snprintf(cand[ncand].name, sizeof(cand[ncand].name), "%s",
+				 de->d_name);
 			ncand++;
 		}
 	}
@@ -472,18 +536,36 @@ static int linux_wlan_list_main(int argc, char **argv)
 		printf("\n%d WLAN interface(s), %d fuzzable with `linux wlan fuzz --target <name>`.\n",
 		       found, supported);
 
-	/* Point the operator at the blind fallback for USB NICs with no
+	/* Point the operator at the blind fallbacks for NICs with no
 	 * class-directed target (proprietary/unknown firmware). */
-	if (ncand) {
-		printf("\n%d USB NIC(s) with no class-directed target -- blind-fuzz"
-		       " with `--target usb-generic` (shallow coverage):\n", ncand);
-		for (i = 0; i < ncand; i++) {
-			if (cand[i].id[0])
-				printf("  %-12s linux wlan fuzz --target usb-generic --usb-id %s\n",
-				       cand[i].name, cand[i].id);
-			else
-				printf("  %-12s (VID:PID unreadable; pass --usb-id <VID:PID> from lsusb)\n",
-				       cand[i].name);
+	{
+		int nusb = 0, nwext = 0;
+
+		for (i = 0; i < ncand; i++)
+			cand[i].kind ? nwext++ : nusb++;
+
+		if (nusb) {
+			printf("\n%d USB NIC(s) with no class-directed target -- blind-fuzz"
+			       " with `--target usb-generic` (shallow coverage):\n", nusb);
+			for (i = 0; i < ncand; i++) {
+				if (cand[i].kind)
+					continue;
+				if (cand[i].id[0])
+					printf("  %-12s linux wlan fuzz --target usb-generic --usb-id %s\n",
+					       cand[i].name, cand[i].id);
+				else
+					printf("  %-12s (VID:PID unreadable; pass --usb-id <VID:PID> from lsusb)\n",
+					       cand[i].name);
+			}
+		}
+		if (nwext) {
+			printf("\n%d WEXT NIC(s) with no class-directed target -- blind-fuzz"
+			       " the driver ioctls with `--target wext-generic` (root; can"
+			       " panic the host):\n", nwext);
+			for (i = 0; i < ncand; i++)
+				if (cand[i].kind)
+					printf("  %-12s sudo linux wlan fuzz --target wext-generic --iface %s\n",
+					       cand[i].name, cand[i].name);
 		}
 	}
 	return 0;

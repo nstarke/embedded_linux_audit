@@ -108,10 +108,32 @@ struct target *target_brcmfmac(void);	/* SDIO/PCIe/USB via the ela_kmod shim */
  */
 struct target *target_usb_generic(uint16_t vid, uint16_t pid);
 
+/*
+ * Blind fuzzer for a legacy Wireless Extensions NIC, addressed by interface
+ * name. Fuzzes the driver's SIOCSIWxxx ioctl handlers over an AF_INET socket
+ * -- this targets the HOST KERNEL, not device firmware, so a bug can panic the
+ * host; SET ioctls need CAP_NET_ADMIN. For the DETECT=wext interfaces that map
+ * to no class-directed target.
+ */
+struct target *target_wext_generic(const char *iface);
+
 /* shared USB recovery: close, wait for re-enumeration, re-attach+probe */
 int usb_recover_generic(struct target *t, int tries, int wait_ms);
 
 /* ---- fuzz loop ----------------------------------------------------------- */
+
+/*
+ * Optional sink notified with each case's wire bytes JUST BEFORE the target
+ * executes it. Used by wext-generic to stream the payload to the agent API so
+ * a driver bug that panics the host (killing the agent before local triage can
+ * run) still leaves the last-sent payload captured remotely. emit() must be
+ * best-effort and non-fatal -- a streaming failure never stops the fuzz loop.
+ */
+struct fuzz_payload_sink {
+	void *ctx;
+	void (*emit)(void *ctx, const char *msg_name, const uint8_t *payload,
+		     int len, const char *note);
+};
 
 struct fuzz_opts {
 	long iterations;
@@ -119,6 +141,7 @@ struct fuzz_opts {
 	uint64_t seed;
 	const char *out_dir;
 	const char *replay_path;	/* if set: replay instead of fuzz */
+	const struct fuzz_payload_sink *sink;	/* optional; NULL to disable */
 };
 
 int wlan_fuzz_run(struct target *t, const struct fuzz_opts *o);
