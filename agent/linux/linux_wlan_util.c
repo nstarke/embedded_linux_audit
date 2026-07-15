@@ -165,3 +165,21 @@ int wlan_parse_usb_id(const char *s, uint16_t *vid, uint16_t *pid)
 	}
 	return parse_hex16(colon + 1, colon + 1 + strlen(colon + 1), pid);
 }
+
+int wlan_valid_iface(const char *name)
+{
+	size_t len, i;
+
+	if (!name)
+		return 0;
+	len = strlen(name);
+	if (len == 0 || len > 15)	/* IFNAMSIZ - 1 */
+		return 0;
+	for (i = 0; i < len; i++) {
+		unsigned char c = (unsigned char)name[i];
+
+		if (c == '/' || c <= ' ' || c == 0x7F)
+			return 0;
+	}
+	return 1;
+}

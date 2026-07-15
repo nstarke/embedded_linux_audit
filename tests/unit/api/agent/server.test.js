@@ -56,6 +56,7 @@ function loadAgentServer(options = {}) {
   const persistUpload = jest.fn();
   const createApp = jest.fn(() => 'app-instance');
   const createPcapWebSocketServer = jest.fn();
+  const createWlanFuzzWebSocketServer = jest.fn();
   const selectStartupDataDir = jest.fn().mockResolvedValue({
     dataDir: '/repo/data/123',
     timestamp: '123',
@@ -122,6 +123,9 @@ function loadAgentServer(options = {}) {
   }));
   jest.doMock('../../../../api/agent/pcapWebSocket', () => ({
     createPcapWebSocketServer,
+  }));
+  jest.doMock('../../../../api/agent/wlanFuzzWebSocket', () => ({
+    createWlanFuzzWebSocketServer,
   }));
   jest.doMock('../../../../api/agent/serverUtils', () => ({
     findProjectRoot: jest.fn(() => '/repo'),

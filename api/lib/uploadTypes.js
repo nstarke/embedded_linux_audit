@@ -28,6 +28,7 @@ const VALID_UPLOAD_TYPES = new Set([
   'tpm2-pcrread',
   'uboot-image',
   'uboot-environment',
+  'wlan-fuzz',
 ]);
 
 module.exports = {

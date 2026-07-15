@@ -215,6 +215,42 @@ static int test_usb_generic_grammar(void)
 	return fail;
 }
 
+/*
+ * wext-generic is blind and has no chip grammar; each generated case must
+ * still render within bounds. POINT ioctls can render 0 bytes (empty
+ * buffer/scan trigger); PARAM/FREQ carry their fixed header, but since only
+ * some fields mutate per case we just assert the case renders and stays bounded.
+ */
+static int test_wext_grammar(void)
+{
+	struct target *t = target_wext_generic("wlan0");
+	struct fcase c;
+	uint8_t buf[CASE_MAX_BYTES];
+	int r, len, fail = 0;
+
+	if (t->nmsgs < 10 || t->big_endian != 0) {
+		printf("FAIL: wext-generic shape (nmsgs=%d be=%d)\n",
+		       t->nmsgs, t->big_endian);
+		fail = 1;
+	}
+	rng_seed(4242);
+	for (r = 0; r < 5000 && !fail; r++) {
+		const struct msg *m;
+
+		case_generate(t->msgs, t->nmsgs, &c);
+		m = &t->msgs[c.msg_idx];
+		len = msg_build(m, &c, t->big_endian, buf, sizeof(buf));
+		if (len < 0 || len > CASE_MAX_BYTES) {
+			printf("FAIL: wext-generic %s renders %d bytes\n",
+			       m->name, len);
+			fail = 1;
+		}
+	}
+	printf("%s: wext-generic grammar renders within bounds\n",
+	       fail ? "FAIL" : "OK");
+	return fail;
+}
+
 static int test_mutation_coverage(void)
 {
 	struct target *t = target_ath9k_htc(NULL);
@@ -375,6 +411,7 @@ int wlan_fuzz_selftest_run(void)
 	fail |= test_render_sizes();
 	fail |= test_rtl8xxxu_box_size();
 	fail |= test_usb_generic_grammar();
+	fail |= test_wext_grammar();
 	fail |= test_mutation_coverage();
 	fail |= test_fuzz_loop();
 	printf(fail ? "SELFTEST FAILED\n" : "SELFTEST PASSED\n");

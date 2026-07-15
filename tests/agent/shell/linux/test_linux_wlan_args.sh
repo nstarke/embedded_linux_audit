@@ -38,6 +38,16 @@ printf 'VENDOR_WRITE 40050001000010 # data=len:1\n' >> "$USB_CRASH"
 run_exact_case "linux wlan fuzz --show usb-generic (no --usb-id)" 0 "$BIN" linux wlan fuzz --show "$USB_CRASH"
 rm -f "$USB_CRASH"
 
+# wext-generic needs an interface name for a hardware run; malformed names are
+# rejected. Both fail before opening a socket, so safe on any host.
+run_exact_case "linux wlan fuzz wext-generic missing --iface" 2 "$BIN" linux wlan fuzz --target wext-generic
+run_exact_case "linux wlan fuzz wext-generic bad --iface" 2 "$BIN" linux wlan fuzz --target wext-generic --iface "wlan/0"
+WEXT_CRASH="$(mktemp /tmp/ela-wlan-wext.XXXXXX)"
+printf '# target=wext-generic cases=1\n' > "$WEXT_CRASH"
+printf 'SIWESSID 4142434445 # buf=len:5\n' >> "$WEXT_CRASH"
+run_exact_case "linux wlan fuzz --show wext-generic (no --iface)" 0 "$BIN" linux wlan fuzz --show "$WEXT_CRASH"
+rm -f "$WEXT_CRASH"
+
 # The offline engine self-test exercises the mutator, renderer, and triage
 # loop with a mock transport -- no hardware required, must pass everywhere.
 run_exact_case "linux wlan fuzz --selftest" 0 "$BIN" linux wlan fuzz --selftest

@@ -650,6 +650,7 @@ AGENT_UNIT_TEST_DEPS := \
 	agent/linux/linux_kernel_buildinfo_util.c \
 	agent/linux/linux_physmem_util.c \
 	agent/linux/linux_wlan_util.c \
+	agent/linux/wlan/wlan_fuzz_stream_fmt.c \
 	agent/spi/spi_util.c \
 	agent/nand/nand_util.c \
 	agent/emmc/emmc_util.c \
@@ -938,6 +939,9 @@ SRC := \
 	agent/linux/wlan/wlan_fuzz_target_carl9170.c \
 	agent/linux/wlan/wlan_fuzz_target_rtl8xxxu.c \
 	agent/linux/wlan/wlan_fuzz_target_usb_generic.c \
+	agent/linux/wlan/wlan_fuzz_target_wext.c \
+	agent/linux/wlan/wlan_fuzz_stream_fmt.c \
+	agent/linux/wlan/wlan_fuzz_stream.c \
 	agent/linux/wlan/wlan_fuzz_kmod.c \
 	agent/linux/wlan/wlan_fuzz_target_ath10k.c \
 	agent/linux/wlan/wlan_fuzz_target_ath11k.c \
@@ -1389,6 +1393,7 @@ $(AGENT_UNIT_TEST_BIN): $(AGENT_UNIT_TEST_SRC) $(AGENT_UNIT_TEST_DEPS) $(TPM2_UN
 			agent/linux/linux_kernel_buildinfo_util.c \
 			agent/linux/linux_physmem_util.c \
 			agent/linux/linux_wlan_util.c \
+			agent/linux/wlan/wlan_fuzz_stream_fmt.c \
 			agent/spi/spi_util.c \
 			agent/nand/nand_util.c \
 			agent/emmc/emmc_util.c \

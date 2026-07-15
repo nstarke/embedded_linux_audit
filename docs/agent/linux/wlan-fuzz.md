@@ -31,6 +31,7 @@ from the Linux driver headers).
 | `mt76` | MediaTek mt7615/mt7915/mt7921/mt7996 (connac MCU) | PCIe/SDIO via the `ela_kmod` kernel shim |
 | `brcmfmac` | Broadcom BCM43xx/4356/4359/4373 (BCDC ioctls) | SDIO/PCIe/USB via the `ela_kmod` kernel shim |
 | `usb-generic` | Any USB NIC by VID:PID (proprietary/unknown) | USB (raw usbfs), **blind** &mdash; no command grammar |
+| `wext-generic` | Any WEXT NIC by interface name | Wireless Extensions ioctls, **blind** &mdash; fuzzes the **host kernel driver** |
 
 The USB targets drive the dongle directly through usbfs and need no kernel
 module. The kernel-shim targets reach a command ring that lives in
@@ -39,6 +40,9 @@ in-kernel driver &mdash; see [Fuzzing a shim-backed NIC](#fuzzing-a-shim-backed-
 The `usb-generic` target is the fallback for a USB NIC that maps to none of the
 class-directed targets &mdash; see
 [Blind-fuzzing a proprietary USB NIC](#blind-fuzzing-a-proprietary-usb-nic).
+The `wext-generic` target fuzzes a legacy Wireless Extensions driver's ioctl
+handlers &mdash; note this exercises the **host kernel**, not device firmware
+&mdash; see [Blind-fuzzing a WEXT driver](#blind-fuzzing-a-wext-driver).
 
 ## Listing NICs (`wlan list`)
 
@@ -56,12 +60,16 @@ wlan0        phy0   ath11k_pci       pci   -          phy80211 ath11k         el
 wlan1        phy1   rtl8xxxu         usb   0bda:8179  phy80211 rtl8xxxu       usbfs
 wlo1         phy2   iwlwifi          pci   -          phy80211 (unsupported)  -
 wlan2        phy3   (proprietary)    usb   0e8d:7612  phy80211 (unsupported)  -
+ra0          -      rt2860v2         soc   -          wext     (unsupported)  -
 ath0         -      qca_wmac         soc   -          name?    (unsupported)  -
 
-5 WLAN interface(s) (1 name-only guess(es), no kernel wireless marker), 2 fuzzable with `linux wlan fuzz --target <name>`.
+6 WLAN interface(s) (1 name-only guess(es), no kernel wireless marker), 2 fuzzable with `linux wlan fuzz --target <name>`.
 
 1 USB NIC(s) with no class-directed target -- blind-fuzz with `--target usb-generic` (shallow coverage):
   wlan2        linux wlan fuzz --target usb-generic --usb-id 0e8d:7612
+
+1 WEXT NIC(s) with no class-directed target -- blind-fuzz the driver ioctls with `--target wext-generic` (root; can panic the host):
+  ra0          sudo linux wlan fuzz --target wext-generic --iface ra0
 ```
 
 The `USBID` column shows the USB `VID:PID` for every NIC on the USB bus (`-` for
@@ -97,6 +105,7 @@ get no such hint &mdash; there is no userspace command transport to reach them.
 | `--out <dir>` | `crashes` | Directory for crash artifacts |
 | `--fw <path>` | &mdash; | Firmware image (target-specific; unused by most targets) |
 | `--usb-id <V:P>` | &mdash; | `usb-generic` only: target USB device by hex VID:PID (e.g. `0bda:8179`; product `*` or omitted = match any) |
+| `--iface <name>` | &mdash; | `wext-generic` only: network interface to fuzz (e.g. `wlan0`) |
 | `--replay <file>` | &mdash; | Reproduce a saved crash on hardware instead of fuzzing |
 | `--show <file>` | &mdash; | Decode a crash file into a readable command/field breakdown for triage (offline, no hardware) |
 | `--selftest` | &mdash; | Run the offline engine self-tests (no hardware) |
@@ -218,6 +227,67 @@ command transport, and its driver's internal symbols are unknown to the
 `ela_kmod` shim (which hooks named send functions), so there is no way to reach
 its firmware command interface blindly. Those NICs get no `usb-generic` hint in
 `wlan list`.
+
+## Blind-fuzzing a WEXT driver
+
+Interfaces `wlan list` marks `DETECT=wext` expose the legacy **Wireless
+Extensions** ioctl API but map to no class-directed firmware target. The
+`wext-generic` target fuzzes those ioctl handlers, addressed by interface name:
+
+```sh
+sudo ./embedded_linux_audit linux wlan fuzz --target wext-generic --iface ra0
+```
+
+> **This targets the HOST KERNEL, not device firmware.** It issues fuzzed
+> `SIOCSIWxxx` ioctls over an `AF_INET` socket straight into the driver's WEXT
+> handlers. A handler bug is a **kernel** bug &mdash; it can oops or **panic the
+> host**, which no userspace recovery can undo (unlike a firmware crash, which
+> only resets the RAM-resident radio). Treat this like the `ela_kmod` shim
+> targets, and more so. SET ioctls require `CAP_NET_ADMIN`, so run as root.
+
+It is semi-blind: the WEXT ioctl ABI *is* the grammar, so the fuzzer knows the
+ioctl shapes (an essid/key/IE buffer with a length, a channel/rate/power param,
+a BSSID) but not the device's semantics. The prime bug surface is the
+length-bearing `iw_point` ioctls (`SIWESSID`, `SIWENCODE`, `SIWENCODEEXT`,
+`SIWGENIE`, `SIWMLME`) whose length the driver trusts against a fixed buffer;
+the engine drives that length across the boundaries. Parameter ioctls
+(`SIWFREQ`, `SIWRATE`, `SIWTXPOW`, `SIWAUTH`, …) fuzz the integer values.
+
+Liveness is judged by `SIOCGIWNAME` (a harmless GET any live interface
+answers); expected per-ioctl rejections (`EPERM`/`EINVAL`/`E2BIG`/`EOPNOTSUPP`)
+are not treated as death. Recovery only reopens the socket and re-probes &mdash;
+a genuine kernel panic leaves nothing to recover, so run this where a host crash
+is acceptable (a test device, not a bastion). Crash files record
+`target=wext-generic`; `--replay` needs `--iface`, and `--show` decodes offline
+without one.
+
+### Remote crash capture (survives a host panic)
+
+Because a WEXT bug can hard-panic the host, the agent may die before it can
+write the offending case to a local crash file &mdash; the on-device triage in
+the previous sections is lost with the machine. To capture the killer anyway,
+`wext-generic` streams each payload to the agent API **before** executing it,
+whenever an API endpoint is configured (`--output-http`, the same option the
+`linux pcap` stream uses):
+
+```sh
+sudo ./embedded_linux_audit --output-http https://ela.example.com \
+    linux wlan fuzz --target wext-generic --iface wlan0
+```
+
+The API holds only the **latest** payload. On a clean run the agent sends a
+"done" marker and the API discards it. But if the host panics, the agent dies,
+the socket drops without that marker, and the API writes the last-streamed
+payload out as a `wlan-fuzz` triage artifact &mdash; a normal, replayable crash
+file (`# target=wext-generic` + the case line). That artifact lands under the
+device's data directory (`<data>/<mac>/wlan-fuzz/crash_*.txt`) and in the
+`uploads` table, exactly like a captured pcap. Fetch it and reproduce with
+`wlan fuzz --replay` (or decode offline with `--show`).
+
+Add `--insecure` to skip TLS verification against a self-signed endpoint. If no
+`--output-http` is set, fuzzing proceeds with local-only triage and a warning.
+This needs the API's `/wlan-fuzz/` WebSocket route (agent-api service + nginx);
+it ships with the stack.
 
 ## How results are reported
 

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later - Copyright (c) 2026 Nicholas Starke
 
 #include "../../../agent/linux/linux_wlan_util.h"
+#include "../../../agent/linux/wlan/wlan_fuzz_stream_fmt.h"
 #include "test_harness.h"
 
 #include <string.h>
@@ -173,6 +174,64 @@ static void test_parse_usb_id(void)
 	ELA_ASSERT_TRUE(wlan_parse_usb_id(NULL, &vid, &pid) != 0);
 }
 
+static void test_valid_iface(void)
+{
+	/* typical interface names */
+	ELA_ASSERT_TRUE(wlan_valid_iface("wlan0"));
+	ELA_ASSERT_TRUE(wlan_valid_iface("wlp3s0"));
+	ELA_ASSERT_TRUE(wlan_valid_iface("ath0"));
+	ELA_ASSERT_TRUE(wlan_valid_iface("a"));
+	ELA_ASSERT_TRUE(wlan_valid_iface("123456789012345"));	/* 15 chars */
+
+	/* rejected: empty, too long (16), slash, whitespace, control char */
+	ELA_ASSERT_FALSE(wlan_valid_iface(""));
+	ELA_ASSERT_FALSE(wlan_valid_iface("1234567890123456"));	/* 16 chars */
+	ELA_ASSERT_FALSE(wlan_valid_iface("wlan/0"));
+	ELA_ASSERT_FALSE(wlan_valid_iface("wlan 0"));
+	ELA_ASSERT_FALSE(wlan_valid_iface("wlan\t0"));
+	ELA_ASSERT_FALSE(wlan_valid_iface("../etc"));
+	ELA_ASSERT_FALSE(wlan_valid_iface(NULL));
+}
+
+static void test_stream_case_line(void)
+{
+	static const uint8_t p[] = { 0x40, 0x05, 0x00, 0x01 };
+	char out[64];
+	int n;
+
+	/* msg + hex + note, matching the on-disk crash-file grammar */
+	n = wlan_fuzz_format_case_line(out, sizeof(out), "SIWESSID", p, 4,
+				       "buf=len:4");
+	ELA_ASSERT_TRUE(n > 0);
+	ELA_ASSERT_STR_EQ("SIWESSID 40050001 #buf=len:4", out);
+
+	/* empty note => no trailing " #" */
+	n = wlan_fuzz_format_case_line(out, sizeof(out), "SIWMODE", p, 1, "");
+	ELA_ASSERT_STR_EQ("SIWMODE 40", out);
+	ELA_ASSERT_TRUE(n == 10);
+
+	/* zero-length payload is valid (e.g. a scan trigger) */
+	n = wlan_fuzz_format_case_line(out, sizeof(out), "SIWSCAN", NULL, 0, NULL);
+	ELA_ASSERT_STR_EQ("SIWSCAN ", out);
+
+	/* newlines in the note are flattened to keep one line per case */
+	wlan_fuzz_format_case_line(out, sizeof(out), "X", p, 1, "a\nb");
+	ELA_ASSERT_STR_EQ("X 40 #a b", out);
+
+	/* invalid args and a too-small buffer are rejected */
+	ELA_ASSERT_TRUE(wlan_fuzz_format_case_line(out, sizeof(out), NULL, p, 1,
+						   NULL) == -1);
+	ELA_ASSERT_TRUE(wlan_fuzz_format_case_line(out, sizeof(out), "X", NULL,
+						   3, NULL) == -1);
+	ELA_ASSERT_TRUE(wlan_fuzz_format_case_line(out, 4, "SIWESSID", p, 4,
+						   NULL) == -1);
+
+	/* payload is truncated cleanly when the buffer can't hold all hex */
+	n = wlan_fuzz_format_case_line(out, 8, "AB", p, 4, NULL);
+	ELA_ASSERT_STR_EQ("AB 4005", out);	/* "AB " + 2 bytes, NUL-terminated */
+	ELA_ASSERT_TRUE(n == 7);
+}
+
 int run_linux_wlan_util_tests(void)
 {
 	static const struct ela_test_case cases[] = {
@@ -185,6 +244,8 @@ int run_linux_wlan_util_tests(void)
 		{ "detect/classify_wireless", test_classify_wireless },
 		{ "detect/uevent_value", test_uevent_value },
 		{ "parse/usb_id", test_parse_usb_id },
+		{ "parse/valid_iface", test_valid_iface },
+		{ "stream/case_line", test_stream_case_line },
 	};
 
 	return ela_run_test_suite("linux_wlan_util", cases,

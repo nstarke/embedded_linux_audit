@@ -38,7 +38,7 @@
 | `linux remote-copy` | Upload a local file to a remote HTTP(S) endpoint |
 | `linux pcap` | Capture packets from an interface as pcap data; stream to the agent API over WebSocket when `--output-http` is configured |
 | `linux wlan list` | Enumerate the host's WLAN NICs (interface, driver, bus) and show which `wlan fuzz` target supports each |
-| `linux wlan fuzz` | Class-directed firmware fuzzer for WLAN NIC command interfaces (USB dongles via usbfs; `ath10k`/`ath11k`/`ath12k`/`mt76`/`brcmfmac` PCIe/SDIO via the `ela_kmod` kernel shim), plus a blind `usb-generic` target for proprietary USB NICs by VID:PID. See [docs](docs/agent/linux/wlan-fuzz.md) |
+| `linux wlan fuzz` | Class-directed firmware fuzzer for WLAN NIC command interfaces (USB dongles via usbfs; `ath10k`/`ath11k`/`ath12k`/`mt76`/`brcmfmac` PCIe/SDIO via the `ela_kmod` kernel shim), plus blind fallbacks: `usb-generic` (proprietary USB NICs by VID:PID) and `wext-generic` (legacy Wireless Extensions driver ioctls by interface name). See [docs](docs/agent/linux/wlan-fuzz.md) |
 | `linux coredump` | Configure kernel coredump collection to `/tmp`; with `--output-http`, POST captured cores to the agent API |
 | `linux ssh client` | Open an interactive SSH session (via libssh) |
 | `linux ssh copy` | Transfer files over SFTP |
