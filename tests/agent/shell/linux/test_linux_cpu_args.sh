@@ -45,10 +45,12 @@ printf '0b000000 executed exec_len=4 note=custom-opcode\n' >> "$FINDING_FILE"
 run_exact_case "linux cpu fuzz --show (infer ISA)" 0 "$BIN" linux cpu fuzz --show "$FINDING_FILE"
 
 # A finding file for a non-host ISA cannot be replayed (would execute a foreign
-# ISA); it must be rejected before any execution. powerpc64 is foreign to any
-# x86_64/aarch64 test runner, so the rejection path (rc=2, no execution) runs.
+# ISA); it must be rejected before any execution. Use an ISA the fuzzer does not
+# support (sparc64) so it is foreign to EVERY test runner -- the CI qemu matrix
+# covers every supported ISA (incl. powerpc64/riscv/mips/...), so a supported
+# ISA would match some runner's host and wrongly execute instead of rejecting.
 FOREIGN_FILE="$(mktemp /tmp/ela-cpu-foreign.XXXXXX)"
-printf '# target=cpu-powerpc64 mode=sweep\n' > "$FOREIGN_FILE"
+printf '# target=cpu-sparc64 mode=sweep\n' > "$FOREIGN_FILE"
 printf '7fe00008 executed exec_len=4\n' >> "$FOREIGN_FILE"
 run_exact_case "linux cpu fuzz --replay foreign ISA" 2 "$BIN" linux cpu fuzz --replay "$FOREIGN_FILE"
 rm -f "$FINDING_FILE" "$FOREIGN_FILE"

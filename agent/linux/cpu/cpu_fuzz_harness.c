@@ -409,12 +409,12 @@ int cpu_harness_seccomp_lockdown(void)
 	int n = 0;
 	size_t i;
 
-	/* A = seccomp_data.nr */
+	/* Load the syscall number into the BPF accumulator. */
 	prog_body[n++] = (struct sock_filter)BPF_STMT(
 		BPF_LD | BPF_W | BPF_ABS,
 		(uint32_t)offsetof(struct seccomp_data, nr));
 	for (i = 0; i < sizeof(allowed) / sizeof(allowed[0]); i++) {
-		/* if (A == allowed[i]) return ALLOW; */
+		/* On a match, allow; otherwise skip to the next comparison. */
 		prog_body[n++] = (struct sock_filter)BPF_JUMP(
 			BPF_JMP | BPF_JEQ | BPF_K, (uint32_t)allowed[i], 0, 1);
 		prog_body[n++] = (struct sock_filter)BPF_STMT(
