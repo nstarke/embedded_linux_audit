@@ -68,6 +68,22 @@ case "$MAJOR" in
 *)  KDIR="v${MAJOR}.x" ;;
 esac
 TARBALL_URL="https://mirrors.edge.kernel.org/pub/linux/kernel/${KDIR}/linux-${KERNEL_VERSION}.tar.xz"
+
+# Does this kernel need the vmlinux/Module.symvers step? Only kernels >= 5.19,
+# where modpost promotes unresolved module imports from warnings to hard errors.
+# Older kernels build fine without it (and pre-4.x trees can't even link vmlinux
+# under a modern binutils), so they skip it — see the gate further down. The
+# cutoff is overridable via ELA_KMOD_VMLINUX_MIN_KVER (as MAJOR*1000+MINOR).
+#
+# Numeric version key (MAJOR*1000 + second component); a bare "6" or a trailing
+# non-numeric component collapses to minor 0.
+KVER_MINOR="${KERNEL_VERSION#"$MAJOR"}"
+KVER_MINOR="${KVER_MINOR#.}"
+KVER_MINOR="${KVER_MINOR%%.*}"
+case "$KVER_MINOR" in ''|*[!0-9]*) KVER_MINOR=0 ;; esac
+KVER_NUM=$(( MAJOR * 1000 + KVER_MINOR ))
+NEEDS_SYMVERS=0
+[ "$KVER_NUM" -ge "${ELA_KMOD_VMLINUX_MIN_KVER:-5019}" ] && NEEDS_SYMVERS=1
 TARBALL="$CACHE_DIR/tarballs/linux-${KERNEL_VERSION}.tar.xz"
 
 mkdir -p "$CACHE_DIR/tarballs" "$CACHE_DIR/trees" "$OUT_DIR"
@@ -163,12 +179,16 @@ ela_oldconfig() {
 }
 
 # --- 3. Unpack + configure + modules_prepare (cached) ----------------------
-# A prepared tree is only reusable if it also carries Module.symvers: trees
-# prepared by an older revision of this script stopped at modules_prepare and
-# have no symbol table, so the out-of-tree modpost below would fail against
-# them. Requiring the file here self-invalidates those stale trees (for both
-# the device-config and defconfig paths) without a manual cache wipe.
-if [ ! -f "$PREPARED_STAMP" ] || [ ! -f "$TREE/Module.symvers" ]; then
+# A prepared tree for a kernel that needs symbol resolution (>= 5.19) is only
+# reusable if it also carries Module.symvers: trees prepared by an older
+# revision of this script stopped at modules_prepare and have no symbol table,
+# so that kernel's modpost would hard-error against them. Requiring the file for
+# those kernels self-invalidates stale trees (for both the device-config and
+# defconfig paths) without a manual cache wipe. Older kernels never build
+# Module.symvers (see the vmlinux gate below), so PREPARED_STAMP alone marks
+# their tree ready — otherwise they would re-prepare from scratch every build.
+if [ ! -f "$PREPARED_STAMP" ] \
+   || { [ "$NEEDS_SYMVERS" = 1 ] && [ ! -f "$TREE/Module.symvers" ]; }; then
     rm -rf "$TREE_PARENT"
     mkdir -p "$TREE_PARENT"
     log "unpacking linux-$KERNEL_VERSION"
@@ -395,16 +415,28 @@ if [ ! -f "$PREPARED_STAMP" ] || [ ! -f "$TREE/Module.symvers" ]; then
     # >= ~5.8 writes the built-in exports to vmlinux.symvers and only names the
     # file Module.symvers once in-tree modules are built; the out-of-tree module
     # build reads $(objtree)/Module.symvers, so seed it from vmlinux.symvers.
-    log "building vmlinux to generate Module.symvers (cold-cache only)"
-    kmake -j"$JOBS" vmlinux
-    if [ ! -f "$TREE/Module.symvers" ] && [ -f "$TREE/vmlinux.symvers" ]; then
-        cp "$TREE/vmlinux.symvers" "$TREE/Module.symvers"
+    #
+    # Only kernels >= 5.19 need this (NEEDS_SYMVERS, set near the top). Older
+    # kernels resolve those imports at load time and their modpost merely warns,
+    # so they build fine without Module.symvers — and pre-4.x trees additionally
+    # fail to *link* vmlinux under a modern binutils (e.g. ARM 3.12's duplicate
+    # nop_* cache stubs in init/do_mounts). Building vmlinux unconditionally
+    # therefore broke old kernels that built before this step was introduced.
+    if [ "$NEEDS_SYMVERS" = 1 ]; then
+        log "building vmlinux to generate Module.symvers (cold-cache only)"
+        kmake -j"$JOBS" vmlinux
+        if [ ! -f "$TREE/Module.symvers" ] && [ -f "$TREE/vmlinux.symvers" ]; then
+            cp "$TREE/vmlinux.symvers" "$TREE/Module.symvers"
+        fi
+        [ -f "$TREE/Module.symvers" ] || die "vmlinux build produced no Module.symvers"
+        # Reclaim the largest build-only artifacts. The out-of-tree module build
+        # needs Module.symvers + the generated headers + scripts/, never the
+        # linked image, so drop it and its aggregate object.
+        rm -f "$TREE/vmlinux" "$TREE/vmlinux.o" "$TREE"/.tmp_vmlinux*
+    else
+        log "kernel $KERNEL_VERSION < 5.19: skipping vmlinux/Module.symvers" \
+            "(its modpost only warns on undefined symbols)"
     fi
-    [ -f "$TREE/Module.symvers" ] || die "vmlinux build produced no Module.symvers"
-    # Reclaim the largest build-only artifacts. The out-of-tree module build
-    # needs Module.symvers + the generated headers + scripts/, never the linked
-    # image, so drop it and its aggregate object.
-    rm -f "$TREE/vmlinux" "$TREE/vmlinux.o" "$TREE"/.tmp_vmlinux*
 
     touch "$PREPARED_STAMP"
 else
