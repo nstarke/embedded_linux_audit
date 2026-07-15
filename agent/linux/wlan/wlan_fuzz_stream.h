@@ -25,13 +25,15 @@ struct wlan_fuzz_stream {
 };
 
 /*
- * Connect to <api>/wlan-fuzz/<mac> and send the target-name header frame.
- * `insecure` disables TLS verification (mirrors pcap's --insecure). Returns 0
- * on success (s->sink is then ready to pass as fuzz_opts.sink), -1 if no API
- * is configured or the connection failed.
+ * Connect to <api>/<endpoint>/<mac> and send the target-name header frame.
+ * `endpoint` is the API path segment ("wlan-fuzz" for WLAN, "eth-fuzz" for
+ * ethernet) so artifacts land in the right place. `insecure` disables TLS
+ * verification (mirrors pcap's --insecure). Returns 0 on success (s->sink is
+ * then ready to pass as fuzz_opts.sink), -1 if no API is configured or the
+ * connection failed.
  */
 int wlan_fuzz_stream_open(struct wlan_fuzz_stream *s, const char *target_name,
-			  int insecure);
+			  const char *endpoint, int insecure);
 
 /* Graceful end-of-run: tell the API this was a clean finish (no crash to
  * save), then close. No-op if not connected. */

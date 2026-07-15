@@ -1680,12 +1680,14 @@ typedef int (*ela_wmi_skb_send_t)(void *ctx, struct sk_buff *skb, u32 cmd_id);
 
 /* WMI-over-skb drivers (ath10k, ath11k) all take (ctx, skb, cmd_id): build a
  * skb with headroom, copy the fuzzed body in, and call the captured send. */
-static int ela_wlan_inject_wmi_skb(void *ctx, void *send_fn, u32 cmd_id,
-				   const void *data, u32 len)
+static int ela_wlan_inject_wmi_skb(void *ctx, unsigned long ctx2, void *send_fn,
+				   u32 cmd_id, const void *data, u32 len)
 {
 	struct sk_buff *skb;
 	u32 round = round_up(len, 4);
 	int ret;
+
+	(void)ctx2;
 
 	skb = __dev_alloc_skb(ELA_WLAN_SKB_HEADROOM + round, GFP_KERNEL);
 	if (!skb)
@@ -1706,9 +1708,10 @@ static int ela_wlan_inject_wmi_skb(void *ctx, void *send_fn, u32 cmd_id,
  * command body. wait_resp=false so it does not block waiting for a response. */
 typedef int (*ela_mt76_send_t)(void *dev, int cmd, const void *data, int len,
 			       bool wait_resp, void *ret_skb);
-static int ela_wlan_inject_mt76(void *ctx, void *send_fn, u32 cmd_id,
-				const void *data, u32 len)
+static int ela_wlan_inject_mt76(void *ctx, unsigned long ctx2, void *send_fn,
+				u32 cmd_id, const void *data, u32 len)
 {
+	(void)ctx2;
 	return ((ela_mt76_send_t)send_fn)(ctx, (int)cmd_id, data, (int)len,
 					  false, NULL);
 }
@@ -1716,10 +1719,117 @@ static int ela_wlan_inject_mt76(void *ctx, void *send_fn, u32 cmd_id,
 /* brcmfmac: brcmf_fil_cmd_data_set(ifp, cmd, data, len) sends a BCDC firmware
  * ioctl (set path). It copies the buffer and takes its own proto lock. */
 typedef int (*ela_brcmf_send_t)(void *ifp, u32 cmd, void *data, u32 len);
-static int ela_wlan_inject_brcmfmac(void *ctx, void *send_fn, u32 cmd_id,
-				    const void *data, u32 len)
+static int ela_wlan_inject_brcmfmac(void *ctx, unsigned long ctx2,
+				    void *send_fn, u32 cmd_id, const void *data,
+				    u32 len)
 {
+	(void)ctx2;
 	return ((ela_brcmf_send_t)send_fn)(ctx, cmd_id, (void *)data, len);
+}
+
+/* ---- ethernet firmware-mailbox / admin-queue inject shims ----------------- */
+
+/* Intel i40e/ice Admin Queue: a fixed 32-byte descriptor (opcode + flags +
+ * datalen + params) plus an optional external buffer. The AQ send copies the
+ * buffer into the AQ DMA area and writes the completion back into the desc, so
+ * both must be writable. data = <32B desc><optional buffer>. */
+#define ELA_AQ_DESC_LEN 32
+typedef int (*ela_i40e_asq_t)(void *hw, void *desc, void *buff, u16 buff_size,
+			      void *cmd_details);
+static int ela_eth_inject_i40e(void *ctx, unsigned long ctx2, void *send_fn,
+			       u32 cmd_id, const void *data, u32 len)
+{
+	u8 desc[ELA_AQ_DESC_LEN];
+	const u8 *buff = NULL;
+	u16 buff_size = 0;
+
+	(void)ctx2;
+	(void)cmd_id;
+	memset(desc, 0, sizeof(desc));
+	memcpy(desc, data, len < ELA_AQ_DESC_LEN ? len : ELA_AQ_DESC_LEN);
+	if (len > ELA_AQ_DESC_LEN) {
+		buff = (const u8 *)data + ELA_AQ_DESC_LEN;
+		buff_size = (u16)(len - ELA_AQ_DESC_LEN);
+	}
+	return ((ela_i40e_asq_t)send_fn)(ctx, desc, (void *)buff, buff_size,
+					 NULL);
+}
+
+typedef int (*ela_ice_sq_t)(void *hw, void *cq, void *desc, void *buf,
+			    u16 buf_size, void *cd);
+static int ela_eth_inject_ice(void *ctx, unsigned long ctx2, void *send_fn,
+			      u32 cmd_id, const void *data, u32 len)
+{
+	u8 desc[ELA_AQ_DESC_LEN];
+	const u8 *buf = NULL;
+	u16 buf_size = 0;
+
+	(void)cmd_id;
+	memset(desc, 0, sizeof(desc));
+	memcpy(desc, data, len < ELA_AQ_DESC_LEN ? len : ELA_AQ_DESC_LEN);
+	if (len > ELA_AQ_DESC_LEN) {
+		buf = (const u8 *)data + ELA_AQ_DESC_LEN;
+		buf_size = (u16)(len - ELA_AQ_DESC_LEN);
+	}
+	/* ctx2 = the captured control queue (ice_ctl_q_info *). */
+	return ((ela_ice_sq_t)send_fn)(ctx, (void *)ctx2, desc, (void *)buf,
+				       buf_size, NULL);
+}
+
+/* Chelsio cxgb4 FW_CMD mailbox: t4_wr_mbox_meat_timeout(adap, mbox, cmd, size,
+ * rpl, sleep_ok, timeout). Command is size bytes (multiple of 8, <= 64). */
+typedef int (*ela_cxgb4_mbox_t)(void *adap, int mbox, const void *cmd, int size,
+				void *rpl, bool sleep_ok, int timeout);
+static int ela_eth_inject_cxgb4(void *ctx, unsigned long ctx2, void *send_fn,
+				u32 cmd_id, const void *data, u32 len)
+{
+	u8 cmd[64];
+	int size = (int)len;
+
+	(void)cmd_id;
+	if (size > (int)sizeof(cmd))
+		size = sizeof(cmd);
+	size &= ~7;			/* FW_CMD size must be 8-byte aligned */
+	if (size == 0)
+		return -EINVAL;
+	memcpy(cmd, data, (size_t)size);
+	/* ctx2 = the captured mailbox number; rpl=NULL: fire and forget. */
+	return ((ela_cxgb4_mbox_t)send_fn)(ctx, (int)ctx2, cmd, size, NULL,
+					   false, 10000);
+}
+
+/* Mellanox mlx5 cmdif: mlx5_cmd_exec(dev, in, in_size, out, out_size). The
+ * command layout is big-endian; the opcode is the first 16 bits of `in`. */
+typedef int (*ela_mlx5_exec_t)(void *dev, void *in, int in_size, void *out,
+			       int out_size);
+static int ela_eth_inject_mlx5(void *ctx, unsigned long ctx2, void *send_fn,
+			       u32 cmd_id, const void *data, u32 len)
+{
+	void *out;
+	int ret;
+
+	(void)ctx2;
+	(void)cmd_id;
+	out = kzalloc(256, GFP_KERNEL);
+	if (!out)
+		return -ENOMEM;
+	ret = ((ela_mlx5_exec_t)send_fn)(ctx, (void *)data, (int)len, out, 256);
+	kfree(out);
+	return ret;
+}
+
+/* Broadcom bnxt HWRM: bnxt_hwrm_do_send_msg(bp, msg, msg_len, timeout, silent).
+ * NOTE: this static symbol exists on pre-5.12 kernels; newer kernels refactored
+ * HWRM to __hwrm_send(bp, ctx) where the message rides a DMA buffer rather than
+ * an argument, so attach fails there (kprobe symbol not found) -- documented. */
+typedef int (*ela_bnxt_hwrm_t)(void *bp, void *msg, u32 msg_len, int timeout,
+			       bool silent);
+static int ela_eth_inject_bnxt(void *ctx, unsigned long ctx2, void *send_fn,
+			       u32 cmd_id, const void *data, u32 len)
+{
+	(void)ctx2;
+	(void)cmd_id;
+	return ((ela_bnxt_hwrm_t)send_fn)(ctx, (void *)data, len, 500, false);
 }
 
 #define ELA_WLAN_MAX_RESTART_SYMS 5
@@ -1733,7 +1843,9 @@ struct ela_wlan_driver_desc {
 	const char *restart_symbols[ELA_WLAN_MAX_RESTART_SYMS];
 	int ctx_arg;			/* send arg index holding the driver ctx */
 	int cmd_arg;			/* send arg index holding the command id */
-	int (*inject)(void *ctx, void *send_fn, u32 cmd_id,
+	int ctx2_arg;			/* second ctx arg (-1 if unused): ice cq,
+					 * cxgb4 mailbox number */
+	int (*inject)(void *ctx, unsigned long ctx2, void *send_fn, u32 cmd_id,
 		      const void *data, u32 len);
 };
 
@@ -1743,7 +1855,7 @@ static const struct ela_wlan_driver_desc ela_wlan_drivers[] = {
 		.name = "ath10k",
 		.send_symbol = "ath10k_wmi_cmd_send",
 		.restart_symbols = { "ath10k_core_restart" },
-		.ctx_arg = 0, .cmd_arg = 2,
+		.ctx_arg = 0, .cmd_arg = 2, .ctx2_arg = -1,
 		.inject = ela_wlan_inject_wmi_skb,
 	},
 	{
@@ -1751,7 +1863,7 @@ static const struct ela_wlan_driver_desc ela_wlan_drivers[] = {
 		.name = "ath11k",
 		.send_symbol = "ath11k_wmi_cmd_send",
 		.restart_symbols = { "ath11k_core_restart" },
-		.ctx_arg = 0, .cmd_arg = 2,
+		.ctx_arg = 0, .cmd_arg = 2, .ctx2_arg = -1,
 		.inject = ela_wlan_inject_wmi_skb,
 	},
 	{
@@ -1759,7 +1871,7 @@ static const struct ela_wlan_driver_desc ela_wlan_drivers[] = {
 		.name = "ath12k",
 		.send_symbol = "ath12k_wmi_cmd_send",
 		.restart_symbols = { "ath12k_core_restart" },
-		.ctx_arg = 0, .cmd_arg = 2,
+		.ctx_arg = 0, .cmd_arg = 2, .ctx2_arg = -1,
 		.inject = ela_wlan_inject_wmi_skb,
 	},
 	{
@@ -1771,7 +1883,7 @@ static const struct ela_wlan_driver_desc ela_wlan_drivers[] = {
 			"mt7921_mac_reset_work", "mt7915_mac_reset_work",
 			"mt7996_mac_reset_work", "mt7615_mac_reset_work",
 		},
-		.ctx_arg = 0, .cmd_arg = 1,
+		.ctx_arg = 0, .cmd_arg = 1, .ctx2_arg = -1,
 		.inject = ela_wlan_inject_mt76,
 	},
 	{
@@ -1779,8 +1891,52 @@ static const struct ela_wlan_driver_desc ela_wlan_drivers[] = {
 		.name = "brcmfmac",
 		.send_symbol = "brcmf_fil_cmd_data_set",
 		.restart_symbols = { "brcmf_fw_crashed" },
-		.ctx_arg = 0, .cmd_arg = 1,
+		.ctx_arg = 0, .cmd_arg = 1, .ctx2_arg = -1,
 		.inject = ela_wlan_inject_brcmfmac,
+	},
+	/* ---- ethernet firmware-command drivers ---- */
+	{
+		.id = ELA_ETH_DRV_BNXT,
+		.name = "bnxt",
+		.send_symbol = "bnxt_hwrm_do_send_msg",	/* pre-5.12 symbol */
+		.restart_symbols = {
+			"bnxt_fw_reset", "bnxt_fw_exception", "bnxt_reset_task",
+		},
+		.ctx_arg = 0, .cmd_arg = 0, .ctx2_arg = -1,
+		.inject = ela_eth_inject_bnxt,
+	},
+	{
+		.id = ELA_ETH_DRV_I40E,
+		.name = "i40e",
+		.send_symbol = "i40e_asq_send_command",
+		.restart_symbols = { "i40e_reset_and_rebuild", "i40e_do_reset" },
+		.ctx_arg = 0, .cmd_arg = 0, .ctx2_arg = -1,
+		.inject = ela_eth_inject_i40e,
+	},
+	{
+		.id = ELA_ETH_DRV_ICE,
+		.name = "ice",
+		.send_symbol = "ice_sq_send_cmd",
+		.restart_symbols = { "ice_rebuild", "ice_do_reset" },
+		.ctx_arg = 0, .cmd_arg = 0, .ctx2_arg = 1,	/* ctx2 = cq */
+		.inject = ela_eth_inject_ice,
+	},
+	{
+		.id = ELA_ETH_DRV_CXGB4,
+		.name = "cxgb4",
+		.send_symbol = "t4_wr_mbox_meat_timeout",
+		.restart_symbols = { "t4_fatal_err" },
+		.ctx_arg = 0, .cmd_arg = 0, .ctx2_arg = 1,	/* ctx2 = mbox */
+		.inject = ela_eth_inject_cxgb4,
+	},
+	{
+		.id = ELA_ETH_DRV_MLX5,
+		.name = "mlx5",
+		.send_symbol = "mlx5_cmd_exec",
+		.restart_symbols = { "mlx5_enter_error_state",
+				     "mlx5_recover_device" },
+		.ctx_arg = 0, .cmd_arg = 0, .ctx2_arg = -1,
+		.inject = ela_eth_inject_mlx5,
 	},
 };
 
@@ -1789,6 +1945,7 @@ static DEFINE_SPINLOCK(ela_wlan_lock);	/* guards the fields below */
 static struct {
 	const struct ela_wlan_driver_desc *desc;
 	void *ctx;
+	unsigned long ctx2;		/* second captured arg (ice cq / cxgb4 mbox) */
 	void *send_fn;
 	u32 captured;
 	u32 last_cmd_id;
@@ -1809,6 +1966,9 @@ static int ela_wlan_send_pre(struct kprobe *p, struct pt_regs *regs)
 	if (ela_wlan.desc) {
 		ela_wlan.ctx = (void *)regs_get_kernel_argument(regs,
 					ela_wlan.desc->ctx_arg);
+		ela_wlan.ctx2 = ela_wlan.desc->ctx2_arg >= 0 ?
+			regs_get_kernel_argument(regs, ela_wlan.desc->ctx2_arg) :
+			0;
 		ela_wlan.send_fn = (void *)p->addr;
 		ela_wlan.last_cmd_id = (u32)regs_get_kernel_argument(regs,
 					ela_wlan.desc->cmd_arg);
@@ -1966,7 +2126,7 @@ static long ela_ioctl_wlan_inject(unsigned long arg)
 	struct ela_kmod_wlan_inject req;
 	const struct ela_wlan_driver_desc *desc;
 	void *ctx, *send_fn, *kbuf;
-	unsigned long flags;
+	unsigned long ctx2, flags;
 	int ret;
 
 	if (copy_from_user(&req, (void __user *)arg, sizeof(req)))
@@ -1987,6 +2147,7 @@ static long ela_ioctl_wlan_inject(unsigned long arg)
 	spin_lock_irqsave(&ela_wlan_lock, flags);
 	desc = ela_wlan.desc;
 	ctx = ela_wlan.ctx;
+	ctx2 = ela_wlan.ctx2;
 	send_fn = ela_wlan.send_fn;
 	if (!desc || !ela_wlan.captured || !ctx || !send_fn) {
 		spin_unlock_irqrestore(&ela_wlan_lock, flags);
@@ -1998,7 +2159,7 @@ static long ela_ioctl_wlan_inject(unsigned long arg)
 
 	/* Call outside the lock: the driver send path may sleep on tx credits
 	 * and will re-enter our send kprobe. */
-	ret = desc->inject(ctx, send_fn, req.cmd_id, kbuf, req.len);
+	ret = desc->inject(ctx, ctx2, send_fn, req.cmd_id, kbuf, req.len);
 	kfree(kbuf);
 
 	req.send_ret = ret;

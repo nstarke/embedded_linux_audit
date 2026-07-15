@@ -43,13 +43,14 @@ function loadWlanFuzzWebSocket(options = {}) {
   return { ...mod, WebSocketServer, auth, serverUtils };
 }
 
-function connect(dataDir, persistUpload) {
+function connect(dataDir, persistUpload, opts = {}) {
+  const seg = opts.pathSegment || 'wlan-fuzz';
   const { createWlanFuzzWebSocketServer, WebSocketServer } = loadWlanFuzzWebSocket();
-  createWlanFuzzWebSocketServer({ server: {}, dataDir, persistUpload });
+  createWlanFuzzWebSocketServer({ server: {}, dataDir, persistUpload, ...opts });
   const onConnection = WebSocketServer.mock.instances[0].handlers.get('connection');
   const ws = createFakeWs();
   onConnection(ws, {
-    url: '/wlan-fuzz/aa:bb:cc:dd:ee:ff',
+    url: `/${seg}/aa:bb:cc:dd:ee:ff`,
     socket: { remoteAddress: '127.0.0.1' },
     headers: {},
   });
@@ -131,6 +132,28 @@ describe('agent wlan-fuzz websocket receiver', () => {
 
     for (let i = 0; i < 10; i += 1) await flush();
     expect(persistUpload).not.toHaveBeenCalled();
+
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  test('pathSegment eth-fuzz serves the ethernet endpoint and tags its uploads', async () => {
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ela-ethfuzz-ws-'));
+    const persistUpload = jest.fn().mockResolvedValue({});
+    const ws = connect(dataDir, persistUpload, { pathSegment: 'eth-fuzz', uploadType: 'eth-fuzz' });
+
+    ws.handlers.get('message')(Buffer.from('T ethtool-generic'));
+    ws.handlers.get('message')(Buffer.from('C GEEPROM 0b00000000ffffff00 #len'));
+    ws.handlers.get('close')();
+
+    for (let i = 0; i < 20 && persistUpload.mock.calls.length === 0; i += 1) {
+      await flush();
+    }
+    expect(persistUpload).toHaveBeenCalledWith(expect.objectContaining({
+      uploadType: 'eth-fuzz',
+      localArtifactPath: expect.stringMatching(/eth-fuzz\/crash_.*\.txt$/),
+    }));
+    expect(fs.readFileSync(persistUpload.mock.calls[0][0].localArtifactPath, 'utf8'))
+      .toBe('# target=ethtool-generic cases=1\nGEEPROM 0b00000000ffffff00 #len\n');
 
     fs.rmSync(dataDir, { recursive: true, force: true });
   });

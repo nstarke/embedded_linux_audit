@@ -18,16 +18,17 @@
 /* Live network path; exercised only against a running API in the field. */
 /* LCOV_EXCL_START */
 
-/* Derive ws(s)://<authority>/wlan-fuzz/<mac> from an http(s) base, mirroring
+/* Derive ws(s)://<authority>/<endpoint>/<mac> from an http(s) base, mirroring
  * ela_pcap_build_ws_url. */
-static int build_ws_url(const char *http_uri, const char *mac, char *out,
-			size_t out_sz)
+static int build_ws_url(const char *http_uri, const char *endpoint,
+			const char *mac, char *out, size_t out_sz)
 {
 	const char *scheme, *authority, *authority_end;
 	size_t authority_len;
 	int n;
 
-	if (!http_uri || !*http_uri || !mac || !*mac || !out || out_sz == 0)
+	if (!http_uri || !*http_uri || !endpoint || !*endpoint || !mac ||
+	    !*mac || !out || out_sz == 0)
 		return -1;
 	if (!strncmp(http_uri, "http://", 7)) {
 		scheme = "ws://";
@@ -45,8 +46,8 @@ static int build_ws_url(const char *http_uri, const char *mac, char *out,
 	authority_len = (size_t)(authority_end - authority);
 	if (!authority_len)
 		return -1;
-	n = snprintf(out, out_sz, "%s%.*s/wlan-fuzz/%s", scheme,
-		     (int)authority_len, authority, mac);
+	n = snprintf(out, out_sz, "%s%.*s/%s/%s", scheme,
+		     (int)authority_len, authority, endpoint, mac);
 	return (n > 0 && (size_t)n < out_sz) ? 0 : -1;
 }
 
@@ -57,7 +58,7 @@ static int send_frame(struct wlan_fuzz_stream *s, const char *buf, size_t len)
 	if (ela_ws_send_binary(&s->ws, buf, len) != 0) {
 		/* API went away: stop streaming, keep fuzzing locally. */
 		fprintf(stderr,
-			"[!] wext stream: send failed; remote crash capture off\n");
+			"[!] nic-fuzz stream: send failed; remote crash capture off\n");
 		ela_ws_close(&s->ws);
 		s->connected = 0;
 		return -1;
@@ -84,7 +85,7 @@ static void stream_emit(void *ctx, const char *msg_name,
 }
 
 int wlan_fuzz_stream_open(struct wlan_fuzz_stream *s, const char *target_name,
-			  int insecure)
+			  const char *endpoint, int insecure)
 {
 	const char *https = getenv("ELA_OUTPUT_HTTPS");
 	const char *http = getenv("ELA_OUTPUT_HTTP");
@@ -98,28 +99,30 @@ int wlan_fuzz_stream_open(struct wlan_fuzz_stream *s, const char *target_name,
 	s->sink.ctx = s;
 	s->sink.emit = stream_emit;
 
+	if (!endpoint || !*endpoint)
+		endpoint = "wlan-fuzz";
 	if (!base || !*base) {
 		fprintf(stderr,
-			"[!] wext: no --output-http agent API set; remote crash "
+			"[!] no --output-http agent API set; remote crash "
 			"capture disabled (local triage still active)\n");
 		return -1;
 	}
 	ela_ws_get_primary_mac(mac, sizeof(mac));
-	if (build_ws_url(base, mac, url, sizeof(url)) != 0)
+	if (build_ws_url(base, endpoint, mac, url, sizeof(url)) != 0)
 		return -1;
 	if (ela_ws_connect_url(url, insecure, &s->ws) != 0) {
-		fprintf(stderr, "[!] wext: cannot reach agent API at %s; remote "
+		fprintf(stderr, "[!] nic-fuzz: cannot reach agent API at %s; remote "
 			"crash capture disabled\n", url);
 		return -1;
 	}
 	s->connected = 1;
 
 	n = snprintf(hdr, sizeof(hdr), "%c %s", FRAME_TARGET,
-		     target_name ? target_name : "wext-generic");
+		     target_name ? target_name : "nic-fuzz");
 	if (n > 0)
 		send_frame(s, hdr, (size_t)n);
 	if (s->connected)
-		printf("[*] wext: streaming payloads to %s for remote crash capture\n",
+		printf("[*] streaming payloads to %s for remote crash capture\n",
 		       url);
 	return s->connected ? 0 : -1;
 }

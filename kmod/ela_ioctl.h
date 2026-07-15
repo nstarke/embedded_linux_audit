@@ -393,6 +393,12 @@ struct ela_kmod_usb_descriptors {
  * built when the kernel has CONFIG_KPROBES.
  * ---------------------------------------------------------------------- */
 
+/*
+ * NIC firmware-command drivers the shim can attach to. WLAN and ethernet share
+ * one id space and one set of ATTACH/STATUS/INJECT/DETACH ioctls -- the shim is
+ * a generic NIC firmware-command injector; the id just selects the per-driver
+ * send symbol, argument layout, and crash oracle.
+ */
 enum ela_kmod_wlan_driver {
 	ELA_WLAN_DRV_NONE     = 0,
 	ELA_WLAN_DRV_ATH10K   = 1, /* ath10k_wmi_cmd_send / ath10k_core_restart */
@@ -400,6 +406,12 @@ enum ela_kmod_wlan_driver {
 	ELA_WLAN_DRV_ATH12K   = 3, /* ath12k_wmi_cmd_send / ath12k_core_restart */
 	ELA_WLAN_DRV_MT76     = 4, /* mt76_mcu_send_and_get_msg / *_mac_reset_work */
 	ELA_WLAN_DRV_BRCMFMAC = 5, /* brcmf_fil_cmd_data / brcmf firmware-crash work */
+	/* Ethernet NIC firmware-mailbox / admin-queue drivers. */
+	ELA_ETH_DRV_BNXT      = 6, /* bnxt_hwrm_do_send_msg (HWRM; pre-5.12 symbol) */
+	ELA_ETH_DRV_I40E      = 7, /* i40e_asq_send_command (Admin Queue)           */
+	ELA_ETH_DRV_ICE       = 8, /* ice_sq_send_cmd (Admin Queue)                 */
+	ELA_ETH_DRV_CXGB4     = 9, /* t4_wr_mbox_meat_timeout (FW_CMD mailbox)      */
+	ELA_ETH_DRV_MLX5      = 10, /* mlx5_cmd_exec (cmdif)                        */
 };
 
 #define ELA_KMOD_WLAN_MAX_CMD 2048U   /* injected command payload ceiling */
