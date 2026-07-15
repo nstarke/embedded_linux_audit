@@ -821,10 +821,9 @@ const openapiSpec = {
       },
       SpawnRequest: {
         type: 'object',
+        description: 'The full command line to background, as a single string (include any arguments in it).',
         properties: {
-          command: { type: 'string', example: 'gdbserver' },
-          args: { type: 'array', items: { type: 'string' }, default: [] },
-          port: { type: 'integer', minimum: 1, maximum: 65535, nullable: true },
+          command: { type: 'string', example: 'gdbserver :4242 --attach 1234' },
         },
         required: ['command'],
       },
@@ -926,12 +925,8 @@ const openapiSpec = {
       },
       DeliverModuleBuildRequest: {
         type: 'object',
+        description: 'The agent-api origin used to build the module download URL is taken from the device\'s own ELA_API_URL (overridable with the ELA_MODULE_DOWNLOAD_BASE_URL env var); it is not part of the request body.',
         properties: {
-          baseUrl: {
-            type: 'string',
-            description: 'agent-api origin as reachable FROM THE DEVICE, used to build the module download URL. Falls back to ELA_MODULE_DOWNLOAD_BASE_URL; required one way or the other.',
-            example: 'https://agent.example.com',
-          },
           load: {
             type: 'boolean',
             default: true,

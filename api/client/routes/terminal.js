@@ -208,29 +208,11 @@ function registerTerminalRoutes(app, deps = {}) {
         return;
       }
 
-      let args = [];
-      if (body.args !== undefined && body.args !== null) {
-        if (!Array.isArray(body.args) || !body.args.every((a) => typeof a === 'string')) {
-          res.status(400).json({ error: 'args must be an array of strings' });
-          return;
-        }
-        args = body.args;
-      }
-
-      let port;
-      if (body.port !== undefined && body.port !== null) {
-        port = Number(body.port);
-        if (!Number.isInteger(port) || port < 1 || port > 65535) {
-          res.status(400).json({ error: 'port must be an integer between 1 and 65535' });
-          return;
-        }
-      }
-
       await dispatch(
         res,
-        { type: 'spawn', mode, mac: req.deviceMac, command, args, port },
+        { type: 'spawn', mode, mac: req.deviceMac, command },
         DEFAULT_WAIT_MS,
-        { username: req.authUser, macAddress: req.deviceMac, commandType: `${mode}-spawn`, command: [command, ...args].join(' ') },
+        { username: req.authUser, macAddress: req.deviceMac, commandType: `${mode}-spawn`, command },
       );
     };
   }
