@@ -32,6 +32,7 @@ const openapiSpec = {
     { name: 'terminal', description: 'Live control of associated devices' },
     { name: 'gdb', description: 'Active gdbserver debug sessions on associated devices' },
     { name: 'modules', description: 'Cross-compiled kernel-module builds for associated devices' },
+    { name: 'ghidra', description: 'Ghidra decompilation of a device filesystem' },
   ],
   paths: {
     '/uploads': {
@@ -422,6 +423,111 @@ const openapiSpec = {
         },
       },
     },
+    '/devices/{mac}/ghidra-analysis': {
+      post: {
+        tags: ['ghidra'],
+        summary: 'Decompile a device\'s filesystem with Ghidra',
+        description: 'Pushes `linux remote-copy --recursive /` to the device\'s live agent session to upload its filesystem (the agent refuses /dev, /proc and /sys by default), then queues a background job that hands the uploaded tree to Ghidra\'s `analyzeHeadless -recursive`. Ghidra discovers every loadable binary (ELF executables, shared objects and kernel modules) and the Haruspex post-script writes decompiled C into a parallel `ghidra/` directory tree, kept separate from the uploaded binaries. Returns 202 immediately; poll `GET /ghidra-analysis/{id}` for progress.',
+        operationId: 'createGhidraAnalysis',
+        parameters: [{ $ref: '#/components/parameters/Mac' }],
+        responses: {
+          202: {
+            description: 'A ghidra-analysis job was queued',
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/GhidraAnalysisResponse' } } },
+          },
+          400: { $ref: '#/components/responses/BadRequest' },
+          401: { $ref: '#/components/responses/Unauthorized' },
+          404: { $ref: '#/components/responses/DeviceNotFound' },
+          503: { $ref: '#/components/responses/RegistryUnavailable' },
+        },
+      },
+    },
+    '/ghidra-analysis': {
+      get: {
+        tags: ['ghidra'],
+        summary: 'List your ghidra-analysis jobs',
+        operationId: 'listGhidraAnalyses',
+        parameters: [{ $ref: '#/components/parameters/MacFilter' }],
+        responses: {
+          200: {
+            description: 'Ghidra-analysis jobs for your associated devices (newest first)',
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/GhidraAnalysisListResponse' } } },
+          },
+          400: { $ref: '#/components/responses/BadRequest' },
+          401: { $ref: '#/components/responses/Unauthorized' },
+        },
+      },
+    },
+    '/ghidra-analysis/{id}': {
+      get: {
+        tags: ['ghidra'],
+        summary: 'Fetch one ghidra-analysis job',
+        operationId: 'getGhidraAnalysis',
+        parameters: [{ $ref: '#/components/parameters/GhidraAnalysisId' }],
+        responses: {
+          200: {
+            description: 'The job status and progress',
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/GhidraAnalysisResponse' } } },
+          },
+          400: { $ref: '#/components/responses/BadRequest' },
+          401: { $ref: '#/components/responses/Unauthorized' },
+          404: { $ref: '#/components/responses/GhidraAnalysisNotFound' },
+        },
+      },
+    },
+    '/ghidra-analysis/{id}/outputs': {
+      get: {
+        tags: ['ghidra'],
+        summary: 'List the downloadable decompiler outputs for a job',
+        description: 'Returns one entry per binary that Ghidra produced decompiled C for — the relative directory (the value `output.zip?binary=` accepts) and its `.c` file count. Only available for `succeeded` jobs.',
+        operationId: 'listGhidraAnalysisOutputs',
+        parameters: [{ $ref: '#/components/parameters/GhidraAnalysisId' }],
+        responses: {
+          200: {
+            description: 'The binaries with decompiler output',
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/GhidraAnalysisOutputsResponse' } } },
+          },
+          400: { $ref: '#/components/responses/BadRequest' },
+          401: { $ref: '#/components/responses/Unauthorized' },
+          404: { $ref: '#/components/responses/GhidraAnalysisNotFound' },
+          409: {
+            description: 'The job has no downloadable output yet (not succeeded)',
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } },
+          },
+        },
+      },
+    },
+    '/ghidra-analysis/{id}/output.zip': {
+      get: {
+        tags: ['ghidra'],
+        summary: 'Download the decompiler output as a zip',
+        description: 'Streams a zip archive of the Haruspex decompiler output for a `succeeded` job: one `<programName>/<func@addr>.c` subdirectory per binary, in the source filesystem hierarchy. Pass `?binary=<relative-dir>` (e.g. `usr/bin/busybox`) to download just one binary\'s decompiled C.',
+        operationId: 'downloadGhidraAnalysisOutput',
+        parameters: [
+          { $ref: '#/components/parameters/GhidraAnalysisId' },
+          {
+            name: 'binary',
+            in: 'query',
+            required: false,
+            description: 'Optional relative directory under the output root to scope the archive to one binary.',
+            schema: { type: 'string', example: 'usr/bin/busybox' },
+          },
+        ],
+        responses: {
+          200: {
+            description: 'A zip archive of the decompiled C files',
+            content: { 'application/zip': { schema: { type: 'string', format: 'binary' } } },
+          },
+          400: { $ref: '#/components/responses/BadRequest' },
+          401: { $ref: '#/components/responses/Unauthorized' },
+          404: { $ref: '#/components/responses/GhidraAnalysisNotFound' },
+          409: {
+            description: 'The job has no downloadable output yet (not succeeded)',
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } },
+          },
+        },
+      },
+    },
   },
   components: {
     securitySchemes: {
@@ -474,6 +580,13 @@ const openapiSpec = {
         description: 'Numeric module-build request id.',
         schema: { type: 'string', pattern: '^[0-9]+$' },
       },
+      GhidraAnalysisId: {
+        name: 'id',
+        in: 'path',
+        required: true,
+        description: 'Numeric ghidra-analysis job id.',
+        schema: { type: 'string', pattern: '^[0-9]+$' },
+      },
     },
     responses: {
       Unauthorized: {
@@ -520,6 +633,12 @@ const openapiSpec = {
       },
       ModuleBuildNotFound: {
         description: 'Module build not found or not owned',
+        content: {
+          'application/json': { schema: { $ref: '#/components/schemas/Error' } },
+        },
+      },
+      GhidraAnalysisNotFound: {
+        description: 'Ghidra-analysis job not found or not owned',
         content: {
           'application/json': { schema: { $ref: '#/components/schemas/Error' } },
         },
@@ -849,6 +968,68 @@ const openapiSpec = {
           results: { type: 'array', items: { $ref: '#/components/schemas/DeliverCommandResult' } },
         },
         required: ['delivered', 'results'],
+      },
+      GhidraAnalysis: {
+        type: 'object',
+        properties: {
+          id: { type: 'integer', example: 7 },
+          status: {
+            type: 'string',
+            enum: ['queued', 'copying', 'analyzing', 'succeeded', 'failed'],
+            description: 'Lifecycle state driven by the ghidra-analysis worker: queued -> copying (uploading the rootfs) -> analyzing (running Ghidra) -> succeeded | failed.',
+          },
+          filesFound: {
+            type: 'integer',
+            description: 'ELF files found in the uploaded filesystem (known once analysis starts).',
+            example: 214,
+          },
+          filesAnalyzed: {
+            type: 'integer',
+            description: 'Binaries Ghidra produced decompiler output for so far.',
+            example: 214,
+          },
+          outputRoot: {
+            type: 'string', nullable: true,
+            description: 'Server-side directory holding the decompiled C tree (parallel to the uploaded filesystem).',
+          },
+          errorMessage: { type: 'string', nullable: true },
+          createdAt: { type: 'string', format: 'date-time' },
+          updatedAt: { type: 'string', format: 'date-time' },
+        },
+        required: ['id', 'status'],
+      },
+      GhidraAnalysisResponse: {
+        type: 'object',
+        properties: {
+          ghidraAnalysis: { $ref: '#/components/schemas/GhidraAnalysis' },
+        },
+        required: ['ghidraAnalysis'],
+      },
+      GhidraAnalysisListResponse: {
+        type: 'object',
+        properties: {
+          ghidraAnalyses: { type: 'array', items: { $ref: '#/components/schemas/GhidraAnalysis' } },
+        },
+        required: ['ghidraAnalyses'],
+      },
+      GhidraAnalysisOutput: {
+        type: 'object',
+        properties: {
+          binary: {
+            type: 'string',
+            description: 'Relative directory under the output root (pass to output.zip?binary=).',
+            example: 'usr/bin/busybox',
+          },
+          files: { type: 'integer', description: 'Number of decompiled .c files.', example: 312 },
+        },
+        required: ['binary', 'files'],
+      },
+      GhidraAnalysisOutputsResponse: {
+        type: 'object',
+        properties: {
+          outputs: { type: 'array', items: { $ref: '#/components/schemas/GhidraAnalysisOutput' } },
+        },
+        required: ['outputs'],
       },
     },
   },

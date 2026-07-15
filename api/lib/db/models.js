@@ -674,6 +674,66 @@ function defineModels(sequelize) {
     updatedAt: 'updated_at',
   });
 
+  const GhidraAnalysisJob = sequelize.define('GhidraAnalysisJob', {
+    id: {
+      type: DataTypes.BIGINT,
+      autoIncrement: true,
+      primaryKey: true,
+    },
+    deviceId: {
+      type: DataTypes.BIGINT,
+      allowNull: false,
+      field: 'device_id',
+    },
+    userId: {
+      type: DataTypes.BIGINT,
+      allowNull: true,
+      field: 'user_id',
+    },
+    // queued -> copying -> analyzing -> succeeded | failed
+    status: {
+      type: DataTypes.STRING(32),
+      allowNull: false,
+      defaultValue: 'queued',
+    },
+    // On-disk directories the worker resolved for this run: the uploaded
+    // filesystem root (<data>/<mac>/fs) and the decompiler output root
+    // (<data>/<mac>/ghidra), a parallel hierarchy so the .c files never mix
+    // with the uploaded binaries.
+    fsRoot: {
+      type: DataTypes.TEXT,
+      allowNull: true,
+      field: 'fs_root',
+    },
+    outputRoot: {
+      type: DataTypes.TEXT,
+      allowNull: true,
+      field: 'output_root',
+    },
+    filesFound: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+      defaultValue: 0,
+      field: 'files_found',
+    },
+    filesAnalyzed: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+      defaultValue: 0,
+      field: 'files_analyzed',
+    },
+    errorMessage: {
+      type: DataTypes.TEXT,
+      allowNull: true,
+      field: 'error_message',
+    },
+  }, {
+    tableName: 'ghidra_analysis_jobs',
+    underscored: true,
+    createdAt: 'created_at',
+    updatedAt: 'updated_at',
+  });
+
   const GrepMatch = sequelize.define('GrepMatch', {
     id: {
       type: DataTypes.BIGINT,
@@ -730,6 +790,8 @@ function defineModels(sequelize) {
   Upload.hasMany(GrepMatch, { foreignKey: 'uploadId' });
   Device.hasMany(ModuleBuildRequest, { foreignKey: 'deviceId' });
   ModuleBuildRequest.belongsTo(Device, { foreignKey: 'deviceId' });
+  Device.hasMany(GhidraAnalysisJob, { foreignKey: 'deviceId' });
+  GhidraAnalysisJob.belongsTo(Device, { foreignKey: 'deviceId' });
   const BlockedRemote = sequelize.define('BlockedRemote', {
     id: {
       type: DataTypes.BIGINT,
@@ -871,6 +933,7 @@ function defineModels(sequelize) {
     ArchReport,
     KernelBuildInfo,
     ModuleBuildRequest,
+    GhidraAnalysisJob,
     GrepMatch,
     BlockedRemote,
     User,

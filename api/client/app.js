@@ -8,6 +8,7 @@ const registerUploadsRoutes = require('./routes/uploads');
 const registerTerminalRoutes = require('./routes/terminal');
 const registerGdbRoutes = require('./routes/gdb');
 const registerModuleBuildRoutes = require('./routes/moduleBuilds');
+const registerGhidraAnalysisRoutes = require('./routes/ghidraAnalysis');
 const { openapiSpec } = require('./openapi');
 
 /**
@@ -66,6 +67,10 @@ function createApp(deps = {}) {
   // Kernel-module build routes: create a build request from a device's latest
   // module-buildinfo upload (enqueued to the builder) and poll its status.
   registerModuleBuildRoutes(app, deps.moduleBuilds || {});
+  // Ghidra-analysis routes: pull a device's rootfs via remote-copy and
+  // decompile every ELF with Ghidra in the background ghidra-analysis worker;
+  // create/list/poll the resulting jobs. ACL'd to the caller's devices.
+  registerGhidraAnalysisRoutes(app, deps.ghidraAnalysis || {});
 
   // Translate JSON body-parser failures on the terminal POST routes into the
   // same error shapes the routes use.

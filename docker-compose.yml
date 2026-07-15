@@ -47,6 +47,39 @@ services:
       redis:
         condition: service_healthy
 
+  ghidra-worker:
+    build:
+      context: .
+      dockerfile: api/ghidra/Dockerfile
+      # Ghidra 12.1.2's public asset carries a build-date suffix resolved from
+      # the GitHub release tag at build time; override to pin/mirror it.
+      args:
+        GHIDRA_VERSION: ${ELA_GHIDRA_VERSION:-12.1.2}
+        GHIDRA_URL: ${ELA_GHIDRA_URL:-}
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      REDIS_HOST: ${ELA_REDIS_HOST:-redis}
+      REDIS_PORT: ${ELA_REDIS_PORT:-6379}
+      # Status transitions are written straight to the DB (the
+      # ghidra_analysis_jobs rows the client API polls).
+      ELA_DB_HOST: ${ELA_DB_HOST:-postgres}
+      ELA_DB_PORT: ${ELA_DB_PORT:-5432}
+      ELA_DB_NAME: ${ELA_DB_NAME:-embedded_linux_audit}
+      ELA_DB_USER: ${ELA_DB_USER:-ela}
+      ELA_DB_PASSWORD: ${ELA_DB_PASSWORD:-ela}
+      # Same shared volume the agent-api uploads to: the worker reads the
+      # <mac>/fs tree and writes decompiler output to <mac>/ghidra.
+      ELA_AGENT_DATA_DIR: /data/agent
+      GHIDRA_HOME: /opt/ghidra
+    volumes:
+      # Read-write: reads the uploaded <mac>/fs tree, writes the <mac>/ghidra
+      # decompiler output alongside it.
+      - ${ELA_DATA_DIR:-/data/agent}:/data/agent
+    depends_on:
+      redis:
+        condition: service_healthy
+
   agent-api:
     build:
       context: .
@@ -88,15 +121,22 @@ services:
       ELA_DB_PASSWORD: ${ELA_DB_PASSWORD:-ela}
       ELA_CLIENT_HOST: 0.0.0.0
       ELA_CLIENT_PORT: 7000
-      # Enqueue operator commands to the terminal API and await results.
+      # Enqueue operator commands to the terminal API and await results, and
+      # enqueue ghidra-analysis jobs to the ghidra-worker.
       REDIS_HOST: ${ELA_REDIS_HOST:-redis}
       REDIS_PORT: ${ELA_REDIS_PORT:-6379}
       # Must match the builder's mount: module-build job payloads carry artifact
       # paths under this root, which the builder resolves on its own volume.
+      # Also where the client API reads Ghidra output to stream output.zip.
       ELA_AGENT_DATA_DIR: /data/agent
       # Default agent-api origin embedded in module-deliver download commands.
       # Must be reachable FROM THE DEVICES (public origin), not docker-internal.
       ELA_MODULE_DOWNLOAD_BASE_URL: ${ELA_MODULE_DOWNLOAD_BASE_URL:-}
+    volumes:
+      # Read-only: the client API streams Ghidra decompiler output (the
+      # ghidra/ tree the worker wrote) as output.zip. Read-only because the
+      # client API only serves these artifacts, never writes them.
+      - ${ELA_DATA_DIR:-/data/agent}:/data/agent:ro
     depends_on:
       redis:
         condition: service_healthy
