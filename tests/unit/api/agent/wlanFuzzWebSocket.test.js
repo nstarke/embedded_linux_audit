@@ -46,7 +46,7 @@ function loadWlanFuzzWebSocket(options = {}) {
 function connect(dataDir, persistUpload, opts = {}) {
   const seg = opts.pathSegment || 'wlan-fuzz';
   const { createWlanFuzzWebSocketServer, WebSocketServer } = loadWlanFuzzWebSocket();
-  createWlanFuzzWebSocketServer({ server: {}, dataDir, persistUpload, ...opts });
+  createWlanFuzzWebSocketServer({ dataDir, persistUpload, ...opts });
   const onConnection = WebSocketServer.mock.instances[0].handlers.get('connection');
   const ws = createFakeWs();
   onConnection(ws, {
@@ -72,24 +72,20 @@ describe('agent wlan-fuzz websocket receiver', () => {
       .toBe('# target=wext-generic cases=1\nX 00\n');
   });
 
-  test('verifyClient enforces the wlan-fuzz path and bearer auth', async () => {
-    const { createWlanFuzzWebSocketServer, WebSocketServer, auth } = loadWlanFuzzWebSocket();
-    createWlanFuzzWebSocketServer({ server: {}, dataDir: '/tmp/noop', persistUpload: jest.fn() });
-    const { verifyClient } = WebSocketServer.mock.instances[0].options;
-    const done = jest.fn();
-
-    verifyClient({ req: { url: '/pcap/aa:bb', headers: {} } }, done);
-    expect(done).toHaveBeenLastCalledWith(false, 404, 'Not Found');
-
-    auth.resolveBearer.mockResolvedValueOnce(false);
-    verifyClient({ req: { url: '/wlan-fuzz/aa:bb:cc:dd:ee:ff', headers: {} } }, done);
-    await flush();
-    expect(done).toHaveBeenLastCalledWith(false, 401, 'Unauthorized');
-
-    auth.resolveBearer.mockResolvedValueOnce(true);
-    verifyClient({ req: { url: '/wlan-fuzz/aa:bb:cc:dd:ee:ff', headers: { authorization: 'Bearer ok' } } }, done);
-    await flush();
-    expect(done).toHaveBeenLastCalledWith(true);
+  test('runs in noServer mode and exposes a per-segment pathRe', () => {
+    const { createWlanFuzzWebSocketServer, WebSocketServer } = loadWlanFuzzWebSocket();
+    const wlan = createWlanFuzzWebSocketServer({ dataDir: '/tmp/noop', persistUpload: jest.fn() });
+    const eth = createWlanFuzzWebSocketServer({
+      dataDir: '/tmp/noop', persistUpload: jest.fn(), pathSegment: 'eth-fuzz',
+    });
+    // noServer mode: routing/auth is the dispatcher's job, so each server only
+    // exposes the pathRe that identifies its own path segment.
+    expect(WebSocketServer.mock.instances[0].options).toEqual({ noServer: true });
+    expect(wlan.pathRe.test('/wlan-fuzz/aa:bb:cc:dd:ee:ff')).toBe(true);
+    expect(wlan.pathRe.test('/pcap/aa:bb')).toBe(false);
+    expect(wlan.pathRe.test('/eth-fuzz/aa:bb:cc:dd:ee:ff')).toBe(false);
+    expect(eth.pathRe.test('/eth-fuzz/aa:bb:cc:dd:ee:ff')).toBe(true);
+    expect(eth.pathRe.test('/wlan-fuzz/aa:bb:cc:dd:ee:ff')).toBe(false);
   });
 
   test('ungraceful close saves the LAST held payload as a triage crash file', async () => {

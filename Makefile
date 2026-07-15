@@ -541,6 +541,7 @@ AGENT_UNIT_TEST_SRC := \
 	tests/unit/agent/test_linux_wlan_util.c \
 	tests/unit/agent/test_linux_eth_util.c \
 	tests/unit/agent/test_linux_bt_util.c \
+	tests/unit/agent/test_cpu_fuzz.c \
 	tests/unit/agent/test_linux_physmem_util.c \
 	tests/unit/agent/test_spi_util.c \
 	tests/unit/agent/test_nand_util.c \
@@ -930,6 +931,7 @@ SRC := \
 	agent/linux/linux_pcap_cmd.c \
 	agent/linux/linux_coredump_util.c \
 	agent/linux/linux_coredump_cmd.c \
+	agent/linux/fuzz_daemon.c \
 	agent/linux/linux_wlan_util.c \
 	agent/linux/linux_wlan_cmd.c \
 	agent/linux/wlan/wlan_fuzz_grammar.c \
@@ -964,6 +966,17 @@ SRC := \
 	agent/linux/linux_bt_util.c \
 	agent/linux/linux_bt_cmd.c \
 	agent/linux/bt/bt_fuzz_target_hci.c \
+	agent/linux/linux_cpu_cmd.c \
+	agent/linux/cpu/cpu_fuzz_engine.c \
+	agent/linux/cpu/cpu_fuzz_harness.c \
+	agent/linux/cpu/cpu_fuzz_x86.c \
+	agent/linux/cpu/cpu_fuzz_fixed.c \
+	agent/linux/cpu/cpu_fuzz_arm64.c \
+	agent/linux/cpu/cpu_fuzz_arm32.c \
+	agent/linux/cpu/cpu_fuzz_mips.c \
+	agent/linux/cpu/cpu_fuzz_powerpc.c \
+	agent/linux/cpu/cpu_fuzz_riscv.c \
+	agent/linux/cpu/cpu_fuzz_stream.c \
 	agent/spi/spi_util.c \
 	agent/spi/spi_cmd.c \
 	agent/nand/nand_util.c \
@@ -1412,6 +1425,15 @@ $(AGENT_UNIT_TEST_BIN): $(AGENT_UNIT_TEST_SRC) $(AGENT_UNIT_TEST_DEPS) $(TPM2_UN
 			agent/linux/linux_eth_util.c \
 			agent/linux/linux_bt_util.c \
 			agent/linux/wlan/wlan_fuzz_stream_fmt.c \
+			agent/linux/cpu/cpu_fuzz_engine.c \
+			agent/linux/cpu/cpu_fuzz_harness.c \
+			agent/linux/cpu/cpu_fuzz_x86.c \
+			agent/linux/cpu/cpu_fuzz_fixed.c \
+			agent/linux/cpu/cpu_fuzz_arm64.c \
+			agent/linux/cpu/cpu_fuzz_arm32.c \
+			agent/linux/cpu/cpu_fuzz_mips.c \
+			agent/linux/cpu/cpu_fuzz_powerpc.c \
+			agent/linux/cpu/cpu_fuzz_riscv.c \
 			agent/spi/spi_util.c \
 			agent/nand/nand_util.c \
 			agent/emmc/emmc_util.c \

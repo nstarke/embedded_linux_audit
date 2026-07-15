@@ -125,6 +125,7 @@ int linux_pcap_replay_main(int argc, char **argv);
 int linux_wlan_main(int argc, char **argv);
 int linux_eth_main(int argc, char **argv);
 int linux_bt_main(int argc, char **argv);
+int linux_cpu_main(int argc, char **argv);
 int tpm2_scan_main(int argc, char **argv);
 int efi_orom_main(int argc, char **argv);
 int efi_dump_vars_main(int argc, char **argv);

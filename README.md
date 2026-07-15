@@ -43,6 +43,8 @@
 | `linux eth fuzz` | Class-directed fuzzer for ethernet NIC command interfaces: `ethtool-generic` (blind `SIOCETHTOOL` ioctl fuzz of any NIC by interface name), plus firmware mailbox/admin-queue targets `bnxt`/`i40e`/`ice`/`cxgb4`/`mlx5` via the `ela_kmod` kernel shim. See [docs](docs/agent/linux/eth-fuzz.md) |
 | `linux bt list` | Enumerate the host's Bluetooth controllers (hciN, address, bus) |
 | `linux bt fuzz` | Class-directed fuzzer for the Bluetooth HCI command interface (`hci-generic`: opcode/length/params fuzzing over a raw HCI User Channel socket by controller index). See [docs](docs/agent/linux/bt-fuzz.md) |
+| `linux cpu list` | Report the host ISA and the CPU-fuzz mode that applies to it |
+| `linux cpu fuzz` | CPU instruction fuzzer (sandsifter-style undocumented-instruction discovery) on the host CPU: length-guided tunnel for x86/x86_64, encoding sweep for AArch64/ARM32/MIPS/PowerPC/RISC-V. See [docs](docs/agent/linux/cpu-fuzz.md) |
 | `linux coredump` | Configure kernel coredump collection to `/tmp`; with `--output-http`, POST captured cores to the agent API |
 | `linux ssh client` | Open an interactive SSH session (via libssh) |
 | `linux ssh copy` | Transfer files over SFTP |

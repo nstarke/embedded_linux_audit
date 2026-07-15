@@ -25,7 +25,6 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { WebSocketServer } = require('ws');
-const auth = require('../auth');
 const {
   isValidMacAddress,
   getClientIp,
@@ -42,27 +41,18 @@ function buildCrashFile(target, caseLine) {
 }
 
 function createWlanFuzzWebSocketServer({
-  server,
   dataDir,
   persistUpload,
   verbose = false,
   pathSegment = 'wlan-fuzz',	// 'wlan-fuzz' for WLAN, 'eth-fuzz' for ethernet
   uploadType = 'wlan-fuzz',
 }) {
+  // noServer mode: the caller's single upgrade dispatcher matches pathRe and
+  // authenticates, then hands us the socket. Attaching with { server } here
+  // instead would make this and every sibling WS server race on each upgrade --
+  // a non-matching sibling's synchronous 404 would beat this one's async auth.
   const pathRe = new RegExp(`^/${pathSegment}/[^/]+$`);
-  const wss = new WebSocketServer({
-    server,
-    verifyClient(info, done) {
-      const url = info.req.url || '';
-      if (!pathRe.test(url)) {
-        done(false, 404, 'Not Found');
-        return;
-      }
-      auth.resolveBearer(info.req.headers.authorization)
-        .then((ok) => (ok ? done(true) : done(false, 401, 'Unauthorized')))
-        .catch(() => done(false, 401, 'Unauthorized'));
-    },
-  });
+  const wss = new WebSocketServer({ noServer: true });
 
   wss.on('connection', (ws, req) => {
     const parts = (req.url || '').split('/').filter(Boolean);
@@ -155,7 +145,7 @@ function createWlanFuzzWebSocketServer({
     ws.on('error', () => {});
   });
 
-  return wss;
+  return { wss, pathRe };
 }
 
 module.exports = {

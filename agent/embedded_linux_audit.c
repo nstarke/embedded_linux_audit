@@ -84,6 +84,8 @@ static void usage(const char *prog)
 		"  linux coredump     Configure kernel coredump generation to /tmp\n"
 		"  linux wlan list    Enumerate WLAN NICs and show which the fuzzer supports\n"
 		"  linux wlan fuzz    Class-directed firmware fuzzer for WLAN NIC command interfaces\n"
+		"  linux cpu list     Show the host ISA and applicable CPU fuzz mode\n"
+		"  linux cpu fuzz     CPU instruction fuzzer (undocumented-instruction discovery)\n"
 		"  tpm2               Run built-in TPM2 commands through the TPM2-TSS library\n"
 		"  spi list           List SPI devices through ela_kmod\n"
 		"  spi dump <path> [index] Dump an indexed SPI-backed MTD through ela_kmod\n"
@@ -753,6 +755,12 @@ int embedded_linux_audit_dispatch(int argc, char **argv)
 				fprintf(stderr,
 					"Warning: --output-format has no effect for bt; output is text (a table for list, progress/crash files for fuzz)\n");
 			ret = linux_bt_main(argc - sub_idx, argv + sub_idx);
+		}
+		else if (!strcmp(argv[sub_idx], "cpu")) {
+			if (opts.output_format_explicit)
+				fprintf(stderr,
+					"Warning: --output-format has no effect for cpu; output is text (a table for list, progress/finding files for fuzz)\n");
+			ret = linux_cpu_main(argc - sub_idx, argv + sub_idx);
 		}
 		else {
 			fprintf(stderr, "Unknown linux subcommand: %s\n\n",
