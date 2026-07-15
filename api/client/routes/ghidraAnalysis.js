@@ -65,6 +65,22 @@ function macKey(mac) {
   return String(mac || '').toLowerCase().replace(/[^0-9a-f]/g, '');
 }
 
+// Validate a client-supplied `?binary=` value as a safe relative sub-path with
+// pure string checks (no path.join/resolve on the tainted value): reject
+// absolute paths, empty/`.`/`..` segments, and NUL. The download route then
+// additionally confirms it against the real output listing (an allowlist), so a
+// crafted value can neither traverse out of the output root nor name a path
+// that does not exist.
+function isSafeRelSubpath(p) {
+  if (typeof p !== 'string' || p.length === 0 || p.includes('\0')) {
+    return false;
+  }
+  if (p.startsWith('/') || /^[A-Za-z]:/.test(p)) {
+    return false;
+  }
+  return p.split('/').every((seg) => seg !== '' && seg !== '.' && seg !== '..');
+}
+
 /**
  * Operator routes for Ghidra decompilation jobs:
  *
@@ -207,7 +223,10 @@ module.exports = function registerGhidraAnalysisRoutes(app, deps = {}) {
       res.status(409).json({ error: `ghidra analysis output is not available (status: ${row.status})` });
       return;
     }
-    const binaries = await walkOutputs(path.resolve(row.outputRoot));
+    // row.outputRoot is an absolute path written by the worker (never client
+    // input), so it is used directly; walkOutputs does its own path joins
+    // outside this handler.
+    const binaries = await walkOutputs(row.outputRoot);
     res.json({ outputs: binaries });
   });
 
@@ -234,35 +253,36 @@ module.exports = function registerGhidraAnalysisRoutes(app, deps = {}) {
       return;
     }
 
-    // Optionally scope to one binary's subdirectory. Resolve and confirm it
-    // stays within outputRoot so a crafted ?binary= cannot escape the tree.
-    const outputRoot = path.resolve(row.outputRoot);
-    let target = outputRoot;
+    // outputRoot is the absolute path the worker wrote (never client input), so
+    // it is used as the zip cwd directly. Optionally scope to one binary's
+    // subdirectory: the ?binary= value is validated as a safe relative sub-path
+    // (pure string checks, no path.join on the tainted value) and then confirmed
+    // against the real output listing, so it can neither traverse out of the
+    // tree nor name a non-existent path.
+    const outputRoot = row.outputRoot;
     let zipArg = '.';
     const binary = req.query.binary;
     if (binary !== undefined) {
-      if (typeof binary !== 'string' || !binary.length) {
+      if (!isSafeRelSubpath(binary)) {
         res.status(400).json({ error: 'invalid binary' });
         return;
       }
-      const resolved = path.resolve(outputRoot, binary);
-      const rel = path.relative(outputRoot, resolved);
-      if (rel === '' || rel.startsWith('..') || path.isAbsolute(rel)) {
-        res.status(400).json({ error: 'invalid binary' });
+      const outputs = await walkOutputs(outputRoot);
+      if (!outputs.some((o) => o.binary === binary)) {
+        res.status(404).json({ error: 'no output for this binary' });
         return;
       }
-      // zip runs with cwd=outputRoot and archives the relative subpath, so the
+      // zip runs with cwd=outputRoot and archives this relative sub-path, so the
       // entries keep their hierarchy inside the archive.
-      zipArg = rel;
-      target = resolved;
-    }
-
-    if (!await statDir(target)) {
-      res.status(404).json({ error: 'no output for this binary' });
+      zipArg = binary;
+    } else if (!await statDir(outputRoot)) {
+      res.status(404).json({ error: 'no output for this job' });
       return;
     }
 
-    const filename = `ghidra-analysis-${row.id}${binary ? `-${path.basename(zipArg)}` : ''}.zip`;
+    // Derive a filesystem-safe download name from the last path segment.
+    const leaf = zipArg === '.' ? '' : `-${zipArg.split('/').pop().replace(/[^A-Za-z0-9._-]/g, '_')}`;
+    const filename = `ghidra-analysis-${row.id}${leaf}.zip`;
     res.status(200);
     res.type('application/zip');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
