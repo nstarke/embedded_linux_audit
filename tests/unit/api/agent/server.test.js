@@ -38,16 +38,19 @@ function loadAgentServer(options = {}) {
   };
   const httpServer = {
     once: jest.fn(),
+    on: jest.fn(),
     listen: jest.fn((port, host, cb) => cb()),
     close: jest.fn((cb) => cb && cb()),
   };
   const httpsServer = {
     once: jest.fn(),
+    on: jest.fn(),
     listen: jest.fn((port, host, cb) => cb()),
     close: jest.fn((cb) => cb && cb()),
   };
   const auth = {
     init: jest.fn().mockResolvedValue(true),
+    resolveBearer: jest.fn().mockResolvedValue(true),
   };
   const loadApiKeyHashes = jest.fn().mockResolvedValue([]);
   const initializeDatabase = jest.fn().mockResolvedValue(undefined);
@@ -55,8 +58,14 @@ function loadAgentServer(options = {}) {
   const closeDatabase = jest.fn().mockResolvedValue(undefined);
   const persistUpload = jest.fn();
   const createApp = jest.fn(() => 'app-instance');
-  const createPcapWebSocketServer = jest.fn();
-  const createWlanFuzzWebSocketServer = jest.fn();
+  // Factories run in noServer mode and return { wss, pathRe }; the mock mirrors
+  // that so the server's single upgrade dispatcher has real endpoints to route to.
+  const makeFakeWss = () => ({ handleUpgrade: jest.fn((req, sock, head, cb) => cb({})), emit: jest.fn() });
+  const createPcapWebSocketServer = jest.fn(() => ({ wss: makeFakeWss(), pathRe: /^\/pcap\/[^/]+$/ }));
+  const createWlanFuzzWebSocketServer = jest.fn((opts = {}) => ({
+    wss: makeFakeWss(),
+    pathRe: new RegExp(`^/${opts.pathSegment || 'wlan-fuzz'}/[^/]+$`),
+  }));
   const selectStartupDataDir = jest.fn().mockResolvedValue({
     dataDir: '/repo/data/123',
     timestamp: '123',
@@ -155,6 +164,7 @@ function loadAgentServer(options = {}) {
     closeDatabase,
     createApp,
     createPcapWebSocketServer,
+    createWlanFuzzWebSocketServer,
     persistUpload,
     loadApiKeyHashes,
     selectStartupDataDir,
@@ -252,11 +262,13 @@ describe('agent server', () => {
       { recursive: true },
     );
     expect(loaded.createPcapWebSocketServer).toHaveBeenCalledWith({
-      server: loaded.httpServer,
       dataDir: '/repo/data/123',
       persistUpload: loaded.persistUpload,
       verbose: true,
     });
+    // The WS endpoints are wired through ONE upgrade dispatcher (noServer mode),
+    // not attached individually — that is what prevents the sibling-404 race.
+    expect(loaded.httpServer.on).toHaveBeenCalledWith('upgrade', expect.any(Function));
     expect(loaded.httpServer.listen).toHaveBeenCalledWith(5050, '127.0.0.1', expect.any(Function));
     expect(loaded.consoleLog).toHaveBeenCalledWith(expect.stringContaining('Serving per-user agent binaries'));
     expect(loaded.processOn).toHaveBeenCalledWith('SIGINT', expect.any(Function));
@@ -274,6 +286,46 @@ describe('agent server', () => {
 
     expect(loaded.execFileSync).toHaveBeenCalled();
     expect(loaded.httpsServer.listen).toHaveBeenCalledWith(5000, '0.0.0.0', expect.any(Function));
+  });
+
+  test('upgrade dispatcher routes by path, authenticates once, and 404s unknown paths (no sibling race)', async () => {
+    const loaded = loadAgentServer();
+    process.argv = ['node', 'server.js'];
+    await expect(loaded.server.main()).resolves.toBe(0);
+
+    const upgradeCall = loaded.httpServer.on.mock.calls.find((c) => c[0] === 'upgrade');
+    expect(upgradeCall).toBeTruthy();
+    const onUpgrade = upgradeCall[1];
+    const flush = () => new Promise((r) => setImmediate(r));
+    const makeSocket = () => ({ write: jest.fn(), destroy: jest.fn() });
+
+    // Unknown path -> 404, socket destroyed, no endpoint invoked.
+    const s404 = makeSocket();
+    onUpgrade({ url: '/nope/aa:bb:cc:dd:ee:ff', headers: {} }, s404, Buffer.alloc(0));
+    await flush();
+    expect(s404.write).toHaveBeenCalledWith(expect.stringContaining('404'));
+    expect(s404.destroy).toHaveBeenCalled();
+
+    // A /wlan-fuzz/ upgrade is handled by the wlan-fuzz endpoint ONLY -- the
+    // pcap endpoint (registered first) must NOT hijack it. This is the race the
+    // noServer + single-dispatcher design fixes.
+    const wlanEndpoint = loaded.createWlanFuzzWebSocketServer.mock.results
+      .map((r) => r.value).find((v) => v.pathRe.test('/wlan-fuzz/x'));
+    const pcapEndpoint = loaded.createPcapWebSocketServer.mock.results[0].value;
+    const sOk = makeSocket();
+    onUpgrade({ url: '/wlan-fuzz/aa:bb:cc:dd:ee:ff', headers: { authorization: 'Bearer ok' } }, sOk, Buffer.alloc(0));
+    await flush();
+    expect(loaded.auth.resolveBearer).toHaveBeenCalledWith('Bearer ok');
+    expect(wlanEndpoint.wss.handleUpgrade).toHaveBeenCalled();
+    expect(pcapEndpoint.wss.handleUpgrade).not.toHaveBeenCalled();
+
+    // Bad auth -> 401.
+    loaded.auth.resolveBearer.mockResolvedValueOnce(false);
+    const s401 = makeSocket();
+    onUpgrade({ url: '/pcap/aa:bb:cc:dd:ee:ff', headers: {} }, s401, Buffer.alloc(0));
+    await flush();
+    expect(s401.write).toHaveBeenCalledWith(expect.stringContaining('401'));
+    expect(s401.destroy).toHaveBeenCalled();
   });
 
   // removeDirectoryContents

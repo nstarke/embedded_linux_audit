@@ -4,7 +4,6 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { WebSocketServer } = require('ws');
-const auth = require('../auth');
 const {
   isValidMacAddress,
   getClientIp,
@@ -15,24 +14,16 @@ function safeIpForPath(ip) {
 }
 
 function createPcapWebSocketServer({
-  server,
   dataDir,
   persistUpload,
   verbose = false,
 }) {
-  const wss = new WebSocketServer({
-    server,
-    verifyClient(info, done) {
-      const url = info.req.url || '';
-      if (!/^\/pcap\/[^/]+$/.test(url)) {
-        done(false, 404, 'Not Found');
-        return;
-      }
-      auth.resolveBearer(info.req.headers.authorization)
-        .then((ok) => (ok ? done(true) : done(false, 401, 'Unauthorized')))
-        .catch(() => done(false, 401, 'Unauthorized'));
-    },
-  });
+  // noServer mode: the caller's single upgrade dispatcher matches pathRe and
+  // authenticates, then hands us the socket. Attaching with { server } here
+  // instead would make this and every sibling WS server race on each upgrade --
+  // a non-matching sibling's synchronous 404 would beat this one's async auth.
+  const pathRe = /^\/pcap\/[^/]+$/;
+  const wss = new WebSocketServer({ noServer: true });
 
   wss.on('connection', (ws, req) => {
     const parts = (req.url || '').split('/').filter(Boolean);
@@ -120,7 +111,7 @@ function createPcapWebSocketServer({
     ws.on('error', () => {});
   });
 
-  return wss;
+  return { wss, pathRe };
 }
 
 module.exports = {

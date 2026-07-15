@@ -228,36 +228,55 @@ async function main() {
     server = http.createServer(app);
   }
 
-  createPcapWebSocketServer({
-    server,
-    dataDir,
-    persistUpload,
-    verbose: args.verbose,
-  });
+  // All agent WebSocket endpoints run in noServer mode behind ONE upgrade
+  // dispatcher below. Attaching each with { server } instead makes every WS
+  // server handle every upgrade and race: a non-matching endpoint's synchronous
+  // 404 in verifyClient beats the matching endpoint's async auth, so every WS
+  // path 404s. The dispatcher matches pathRe, authenticates once, then hands the
+  // socket to the one endpoint that owns the path.
+  const wsEndpoints = [
+    createPcapWebSocketServer({ dataDir, persistUpload, verbose: args.verbose }),
+    createWlanFuzzWebSocketServer({ dataDir, persistUpload, verbose: args.verbose }),
+    createWlanFuzzWebSocketServer({
+      dataDir, persistUpload, verbose: args.verbose,
+      pathSegment: 'eth-fuzz', uploadType: 'eth-fuzz',
+    }),
+    createWlanFuzzWebSocketServer({
+      dataDir, persistUpload, verbose: args.verbose,
+      pathSegment: 'bt-fuzz', uploadType: 'bt-fuzz',
+    }),
+    createWlanFuzzWebSocketServer({
+      dataDir, persistUpload, verbose: args.verbose,
+      pathSegment: 'cpu-fuzz', uploadType: 'cpu-fuzz',
+    }),
+  ];
 
-  createWlanFuzzWebSocketServer({
-    server,
-    dataDir,
-    persistUpload,
-    verbose: args.verbose,
-  });
+  function rejectUpgrade(socket, code, text) {
+    socket.write(
+      `HTTP/1.1 ${code} ${text}\r\nConnection: close\r\n` +
+      `Content-Length: ${Buffer.byteLength(text)}\r\n\r\n${text}`,
+    );
+    socket.destroy();
+  }
 
-  createWlanFuzzWebSocketServer({
-    server,
-    dataDir,
-    persistUpload,
-    verbose: args.verbose,
-    pathSegment: 'eth-fuzz',
-    uploadType: 'eth-fuzz',
-  });
-
-  createWlanFuzzWebSocketServer({
-    server,
-    dataDir,
-    persistUpload,
-    verbose: args.verbose,
-    pathSegment: 'bt-fuzz',
-    uploadType: 'bt-fuzz',
+  server.on('upgrade', (req, socket, head) => {
+    const url = req.url || '';
+    const ep = wsEndpoints.find((e) => e.pathRe.test(url));
+    if (!ep) {
+      rejectUpgrade(socket, 404, 'Not Found');
+      return;
+    }
+    auth.resolveBearer(req.headers.authorization)
+      .then((ok) => {
+        if (!ok) {
+          rejectUpgrade(socket, 401, 'Unauthorized');
+          return;
+        }
+        ep.wss.handleUpgrade(req, socket, head, (ws) => {
+          ep.wss.emit('connection', ws, req);
+        });
+      })
+      .catch(() => rejectUpgrade(socket, 401, 'Unauthorized'));
   });
 
   await new Promise((resolve, reject) => {

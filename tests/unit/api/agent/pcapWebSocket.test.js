@@ -60,36 +60,19 @@ describe('agent pcap websocket receiver', () => {
     jest.restoreAllMocks();
   });
 
-  test('verifyClient enforces pcap path and bearer auth', async () => {
-    const { createPcapWebSocketServer, WebSocketServer, auth } = loadPcapWebSocket();
-    createPcapWebSocketServer({
-      server: {},
+  test('runs in noServer mode and exposes a pcap pathRe (path/auth is the dispatcher\'s job)', () => {
+    const { createPcapWebSocketServer, WebSocketServer } = loadPcapWebSocket();
+    const result = createPcapWebSocketServer({
       dataDir: '/tmp/noop',
       persistUpload: jest.fn(),
     });
-    const verifyClient = WebSocketServer.mock.instances[0].options.verifyClient;
-    const done = jest.fn();
-    const flush = () => new Promise((resolve) => setImmediate(resolve));
-
-    // Wrong path -> 404 synchronously (before auth).
-    verifyClient({ req: { url: '/upload/aa:bb', headers: {} } }, done);
-    expect(done).toHaveBeenLastCalledWith(false, 404, 'Not Found');
-
-    auth.resolveBearer.mockResolvedValueOnce(false);
-    verifyClient({ req: { url: '/pcap/aa:bb:cc:dd:ee:ff', headers: {} } }, done);
-    await flush();
-    expect(done).toHaveBeenLastCalledWith(false, 401, 'Unauthorized');
-
-    auth.resolveBearer.mockResolvedValueOnce(true);
-    verifyClient({ req: { url: '/pcap/aa:bb:cc:dd:ee:ff', headers: { authorization: 'Bearer ok' } } }, done);
-    await flush();
-    expect(done).toHaveBeenLastCalledWith(true);
-
-    // A key-lookup error fails closed (401).
-    auth.resolveBearer.mockRejectedValueOnce(new Error('db down'));
-    verifyClient({ req: { url: '/pcap/aa:bb:cc:dd:ee:ff', headers: { authorization: 'Bearer ok' } } }, done);
-    await flush();
-    expect(done).toHaveBeenLastCalledWith(false, 401, 'Unauthorized');
+    // noServer: not attached to the http server (the single upgrade dispatcher
+    // owns routing + auth, so sibling WS servers can't race to a 404).
+    expect(WebSocketServer.mock.instances[0].options).toEqual({ noServer: true });
+    expect(result.pathRe.test('/pcap/aa:bb:cc:dd:ee:ff')).toBe(true);
+    expect(result.pathRe.test('/upload/aa:bb')).toBe(false);
+    expect(result.pathRe.test('/pcap/aa/bb')).toBe(false);
+    expect(result.pathRe.test('/wlan-fuzz/aa:bb:cc:dd:ee:ff')).toBe(false);
   });
 
   test('connection writes binary chunks and persists artifact path on close', async () => {
@@ -97,7 +80,6 @@ describe('agent pcap websocket receiver', () => {
     const persistUpload = jest.fn().mockResolvedValue({});
     const { createPcapWebSocketServer, WebSocketServer } = loadPcapWebSocket();
     createPcapWebSocketServer({
-      server: {},
       dataDir,
       persistUpload,
     });
