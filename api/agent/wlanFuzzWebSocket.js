@@ -42,12 +42,15 @@ function createWlanFuzzWebSocketServer({
   dataDir,
   persistUpload,
   verbose = false,
+  pathSegment = 'wlan-fuzz',	// 'wlan-fuzz' for WLAN, 'eth-fuzz' for ethernet
+  uploadType = 'wlan-fuzz',
 }) {
+  const pathRe = new RegExp(`^/${pathSegment}/[^/]+$`);
   const wss = new WebSocketServer({
     server,
     verifyClient(info, done) {
       const url = info.req.url || '';
-      if (!/^\/wlan-fuzz\/[^/]+$/.test(url)) {
+      if (!pathRe.test(url)) {
         done(false, 404, 'Not Found');
         return;
       }
@@ -74,7 +77,7 @@ function createWlanFuzzWebSocketServer({
     let cases = 0;
 
     if (verbose) {
-      process.stdout.write(`[${timestamp}] ${srcIp} WS /wlan-fuzz/${macAddress} open\n`);
+      process.stdout.write(`[${timestamp}] ${srcIp} WS /${pathSegment}/${macAddress} open\n`);
     }
 
     ws.on('message', (data) => {
@@ -96,7 +99,7 @@ function createWlanFuzzWebSocketServer({
       // agent stopped streaming without saying "done" (host panicked/killed).
       if (graceful || !lastCase) {
         if (verbose) {
-          process.stdout.write(`[${new Date().toISOString()}] WS /wlan-fuzz/${macAddress} closed cleanly (${cases} case(s))\n`);
+          process.stdout.write(`[${new Date().toISOString()}] WS /${pathSegment}/${macAddress} closed cleanly (${cases} case(s))\n`);
         }
         return;
       }
@@ -104,7 +107,7 @@ function createWlanFuzzWebSocketServer({
       const tsSafe = timestamp.replace(/[-:]/g, '').replace(/\..+/, 'Z');
       const safeIp = safeIpForPath(srcIp);
       const unique = crypto.randomUUID().replace(/-/g, '').slice(0, 8);
-      const targetDir = path.join(dataDir, macAddress, 'wlan-fuzz');
+      const targetDir = path.join(dataDir, macAddress, pathSegment);
       const localArtifactPath = path.join(
         targetDir, `crash_${tsSafe}_${safeIp}_${unique}.txt`,
       );
@@ -115,7 +118,7 @@ function createWlanFuzzWebSocketServer({
         fs.writeFileSync(localArtifactPath, payload, { flag: 'wx' });
         await persistUpload({
           macAddress,
-          uploadType: 'wlan-fuzz',
+          uploadType,
           contentType: 'application/octet-stream',
           srcIp,
           apiTimestamp: timestamp,
@@ -126,7 +129,7 @@ function createWlanFuzzWebSocketServer({
           payload,
           payloadToPersist: payload,
         });
-        process.stdout.write(`[${new Date().toISOString()}] WS /wlan-fuzz/${macAddress} DROPPED mid-fuzz -> saved crash ${localArtifactPath}\n`);
+        process.stdout.write(`[${new Date().toISOString()}] WS /${pathSegment}/${macAddress} DROPPED mid-fuzz -> saved crash ${localArtifactPath}\n`);
       } catch (err) {
         process.stderr.write(`wlan-fuzz websocket: failed to persist ${localArtifactPath}: ${err.message}\n`);
       }

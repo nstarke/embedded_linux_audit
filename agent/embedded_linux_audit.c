@@ -742,6 +742,12 @@ int embedded_linux_audit_dispatch(int argc, char **argv)
 					"Warning: --output-format has no effect for wlan; output is text (a table for list, progress/crash files for fuzz)\n");
 			ret = linux_wlan_main(argc - sub_idx, argv + sub_idx);
 		}
+		else if (!strcmp(argv[sub_idx], "eth")) {
+			if (opts.output_format_explicit)
+				fprintf(stderr,
+					"Warning: --output-format has no effect for eth; output is text (a table for list, progress/crash files for fuzz)\n");
+			ret = linux_eth_main(argc - sub_idx, argv + sub_idx);
+		}
 		else {
 			fprintf(stderr, "Unknown linux subcommand: %s\n\n",
 				argv[sub_idx]);

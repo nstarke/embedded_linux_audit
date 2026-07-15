@@ -17,6 +17,7 @@
 #include <unistd.h>
 
 #include "wlan_fuzz.h"
+#include "linux/eth/eth_fuzz.h"
 
 /* ---- pull in the ath9k grammar via its target constructor ---------------- */
 
@@ -251,6 +252,78 @@ static int test_wext_grammar(void)
 	return fail;
 }
 
+/*
+ * ethtool-generic (ethernet blind target): each case must carry the 4-byte
+ * ethtool command word and render within the ioctl buffer bound. The read-path
+ * ops keep a len word the transport clamps, so here we just assert bounds.
+ */
+static int test_ethtool_grammar(void)
+{
+	struct target *t = target_ethtool_generic("eth0");
+	struct fcase c;
+	uint8_t buf[CASE_MAX_BYTES];
+	int r, len, fail = 0;
+
+	if (t->nmsgs < 8 || t->big_endian != 0) {
+		printf("FAIL: ethtool-generic shape (nmsgs=%d be=%d)\n",
+		       t->nmsgs, t->big_endian);
+		fail = 1;
+	}
+	rng_seed(31337);
+	for (r = 0; r < 5000 && !fail; r++) {
+		const struct msg *m;
+
+		case_generate(t->msgs, t->nmsgs, &c);
+		m = &t->msgs[c.msg_idx];
+		len = msg_build(m, &c, t->big_endian, buf, sizeof(buf));
+		if (len < 4 || len > CASE_MAX_BYTES) {	/* >= the cmd word */
+			printf("FAIL: ethtool-generic %s renders %d bytes\n",
+			       m->name, len);
+			fail = 1;
+		}
+	}
+	printf("%s: ethtool-generic grammar renders within ioctl bounds\n",
+	       fail ? "FAIL" : "OK");
+	return fail;
+}
+
+/*
+ * Ethernet firmware-command targets (bnxt/i40e/ice/cxgb4/mlx5): each renders a
+ * bounded command buffer the shim caps before injecting. Assert every case
+ * renders within CASE_MAX_BYTES so the grammars are well-formed offline.
+ */
+static int test_eth_firmware_grammars(void)
+{
+	struct target *targets[] = {
+		target_bnxt(), target_i40e(), target_ice(),
+		target_cxgb4(), target_mlx5(),
+	};
+	struct fcase c;
+	uint8_t buf[CASE_MAX_BYTES];
+	int ti, r, len, fail = 0;
+
+	rng_seed(0xE7);
+	for (ti = 0; ti < (int)(sizeof(targets) / sizeof(targets[0])); ti++) {
+		struct target *t = targets[ti];
+
+		for (r = 0; r < 2000 && !fail; r++) {
+			const struct msg *m;
+
+			case_generate(t->msgs, t->nmsgs, &c);
+			m = &t->msgs[c.msg_idx];
+			len = msg_build(m, &c, t->big_endian, buf, sizeof(buf));
+			if (len < 1 || len > CASE_MAX_BYTES) {
+				printf("FAIL: %s %s renders %d bytes\n",
+				       t->name, m->name, len);
+				fail = 1;
+			}
+		}
+	}
+	printf("%s: ethernet firmware grammars (bnxt/i40e/ice/cxgb4/mlx5) render "
+	       "within bounds\n", fail ? "FAIL" : "OK");
+	return fail;
+}
+
 static int test_mutation_coverage(void)
 {
 	struct target *t = target_ath9k_htc(NULL);
@@ -412,6 +485,8 @@ int wlan_fuzz_selftest_run(void)
 	fail |= test_rtl8xxxu_box_size();
 	fail |= test_usb_generic_grammar();
 	fail |= test_wext_grammar();
+	fail |= test_ethtool_grammar();
+	fail |= test_eth_firmware_grammars();
 	fail |= test_mutation_coverage();
 	fail |= test_fuzz_loop();
 	printf(fail ? "SELFTEST FAILED\n" : "SELFTEST PASSED\n");

@@ -242,6 +242,15 @@ async function main() {
     verbose: args.verbose,
   });
 
+  createWlanFuzzWebSocketServer({
+    server,
+    dataDir,
+    persistUpload,
+    verbose: args.verbose,
+    pathSegment: 'eth-fuzz',
+    uploadType: 'eth-fuzz',
+  });
+
   await new Promise((resolve, reject) => {
     server.once('error', reject);
     server.listen(args.port, args.host, resolve);

@@ -257,7 +257,7 @@ static int wlan_fuzz_cmd_main(int argc, char **argv)
 		struct wlan_fuzz_stream stream;
 		int rc;
 
-		if (wlan_fuzz_stream_open(&stream, tname, insecure) == 0)
+		if (wlan_fuzz_stream_open(&stream, tname, "wlan-fuzz", insecure) == 0)
 			o.sink = &stream.sink;
 		rc = wlan_fuzz_run(t, &o);
 		if (o.sink)
