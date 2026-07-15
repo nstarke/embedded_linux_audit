@@ -29,6 +29,33 @@
 #include <linux/uaccess.h>
 #include <linux/capability.h>
 #include <linux/version.h>
+
+/*
+ * IS_ENABLED()/IS_BUILTIN()/IS_MODULE() arrived with <linux/kconfig.h> in 3.1
+ * (and modern kbuild -includes it automatically). On older kernels — this
+ * module builds back to 2.6 — they are undefined, so the `#if IS_ENABLED(...)`
+ * include guards below fail to preprocess ("missing binary operator before
+ * token"). Provide the upstream kconfig.h implementation when it is absent.
+ */
+#ifndef IS_ENABLED
+#define __ARG_PLACEHOLDER_1 0,
+#define __take_second_arg(__ignored, val, ...) val
+#define __and(x, y)			___and(x, y)
+#define ___and(x, y)			____and(__ARG_PLACEHOLDER_##x, y)
+#define ____and(arg1_or_junk, y)	__take_second_arg(arg1_or_junk y, 0)
+#define __or(x, y)			___or(x, y)
+#define ___or(x, y)			____or(__ARG_PLACEHOLDER_##x, y)
+#define ____or(arg1_or_junk, y)		__take_second_arg(arg1_or_junk 1, y)
+#define __is_defined(x)			___is_defined(x)
+#define ___is_defined(val)		____is_defined(__ARG_PLACEHOLDER_##val)
+#define ____is_defined(arg1_or_junk)	__take_second_arg(arg1_or_junk 1, 0)
+#define IS_BUILTIN(option) __is_defined(option)
+#define IS_MODULE(option) __is_defined(option##_MODULE)
+#define IS_REACHABLE(option) __or(IS_BUILTIN(option), \
+				__and(IS_MODULE(option), __is_defined(MODULE)))
+#define IS_ENABLED(option) __or(IS_BUILTIN(option), IS_MODULE(option))
+#endif
+
 #ifdef CONFIG_PCI
 # include <linux/pci.h>
 #endif
@@ -44,10 +71,36 @@
 #if IS_BUILTIN(CONFIG_SPI)
 # include <linux/spi/spi.h>
 #endif
-#if IS_BUILTIN(CONFIG_MTD)
+/*
+ * The MTD/NAND and SPI-flash dump paths use the mtd_read()/mtd_block_isbad()
+ * accessor API, the mtd_info.ecc_strength field and the MTD_MLCNANDFLASH type,
+ * all introduced around 3.4. Rather than shim that entire pre-3.4 MTD API, gate
+ * the whole implementation on >= 3.4; older kernels (this module builds back to
+ * 2.6) fall to the -EOPNOTSUPP stubs. Every MTD block keys off ELA_HAVE_MTD.
+ */
+#if IS_BUILTIN(CONFIG_MTD) && LINUX_VERSION_CODE >= KERNEL_VERSION(3, 4, 0)
+# define ELA_HAVE_MTD 1
+#endif
+#ifdef ELA_HAVE_MTD
 # include <linux/mtd/mtd.h>
 #endif
+/*
+ * The USB hub port-power / descriptor paths need <linux/usb/ch11.h> (the USB 2.0
+ * chapter-11 hub definitions), a public header only from ~2.6.39. Probe for it
+ * and gate the USB implementation on its presence; older kernels (this module
+ * builds back to 2.6) fall to the -EOPNOTSUPP stubs. Every USB block keys off
+ * ELA_HAVE_USB.
+ */
 #if IS_ENABLED(CONFIG_USB)
+# if defined(__has_include)
+#  if __has_include(<linux/usb/ch11.h>)
+#   define ELA_HAVE_USB 1
+#  endif
+# elif LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 39)
+#  define ELA_HAVE_USB 1
+# endif
+#endif
+#ifdef ELA_HAVE_USB
 # include <linux/usb.h>
 # include <linux/usb/ch11.h>
 # include <linux/delay.h>
@@ -58,7 +111,13 @@
 # include <linux/mmc/card.h>
 # include <linux/major.h>
 #endif
-#if IS_ENABLED(CONFIG_KPROBES)
+/*
+ * The WLAN firmware-command injection shim reads the driver's call arguments
+ * out of pt_regs via regs_get_kernel_argument(), which only exists from 4.20,
+ * and uses round_up() (post-2.6.32). Gate the whole kprobe shim on >= 4.20;
+ * older kernels (this module builds back to 2.6) fall to the -EOPNOTSUPP stub.
+ */
+#if IS_ENABLED(CONFIG_KPROBES) && LINUX_VERSION_CODE >= KERNEL_VERSION(4, 20, 0)
 # include <linux/kprobes.h>
 # include <linux/skbuff.h>
 # include <linux/ptrace.h>
@@ -87,6 +146,35 @@ static void ela_copy_fixed_name(char *dst, size_t dst_len, const char *src);
 # include <asm-generic/io-64-nonatomic-lo-hi.h>
 #else
 # define ELA_INLINE_IO64 1
+#endif
+
+/*
+ * kvmalloc()/kvfree() are later additions — kvfree() arrived in 4.6, kvmalloc()
+ * in 4.12 — but this module is built against kernels back to 2.6, where an
+ * unguarded call is an implicit declaration (fatal under the kernel's
+ * -Werror=implicit-function-declaration). Provide fallbacks with the same
+ * semantics: try a contiguous kmalloc first (silently, __GFP_NOWARN), fall back
+ * to vmalloc for large/failed allocations, and free whichever way it landed.
+ * All of kmalloc/vmalloc/kfree/vfree/is_vmalloc_addr/__GFP_NOWARN exist in 2.6.
+ */
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 12, 0)
+static inline void *kvmalloc(size_t size, gfp_t flags)
+{
+	void *p = kmalloc(size, flags | __GFP_NOWARN);
+
+	if (!p)
+		p = vmalloc(size);
+	return p;
+}
+#endif
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 6, 0)
+static inline void kvfree(const void *addr)
+{
+	if (is_vmalloc_addr(addr))
+		vfree(addr);
+	else
+		kfree(addr);
+}
 #endif
 
 #if IS_ENABLED(CONFIG_BLOCK) && IS_ENABLED(CONFIG_MMC_BLOCK) && \
@@ -306,7 +394,7 @@ struct ela_phys_alloc {
 	unsigned int order;
 };
 
-#if IS_BUILTIN(CONFIG_MTD)
+#ifdef ELA_HAVE_MTD
 struct ela_nand_entry {
 	struct list_head node;
 	int mtd_index;
@@ -963,7 +1051,7 @@ static void ela_copy_fixed_name(char *dst, size_t dst_len, const char *src)
 	dst[len] = '\0';
 }
 
-#if IS_ENABLED(CONFIG_USB)
+#ifdef ELA_HAVE_USB
 struct ela_usb_find_ctx {
 	u32 busnum;
 	u32 devnum;
@@ -1365,7 +1453,7 @@ static long ela_ioctl_spi_get(unsigned long arg)
 }
 #endif
 
-#if IS_BUILTIN(CONFIG_SPI) && IS_BUILTIN(CONFIG_MTD)
+#if defined(ELA_HAVE_MTD) && IS_BUILTIN(CONFIG_SPI)
 static struct spi_device *ela_mtd_spi_parent(struct mtd_info *mtd)
 {
 	struct device *dev = mtd->dev.parent;
@@ -1521,7 +1609,7 @@ static long ela_ioctl_spi_mtd_read(unsigned long arg)
 }
 #endif
 
-#if IS_BUILTIN(CONFIG_MTD)
+#ifdef ELA_HAVE_MTD
 static long ela_ioctl_nand_mtd_get(unsigned long arg)
 {
 	struct ela_kmod_nand_mtd req;
@@ -1671,7 +1759,7 @@ static long ela_ioctl_nand_mtd_read(unsigned long arg)
  * firmware-restart entry counts crashes -- the fuzzer's liveness oracle.
  * See kmod/ela_ioctl.h for the ABI and the authorized-use warning.
  */
-#if IS_ENABLED(CONFIG_KPROBES)
+#if IS_ENABLED(CONFIG_KPROBES) && LINUX_VERSION_CODE >= KERNEL_VERSION(4, 20, 0)
 
 #define ELA_WLAN_SKB_HEADROOM 64	/* room for the WMI/HTC headers the
 					 * driver push()es onto the skb */
@@ -2302,13 +2390,13 @@ static int __init ela_kmod_init(void)
 {
 	int rc;
 
-#if IS_BUILTIN(CONFIG_MTD)
+#ifdef ELA_HAVE_MTD
 	register_mtd_user(&ela_nand_mtd_notifier);
 #endif
 	rc = misc_register(&ela_kmod_dev);
 
 	if (rc) {
-#if IS_BUILTIN(CONFIG_MTD)
+#ifdef ELA_HAVE_MTD
 		unregister_mtd_user(&ela_nand_mtd_notifier);
 		ela_nand_entries_clear();
 #endif
@@ -2324,7 +2412,7 @@ static void __exit ela_kmod_exit(void)
 {
 	ela_wlan_shutdown();	/* unregister any WLAN-shim kprobes */
 	misc_deregister(&ela_kmod_dev);
-#if IS_BUILTIN(CONFIG_MTD)
+#ifdef ELA_HAVE_MTD
 	unregister_mtd_user(&ela_nand_mtd_notifier);
 	ela_nand_entries_clear();
 #endif
