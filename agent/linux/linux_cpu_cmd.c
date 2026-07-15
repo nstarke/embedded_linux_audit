@@ -116,6 +116,7 @@ static int cpu_fuzz_cmd_main(int argc, char **argv)
 	const char *show_path = NULL;
 	const char *isa_name = host_isa_name();
 	struct cpu_isa *isa;
+	char inferred[32];	/* function-scoped: isa_name may point at it below */
 	int insecure = 0, thumb = 0, opt;
 
 	optind = 1;
@@ -172,7 +173,6 @@ static int cpu_fuzz_cmd_main(int argc, char **argv)
 	 */
 	if (show_path || o.replay_path) {
 		const char *src = show_path ? show_path : o.replay_path;
-		char inferred[32];
 
 		if (cpu_fuzz_peek_isa(src, inferred, sizeof(inferred)) == 0) {
 			if (o.replay_path && !show_path &&

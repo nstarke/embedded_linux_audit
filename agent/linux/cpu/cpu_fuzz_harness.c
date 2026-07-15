@@ -67,6 +67,31 @@ static struct cpu_isa       *g_isa;
 
 /* LCOV_EXCL_START -- runs machine code; only exercised on real hardware */
 
+/*
+ * Make freshly-written code in [start,end) executable on a CPU with a
+ * non-coherent instruction cache. `__builtin___clear_cache` handles this on most
+ * targets, but on PowerPC it lowers to a call to libgcc's __clear_cache, which
+ * is not present in this project's static link -- so we issue the dcbst/icbi/sync
+ * sequence directly there. On x86 the icache is coherent and this is a no-op.
+ */
+static void cpu_flush_icache(void *start, void *end)
+{
+#if defined(__powerpc__) || defined(__powerpc64__) || defined(__ppc__) || \
+	defined(__PPC__) || defined(__PPC64__)
+	char *p;
+	const long line = 32;	/* <= the real line size, so no line is skipped */
+
+	for (p = (char *)start; p < (char *)end; p += line)
+		__asm__ volatile("dcbst 0,%0" :: "r"(p) : "memory");
+	__asm__ volatile("sync" ::: "memory");
+	for (p = (char *)start; p < (char *)end; p += line)
+		__asm__ volatile("icbi 0,%0" :: "r"(p) : "memory");
+	__asm__ volatile("isync" ::: "memory");
+#else
+	__builtin___clear_cache((char *)start, (char *)end);
+#endif
+}
+
 static void on_signal(int sig, siginfo_t *si, void *uc)
 {
 	if (!g_active) {
@@ -200,7 +225,7 @@ static void run_placed(struct cpu_harness *h, struct cpu_isa *isa,
 			memcpy(entry + clen, isa->epilogue,
 			       (size_t)isa->epilogue_len);
 	}
-	__builtin___clear_cache((char *)entry, (char *)h->guard);
+	cpu_flush_icache(entry, h->guard);
 
 	g_isa      = isa;
 	g_guard_lo = (uintptr_t)h->guard;
