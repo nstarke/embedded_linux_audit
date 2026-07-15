@@ -36,6 +36,11 @@ services:
       postgres:
         condition: service_healthy
 
+  ghidra-worker:
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   terminal-api:
     depends_on:
       postgres:

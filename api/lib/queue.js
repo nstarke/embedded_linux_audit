@@ -26,6 +26,13 @@ const GDB_COMMAND_QUEUE_NAME = process.env.ELA_GDB_COMMAND_QUEUE_NAME || 'ela-gd
 // queue so a slow kernel modules_prepare never blocks launcher rebuilds.
 const MODULE_BUILD_QUEUE_NAME = process.env.ELA_MODULE_BUILD_QUEUE_NAME || 'ela-module-builds';
 
+// Ghidra-analysis queue: the client API enqueues one job per device rootfs
+// decompilation request; the ghidra-analysis worker (api/ghidra/worker.js)
+// drives the whole run — pulling the filesystem via `linux remote-copy` and
+// decompiling every ELF with analyzeHeadless. Separate from the module-build
+// queue so a multi-hour decompile never blocks kernel-module compiles.
+const GHIDRA_ANALYSIS_QUEUE_NAME = process.env.ELA_GHIDRA_QUEUE_NAME || 'ela-ghidra-analysis';
+
 function getConnection() {
   return {
     host: process.env.REDIS_HOST || 'redis',
@@ -116,6 +123,44 @@ function getModuleBuildWorkerOptions() {
     lockDuration: intFromEnv('ELA_MODULE_BUILD_LOCK_DURATION_MS', 30 * 60 * 1000),
     stalledInterval: intFromEnv('ELA_MODULE_BUILD_STALLED_INTERVAL_MS', 30 * 1000),
     maxStalledCount: intFromEnv('ELA_MODULE_BUILD_MAX_STALLED_COUNT', 3),
+  };
+}
+
+/* -------------------------------------------------------------------------
+ * Ghidra-analysis queue
+ * ---------------------------------------------------------------------- */
+
+let ghidraAnalysisQueue = null;
+
+function getGhidraAnalysisQueue() {
+  if (!ghidraAnalysisQueue) {
+    ghidraAnalysisQueue = new Queue(GHIDRA_ANALYSIS_QUEUE_NAME, { connection: getConnection() });
+  }
+  return ghidraAnalysisQueue;
+}
+
+async function closeGhidraAnalysisQueue() {
+  if (ghidraAnalysisQueue) {
+    await ghidraAnalysisQueue.close();
+    ghidraAnalysisQueue = null;
+  }
+}
+
+// Worker options for ghidra-analysis jobs. A single job first pulls a whole
+// device rootfs over the live agent session (`linux remote-copy --recursive /`)
+// and then runs analyzeHeadless once per ELF — both open-ended and easily
+// multi-hour on a large filesystem or slow link. lockDuration is therefore very
+// high so a slow-but-healthy job is never declared stalled; concurrency 1
+// because analyzeHeadless is memory-heavy and the jobs share the /data volume.
+// All env-overridable.
+function getGhidraAnalysisWorkerOptions() {
+  return {
+    connection: getConnection(),
+    concurrency: intFromEnv('ELA_GHIDRA_CONCURRENCY', 1),
+    // 6 hours: comfortably longer than a full rootfs copy + decompile.
+    lockDuration: intFromEnv('ELA_GHIDRA_LOCK_DURATION_MS', 6 * 60 * 60 * 1000),
+    stalledInterval: intFromEnv('ELA_GHIDRA_STALLED_INTERVAL_MS', 60 * 1000),
+    maxStalledCount: intFromEnv('ELA_GHIDRA_MAX_STALLED_COUNT', 2),
   };
 }
 
@@ -249,6 +294,7 @@ module.exports = {
   COMMAND_QUEUE_NAME,
   GDB_COMMAND_QUEUE_NAME,
   MODULE_BUILD_QUEUE_NAME,
+  GHIDRA_ANALYSIS_QUEUE_NAME,
   getConnection,
   getWorkerOptions,
   getBuildQueue,
@@ -256,6 +302,9 @@ module.exports = {
   getModuleBuildQueue,
   closeModuleBuildQueue,
   getModuleBuildWorkerOptions,
+  getGhidraAnalysisQueue,
+  closeGhidraAnalysisQueue,
+  getGhidraAnalysisWorkerOptions,
   getCommandQueue,
   getCommandQueueEvents,
   getCommandWorkerOptions,

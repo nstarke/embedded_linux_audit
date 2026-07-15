@@ -10,6 +10,7 @@ function loadCreateApp() {
   const registerUploadsRoutes = jest.fn();
   const registerTerminalRoutes = jest.fn();
   const registerModuleBuildRoutes = jest.fn();
+  const registerGhidraAnalysisRoutes = jest.fn();
   const rateLimiter = jest.fn();
   const swaggerServe = [jest.fn()];
   const swaggerSetupHandler = jest.fn();
@@ -26,12 +27,13 @@ function loadCreateApp() {
   jest.doMock('../../../../api/client/routes/uploads', () => registerUploadsRoutes);
   jest.doMock('../../../../api/client/routes/terminal', () => registerTerminalRoutes);
   jest.doMock('../../../../api/client/routes/moduleBuilds', () => registerModuleBuildRoutes);
+  jest.doMock('../../../../api/client/routes/ghidraAnalysis', () => registerGhidraAnalysisRoutes);
   jest.doMock('../../../../api/client/openapi', () => ({ openapiSpec }));
 
   const { createApp } = require('../../../../api/client/app');
   return {
     app, createApp, authMiddleware, registerUploadsRoutes, registerTerminalRoutes,
-    registerModuleBuildRoutes, rateLimiter,
+    registerModuleBuildRoutes, registerGhidraAnalysisRoutes, rateLimiter,
     swaggerUi, swaggerServe, swaggerSetupHandler, openapiSpec,
   };
 }
@@ -49,7 +51,7 @@ describe('client app bootstrap', () => {
   test('serves the OpenAPI spec and Swagger UI before auth, then the upload routes', () => {
     const {
       app, createApp, authMiddleware, registerUploadsRoutes, registerTerminalRoutes,
-      registerModuleBuildRoutes, rateLimiter,
+      registerModuleBuildRoutes, registerGhidraAnalysisRoutes, rateLimiter,
       swaggerUi, swaggerServe, swaggerSetupHandler,
     } = loadCreateApp();
 
@@ -79,6 +81,7 @@ describe('client app bootstrap', () => {
     expect(registerUploadsRoutes).toHaveBeenCalledWith(app, {});
     expect(registerTerminalRoutes).toHaveBeenCalledWith(app, {});
     expect(registerModuleBuildRoutes).toHaveBeenCalledWith(app, {});
+    expect(registerGhidraAnalysisRoutes).toHaveBeenCalledWith(app, {});
     const guard = useFns(app).find((fn) => fn !== rateLimiter && fn !== authMiddleware);
     expect(typeof guard).toBe('function');
   });

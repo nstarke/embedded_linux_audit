@@ -12,8 +12,13 @@ describe('client OpenAPI spec', () => {
 
   test('documents every client API route', () => {
     expect(Object.keys(openapiSpec.paths).sort()).toEqual([
+      '/devices/{mac}/ghidra-analysis',
       '/devices/{mac}/module-builds',
       '/gdb/sessions',
+      '/ghidra-analysis',
+      '/ghidra-analysis/{id}',
+      '/ghidra-analysis/{id}/output.zip',
+      '/ghidra-analysis/{id}/outputs',
       '/module-builds',
       '/module-builds/{id}',
       '/module-builds/{id}/deliver',

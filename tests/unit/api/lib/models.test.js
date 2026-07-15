@@ -45,6 +45,7 @@ describe('db models', () => {
       'DeviceAlias',
       'EfiVariable',
       'FileListEntry',
+      'GhidraAnalysisJob',
       'GrepMatch',
       'KernelBuildInfo',
       'LogEvent',
