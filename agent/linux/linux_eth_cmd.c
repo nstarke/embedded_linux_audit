@@ -257,9 +257,14 @@ static int eth_fuzz_cmd_main(int argc, char **argv)
 	if (show_path)
 		return wlan_fuzz_show(t, show_path);
 
-	/* ethtool-generic fuzzes the host kernel and can panic it. Stream each
-	 * payload to the agent API first so the last one survives a panic. */
-	if (!o.replay_path && !strcmp(tname, "ethtool-generic")) {
+	/* Every eth target can panic the HOST kernel: ethtool-generic through the
+	 * driver's ioctl handlers, and the firmware targets through the ela_kmod
+	 * shim's inject, which re-calls the driver's command-send path in kernel
+	 * context. A panic kills the agent before local triage can run, so stream
+	 * each payload to the agent API first (when --output-http is set); the
+	 * last one survives as a remote crash artifact. A clean run ends the
+	 * stream gracefully so nothing is falsely saved. */
+	if (!o.replay_path) {
 		struct wlan_fuzz_stream stream;
 		int rc;
 

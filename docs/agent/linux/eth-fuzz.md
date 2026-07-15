@@ -128,7 +128,12 @@ sudo ./embedded_linux_audit linux eth fuzz --target i40e --out crashes/
   buffer + length directly, which is stable across more kernel versions;
   `ice`/`cxgb4` additionally capture the control queue / mailbox number.
 - Injecting crashes device firmware **and can panic the host kernel** (the inject
-  runs in kernel context). Run only where a host crash is acceptable.
+  runs in kernel context). Run only where a host crash is acceptable. Because of
+  this, the firmware targets stream to the agent API for **remote crash capture**
+  exactly like `ethtool-generic` — pass `--output-http` (and `--insecure` for a
+  self-signed endpoint) and a host panic leaves the last-injected command saved
+  as a replayable crash file under `/eth-fuzz/`. See
+  [remote crash capture](wlan-fuzz.md#remote-crash-capture-survives-a-host-panic).
 
 ## Crash artifacts and triage
 
