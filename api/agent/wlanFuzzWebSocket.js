@@ -13,8 +13,12 @@
  *
  * Frame protocol (one text/binary frame each), from the agent:
  *   "T <target>"      once, up front  — names the fuzz target
- *   "C <MSGNAME> <hex> #<note>"        — the current case (overwrites the prior)
- *   "D"               on a clean run  — graceful done; nothing is saved
+ *   "C <MSGNAME> <hex> #<note>"        — the current case (overwrites the prior;
+ *                                        the host-panic dead-man's-switch)
+ *   "X <crash-file text>"              — a confirmed crash the agent saved
+ *                                        locally; persisted here immediately
+ *   "D"               on a clean run  — graceful done; the held payload is not
+ *                                        saved
  */
 
 const fs = require('fs');
@@ -72,9 +76,45 @@ function createWlanFuzzWebSocketServer({
     }
 
     let target = 'wext-generic';
-    let lastCase = null; // the current (latest) case line, or null
+    let lastCase = null; // latest streamed case (host-panic dead-man's-switch)
     let graceful = false;
     let cases = 0;
+    let crashes = 0;
+
+    const tsSafe = timestamp.replace(/[-:]/g, '').replace(/\..+/, 'Z');
+    const safeIp = safeIpForPath(srcIp);
+    const targetDir = path.join(dataDir, macAddress, pathSegment);
+
+    // Persist one crash-file artifact (a full "# target=" crash file) to disk +
+    // DB. `suffix` distinguishes a confirmed crash ('') from the last payload
+    // captured on an ungraceful disconnect ('_panic').
+    async function persistCrash(text, suffix, note) {
+      const unique = crypto.randomUUID().replace(/-/g, '').slice(0, 8);
+      const localArtifactPath = path.join(
+        targetDir, `crash_${tsSafe}_${safeIp}_${unique}${suffix}.txt`,
+      );
+      const payload = Buffer.from(text, 'utf8');
+      try {
+        fs.mkdirSync(targetDir, { recursive: true });
+        fs.writeFileSync(localArtifactPath, payload, { flag: 'wx' });
+        await persistUpload({
+          macAddress,
+          uploadType,
+          contentType: 'application/octet-stream',
+          srcIp,
+          apiTimestamp: new Date().toISOString(),
+          requestFilePath: null,
+          localArtifactPath,
+          isSymlink: false,
+          symlinkPath: null,
+          payload,
+          payloadToPersist: payload,
+        });
+        process.stdout.write(`[${new Date().toISOString()}] WS /${pathSegment}/${macAddress} ${note} -> saved ${localArtifactPath}\n`);
+      } catch (err) {
+        process.stderr.write(`nic-fuzz websocket: failed to persist ${localArtifactPath}: ${err.message}\n`);
+      }
+    }
 
     if (verbose) {
       process.stdout.write(`[${timestamp}] ${srcIp} WS /${pathSegment}/${macAddress} open\n`);
@@ -88,6 +128,12 @@ function createWlanFuzzWebSocketServer({
       } else if (kind === 0x43 /* 'C' */) {
         lastCase = msg.slice(2);
         cases += 1;
+      } else if (kind === 0x58 /* 'X': a confirmed crash, saved immediately */) {
+        const text = msg.slice(2);
+        if (text) {
+          crashes += 1;
+          persistCrash(text, '', 'CONFIRMED crash');
+        }
       } else if (kind === 0x44 /* 'D' */) {
         graceful = true; // clean finish: the held payload is not a crash
         lastCase = null;
@@ -95,44 +141,15 @@ function createWlanFuzzWebSocketServer({
     });
 
     ws.on('close', async () => {
-      // Only an ungraceful drop while holding a payload means a crash: the
-      // agent stopped streaming without saying "done" (host panicked/killed).
+      // An ungraceful drop while still holding a payload means the agent died
+      // (host panic/kill) mid-fuzz: save the last-streamed payload as a crash.
       if (graceful || !lastCase) {
         if (verbose) {
-          process.stdout.write(`[${new Date().toISOString()}] WS /${pathSegment}/${macAddress} closed cleanly (${cases} case(s))\n`);
+          process.stdout.write(`[${new Date().toISOString()}] WS /${pathSegment}/${macAddress} closed cleanly (${cases} case(s), ${crashes} crash(es))\n`);
         }
         return;
       }
-
-      const tsSafe = timestamp.replace(/[-:]/g, '').replace(/\..+/, 'Z');
-      const safeIp = safeIpForPath(srcIp);
-      const unique = crypto.randomUUID().replace(/-/g, '').slice(0, 8);
-      const targetDir = path.join(dataDir, macAddress, pathSegment);
-      const localArtifactPath = path.join(
-        targetDir, `crash_${tsSafe}_${safeIp}_${unique}.txt`,
-      );
-      const payload = Buffer.from(buildCrashFile(target, lastCase), 'utf8');
-
-      try {
-        fs.mkdirSync(targetDir, { recursive: true });
-        fs.writeFileSync(localArtifactPath, payload, { flag: 'wx' });
-        await persistUpload({
-          macAddress,
-          uploadType,
-          contentType: 'application/octet-stream',
-          srcIp,
-          apiTimestamp: timestamp,
-          requestFilePath: null,
-          localArtifactPath,
-          isSymlink: false,
-          symlinkPath: null,
-          payload,
-          payloadToPersist: payload,
-        });
-        process.stdout.write(`[${new Date().toISOString()}] WS /${pathSegment}/${macAddress} DROPPED mid-fuzz -> saved crash ${localArtifactPath}\n`);
-      } catch (err) {
-        process.stderr.write(`wlan-fuzz websocket: failed to persist ${localArtifactPath}: ${err.message}\n`);
-      }
+      await persistCrash(buildCrashFile(target, lastCase), '_panic', 'DROPPED mid-fuzz');
     });
 
     ws.on('error', () => {});

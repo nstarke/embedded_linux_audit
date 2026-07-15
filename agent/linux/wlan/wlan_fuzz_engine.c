@@ -17,6 +17,7 @@
 #include <unistd.h>
 
 #include "wlan_fuzz.h"
+#include "wlan_fuzz_stream_fmt.h"
 
 #define WINDOW_MAX  64
 #define HISTORY_MULT 4
@@ -75,35 +76,74 @@ static int replay_seq(struct fuzz_ctx *fc, const struct stored_case *seq,
 
 /* ---- crash persistence ----------------------------------------------------- */
 
+/* Render the crash file (header + one case line each) into `buf`. Returns the
+ * length written, or -1 if it would not fit. Reuses the same line format the
+ * remote stream uses so the API-saved copy is byte-identical and replayable. */
+static int format_crash_file(char *buf, size_t bufsz, const char *target_name,
+			     const struct target *t,
+			     const struct stored_case *seq, int n)
+{
+	int off, i;
+
+	off = snprintf(buf, bufsz, "# target=%s cases=%d\n", target_name, n);
+	if (off < 0 || (size_t)off >= bufsz)
+		return -1;
+	for (i = 0; i < n; i++) {
+		int m = wlan_fuzz_format_case_line(buf + off, bufsz - (size_t)off,
+						   t->msgs[seq[i].msg_idx].name,
+						   seq[i].payload, seq[i].len,
+						   seq[i].note);
+		if (m < 0 || (size_t)(off + m + 1) >= bufsz)
+			return -1;
+		off += m;
+		buf[off++] = '\n';
+	}
+	buf[off] = '\0';
+	return off;
+}
+
 static void save_crash(struct fuzz_ctx *fc, const struct stored_case *seq,
 		       int n, const char *tag)
 {
+	/* Header + n lines; a minimized sequence is small, but size for the worst
+	 * case (a full unminimized window) so the on-disk and uploaded copies are
+	 * always complete. */
+	static char buf[64 + WINDOW_MAX * (HISTORY_MULT + 1) *
+			(CASE_MAX_BYTES * 2 + 200)];
 	char path[512];
-	FILE *f;
-	int i, j, fd;
+	int len, fd;
+	ssize_t w;
 
 	fc->crashes++;
 	snprintf(path, sizeof(path), "%s/crash_%04ld_%s.txt",
 		 fc->o.out_dir, fc->crashes, tag);
+
+	len = format_crash_file(buf, sizeof(buf), fc->t->name, fc->t, seq, n);
+	if (len < 0) {
+		fprintf(stderr, "[!] crash %s too large to serialize\n", path);
+		return;
+	}
+
 	/* Create 0600, not fopen()'s world-writable 0666: crash files can hold
 	 * captured firmware state and should not be readable/writable by all. */
 	fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0600);
-	if (fd < 0 || !(f = fdopen(fd, "w"))) {
+	if (fd < 0) {
 		fprintf(stderr, "[!] cannot write %s: %s\n", path,
 			strerror(errno));
-		if (fd >= 0)
-			close(fd);
 		return;
 	}
-	fprintf(f, "# target=%s cases=%d\n", fc->t->name, n);
-	for (i = 0; i < n; i++) {
-		fprintf(f, "%s ", fc->t->msgs[seq[i].msg_idx].name);
-		for (j = 0; j < seq[i].len; j++)
-			fprintf(f, "%02x", seq[i].payload[j]);
-		fprintf(f, " #%s\n", seq[i].note);
+	w = write(fd, buf, (size_t)len);
+	close(fd);
+	if (w != len) {
+		fprintf(stderr, "[!] short write to %s\n", path);
+		return;
 	}
-	fclose(f);
 	printf("[+] crash saved: %s (%d case(s))\n", path, n);
+
+	/* Push the confirmed crash to the agent API immediately (best-effort),
+	 * so it is captured even for runs the agent survives. */
+	if (fc->o.sink && fc->o.sink->crash)
+		fc->o.sink->crash(fc->o.sink->ctx, buf, len);
 }
 
 /* ---- triage: confirm, history fallback, suffix binary search --------------- */

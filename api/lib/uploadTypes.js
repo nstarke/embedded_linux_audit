@@ -30,6 +30,7 @@ const VALID_UPLOAD_TYPES = new Set([
   'uboot-environment',
   'wlan-fuzz',
   'eth-fuzz',
+  'bt-fuzz',
 ]);
 
 module.exports = {

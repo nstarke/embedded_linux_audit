@@ -7,10 +7,12 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* frame kinds (first byte): target header, case payload, graceful done */
+/* frame kinds (first byte): target header, case payload, graceful done,
+ * confirmed-crash file */
 #define FRAME_TARGET 'T'
 #define FRAME_CASE   'C'
 #define FRAME_DONE   'D'
+#define FRAME_CRASH  'X'
 
 /* one CASE frame: 'C' + ' ' + "<msg> <hex> #<note>" for a CASE_MAX_BYTES payload */
 #define STREAM_FRAME_MAX (CASE_MAX_BYTES * 2 + 256)
@@ -84,8 +86,27 @@ static void stream_emit(void *ctx, const char *msg_name,
 	send_frame(s, frame, (size_t)body + 2);
 }
 
+/* A confirmed crash saved locally: upload the full crash-file text to the API
+ * as one "X <crashfile>" frame so it is persisted immediately. */
+static void stream_crash(void *ctx, const char *crashfile, int len)
+{
+	struct wlan_fuzz_stream *s = ctx;
+	char *frame;
+
+	if (!s->connected || len < 0 || !crashfile)
+		return;
+	frame = malloc((size_t)len + 2);
+	if (!frame)
+		return;
+	frame[0] = FRAME_CRASH;
+	frame[1] = ' ';
+	memcpy(frame + 2, crashfile, (size_t)len);
+	send_frame(s, frame, (size_t)len + 2);
+	free(frame);
+}
+
 int wlan_fuzz_stream_open(struct wlan_fuzz_stream *s, const char *target_name,
-			  const char *endpoint, int insecure)
+			  const char *endpoint, int stream_payloads, int insecure)
 {
 	const char *https = getenv("ELA_OUTPUT_HTTPS");
 	const char *http = getenv("ELA_OUTPUT_HTTP");
@@ -97,7 +118,10 @@ int wlan_fuzz_stream_open(struct wlan_fuzz_stream *s, const char *target_name,
 	s->ws.sock = -1;
 	s->insecure = insecure;
 	s->sink.ctx = s;
-	s->sink.emit = stream_emit;
+	/* emit = per-case dead-man's-switch (host-panic targets only);
+	 * crash = upload confirmed local crashes (always). */
+	s->sink.emit = stream_payloads ? stream_emit : NULL;
+	s->sink.crash = stream_crash;
 
 	if (!endpoint || !*endpoint)
 		endpoint = "wlan-fuzz";
@@ -122,7 +146,8 @@ int wlan_fuzz_stream_open(struct wlan_fuzz_stream *s, const char *target_name,
 	if (n > 0)
 		send_frame(s, hdr, (size_t)n);
 	if (s->connected)
-		printf("[*] streaming payloads to %s for remote crash capture\n",
+		printf("[*] %s to %s for remote crash capture\n",
+		       stream_payloads ? "streaming payloads" : "uploading crashes",
 		       url);
 	return s->connected ? 0 : -1;
 }
