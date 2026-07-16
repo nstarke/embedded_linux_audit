@@ -2,6 +2,7 @@
 
 #include "test_harness.h"
 #include "../../../agent/linux/remote_copy_cmd_util.h"
+#include "../../../agent/util/remote_copy_util.h"
 
 #include <errno.h>
 #include <inttypes.h>
@@ -95,6 +96,11 @@ static void test_remote_copy_path_and_errno_helpers(void)
 	ELA_ASSERT_TRUE(strstr(buf, "No such file") != NULL);
 	ELA_ASSERT_INT_EQ(0, ela_remote_copy_join_child_path("/tmp/root", "child", buf, sizeof(buf)));
 	ELA_ASSERT_STR_EQ("/tmp/root/child", buf);
+	/* Root parent must not double the slash: "//sys" would slip past the
+	 * /dev,/sys,/proc prefix checks and copy those restricted trees. */
+	ELA_ASSERT_INT_EQ(0, ela_remote_copy_join_child_path("/", "sys", buf, sizeof(buf)));
+	ELA_ASSERT_STR_EQ("/sys", buf);
+	ELA_ASSERT_FALSE(ela_path_is_allowed(buf, false, false, false));
 	ELA_ASSERT_TRUE(ela_remote_copy_should_recurse(S_IFDIR, true));
 	ELA_ASSERT_FALSE(ela_remote_copy_should_recurse(S_IFDIR, false));
 	ELA_ASSERT_FALSE(ela_remote_copy_should_recurse(S_IFREG, true));
