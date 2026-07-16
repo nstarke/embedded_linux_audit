@@ -99,6 +99,8 @@ void ela_ws_classify_incoming_frame(uint8_t opcode,
 	if (opcode == ELA_WS_OPCODE_TEXT && payload && payload_len > 0) {
 		if (strstr(payload, "\"_type\":\"heartbeat\""))
 			out->send_heartbeat_ack = 1;
+		else if (strstr(payload, "\"_type\":\"config.get\""))
+			out->send_config_value = 1;
 		else
 			out->forward_to_repl = 1;
 	}

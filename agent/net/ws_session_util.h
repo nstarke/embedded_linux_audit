@@ -23,6 +23,11 @@ struct ela_ws_frame_action {
 	int no_reconnect;
 	int send_pong;
 	int send_heartbeat_ack;
+	/* A `config.get` request: answered by this process from /tmp/.ela.conf
+	 * and its own environment, never forwarded to the REPL (which may be
+	 * busy for the length of a whole-rootfs remote-copy). See
+	 * ws_config_util.h. */
+	int send_config_value;
 	int forward_to_repl;
 };
 

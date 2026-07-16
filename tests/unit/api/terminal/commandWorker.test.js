@@ -255,6 +255,65 @@ describe('processCommand', () => {
       gate.resolve();
       await execP;
     });
+
+    // The whole reason configGet exists: reading a device's settings must not
+    // queue behind an hour-long remote-copy on that same device.
+    test('configGet is answered while a long exec holds the SAME mac', async () => {
+      const sessionRegistry = registry([['aa:bb', { ws: {} }]]);
+      const gate = deferred();
+      const runExecImpl = jest.fn(() => gate.promise.then(() => ({ output: 'x', durationMs: 1 })));
+      const runConfigGetImpl = jest.fn(async () => ({ ELA_API_URL: 'http://a.example/upload' }));
+
+      const execP = run(
+        { type: 'exec', mac: 'aa:bb', command: 'linux remote-copy --recursive /' },
+        { sessionRegistry, runExecImpl },
+      );
+      const cfg = await run(
+        { type: 'configGet', mac: 'aa:bb', keys: ['ELA_API_URL'] },
+        { sessionRegistry, runConfigGetImpl },
+      );
+
+      expect(cfg.status).toBe(200);
+      expect(cfg.body.values).toEqual({ ELA_API_URL: 'http://a.example/upload' });
+      expect(runConfigGetImpl).toHaveBeenCalledTimes(1);
+      gate.resolve();
+      await execP;
+    });
+  });
+
+  describe('configGet', () => {
+    test('404s when the device has no session', async () => {
+      const res = await run({ type: 'configGet', mac: 'no:such', keys: ['ELA_API_URL'] }, { sessionRegistry: registry() });
+      expect(res).toEqual({ status: 404, body: { error: 'no active session for mac' } });
+    });
+
+    test('a device that answers with an unset value is a 200, not an error', async () => {
+      const sessionRegistry = registry([['aa:bb', { ws: {} }]]);
+      const runConfigGetImpl = jest.fn(async () => ({ ELA_API_URL: '' }));
+      const res = await run({ type: 'configGet', mac: 'aa:bb', keys: ['ELA_API_URL'] }, { sessionRegistry, runConfigGetImpl });
+      // Callers distinguish this from a 504 to avoid reporting a timeout as a
+      // device misconfiguration.
+      expect(res).toEqual({ status: 200, body: { ok: true, values: { ELA_API_URL: '' } } });
+    });
+
+    test('a device that never answers is a 504', async () => {
+      const sessionRegistry = registry([['aa:bb', { ws: {} }]]);
+      const runConfigGetImpl = jest.fn(async () => {
+        throw Object.assign(new Error('config.get timed out'), { code: 'TIMEOUT' });
+      });
+      const res = await run({ type: 'configGet', mac: 'aa:bb', keys: ['ELA_API_URL'] }, { sessionRegistry, runConfigGetImpl });
+      expect(res.status).toBe(504);
+      expect(res.body.ok).toBe(false);
+    });
+
+    test('a disconnected session is a 404', async () => {
+      const sessionRegistry = registry([['aa:bb', { ws: {} }]]);
+      const runConfigGetImpl = jest.fn(async () => {
+        throw Object.assign(new Error('session is not connected'), { code: 'NOT_CONNECTED' });
+      });
+      const res = await run({ type: 'configGet', mac: 'aa:bb', keys: ['ELA_API_URL'] }, { sessionRegistry, runConfigGetImpl });
+      expect(res).toEqual({ status: 404, body: { error: 'no active session for mac' } });
+    });
   });
 });
 

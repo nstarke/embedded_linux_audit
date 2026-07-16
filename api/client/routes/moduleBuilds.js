@@ -84,18 +84,6 @@ function deriveDownloadBaseUrl(apiUrl) {
   return trimmed;
 }
 
-// Pull `ELA_API_URL current=<value>` out of the agent's `set` output — the same
-// line the self-update flow reads. Returns '' when the setting is explicitly
-// unset (`<unset>`), or null when the line is absent altogether.
-function parseDeviceApiUrl(output) {
-  const match = String(output || '').match(/ELA_API_URL\s+current=([^\r\n]+)/);
-  if (!match) {
-    return null;
-  }
-  const value = String(match[1] || '').trim();
-  return value === '<unset>' ? '' : value;
-}
-
 /**
  * Operator routes for kernel-module builds:
  *
@@ -413,25 +401,48 @@ module.exports = function registerModuleBuildRoutes(app, deps = {}) {
     // ELA_MODULE_DOWNLOAD_BASE_URL override wins; otherwise ask the device for
     // its own ELA_API_URL (the value it already uses to talk to the agent-api)
     // and derive the download origin from that.
+    //
+    // The read goes over the control channel (`configGet`), not the REPL. It
+    // used to run `set` as an exec and scrape the output, which serialized
+    // behind whatever command the device was already running — a whole-rootfs
+    // `remote-copy` holds the device for up to an hour, so the probe timed out
+    // and, because the failure was swallowed, got reported as "the device has
+    // no ELA_API_URL". Two different problems must not share one error.
     let baseUrl = stripTrailingSlashes(String(moduleBaseUrl || '').trim());
     if (!/^https?:\/\//i.test(baseUrl)) {
-      let setResult;
+      let configResult;
       try {
-        setResult = await sendCommand(
-          { type: 'exec', mode: 'ela', mac: device.macAddress, command: 'set' },
-          { waitMs: 30000 },
+        configResult = await sendCommand(
+          { type: 'configGet', mac: device.macAddress, keys: ['ELA_API_URL'] },
+          { waitMs: 15000 },
         );
       } catch {
-        setResult = null;
+        configResult = null;
       }
-      const apiUrl = parseDeviceApiUrl(setResult && setResult.body && setResult.body.output);
-      baseUrl = deriveDownloadBaseUrl(apiUrl);
-    }
-    if (!/^https?:\/\//i.test(baseUrl)) {
-      res.status(400).json({
-        error: "could not determine the agent-api origin from the device's ELA_API_URL; set ELA_API_URL on the device or override with ELA_MODULE_DOWNLOAD_BASE_URL",
-      });
-      return;
+
+      // Never got an answer: report that, rather than blaming the device's
+      // configuration for something we failed to read.
+      if (!configResult || configResult.status !== 200) {
+        const status = configResult && configResult.status === 404 ? 404 : 504;
+        res.status(status).json({
+          error: status === 404
+            ? 'no active session for mac'
+            : "could not read the device's ELA_API_URL (the device did not answer; it may be offline). Retry, or override with ELA_MODULE_DOWNLOAD_BASE_URL",
+        });
+        return;
+      }
+
+      const values = (configResult.body && configResult.body.values) || {};
+      baseUrl = deriveDownloadBaseUrl(values.ELA_API_URL);
+
+      // The device answered and genuinely has no usable ELA_API_URL. This is
+      // the only case the original message was ever meant to describe.
+      if (!/^https?:\/\//i.test(baseUrl)) {
+        res.status(400).json({
+          error: "could not determine the agent-api origin from the device's ELA_API_URL; set ELA_API_URL on the device or override with ELA_MODULE_DOWNLOAD_BASE_URL",
+        });
+        return;
+      }
     }
 
     const issued = await db.issueDownloadToken(row.id);

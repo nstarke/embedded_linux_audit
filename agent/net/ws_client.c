@@ -10,6 +10,8 @@
 #include "http_ws_policy_util.h"
 #include "ws_connect_util.h"
 #include "ws_client_runtime_util.h"
+#include "ws_config_util.h"
+#include "ela_conf.h"
 #include "ws_interactive_util.h"
 #include "ws_recv_util.h"
 #include "ws_frame_util.h"
@@ -940,6 +942,11 @@ static int send_heartbeat_ack(const struct ela_ws_conn *ws)
 struct ws_loop_dispatch_ctx {
 	const struct ela_ws_conn *ws;
 	int repl_fd;
+	/* Conf as it was when this session started. config.get compares the
+	 * current conf against it to tell a runtime `set` (which writes through
+	 * to /tmp/.ela.conf) from a value left by an earlier run; see
+	 * ela_ws_config_resolve. */
+	const struct ela_conf *startup_conf;
 };
 
 static int ws_dispatch_write_repl(void *ctx, const char *payload, size_t payload_len)
@@ -973,6 +980,57 @@ static int ws_dispatch_send_heartbeat_ack(void *ctx)
 	return send_heartbeat_ack(dispatch->ws);
 }
 
+/* getenv with the signature ela_ws_config_resolve injects (tests pass a stub). */
+static const char *ws_config_env_lookup(const char *name)
+{
+	return getenv(name);
+}
+
+/*
+ * Answer a config.get request without involving the REPL.
+ *
+ * A malformed request is dropped rather than terminating the session: the
+ * terminal API's read simply times out, which is strictly better than dropping
+ * an operator's live session over a bad frame.
+ */
+static int ws_dispatch_send_config_value(void *ctx, const char *payload,
+					 size_t payload_len)
+{
+	struct ws_loop_dispatch_ctx *dispatch = (struct ws_loop_dispatch_ctx *)ctx;
+	struct ela_conf now_conf;
+	char id[ELA_WS_CONFIG_ID_MAX];
+	char keys[ELA_WS_CONFIG_MAX_KEYS][ELA_WS_CONFIG_KEY_MAX];
+	char values[ELA_WS_CONFIG_MAX_KEYS][ELA_WS_CONFIG_VALUE_MAX];
+	char reply[4096];
+	size_t n_keys = 0;
+	size_t i;
+
+	if (!dispatch || !dispatch->ws)
+		return -1;
+
+	if (ela_ws_config_parse_get(payload, payload_len, id, sizeof(id),
+				    keys, ELA_WS_CONFIG_MAX_KEYS, &n_keys) != 0)
+		return 0;
+
+	/* Re-read conf on every request: a runtime `set` in the REPL child
+	 * writes through to it, and that child is a different process whose
+	 * environment this one cannot see. */
+	ela_conf_load(&now_conf);
+
+	for (i = 0; i < n_keys; i++) {
+		if (ela_ws_config_resolve(keys[i], dispatch->startup_conf,
+					  &now_conf, ws_config_env_lookup,
+					  values[i], ELA_WS_CONFIG_VALUE_MAX) != 0)
+			values[i][0] = '\0';
+	}
+
+	if (ela_ws_config_build_value_reply(id, keys, values, n_keys,
+					    reply, sizeof(reply)) != 0)
+		return 0;
+
+	return ws_send_text(dispatch->ws, reply, strlen(reply)) < 0 ? -1 : 0;
+}
+
 /* -------------------------------------------------------------------------
  * Interactive session bridge
  * ---------------------------------------------------------------------- */
@@ -996,6 +1054,9 @@ int ela_ws_run_interactive(struct ela_ws_conn *ws, const char *prog)
 	char   read_buf[65536];
 	time_t last_ping_t;
 	char   mac[32];
+	/* Snapshot conf before the REPL child can mutate it, so config.get can
+	 * distinguish a runtime `set` from a previous run's persisted value. */
+	struct ela_conf startup_conf;
 	int    child_exited = 0;
 	int    child_status = 0;
 	int    no_reconnect = 0;
@@ -1011,6 +1072,8 @@ int ela_ws_run_interactive(struct ela_ws_conn *ws, const char *prog)
 	/* Let the child know its session MAC so it can show the prompt. */
 	ela_ws_get_primary_mac(mac, sizeof(mac));
 	setenv("ELA_SESSION_MAC", mac, 1);
+
+	ela_conf_load(&startup_conf);
 
 	child = fork();
 	fprintf(stderr, "ws: session process forked (pid=%d)\n", (int)child);
@@ -1089,11 +1152,13 @@ int ela_ws_run_interactive(struct ela_ws_conn *ws, const char *prog)
 			struct ws_loop_dispatch_ctx dispatch_ctx = {
 				.ws = ws,
 				.repl_fd = pipe_to_loop[1],
+				.startup_conf = &startup_conf,
 			};
 			struct ela_ws_runtime_dispatch_ops dispatch_ops = {
 				.write_repl_fn = ws_dispatch_write_repl,
 				.send_pong_fn = ws_dispatch_send_pong,
 				.send_heartbeat_ack_fn = ws_dispatch_send_heartbeat_ack,
+				.send_config_value_fn = ws_dispatch_send_config_value,
 			};
 			if (!ws_readable && ws->is_tls && ws->ssl) {
 #ifdef ELA_HAS_WOLFSSL

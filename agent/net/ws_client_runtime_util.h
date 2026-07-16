@@ -11,6 +11,9 @@ struct ela_ws_runtime_dispatch_ops {
 	int (*write_repl_fn)(void *ctx, const char *payload, size_t payload_len);
 	int (*send_pong_fn)(void *ctx);
 	int (*send_heartbeat_ack_fn)(void *ctx);
+	/* Answer a `config.get` request. Receives the raw frame so the handler
+	 * can parse the request id and key list (see ws_config_util.h). */
+	int (*send_config_value_fn)(void *ctx, const char *payload, size_t payload_len);
 };
 
 /*

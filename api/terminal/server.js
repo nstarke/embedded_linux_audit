@@ -10,6 +10,7 @@ const { getTerminalServiceConfig } = require('../lib/config');
 const { COMMAND_QUEUE_NAME, getCommandWorkerOptions } = require('../lib/queue');
 const { processCommand, buildSessionList } = require('./commandWorker');
 const { publishSessionSnapshot, closeSnapshotClient } = require('../lib/sessionSnapshot');
+const { deliverConfigValue } = require('./configCommand');
 const { initializeDatabase, runMigrations, closeDatabase } = require('../lib/db');
 const {
   recordTerminalConnection,
@@ -252,6 +253,13 @@ wss.on('connection', async (ws, req) => {
             process.stderr.write(`Warning: failed to update heartbeat for ${mac}: ${err.message}\n`);
           });
         }
+        return;
+      }
+      // A control-channel reply, not session output: hand it to the waiting
+      // reader and keep it out of the output stream so it never lands in an
+      // exec capture or the operator's TUI.
+      if (msg._type === 'config.value') {
+        deliverConfigValue(entry, msg);
         return;
       }
     } catch {

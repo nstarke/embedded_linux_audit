@@ -53,6 +53,9 @@ int ela_ws_dispatch_incoming_frame(uint8_t opcode,
 		return ops->send_pong_fn ? ops->send_pong_fn(ctx) : -1;
 	if (action.send_heartbeat_ack)
 		return ops->send_heartbeat_ack_fn ? ops->send_heartbeat_ack_fn(ctx) : -1;
+	if (action.send_config_value)
+		return ops->send_config_value_fn
+			? ops->send_config_value_fn(ctx, payload, payload_len) : -1;
 	if (action.forward_to_repl)
 		return ops->write_repl_fn ? ops->write_repl_fn(ctx, payload, payload_len) : -1;
 	return 0;

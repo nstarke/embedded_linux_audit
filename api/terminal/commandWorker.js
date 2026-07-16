@@ -3,6 +3,7 @@
 
 const { runExec } = require('./execCommand');
 const { runSpawn } = require('./spawnCommand');
+const { runConfigGet } = require('./configCommand');
 
 // Process one operator command received over the `ela-terminal-commands` queue
 // (produced by the client API) against the live agent WebSocket sessions this
@@ -175,6 +176,33 @@ async function setMeta(sessionRegistry, setDeviceAliasImpl, setDeviceGroupImpl, 
   return { status: 200, body: out };
 }
 
+// Read device settings over the control channel.
+//
+// This is control-plane despite naming a MAC: the agent answers it from its
+// WebSocket parent process, not the REPL, so it neither touches the session
+// output stream nor waits on a running command. It must therefore NOT take the
+// device lock — the entire point is that it answers while a long `remote-copy`
+// holds the device.
+//
+// A 504 here means "we never got an answer", which is deliberately distinct
+// from a 200 carrying an empty value ("the device answered; the setting is
+// unset"). Callers depend on that distinction to avoid reporting a timeout as
+// a device misconfiguration.
+async function configGet(sessionRegistry, runConfigGetImpl, { mac, keys }) {
+  const entry = sessionRegistry.getSession(mac);
+  if (!entry) return NO_SESSION;
+  try {
+    const values = await runConfigGetImpl({ entry, keys });
+    return { status: 200, body: { ok: true, values } };
+  } catch (err) {
+    if (err.code === 'NOT_CONNECTED') return NO_SESSION;
+    if (err.code === 'TIMEOUT') {
+      return { status: 504, body: { ok: false, error: 'config.get timed out' } };
+    }
+    return { status: 500, body: { error: 'config.get failed' } };
+  }
+}
+
 function listSpawns(sessionRegistry, { mac }) {
   const entry = sessionRegistry.getSession(mac);
   if (!entry) return NO_SESSION;
@@ -211,6 +239,7 @@ async function processCommand({
   sessionRegistry,
   runExecImpl = runExec,
   runSpawnImpl = runSpawn,
+  runConfigGetImpl = runConfigGet,
   now = () => new Date().toISOString(),
   // Lazily resolved so importing this module (tests) does not pull in the DB.
   setDeviceAliasImpl = (mac, alias) => require('../lib/db/deviceRegistry').setDeviceAlias(mac, alias, 'client_api'),
@@ -226,6 +255,8 @@ async function processCommand({
       return listSpawns(sessionRegistry, data);
     case 'setMeta':
       return setMeta(sessionRegistry, setDeviceAliasImpl, setDeviceGroupImpl, data);
+    case 'configGet':
+      return configGet(sessionRegistry, runConfigGetImpl, data);
     // Device-touching: serialized per MAC (see withDeviceLock).
     case 'exec':
       return withDeviceLock(data.mac, () => execOnSession(sessionRegistry, runExecImpl, data));

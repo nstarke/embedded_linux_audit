@@ -443,12 +443,13 @@ describe('module build routes', () => {
 
     test('derives the download origin from the device ELA_API_URL when no override is set', async () => {
       const { app, sendCommand } = deliverSetup({ deps: { moduleBaseUrl: null } });
-      // First call is the `set` query for the device's ELA_API_URL; the origin
-      // is derived from it (trailing /upload stripped). Remaining calls default
-      // to the OK stub, so download+load proceed.
+      // The origin is read over the control channel, not by scraping `set`:
+      // configGet is answered by the agent's WS parent, so it is not blocked by
+      // a long-running command on the device. Remaining calls default to the OK
+      // stub, so download+load proceed.
       sendCommand.mockResolvedValueOnce({
         status: 200,
-        body: { output: '  ELA_API_URL              current=http://10.0.0.5:5000/upload\n' },
+        body: { ok: true, values: { ELA_API_URL: 'http://10.0.0.5:5000/upload' } },
       });
       const res = createRes();
 
@@ -458,25 +459,75 @@ describe('module build routes', () => {
 
       expect(res.statusCode).toBe(200);
       expect(sendCommand.mock.calls[0][0]).toEqual({
-        type: 'exec', mode: 'ela', mac: MAC, command: 'set',
+        type: 'configGet', mac: MAC, keys: ['ELA_API_URL'],
       });
+      // The trailing /upload is stripped to give the module-download origin.
       expect(sendCommand.mock.calls[1][0].command)
         .toBe('linux download-file http://10.0.0.5:5000/module/raw-token-abc /tmp/ela_kmod.ko');
     });
 
-    test('400s when neither an override nor the device ELA_API_URL yields an origin', async () => {
+    test('400s when the device answers but has no usable ELA_API_URL', async () => {
       const { app, sendCommand } = deliverSetup({ deps: { moduleBaseUrl: null } });
-      // The default stub's `set` output carries no ELA_API_URL line.
+      sendCommand.mockResolvedValueOnce({
+        status: 200,
+        body: { ok: true, values: { ELA_API_URL: '' } },
+      });
       const res = createRes();
 
       await app.posts['/module-builds/:id/deliver'](
         { params: { id: '7' }, body: {}, authUser: 'alice' }, res,
       );
 
+      // The device answered; the setting really is missing. This is the only
+      // case the "set ELA_API_URL on the device" message should ever describe.
       expect(res.statusCode).toBe(400);
-      // Only the `set` probe ran; no token was minted and nothing was delivered.
+      expect(res.jsonBody.error).toContain('ELA_API_URL');
       expect(sendCommand).toHaveBeenCalledTimes(1);
-      expect(sendCommand.mock.calls[0][0].command).toBe('set');
+    });
+
+    test('504s (not 400) when the device never answers the config read', async () => {
+      const { app, sendCommand } = deliverSetup({ deps: { moduleBaseUrl: null } });
+      // Regression: a timed-out probe used to be swallowed into `null` and
+      // reported as "the device has no ELA_API_URL", sending operators off to
+      // fix a device setting that was fine all along.
+      sendCommand.mockResolvedValueOnce({ status: 504, body: { ok: false, error: 'config.get timed out' } });
+      const res = createRes();
+
+      await app.posts['/module-builds/:id/deliver'](
+        { params: { id: '7' }, body: {}, authUser: 'alice' }, res,
+      );
+
+      expect(res.statusCode).toBe(504);
+      expect(res.jsonBody.error).toContain('did not answer');
+      expect(res.jsonBody.error).not.toContain('set ELA_API_URL on the device');
+      // Nothing was minted or delivered on an unreadable origin.
+      expect(sendCommand).toHaveBeenCalledTimes(1);
+    });
+
+    test('504s when the config read rejects outright', async () => {
+      const { app, sendCommand } = deliverSetup({ deps: { moduleBaseUrl: null } });
+      sendCommand.mockRejectedValueOnce(new Error('queue down'));
+      const res = createRes();
+
+      await app.posts['/module-builds/:id/deliver'](
+        { params: { id: '7' }, body: {}, authUser: 'alice' }, res,
+      );
+
+      expect(res.statusCode).toBe(504);
+      expect(sendCommand).toHaveBeenCalledTimes(1);
+    });
+
+    test('404s when the device has no session', async () => {
+      const { app, sendCommand } = deliverSetup({ deps: { moduleBaseUrl: null } });
+      sendCommand.mockResolvedValueOnce({ status: 404, body: { error: 'no active session for mac' } });
+      const res = createRes();
+
+      await app.posts['/module-builds/:id/deliver'](
+        { params: { id: '7' }, body: {}, authUser: 'alice' }, res,
+      );
+
+      expect(res.statusCode).toBe(404);
+      expect(sendCommand).toHaveBeenCalledTimes(1);
     });
 
     test('rejects a destPath with shell metacharacters', async () => {

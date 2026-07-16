@@ -497,6 +497,7 @@ AGENT_UNIT_TEST_SRC := \
 	tests/unit/agent/test_transfer_parse_util.c \
 	tests/unit/agent/test_transfer_cmd_util.c \
 	tests/unit/agent/test_ws_session_util.c \
+	tests/unit/agent/test_ws_config_util.c \
 	tests/unit/agent/test_uboot_command_extract_util.c \
 	tests/unit/agent/test_uboot_image_format_util.c \
 	tests/unit/agent/test_uboot_image_record_util.c \
@@ -619,6 +620,7 @@ AGENT_UNIT_TEST_DEPS := \
 	agent/net/api_key_util.c \
 	agent/net/ws_frame_util.c \
 	agent/net/ws_session_util.c \
+	agent/net/ws_config_util.c \
 	agent/net/http_ws_policy_util.c \
 	agent/net/http_client_parse_util.c \
 	agent/net/http_client_body_util.c \
@@ -718,6 +720,7 @@ AGENT_UNIT_TEST_DEPS := \
 	agent/net/api_key_util.h \
 	agent/net/ws_frame_util.h \
 	agent/net/ws_session_util.h \
+	agent/net/ws_config_util.h \
 	agent/net/http_ws_policy_util.h \
 	agent/net/http_client_parse_util.h \
 	agent/net/http_client_transfer_util.h \
@@ -852,6 +855,7 @@ SRC := \
 	agent/net/ws_frame_util.c \
 	agent/net/ws_recv_util.c \
 	agent/net/ws_session_util.c \
+	agent/net/ws_config_util.c \
 	agent/net/ws_client.c \
 	agent/net/http_ws_policy_util.c \
 	agent/device/device_scan.c \
@@ -1404,6 +1408,7 @@ $(AGENT_UNIT_TEST_BIN): $(AGENT_UNIT_TEST_SRC) $(AGENT_UNIT_TEST_DEPS) $(TPM2_UN
 			agent/net/api_key_util.c \
 			agent/net/ws_frame_util.c \
 			agent/net/ws_session_util.c \
+			agent/net/ws_config_util.c \
 			agent/net/http_ws_policy_util.c \
 			agent/net/http_client_parse_util.c \
 			agent/net/http_client_body_util.c \
