@@ -24,7 +24,6 @@ const {
   logPathForContentType,
   augmentJsonPayload,
   resolveProjectPath,
-  selectStartupDataDir,
   isWithinRoot,
   getClientIp,
   sanitizeUploadPath,
@@ -141,7 +140,7 @@ function parseArgs(argv) {
 }
 
 function printHelp() {
-  console.log(`Usage: node server.js [options]\n\nOptions:\n  --host HOST\n  --port PORT\n  --log-prefix PREFIX\n  --data-dir DIR\n  --assets-dir DIR\n  --tests-dir DIR\n  --clean\n  --https\n  --verbose\n  --cert PATH\n  --key PATH\n  --reuse-last-data-dir  Reuse the latest timestamped data directory instead of creating a new one\n  --help`);
+  console.log(`Usage: node server.js [options]\n\nOptions:\n  --host HOST\n  --port PORT\n  --log-prefix PREFIX\n  --data-dir DIR\n  --assets-dir DIR\n  --tests-dir DIR\n  --clean\n  --https\n  --verbose\n  --cert PATH\n  --key PATH\n  --reuse-last-data-dir  (deprecated no-op; the per-startup timestamp data dir was removed)\n  --help`);
 }
   
 async function main() {
@@ -169,10 +168,9 @@ async function main() {
 
   const logPrefix = resolveProjectPath(PROJECT_ROOT, args.logPrefix);
   const dataRootDir = resolveProjectPath(PROJECT_ROOT, args.dataDir);
-  const startupDataDir = await selectStartupDataDir(dataRootDir, {
-    reuseLastTimestampDir: Boolean(args.reuseLastDataDir),
-  });
-  const dataDir = startupDataDir.dataDir;
+  // Legacy per-startup timestamp data subdir removed: every service now shares
+  // a single stable <dataRoot>/<mac>/ layout, so use the data root directly.
+  const dataDir = dataRootDir;
   const defaultAssetsDir = path.join(dataRootDir, 'release_binaries');
   const assetsDir = args.assetsDir
     ? (path.isAbsolute(args.assetsDir)
@@ -193,10 +191,7 @@ async function main() {
     fsp.mkdir(usersAssetsDir, { recursive: true })
   ]);
 
-  if (args.reuseLastDataDir) {
-    const action = startupDataDir.reusedExisting ? 'Reusing' : 'Created';
-    console.log(`${action} startup data directory ${dataDir}`);
-  }
+  console.log(`Using data directory ${dataDir}`);
 
   console.log(`Serving per-user agent binaries from ${usersAssetsDir}/<keyHash>; shared fallback ${assetsDir}`);
   console.log('Build per-user binaries with: node tools/add-user-key.js --username <name>');

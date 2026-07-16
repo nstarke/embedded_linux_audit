@@ -245,12 +245,9 @@ describe('agent server', () => {
 
     expect(loaded.initializeDatabase).toHaveBeenCalled();
     expect(loaded.runMigrations).toHaveBeenCalled();
-    expect(loaded.selectStartupDataDir).toHaveBeenCalledWith('/repo/data-root', {
-      reuseLastTimestampDir: true,
-    });
     expect(loaded.createApp).toHaveBeenCalledWith(expect.objectContaining({
       logPrefix: '/repo/logs/prefix',
-      dataDir: '/repo/data/123',
+      dataDir: '/repo/data-root',
       testsDir: '/repo/tests-root',
       assetsDir: path.join('/repo/data-root', 'release_binaries'),
       verbose: true,
@@ -262,7 +259,7 @@ describe('agent server', () => {
       { recursive: true },
     );
     expect(loaded.createPcapWebSocketServer).toHaveBeenCalledWith({
-      dataDir: '/repo/data/123',
+      dataDir: '/repo/data-root',
       persistUpload: loaded.persistUpload,
       verbose: true,
     });
@@ -416,32 +413,16 @@ describe('agent server', () => {
     );
   });
 
-  test('main logs "Reusing" or "Created" based on whether an existing data dir was found', async () => {
-    const loaded = loadAgentServer({
-      serverUtils: {
-        selectStartupDataDir: jest.fn().mockResolvedValue({
-          dataDir: '/repo/data/999',
-          timestamp: '999',
-          reusedExisting: true,
-        }),
-      },
-    });
-    process.argv = ['node', 'server.js', '--reuse-last-data-dir'];
-    await loaded.server.main();
-    expect(loaded.consoleLog).toHaveBeenCalledWith(expect.stringContaining('Reusing'));
-
-    const loaded2 = loadAgentServer({
-      serverUtils: {
-        selectStartupDataDir: jest.fn().mockResolvedValue({
-          dataDir: '/repo/data/1000',
-          timestamp: '1000',
-          reusedExisting: false,
-        }),
-      },
-    });
-    process.argv = ['node', 'server.js', '--reuse-last-data-dir'];
-    await loaded2.server.main();
-    expect(loaded2.consoleLog).toHaveBeenCalledWith(expect.stringContaining('Created'));
+  test('main uses the data root directly (no per-startup timestamp subdir)', async () => {
+    const loaded = loadAgentServer();
+    // The deprecated --reuse-last-data-dir flag is still accepted (no-op).
+    process.argv = ['node', 'server.js', '--data-dir', 'data-root', '--reuse-last-data-dir'];
+    await expect(loaded.server.main()).resolves.toBe(0);
+    // dataDir is the resolved data root itself, not a timestamped subdir.
+    expect(loaded.createApp).toHaveBeenCalledWith(expect.objectContaining({
+      dataDir: '/repo/data-root',
+    }));
+    expect(loaded.consoleLog).toHaveBeenCalledWith(expect.stringContaining('Using data directory'));
   });
 
   test('SIGINT handler closes the server and database then exits', async () => {

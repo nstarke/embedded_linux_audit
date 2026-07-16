@@ -222,7 +222,8 @@ describe('module build routes', () => {
       await app.posts['/devices/:mac/module-builds']({ params: { mac: MAC }, authUser: 'alice' }, res);
       expect(res.statusCode).toBe(202);
       expect(deps.findDeviceByMac).toHaveBeenCalledWith(stored);
-      expect(queue.add.mock.calls[0][1].outDir).toBe(`/data/agent/${stored}/modules/7`);
+      // Modules are stored under the colon-MAC dir (shared with agent-api uploads).
+      expect(queue.add.mock.calls[0][1].outDir).toBe(`/data/agent/${stored.replace(/-/g, ':')}/modules/7`);
     });
 
     test('409s when the device has no buildinfo upload', async () => {
