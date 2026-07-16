@@ -324,7 +324,10 @@ module.exports = function registerModuleBuildRoutes(app, deps = {}) {
 
     // Artifacts land under the device's data dir on the shared volume, where
     // the agent-api can later serve them (Phase 5 download route).
-    const outDir = path.join(dataDir, storedMac, 'modules', String(request.id));
+    // Store modules under the colon-MAC dir so they share one directory with
+    // the agent-api's uploads for the device (which land under the colon-MAC
+    // the agent reports), rather than a separate dash-MAC dir.
+    const outDir = path.join(dataDir, storedMac.replace(/-/g, ':'), 'modules', String(request.id));
     await getQueue().add('module-build', {
       requestId: request.id,
       outDir,
