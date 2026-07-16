@@ -12,6 +12,7 @@ The source path must be a full absolute OS path. Directory uploads are supported
 
 - `<absolute-path>` — required source path (must start with `/`)
 - `--recursive` — recurse into subdirectories when `<absolute-path>` is a directory
+- `--analysis-only` — upload only regular files identified as plaintext or ELF; skip other files
 - `--allow-dev` — allow copying paths under `/dev`
 - `--allow-sysfs` — allow copying paths under `/sys`
 - `--allow-proc` — allow copying paths under `/proc`

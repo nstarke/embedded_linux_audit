@@ -48,9 +48,10 @@ static struct ela_http_ka_session *g_remote_copy_ka;
 static void usage(const char *prog)
 {
 	fprintf(stderr,
-		"Usage: %s <absolute-path> [--recursive] [--allow-dev] [--allow-sysfs] [--allow-proc] [--allow-symlinks]\n"
+		"Usage: %s <absolute-path> [--recursive] [--analysis-only] [--allow-dev] [--allow-sysfs] [--allow-proc] [--allow-symlinks]\n"
 		"  Copy one local file to remote destination, or upload directory contents over HTTP(S)\n"
 		"  --recursive                    Recurse into subdirectories when source is a directory\n"
+		"  --analysis-only               Only upload plaintext files and ELF files\n"
 		"  --allow-dev                    Allow copying paths under /dev\n"
 		"  --allow-sysfs                  Allow copying paths under /sys\n"
 		"  --allow-proc                   Allow copying paths under /proc\n"
@@ -335,6 +336,7 @@ static int upload_path_http(const char *path,
 			    bool allow_sysfs,
 			    bool allow_proc,
 			    bool allow_symlinks,
+			    bool analysis_only,
 			    uint64_t *copied_files)
 {
 	struct stat st;
@@ -354,6 +356,8 @@ static int upload_path_http(const char *path,
 	}
 
 	if (S_ISLNK(st.st_mode)) {
+		if (analysis_only)
+			return 0;
 		if (!allow_symlinks) {
 			if (verbose)
 				fprintf(stderr, "Skipping symlink without --allow-symlinks: %s\n", path);
@@ -418,7 +422,7 @@ static int upload_path_http(const char *path,
 			}
 
 			child_rc = upload_path_http(child, output_uri, insecure, verbose,
-				recursive, allow_dev, allow_sysfs, allow_proc, allow_symlinks,
+				recursive, allow_dev, allow_sysfs, allow_proc, allow_symlinks, analysis_only,
 				copied_files);
 			free(child);
 			if (child_rc != 0) {
@@ -434,6 +438,12 @@ static int upload_path_http(const char *path,
 	if (!ela_stat_is_copyable_file(&st)) {
 		if (verbose)
 			fprintf(stderr, "Skipping unsupported file type: %s\n", path);
+		return 0;
+	}
+
+	if (analysis_only && (!S_ISREG(st.st_mode) || !ela_file_is_analysis_candidate(path))) {
+		if (verbose)
+			fprintf(stderr, "Skipping binary/non-ELF file in analysis-only mode: %s\n", path);
 		return 0;
 	}
 

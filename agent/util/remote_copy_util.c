@@ -5,9 +5,11 @@
 #include "str_util.h"
 
 #include <inttypes.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 bool ela_has_path_prefix(const char *path, const char *prefix)
 {
@@ -40,6 +42,33 @@ bool ela_stat_is_copyable_file(const struct stat *st)
 		return false;
 
 	return S_ISREG(st->st_mode) || S_ISCHR(st->st_mode) || S_ISBLK(st->st_mode);
+}
+
+bool ela_file_is_analysis_candidate(const char *path)
+{
+	unsigned char buf[4096];
+	ssize_t n;
+	int fd;
+
+	if (!path)
+		return false;
+	fd = open(path, O_RDONLY);
+	if (fd < 0)
+		return false;
+	n = read(fd, buf, sizeof(buf));
+	close(fd);
+	if (n < 0)
+		return false;
+	if (n >= 4 && buf[0] == 0x7f && buf[1] == 'E' && buf[2] == 'L' && buf[3] == 'F')
+		return true;
+	/* Treat ordinary text-like bytes as plaintext. NUL and other control
+	 * bytes are strong binary indicators; permit the usual whitespace. */
+	for (ssize_t i = 0; i < n; i++) {
+		unsigned char c = buf[i];
+		if (c == 0 || (c < 0x20 && c != '\t' && c != '\n' && c != '\r' && c != '\f'))
+			return false;
+	}
+	return true;
 }
 
 int ela_format_remote_copy_summary(char *buf, size_t buf_sz, const char *path, uint64_t copied_files)

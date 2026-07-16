@@ -40,6 +40,7 @@ int ela_remote_copy_prepare_request(int argc, char **argv,
 		{ "allow-sysfs", no_argument, NULL, 'S' },
 		{ "allow-proc", no_argument, NULL, 'P' },
 		{ "allow-symlinks", no_argument, NULL, 'L' },
+		{ "analysis-only", no_argument, NULL, 'a' },
 		{ 0, 0, 0, 0 }
 	};
 
@@ -54,7 +55,7 @@ int ela_remote_copy_prepare_request(int argc, char **argv,
 	out->verbose = env->verbose;
 
 	optind = 1;
-	while ((opt = getopt_long(argc, argv, "hrDSPL", long_opts, NULL)) != -1) {
+	while ((opt = getopt_long(argc, argv, "hrDSPLa", long_opts, NULL)) != -1) {
 		switch (opt) {
 		case 'h':
 			out->show_help = true;
@@ -73,6 +74,9 @@ int ela_remote_copy_prepare_request(int argc, char **argv,
 			break;
 		case 'L':
 			out->allow_symlinks = true;
+			break;
+		case 'a':
+			out->analysis_only = true;
 			break;
 		default:
 			if (errbuf && errbuf_len)
@@ -162,6 +166,12 @@ int ela_remote_copy_execute(const struct ela_remote_copy_request *request,
 	}
 
 	if (request->output_tcp) {
+		if (request->analysis_only &&
+		    (!S_ISREG(st.st_mode) || !ela_file_is_analysis_candidate(request->path))) {
+			if (request->verbose)
+				fprintf(stderr, "Skipping file in analysis-only mode: %s\n", request->path);
+			return 0;
+		}
 		if (effective_ops->stat_is_copyable_file_fn &&
 		    !effective_ops->stat_is_copyable_file_fn(&st)) {
 			if (errbuf && errbuf_len) {
@@ -188,6 +198,7 @@ int ela_remote_copy_execute(const struct ela_remote_copy_request *request,
 						       request->allow_sysfs,
 						       request->allow_proc,
 						       request->allow_symlinks,
+						       request->analysis_only,
 						       result ? &result->copied_files : NULL) != 0) {
 			return 1;
 		}

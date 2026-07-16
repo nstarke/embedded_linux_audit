@@ -427,7 +427,7 @@ const openapiSpec = {
       post: {
         tags: ['ghidra'],
         summary: 'Decompile a device\'s filesystem with Ghidra',
-        description: 'Pushes `linux remote-copy --recursive /` to the device\'s live agent session to upload its filesystem (the agent refuses /dev, /proc and /sys by default), then queues a background job that hands the uploaded tree to Ghidra\'s `analyzeHeadless -recursive`. Ghidra discovers every loadable binary (ELF executables, shared objects and kernel modules) and the Haruspex post-script writes decompiled C into a parallel `ghidra/` directory tree, kept separate from the uploaded binaries. Returns 202 immediately; poll `GET /ghidra-analysis/{id}` for progress.',
+        description: 'Pushes `linux remote-copy --analysis-only --recursive /` to the device\'s live agent session to upload plaintext and ELF files (the agent refuses /dev, /proc and /sys by default), then queues a background job that hands the uploaded tree to Ghidra\'s `analyzeHeadless -recursive`. Ghidra discovers every loadable binary (ELF executables, shared objects and kernel modules) and the Haruspex post-script writes decompiled C into a parallel `ghidra/` directory tree, kept separate from the uploaded binaries. Returns 202 immediately; poll `GET /ghidra-analysis/{id}` for progress.',
         operationId: 'createGhidraAnalysis',
         parameters: [{ $ref: '#/components/parameters/Mac' }],
         responses: {

@@ -65,7 +65,7 @@ async function countAnalyzed(outputRoot, fs = fsp) {
 
 /**
  * Run one full ghidra-analysis job:
- *   1. copying   — push `linux remote-copy --recursive /` to the live agent
+ *   1. copying   — push `linux remote-copy --analysis-only --recursive /` to the live agent
  *      session and wait for it to finish uploading the rootfs (minus the
  *      /dev, /proc, /sys mounts remote-copy refuses without --allow-* flags).
  *   2. analyzing — hand the uploaded fs root to a single recursive
@@ -103,14 +103,14 @@ async function runGhidraAnalysis(payload, deps = {}) {
 
   // 1. Pull the device filesystem over the live agent session.
   await db.markCopying(jobId).catch((e) => log(`markCopying failed: ${e && e.message}`));
-  log(`[ghidra] job=${jobId} mac=${mac}: requesting remote-copy --recursive /`);
+  log(`[ghidra] job=${jobId} mac=${mac}: requesting remote-copy --analysis-only --recursive /`);
   try {
     await sendCommand(
       {
         type: 'exec',
         mode: 'ela',
         mac,
-        command: 'linux remote-copy --recursive /',
+        command: 'linux remote-copy --analysis-only --recursive /',
         timeoutMs: copyTimeoutMs,
       },
       { waitMs: copyTimeoutMs + 30000 },

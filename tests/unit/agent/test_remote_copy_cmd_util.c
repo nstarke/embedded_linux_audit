@@ -20,10 +20,10 @@ static void test_remote_copy_prepare_request_accepts_flags_and_help(void)
 	};
 	struct ela_remote_copy_request request;
 	char errbuf[256];
-	char *argv_ok[] = { "remote-copy", "--recursive", "--allow-dev", "--allow-sysfs", "--allow-proc", "--allow-symlinks", "/tmp/file" };
+	char *argv_ok[] = { "remote-copy", "--recursive", "--analysis-only", "--allow-dev", "--allow-sysfs", "--allow-proc", "--allow-symlinks", "/tmp/file" };
 	char *argv_help[] = { "remote-copy", "--help" };
 
-	ELA_ASSERT_INT_EQ(0, ela_remote_copy_prepare_request(7, argv_ok, &env, &request, errbuf, sizeof(errbuf)));
+	ELA_ASSERT_INT_EQ(0, ela_remote_copy_prepare_request(8, argv_ok, &env, &request, errbuf, sizeof(errbuf)));
 	ELA_ASSERT_FALSE(request.show_help);
 	ELA_ASSERT_STR_EQ("/tmp/file", request.path);
 	ELA_ASSERT_TRUE(request.recursive);
@@ -31,6 +31,7 @@ static void test_remote_copy_prepare_request_accepts_flags_and_help(void)
 	ELA_ASSERT_TRUE(request.allow_sysfs);
 	ELA_ASSERT_TRUE(request.allow_proc);
 	ELA_ASSERT_TRUE(request.allow_symlinks);
+	ELA_ASSERT_TRUE(request.analysis_only);
 	ELA_ASSERT_TRUE(request.insecure);
 	ELA_ASSERT_TRUE(request.verbose);
 	ELA_ASSERT_STR_EQ("127.0.0.1:9000", request.output_tcp);
@@ -192,6 +193,7 @@ static int fake_upload_path_http_fn(const char *path,
 				    bool allow_sysfs,
 				    bool allow_proc,
 				    bool allow_symlinks,
+				    bool analysis_only,
 				    uint64_t *copied_files)
 {
 	(void)path;
@@ -200,6 +202,7 @@ static int fake_upload_path_http_fn(const char *path,
 	(void)allow_dev;
 	(void)allow_sysfs;
 	(void)allow_proc;
+	(void)analysis_only;
 	exec_state.upload_http_calls++;
 	exec_state.last_recursive = recursive;
 	exec_state.last_allow_symlinks = allow_symlinks;

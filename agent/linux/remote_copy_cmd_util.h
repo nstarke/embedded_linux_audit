@@ -27,6 +27,7 @@ struct ela_remote_copy_request {
 	bool allow_sysfs;
 	bool allow_proc;
 	bool allow_symlinks;
+	bool analysis_only;
 	bool insecure;
 	bool verbose;
 	bool show_help;
@@ -58,6 +59,7 @@ struct ela_remote_copy_execution_ops {
 				   bool allow_sysfs,
 				   bool allow_proc,
 				   bool allow_symlinks,
+				   bool analysis_only,
 				   uint64_t *copied_files);
 	int (*format_summary_fn)(char *buf, size_t buf_sz, const char *path, uint64_t copied_files);
 	int (*write_stderr_fn)(const char *message);

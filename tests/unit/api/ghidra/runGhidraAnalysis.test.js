@@ -97,7 +97,7 @@ describe('runGhidraAnalysis orchestration', () => {
 
     // remote-copy was pushed to the agent.
     expect(d.sendCommand).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'exec', mode: 'ela', mac: 'de:ad:be:ef:00:01', command: 'linux remote-copy --recursive /' }),
+      expect.objectContaining({ type: 'exec', mode: 'ela', mac: 'de:ad:be:ef:00:01', command: 'linux remote-copy --analysis-only --recursive /' }),
       expect.any(Object),
     );
     // Analysis was scoped to the resolved fs root, recursively, into a parallel ghidra/ root.
