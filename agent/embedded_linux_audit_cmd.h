@@ -82,6 +82,20 @@ int ela_http_get_to_file(const char *uri, const char *output_path,
 int ela_http_post(const char *uri, const uint8_t *data, size_t len,
 		 const char *content_type, bool insecure, bool verbose,
 		 char *errbuf, size_t errbuf_len);
+/*
+ * HTTP keep-alive upload session — reuse one https connection across many
+ * POSTs (remote-copy fast path). _open returns NULL for http/tcp/wolfSSL
+ * backends (caller then uses per-file ela_http_post). _post returns 0 on
+ * success, a positive HTTP status on an upload error (connection still usable),
+ * or -1 when the connection/framing is broken (caller should stop reusing it).
+ */
+struct ela_http_ka_session;
+struct ela_http_ka_session *ela_http_ka_open(const char *base_uri, bool insecure,
+					     bool verbose, char *errbuf, size_t errbuf_len);
+int ela_http_ka_post(struct ela_http_ka_session *s, const char *upload_uri,
+		     const uint8_t *data, size_t len, const char *content_type,
+		     char *errbuf, size_t errbuf_len);
+void ela_http_ka_close(struct ela_http_ka_session *s);
 extern const unsigned char ela_default_ca_bundle_pem[];
 extern const size_t ela_default_ca_bundle_pem_len;
 void ela_crc32_init(uint32_t table[256]);
