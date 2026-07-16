@@ -561,7 +561,9 @@ fi
 
 # Services to start before nginx; the bundled postgres only when not external.
 # redis (queue broker) and builder (binary build worker) are always started.
-APP_SERVICES="redis builder agent-api client-api terminal-api gdb-api"
+# ghidra-worker consumes the ghidra-analysis queue (rootfs remote-copy +
+# decompile); omitting it leaves those jobs stuck 'queued' with no consumer.
+APP_SERVICES="redis builder agent-api client-api terminal-api gdb-api ghidra-worker"
 if [ "$EXTERNAL_DB" -eq 0 ]; then
     CORE_SERVICES="postgres $APP_SERVICES"
 else

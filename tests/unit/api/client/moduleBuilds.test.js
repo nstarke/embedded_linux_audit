@@ -440,8 +440,32 @@ describe('module build routes', () => {
       expect(res.jsonBody.force).toBe(false);
     });
 
-    test('requires a usable baseUrl', async () => {
+    test('derives the download origin from the device ELA_API_URL when no override is set', async () => {
       const { app, sendCommand } = deliverSetup({ deps: { moduleBaseUrl: null } });
+      // First call is the `set` query for the device's ELA_API_URL; the origin
+      // is derived from it (trailing /upload stripped). Remaining calls default
+      // to the OK stub, so download+load proceed.
+      sendCommand.mockResolvedValueOnce({
+        status: 200,
+        body: { output: '  ELA_API_URL              current=http://10.0.0.5:5000/upload\n' },
+      });
+      const res = createRes();
+
+      await app.posts['/module-builds/:id/deliver'](
+        { params: { id: '7' }, body: {}, authUser: 'alice' }, res,
+      );
+
+      expect(res.statusCode).toBe(200);
+      expect(sendCommand.mock.calls[0][0]).toEqual({
+        type: 'exec', mode: 'ela', mac: MAC, command: 'set',
+      });
+      expect(sendCommand.mock.calls[1][0].command)
+        .toBe('linux download-file http://10.0.0.5:5000/module/raw-token-abc /tmp/ela_kmod.ko');
+    });
+
+    test('400s when neither an override nor the device ELA_API_URL yields an origin', async () => {
+      const { app, sendCommand } = deliverSetup({ deps: { moduleBaseUrl: null } });
+      // The default stub's `set` output carries no ELA_API_URL line.
       const res = createRes();
 
       await app.posts['/module-builds/:id/deliver'](
@@ -449,7 +473,9 @@ describe('module build routes', () => {
       );
 
       expect(res.statusCode).toBe(400);
-      expect(sendCommand).not.toHaveBeenCalled();
+      // Only the `set` probe ran; no token was minted and nothing was delivered.
+      expect(sendCommand).toHaveBeenCalledTimes(1);
+      expect(sendCommand.mock.calls[0][0].command).toBe('set');
     });
 
     test('rejects a destPath with shell metacharacters', async () => {

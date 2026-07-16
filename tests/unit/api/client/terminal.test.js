@@ -240,25 +240,22 @@ describe('client terminal routes', () => {
   });
 
   describe('spawn / kill', () => {
-    test('linux/spawn validates args/port, enqueues (mode linux), and audit-logs', async () => {
+    test('linux/spawn requires a command, forwards only the command string, and audit-logs', async () => {
       const { app, deps } = setup({ sendCommand: jest.fn().mockResolvedValue({ status: 201, body: { pid: 7 } }) });
 
-      const badArgs = createRes();
-      await invoke(app.find('post', '/terminal/:mac/linux/spawn'), { authUser: 'alice', params: { mac: MAC }, body: { command: 'x', args: [1] } }, badArgs);
-      expect(badArgs.statusCode).toBe(400);
-
-      const badPort = createRes();
-      await invoke(app.find('post', '/terminal/:mac/linux/spawn'), { authUser: 'alice', params: { mac: MAC }, body: { command: 'x', port: 70000 } }, badPort);
-      expect(badPort.statusCode).toBe(400);
+      const badCommand = createRes();
+      await invoke(app.find('post', '/terminal/:mac/linux/spawn'), { authUser: 'alice', params: { mac: MAC }, body: { command: '  ' } }, badCommand);
+      expect(badCommand.statusCode).toBe(400);
 
       const ok = createRes();
-      await invoke(app.find('post', '/terminal/:mac/linux/spawn'), { authUser: 'alice', params: { mac: MAC }, body: { command: 'gdbserver', args: ['a'], port: 1234 } }, ok);
+      // Any extra fields are ignored; the whole command line lives in `command`.
+      await invoke(app.find('post', '/terminal/:mac/linux/spawn'), { authUser: 'alice', params: { mac: MAC }, body: { command: 'gdbserver :4242', args: ['a'], port: 1234 } }, ok);
       expect(deps.sendCommand).toHaveBeenLastCalledWith(
-        { type: 'spawn', mode: 'linux', mac: MAC, command: 'gdbserver', args: ['a'], port: 1234 },
+        { type: 'spawn', mode: 'linux', mac: MAC, command: 'gdbserver :4242' },
         expect.any(Object),
       );
       expect(deps.recordCommandLog).toHaveBeenLastCalledWith(
-        expect.objectContaining({ commandType: 'linux-spawn', command: 'gdbserver a', status: 201 }),
+        expect.objectContaining({ commandType: 'linux-spawn', command: 'gdbserver :4242', status: 201 }),
       );
       expect(ok.statusCode).toBe(201);
       expect(ok.body).toEqual({ pid: 7 });

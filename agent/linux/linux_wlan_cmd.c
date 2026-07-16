@@ -581,7 +581,7 @@ static int linux_wlan_list_main(int argc, char **argv)
 			       " panic the host):\n", nwext);
 			for (i = 0; i < ncand; i++)
 				if (cand[i].kind)
-					printf("  %-12s sudo linux wlan fuzz --target wext-generic --iface %s\n",
+					printf("  %-12s linux wlan fuzz --target wext-generic --iface %s\n",
 					       cand[i].name, cand[i].name);
 		}
 	}

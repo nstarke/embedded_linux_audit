@@ -58,6 +58,44 @@ function looksLikeVermagicReject(result) {
     || hay.includes('version magic');
 }
 
+// Strip trailing '/' with a plain loop rather than a `/\/+$/` regex: the regex
+// backtracks polynomially (CodeQL js/polynomial-redos) and the origin here can
+// derive from device-reported data.
+function stripTrailingSlashes(value) {
+  let end = value.length;
+  while (end > 0 && value.charCodeAt(end - 1) === 47 /* '/' */) {
+    end -= 1;
+  }
+  return value.slice(0, end);
+}
+
+// Derive the module-download origin from a device's ELA_API_URL, mirroring the
+// self-update flow (see terminal/updateManager.js): strip a trailing '/upload'
+// so `${origin}/module/<token>` resolves against the same agent-api. Returns ''
+// when the value is not an absolute http(s) URL.
+function deriveDownloadBaseUrl(apiUrl) {
+  const trimmed = stripTrailingSlashes(String(apiUrl || '').trim());
+  if (!/^https?:\/\//i.test(trimmed)) {
+    return '';
+  }
+  if (trimmed.endsWith('/upload')) {
+    return stripTrailingSlashes(trimmed.slice(0, -'/upload'.length));
+  }
+  return trimmed;
+}
+
+// Pull `ELA_API_URL current=<value>` out of the agent's `set` output — the same
+// line the self-update flow reads. Returns '' when the setting is explicitly
+// unset (`<unset>`), or null when the line is absent altogether.
+function parseDeviceApiUrl(output) {
+  const match = String(output || '').match(/ELA_API_URL\s+current=([^\r\n]+)/);
+  if (!match) {
+    return null;
+  }
+  const value = String(match[1] || '').trim();
+  return value === '<unset>' ? '' : value;
+}
+
 /**
  * Operator routes for kernel-module builds:
  *
@@ -87,9 +125,10 @@ module.exports = function registerModuleBuildRoutes(app, deps = {}) {
   const sendCommand = deps.sendCommand || defaultSendCommand;
   const recordCommandLog = deps.recordCommandLog
     || ((row) => deviceRegistry().recordCommandLog(row));
-  // Where the agent reaches the agent-api from ITS network vantage point
-  // (the docker-internal name the client API uses would not resolve on the
-  // device). Deployments set this to the public agent-api origin.
+  // Optional override for where the agent reaches the agent-api from ITS
+  // network vantage point. Normally we ask the device for its own ELA_API_URL
+  // and derive the origin from that (see the deliver route); this env var lets
+  // a deployment force a different public origin when it must differ.
   const moduleBaseUrl = deps.moduleBaseUrl || process.env.ELA_MODULE_DOWNLOAD_BASE_URL || null;
   const parseBody = deps.parseBody || express.json({ limit: 64 * 1024, type: () => true });
   const sleep = deps.sleep || ((ms) => new Promise((resolve) => { setTimeout(resolve, ms); }));
@@ -318,9 +357,12 @@ module.exports = function registerModuleBuildRoutes(app, deps = {}) {
    * then push `linux download-file` + `linux modules load` to the live agent
    * session over the terminal command queue.
    *
+   * The agent-api origin as reachable FROM THE DEVICE is taken from the
+   * device's own ELA_API_URL (queried with `set`, same value the self-update
+   * flow uses); ELA_MODULE_DOWNLOAD_BASE_URL overrides it when a deployment
+   * needs a different public origin.
+   *
    * Body (all optional):
-   *   baseUrl   agent-api origin as reachable FROM THE DEVICE; falls back to
-   *             ELA_MODULE_DOWNLOAD_BASE_URL. Required one way or the other.
    *   load      false to only download (default true: download then load)
    *   force     true to load with --force (vermagic mismatch override);
    *             defaults to true when the build's vermagicResult was not an
@@ -346,21 +388,6 @@ module.exports = function registerModuleBuildRoutes(app, deps = {}) {
     }
 
     const body = req.body && typeof req.body === 'object' ? req.body : {};
-    // Strip trailing slashes with a plain loop rather than a `/\/+$/` regex:
-    // the regex backtracks polynomially on inputs with many '/' characters
-    // (CodeQL js/polynomial-redos), and this input is user-supplied.
-    let baseUrl = String(body.baseUrl || moduleBaseUrl || '').trim();
-    let baseEnd = baseUrl.length;
-    while (baseEnd > 0 && baseUrl.charCodeAt(baseEnd - 1) === 47 /* '/' */) {
-      baseEnd -= 1;
-    }
-    baseUrl = baseUrl.slice(0, baseEnd);
-    if (!/^https?:\/\//i.test(baseUrl)) {
-      res.status(400).json({
-        error: 'baseUrl (agent-reachable agent-api origin) is required; set it in the body or ELA_MODULE_DOWNLOAD_BASE_URL',
-      });
-      return;
-    }
     const destPath = typeof body.destPath === 'string' && body.destPath.startsWith('/')
       ? body.destPath
       : '/tmp/ela_kmod.ko';
@@ -376,6 +403,31 @@ module.exports = function registerModuleBuildRoutes(app, deps = {}) {
     const device = await findDeviceById(row.deviceId);
     if (!device) {
       res.status(404).json({ error: 'module build not found' });
+      return;
+    }
+
+    // Resolve the agent-api origin as reachable FROM THE DEVICE. An explicit
+    // ELA_MODULE_DOWNLOAD_BASE_URL override wins; otherwise ask the device for
+    // its own ELA_API_URL (the value it already uses to talk to the agent-api)
+    // and derive the download origin from that.
+    let baseUrl = stripTrailingSlashes(String(moduleBaseUrl || '').trim());
+    if (!/^https?:\/\//i.test(baseUrl)) {
+      let setResult;
+      try {
+        setResult = await sendCommand(
+          { type: 'exec', mode: 'ela', mac: device.macAddress, command: 'set' },
+          { waitMs: 30000 },
+        );
+      } catch {
+        setResult = null;
+      }
+      const apiUrl = parseDeviceApiUrl(setResult && setResult.body && setResult.body.output);
+      baseUrl = deriveDownloadBaseUrl(apiUrl);
+    }
+    if (!/^https?:\/\//i.test(baseUrl)) {
+      res.status(400).json({
+        error: "could not determine the agent-api origin from the device's ELA_API_URL; set ELA_API_URL on the device or override with ELA_MODULE_DOWNLOAD_BASE_URL",
+      });
       return;
     }
 
