@@ -1191,6 +1191,7 @@ $(TPM2_TSS_BUILD_STAMP): $(OPENSSL_SSL_LIB)
 		cp build_support/tpm2-tss/ela_fallbacks.m4 "$(TPM2_TSS_DIR)/m4/ela_fallbacks.m4"; \
 		cp build_support/tpm2-tss/aminclude_static.am "$(TPM2_TSS_DIR)/aminclude_static.am"; \
 		cd $(TPM2_TSS_DIR) && \
+			rm -rf autom4te.cache && rm -f aclocal.m4 && \
 			AUTORECONF='autoreconf -I m4' \
 			ACLOCAL='aclocal -I m4' \
 			ACLOCAL_PATH="$(abspath $(TPM2_TSS_DIR))/m4$${ACLOCAL_PATH:+:$${ACLOCAL_PATH}}" \
@@ -1261,6 +1262,7 @@ $(WOLFSSL_LIB): check-autoconf
 		|| grep -qE '^[[:space:]]*(LT_PREREQ|LT_INIT)\(' "$(WOLFSSL_DIR)/configure"; then \
 		$(MAKE) check-autoreconf; \
 		cd $(WOLFSSL_DIR) && \
+			rm -rf autom4te.cache && rm -f aclocal.m4 && \
 			ACLOCAL='aclocal -I m4' \
 			ACLOCAL_PATH="$(abspath $(WOLFSSL_DIR))/m4$${ACLOCAL_PATH:+:$${ACLOCAL_PATH}}" \
 			WARNINGS=all \
