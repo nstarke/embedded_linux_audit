@@ -31,6 +31,7 @@ const VALID_UPLOAD_TYPES = new Set([
   'wlan-fuzz',
   'eth-fuzz',
   'bt-fuzz',
+  'cpu-fuzz',
 ]);
 
 module.exports = {
