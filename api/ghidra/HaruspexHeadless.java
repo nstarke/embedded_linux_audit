@@ -42,6 +42,7 @@ public class HaruspexHeadless extends GhidraScript
 	DecompInterface decomp;
 	String outputPath = "/tmp/haruspex.out";
 	String baseOutputPath = outputPath;
+	String importRoot = null;
 	static final int TIMEOUT = 60;
 
 	@Override
@@ -51,7 +52,9 @@ public class HaruspexHeadless extends GhidraScript
 		printf("Copyright (c) 2022-2026 Marco Ivaldi <raptor@0xdeadbeef.info>\n\n");
 
 		resolveOutputPath();
-		outputPath = new File(baseOutputPath, currentProgram.getName()).getAbsolutePath();
+		// Mirror the binary's location within the imported filesystem tree under
+		// the output root, instead of flattening every program to its basename.
+		outputPath = new File(baseOutputPath, relativeProgramPath()).getAbsolutePath();
 
 		File outDir = new File(outputPath);
 		if (!outDir.exists() && !outDir.mkdirs()) {
@@ -88,6 +91,12 @@ public class HaruspexHeadless extends GhidraScript
 	{
 		String[] args = getScriptArgs();
 
+		// scriptArgs[1] (optional): the import root, so each program's output path
+		// can be made relative to it and mirror the imported filesystem tree.
+		if (args != null && args.length > 1 && args[1] != null && !args[1].trim().isEmpty()) {
+			importRoot = args[1].trim();
+		}
+
 		if (args != null && args.length > 0 && args[0] != null && !args[0].trim().isEmpty()) {
 			baseOutputPath = args[0].trim();
 			printf("Using base output directory from scriptArgs: \"%s\"\n", baseOutputPath);
@@ -100,6 +109,44 @@ public class HaruspexHeadless extends GhidraScript
 		catch (Exception e) {
 			printf("Output directory not supplied, using default base path \"%s\".\n", baseOutputPath);
 		}
+	}
+
+	// Compute the program's path RELATIVE to the imported filesystem root, so the
+	// decompiled output mirrors the rootfs layout (e.g. lib/modules/.../foo.ko/)
+	// instead of a flat basename (which also collides when two directories hold a
+	// same-named binary). Falls back to the Ghidra project path, then the name.
+	private String relativeProgramPath()
+	{
+		String exec = null;
+		try { exec = currentProgram.getExecutablePath(); } catch (Exception e) { }
+		if (exec != null && importRoot != null && !importRoot.isEmpty()) {
+			String root = importRoot;
+			while (root.endsWith("/")) {
+				root = root.substring(0, root.length() - 1);
+			}
+			if (exec.startsWith(root)) {
+				String rel = exec.substring(root.length());
+				while (rel.startsWith("/")) {
+					rel = rel.substring(1);
+				}
+				if (!rel.isEmpty()) {
+					return rel;
+				}
+			}
+		}
+		// Recursive imports mirror the source tree in the Ghidra project, so the
+		// domain-file pathname carries the structure even without an import root.
+		try {
+			String p = currentProgram.getDomainFile().getPathname();
+			while (p.startsWith("/")) {
+				p = p.substring(1);
+			}
+			if (!p.isEmpty()) {
+				return p;
+			}
+		}
+		catch (Exception e) { }
+		return currentProgram.getName();
 	}
 
 	// collect all Function objects into a global ArrayList
