@@ -32,6 +32,12 @@
 #define PATH_MAX 4096
 #endif
 
+/* Set for the duration of one HTTP(S) remote-copy walk so send_file_to_http can
+ * reuse a single keep-alive connection across files instead of reconnecting per
+ * file. NULL when unavailable (http/tcp/wolfSSL backends) — the per-file
+ * ela_http_post path is used instead. One remote-copy runs at a time. */
+static struct ela_http_ka_session *g_remote_copy_ka;
+
 /*
  * All functions in this file require real hardware, network I/O, or OS-level
  * services (ptrace, SSH, sockets, TPM2, EFI) and cannot be exercised in the
@@ -265,6 +271,30 @@ static int send_file_to_http(const char *path, const char *output_uri, bool inse
 		goto out;
 	}
 
+	/* Fast path: reuse the open keep-alive connection when one is active. */
+	if (g_remote_copy_ka) {
+		int krc = ela_http_ka_post(g_remote_copy_ka, upload_uri, data, data_len,
+					   "application/octet-stream", errbuf, sizeof(errbuf));
+		if (krc == 0) {
+			rc = 0;
+			goto out;
+		}
+		if (krc < 0) {
+			/* Connection/framing broken: tear down keep-alive and let
+			 * this file (and the rest of the walk) use per-file POSTs. */
+			ela_http_ka_close(g_remote_copy_ka);
+			g_remote_copy_ka = NULL;
+		} else {
+			/* HTTP error for this file; the connection is still healthy,
+			 * so report and fail just this file (as the per-file path would). */
+			char message[PATH_MAX + 384];
+			snprintf(message, sizeof(message), "Failed HTTP(S) POST file %s to %s: %s\n",
+				path, upload_uri, errbuf[0] ? errbuf : "unknown error");
+			report_remote_copy_http_error(output_uri, insecure, verbose, message);
+			goto out;
+		}
+	}
+
 	/* False-positive suppression: data contains raw bytes read from a local
 	 * file and is being uploaded as-is to the user's audit server.  No
 	 * sanitization of arbitrary binary file content is meaningful here;
@@ -474,7 +504,20 @@ int linux_remote_copy_scan_main(int argc, char **argv)
 		return 0;
 	}
 
+	/* Hold one keep-alive connection open for the whole HTTP(S) walk so the
+	 * thousands of per-file POSTs share a single TLS handshake. Falls back to
+	 * per-file connections when unavailable (returns NULL). */
+	if (request.output_uri && *request.output_uri)
+		g_remote_copy_ka = ela_http_ka_open(request.output_uri, request.insecure,
+						    request.verbose, NULL, 0);
+
 	rc = ela_remote_copy_execute(&request, &ops, &result, errbuf, sizeof(errbuf));
+
+	if (g_remote_copy_ka) {
+		ela_http_ka_close(g_remote_copy_ka);
+		g_remote_copy_ka = NULL;
+	}
+
 	if (rc != 0 && errbuf[0])
 		fprintf(stderr, "%s\n", errbuf);
 	return rc;

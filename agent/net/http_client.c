@@ -27,6 +27,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -1731,6 +1732,229 @@ static int __attribute__((unused)) ela_http_post_https_once(const char *effectiv
 		fprintf(stderr, "HTTP POST success uri=%s status=%ld\n", effective_uri, http_code);
 
 	return 0;
+}
+
+/* -------------------------------------------------------------------------
+ * HTTP keep-alive upload session (remote-copy fast path)
+ *
+ * remote-copy uploads thousands of files; opening a fresh TCP+TLS connection
+ * per file (a full handshake each) dominates the cost on slow devices. This
+ * holds ONE https connection open and reuses it across POSTs via HTTP/1.1
+ * keep-alive. Scoped to the OpenSSL https backend; plain http and the wolfSSL
+ * backend return NULL from _open so the caller falls back to per-file
+ * ela_http_post (correct, just not accelerated).
+ * ---------------------------------------------------------------------- */
+
+struct ela_http_ka_session {
+	SSL_CTX *ctx;
+	SSL *ssl;
+	int sock;
+	uint16_t port;
+	bool insecure;
+	bool verbose;
+	char host[256];
+};
+
+static long ka_parse_content_length(const char *headers)
+{
+	const char *p = headers;
+
+	while (p && (p = strchr(p, '\n')) != NULL) {
+		p++;
+		if (strncasecmp(p, "content-length:", 15) == 0) {
+			p += 15;
+			while (*p == ' ' || *p == '\t')
+				p++;
+			return strtol(p, NULL, 10);
+		}
+	}
+	return -1;
+}
+
+static int ka_consume_length(SSL *ssl, long clen)
+{
+	char buf[4096];
+
+	while (clen > 0) {
+		int want = clen < (long)sizeof(buf) ? (int)clen : (int)sizeof(buf);
+		int n = SSL_read(ssl, buf, want);
+		if (n <= 0)
+			return -1;
+		clen -= n;
+	}
+	return 0;
+}
+
+static int ka_consume_chunked(SSL *ssl)
+{
+	char line[128];
+	char buf[4096];
+
+	for (;;) {
+		unsigned long clen;
+
+		if (ssl_readline(ssl, line, sizeof(line)) < 0)
+			return -1;
+		if (ela_http_parse_chunk_size_line(line, &clen) != 0)
+			return -1;
+		if (clen == 0) {
+			if (ssl_readline(ssl, line, sizeof(line)) < 0)
+				return -1;
+			return 0;
+		}
+		while (clen) {
+			int want = clen < sizeof(buf) ? (int)clen : (int)sizeof(buf);
+			int n = SSL_read(ssl, buf, want);
+			if (n <= 0)
+				return -1;
+			clen -= (unsigned long)n;
+		}
+		if (SSL_read(ssl, buf, 2) != 2) /* trailing CRLF */
+			return -1;
+	}
+}
+
+/* Drain the response body so the socket is positioned at the next response. */
+static int ka_consume_body(SSL *ssl, const char *headers)
+{
+	long clen;
+
+	if (ela_http_body_is_chunked(headers))
+		return ka_consume_chunked(ssl);
+	clen = ka_parse_content_length(headers);
+	if (clen < 0)
+		return -1; /* unframed response: cannot safely reuse the connection */
+	return ka_consume_length(ssl, clen);
+}
+
+static int ka_build_post_request(const char *path, const char *host, uint16_t port,
+				 const char *content_type, size_t content_len,
+				 const char *auth_key, const uint8_t *data,
+				 char **req_out, size_t *req_len_out)
+{
+	char host_header[320];
+	char *req;
+	size_t hcap;
+	int hn;
+
+	if (port && port != 443)
+		snprintf(host_header, sizeof(host_header), "%s:%u", host, (unsigned int)port);
+	else
+		snprintf(host_header, sizeof(host_header), "%s", host);
+
+	hcap = strlen(path) + strlen(host_header) +
+	       (content_type ? strlen(content_type) : 0) +
+	       (auth_key ? strlen(auth_key) : 0) + 256;
+	req = malloc(hcap + content_len);
+	if (!req)
+		return -1;
+
+	hn = snprintf(req, hcap,
+		"POST %s HTTP/1.1\r\nHost: %s\r\nConnection: keep-alive\r\n"
+		"Content-Type: %s\r\nContent-Length: %zu\r\n%s%s%s\r\n",
+		path, host_header,
+		content_type ? content_type : "application/octet-stream", content_len,
+		(auth_key && *auth_key) ? "Authorization: Bearer " : "",
+		(auth_key && *auth_key) ? auth_key : "",
+		(auth_key && *auth_key) ? "\r\n" : "");
+	if (hn < 0 || (size_t)hn >= hcap) {
+		free(req);
+		return -1;
+	}
+	if (content_len)
+		memcpy(req + hn, data, content_len);
+	*req_out = req;
+	*req_len_out = (size_t)hn + content_len;
+	return 0;
+}
+
+struct ela_http_ka_session *ela_http_ka_open(const char *base_uri, bool insecure,
+					     bool verbose, char *errbuf, size_t errbuf_len)
+{
+	struct parsed_http_uri parsed;
+	struct ela_http_ka_session *s;
+
+	if (!base_uri || parse_http_uri(base_uri, &parsed) != 0 || !parsed.https)
+		return NULL; /* only https keep-alive; http/tcp fall back per file */
+
+#ifdef ELA_HAS_WOLFSSL
+	if (ela_http_choose_https_backend(isa_is_powerpc_family(ela_detect_isa())) ==
+	    ELA_HTTP_HTTPS_BACKEND_WOLFSSL)
+		return NULL; /* wolfSSL backend: per-file fallback */
+#endif
+
+	s = calloc(1, sizeof(*s));
+	if (!s)
+		return NULL;
+	s->sock = -1;
+	s->insecure = insecure;
+	s->verbose = verbose;
+	s->port = parsed.port;
+	snprintf(s->host, sizeof(s->host), "%s", parsed.host);
+
+	ela_install_sigill_debug_handler();
+	if (ssl_connect_with_embedded_ca(&parsed, insecure, &s->ctx, &s->ssl, &s->sock,
+					 errbuf, errbuf_len) < 0) {
+		free(s);
+		return NULL;
+	}
+	if (verbose)
+		fprintf(stderr, "remote-copy: keep-alive upload connection to %s established\n", s->host);
+	return s;
+}
+
+int ela_http_ka_post(struct ela_http_ka_session *s, const char *upload_uri,
+		     const uint8_t *data, size_t len, const char *content_type,
+		     char *errbuf, size_t errbuf_len)
+{
+	struct parsed_http_uri parsed;
+	char *req = NULL;
+	size_t req_len = 0;
+	char *headers = NULL;
+	int status;
+
+	if (!s || !s->ssl || !upload_uri)
+		return -1;
+	if (parse_http_uri(upload_uri, &parsed) != 0)
+		return -1;
+	if (ka_build_post_request(parsed.path, s->host, s->port, content_type, len,
+				  ela_api_key_get(), data, &req, &req_len) != 0)
+		return -1;
+	if (ssl_write_all(s->ssl, (const uint8_t *)req, req_len) != 0) {
+		free(req);
+		return -1;
+	}
+	free(req);
+	if (ssl_read_headers(s->ssl, &headers) != 0)
+		return -1;
+	status = ela_http_parse_status_code_from_headers(headers);
+	if (ka_consume_body(s->ssl, headers) != 0) {
+		free(headers);
+		return -1; /* framing lost: connection unusable */
+	}
+	free(headers);
+	if (status >= 200 && status < 300) {
+		ela_api_key_confirm();
+		return 0;
+	}
+	if (errbuf && errbuf_len)
+		ela_http_format_status_error(status, errbuf, errbuf_len);
+	return status; /* HTTP error; connection is still framed and reusable */
+}
+
+void ela_http_ka_close(struct ela_http_ka_session *s)
+{
+	if (!s)
+		return;
+	if (s->ssl) {
+		SSL_shutdown(s->ssl);
+		SSL_free(s->ssl);
+	}
+	if (s->sock >= 0)
+		close(s->sock);
+	if (s->ctx)
+		SSL_CTX_free(s->ctx);
+	free(s);
 }
 
 int ela_http_post(const char *uri, const uint8_t *data, size_t len,
