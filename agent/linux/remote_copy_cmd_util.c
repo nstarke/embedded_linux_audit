@@ -286,8 +286,20 @@ int ela_remote_copy_join_child_path(const char *parent,
 				    char *buf,
 				    size_t buf_sz)
 {
+	size_t plen;
+
 	if (!parent || !name || !buf || buf_sz == 0)
 		return -1;
+
+	/* Don't double the separator when the parent already ends with one
+	 * (notably the root "/"). "%s/%s" on "/" + "sys" yields "//sys", and the
+	 * /dev,/sys,/proc prefix checks in ela_path_is_allowed() do NOT match a
+	 * "//" prefix — so `remote-copy --recursive /` would copy those restricted
+	 * trees despite the missing --allow-* flag. Keeping paths canonical keeps
+	 * the allow-gate effective. */
+	plen = strlen(parent);
+	if (plen > 0 && parent[plen - 1] == '/')
+		return snprintf(buf, buf_sz, "%s%s", parent, name) >= (int)buf_sz ? -1 : 0;
 
 	return snprintf(buf, buf_sz, "%s/%s", parent, name) >= (int)buf_sz ? -1 : 0;
 }
