@@ -36,27 +36,28 @@ the ISA is the host's, taken from the binary's compile-time architecture.
 
 ## What counts as a finding
 
-The disassembler-free signal per ISA is an instruction that **executes** (does
-not raise `SIGILL`) while lying in that ISA's reserved / vendor / custom opcode
-space — exactly where hidden instructions live:
+The policy is versioned with the finding (`policy=2026.07`) and distinguishes
+architecturally **reserved**, deliberately **custom/vendor**, feature-gated,
+and privileged spaces. A custom-space execution is reported as evidence of a
+non-standard extension, not automatically as an undocumented instruction.
+Feature-gated and privileged forms are counted but are not saved as findings.
 
 | ISA | Finding = executes AND lies in… |
 |---|---|
-| x86 / x86_64 | a curated set of removed/undocumented opcodes (SALC, ICEBP, `MOV`↔test-registers, reserved `0F` opcodes) |
+| x86 / x86_64 | curated removed/reserved opcodes (SALC, legacy test-register moves, reserved `0F` opcodes) plus over-15-byte decode anomalies |
 | AArch64 | the top-level **Reserved**/unallocated decode groups + reserved system-hint numbers |
 | ARM32 (A32) | the **cp0–cp7 coprocessor** (vendor) space + permanently-**UNDEFINED** encodings |
 | ARM32 (Thumb) | 16-bit **UDF** + 32-bit Thumb-2 vendor coprocessor space (`--thumb`) |
-| MIPS / MIPS64 | **COP2 / COP1X / SPECIAL2** vendor space + reserved SPECIAL functions |
-| PowerPC | the illegal/reserved primary opcodes **1 / 2 / 5 / 6** and the vendor SIMD opcode **4** (VMX/SPE) |
+| MIPS / MIPS64 | **COP2 / SPECIAL2** vendor space + reserved SPECIAL functions; COP1X is feature-gated |
+| PowerPC | illegal/reserved primary opcodes **1 / 5 / 6** and vendor SIMD opcode **4** (VMX/SPE) |
 | RISC-V | 32-bit **custom-0/1/2/3** opcodes (`0x0B/0x2B/0x5B/0x7B`) + reserved **16-bit compressed** encodings |
 
 Ordinary outcomes (a normal instruction executing, a plain `SIGILL` in reserved
-space) are counted in the run summary but not saved. Suspicious candidates are
-re-executed twice and saved only when outcome, length, signal reason, and
-sentinel reachability are stable. Finding lines include signal code, fault PC,
-sentinel status, confirmation count, and reservation category. A human triages
-the saved findings with their own disassembler — ELA ships no disassembler
-because it is a self-contained static binary.
+space) are counted in the run summary but not saved. A suspicious candidate is
+saved only after its initial observation and **two confirmations in fresh,
+same-logical-CPU executor processes** match on outcome, decoded length, signal,
+signal code, and sentinel reachability. Finding lines include the CPU number
+and an architectural-state fingerprint captured at the outcome boundary.
 
 ## Listing (`cpu list`)
 
@@ -102,6 +103,10 @@ Executing attacker-controlled code is dangerous; four layers contain it:
    supervisor records the killer candidate and respawns from the next index. A
    child that wedges a core unrecoverably (D-state) is detected and the run
    aborts rather than wedging more cores.
+5. **Deterministic state.** Fixed-width ISA modules now prepend a native
+   register-clearing trampoline (preserving the stack pointer); x86 already
+   does this. Seccomp also rejects a foreign/compat syscall ABI before checking
+   the syscall allow-list.
 
 ## Options
 
@@ -114,6 +119,8 @@ Executing attacker-controlled code is dangerous; four layers contain it:
 | `--seed N` | rng seed / sweep base (default 1) |
 | `--out DIR` | finding output directory (default `crashes`) |
 | `--thumb` | ARM32 host only: fuzz the Thumb (T32) instruction set instead of A32 |
+| `--cpu N` | pin execution and confirmations to logical CPU `N` |
+| `--all-cpus` | run the corpus independently on every online logical CPU (useful for heterogeneous SoCs) |
 | `--daemon` | detach and run in the background, logging to `<out>/cpu-fuzz-daemon.log` — so an agent-API `.../ela/spawn` returns immediately instead of waiting for the whole run |
 | `--replay FILE` | re-execute a saved/returned finding on this CPU |
 | `--show FILE` | decode a finding offline (no execution) |
@@ -125,9 +132,8 @@ Executing attacker-controlled code is dangerous; four layers contain it:
 A run writes a finding file to `--out` (default `crashes/`):
 
 ```text
-# target=cpu-x86_64 mode=tunnel
-f1000000000000000000000000000000 executed exec_len=1
-d6000000000000000000000000000000 executed exec_len=1 note=...
+# target=cpu-x86_64 mode=tunnel policy=2026.07 cpu=3
+d6000000000000000000000000000000 executed exec_len=1 confirms=3 class=2 cpu=3 state=0x...
 ```
 
 The `# target=cpu-<isa>` header makes findings self-describing:
@@ -155,7 +161,9 @@ have their own module (`cpu_fuzz_arm64.c`, `cpu_fuzz_arm32.c`, `cpu_fuzz_mips.c`
 `cpu_fuzz_powerpc.c`, `cpu_fuzz_riscv.c`) over a shared sweep core, each with a
 vendor/reserved recognizer tuned to that ISA's custom-instruction space. RISC-V
 also sweeps the 16-bit compressed encodings and ARM32 the Thumb (T32) set
-(`--thumb`). The execution path for non-x86 ISAs (and the Thumb-state entry) is
+(`--thumb`). RISC-V also maps 48-, 64-, and longer parcel-prefixed instructions
+as complete candidates, so the EBREAK sentinel cannot accidentally complete an
+instruction. The execution path for non-x86 ISAs (and the Thumb-state entry) is
 built to be correct but must be validated on real hardware — it cannot be
 exercised on an x86 build. See [the design note](cpu-fuzz-design.md) for the
 full rationale, including the seccomp lockdown.

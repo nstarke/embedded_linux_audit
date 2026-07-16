@@ -21,14 +21,19 @@
 
 static int ppc_is_reserved(struct cpu_isa *isa, const uint8_t *insn, int len)
 {
-	uint32_t v, opc;
+	static const struct cpu_decode_rule policy[] = {
+		{ 0xFC000000u, 0x04000000u, CPU_RES_RESERVED },
+		{ 0xFC000000u, 0x10000000u, CPU_RES_VENDOR },
+		{ 0xFC000000u, 0x14000000u, CPU_RES_RESERVED },
+		{ 0xFC000000u, 0x18000000u, CPU_RES_RESERVED },
+	};
+	uint32_t v;
 
 	if (len < 4)
 		return 0;
 	v = cpu_fixed_get_u32(insn, isa->big_endian);
-	opc = (v >> 26) & 0x3F;
-
-	return opc == 1 || opc == 2 || opc == 4 || opc == 5 || opc == 6;
+	return cpu_decode_rules_u32(v, policy, sizeof(policy) / sizeof(policy[0]))
+		!= CPU_RES_DEFINED;
 }
 
 static enum cpu_reservation ppc_classify(struct cpu_isa *isa,
@@ -38,9 +43,15 @@ static enum cpu_reservation ppc_classify(struct cpu_isa *isa,
 	if (len < 4)
 		return CPU_RES_DEFINED;
 	v = cpu_fixed_get_u32(insn, isa->big_endian);
-	if (((v >> 26) & 0x3F) == 4)
-		return CPU_RES_VENDOR;
-	return ppc_is_reserved(isa, insn, len) ? CPU_RES_RESERVED : CPU_RES_DEFINED;
+	{
+		static const struct cpu_decode_rule policy[] = {
+			{ 0xFC000000u, 0x04000000u, CPU_RES_RESERVED },
+			{ 0xFC000000u, 0x10000000u, CPU_RES_VENDOR },
+			{ 0xFC000000u, 0x14000000u, CPU_RES_RESERVED },
+			{ 0xFC000000u, 0x18000000u, CPU_RES_RESERVED },
+		};
+		return cpu_decode_rules_u32(v, policy, sizeof(policy) / sizeof(policy[0]));
+	}
 }
 
 struct cpu_isa *cpu_isa_powerpc(const char *name)

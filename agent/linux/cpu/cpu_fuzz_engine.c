@@ -27,10 +27,14 @@
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <sys/utsname.h>
+#ifdef __linux__
+#include <sys/auxv.h>
+#endif
 #include <time.h>
 #include <unistd.h>
 #ifdef __linux__
 #include <sys/prctl.h>
+#include <sched.h>
 #endif
 
 #ifndef MAP_ANONYMOUS
@@ -148,8 +152,16 @@ static void cpu_feature_snapshot(char *out, size_t outsz)
 #endif
 	if (uname(&u) != 0)
 		memset(&u, 0, sizeof(u));
-	snprintf(out, outsz, "arch=%s kernel=%s machine=%s", arch,
-		 u.release, u.machine);
+	snprintf(out, outsz, "arch=%s kernel=%s machine=%s online_cpus=%ld", arch,
+		 u.release, u.machine, sysconf(_SC_NPROCESSORS_ONLN));
+#ifdef __linux__
+	snprintf(out + strlen(out), outsz - strlen(out), " hwcap=%#llx",
+		(unsigned long long)getauxval(AT_HWCAP));
+#ifdef AT_HWCAP2
+	snprintf(out + strlen(out), outsz - strlen(out), " hwcap2=%#llx",
+		(unsigned long long)getauxval(AT_HWCAP2));
+#endif
+#endif
 	f = fopen("/proc/cpuinfo", "r");
 	if (!f)
 		return;
@@ -205,13 +217,23 @@ static int parse_hex(const char *s, uint8_t *out, int cap)
 /* Is this executed candidate worth saving as a finding? */
 static int is_finding(struct cpu_isa *isa, const struct cpu_result *r)
 {
-	if (r->confirmations > 0 && r->confirmations < 2)
+	if (r->confirmations < 3)
 		return 0;
 	if (!isa->is_reserved)
 		return 0;
+	/* A feature-gated or privileged instruction is expected to vary with the
+	 * execution environment; retain it in statistics, not as a hidden opcode. */
+	if (r->reservation == CPU_RES_FEATURE_GATED ||
+	    r->reservation == CPU_RES_PRIVILEGED)
+		return 0;
 	if (isa->variable_length) {
-		/* x86: a curated removed/undocumented opcode that executed. */
-		return r->outcome == CPU_OUT_EXECUTED &&
+		/* x86: a policy-reserved opcode decoded by the CPU, or an instruction
+		 * length beyond the architectural 15-byte ceiling. A data/floating
+		 * fault still proves decode, so it is evidence just like single-step. */
+		if (r->exec_len > 15)
+			return r->outcome == CPU_OUT_FETCH || r->outcome == CPU_OUT_EXECUTED;
+		return (r->outcome == CPU_OUT_EXECUTED || r->outcome == CPU_OUT_SIGSEGV ||
+			r->outcome == CPU_OUT_SIGBUS || r->outcome == CPU_OUT_SIGFPE) &&
 		       isa->is_reserved(isa, r->bytes, r->exec_len);
 	}
 	/* fixed-width: a reserved/custom encoding the CPU did not reject. */
@@ -226,6 +248,14 @@ static int is_finding(struct cpu_isa *isa, const struct cpu_result *r)
 	}
 }
 
+static int is_candidate(struct cpu_isa *isa, const struct cpu_result *r)
+{
+	int confirms = r->confirmations;
+	struct cpu_result tmp = *r;
+	tmp.confirmations = 3;
+	return confirms >= 1 && is_finding(isa, &tmp);
+}
+
 /* ---- finding file ------------------------------------------------------- */
 
 static void finding_target_tag(struct cpu_isa *isa, char *out, size_t outsz)
@@ -233,7 +263,7 @@ static void finding_target_tag(struct cpu_isa *isa, char *out, size_t outsz)
 	snprintf(out, outsz, "cpu-%s", isa->name);
 }
 
-static int finding_open_header(struct cpu_isa *isa, enum cpu_mode mode,
+static int finding_open_header(struct cpu_isa *isa, const struct cpu_fuzz_opts *o,
 			       const char *out_dir, char *path, size_t pathsz)
 {
 	char tag[48];
@@ -248,8 +278,8 @@ static int finding_open_header(struct cpu_isa *isa, enum cpu_mode mode,
 	fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0600);
 	if (fd < 0)
 		return -1;
-	n = snprintf(hdr, sizeof(hdr), "# target=%s mode=%s\n", tag,
-		     mode_name(mode));
+	n = snprintf(hdr, sizeof(hdr), "# target=%s mode=%s policy=%s cpu=%d\n", tag,
+		     mode_name(o->mode), CPU_FUZZ_POLICY_VERSION, o->cpu);
 	if (n < 0 || (size_t)n >= sizeof(hdr) ||
 	    write(fd, hdr, (size_t)n) != n) {
 		close(fd);
@@ -279,10 +309,11 @@ static void finding_write(int fd, const struct cpu_result *r)
 	hex_bytes(r->bytes, r->len, hex, sizeof(hex));
 	n = snprintf(line, sizeof(line),
 		     "%s %s exec_len=%d signo=%d si_code=%d pc=0x%llx "
-		     "sentinel=%d confirms=%d class=%d%s%s\n",
+		     "sentinel=%d confirms=%d class=%d cpu=%d state=0x%llx%s%s\n",
 		     hex, cpu_outcome_name(r->outcome), r->exec_len,
 		     r->signo, r->si_code, (unsigned long long)r->fault_pc,
-		     r->reached_sentinel, r->confirmations, r->reservation,
+		     r->reached_sentinel, r->confirmations, r->reservation, r->cpu,
+		     (unsigned long long)r->state_hash,
 		     r->note[0] ? " note=" : "", r->note[0] ? r->note : "");
 	if (n > 0)
 		(void)!write(fd, line, (size_t)n);
@@ -307,6 +338,8 @@ struct cpu_shared_finding {
 	int      reached_sentinel;
 	int      reservation;
 	int      confirmations;
+	uint64_t state_hash;
+	int      cpu;
 	char     note[96];
 };
 
@@ -351,9 +384,10 @@ static void ring_push(struct cpu_shared *sh, const struct cpu_result *r)
 	e->reached_sentinel = r->reached_sentinel;
 	e->reservation = r->reservation;
 	e->confirmations = r->confirmations;
+	e->state_hash = r->state_hash;
+	e->cpu = r->cpu;
 	memcpy(e->note, r->note, sizeof(e->note));
 	sh->ring_head = head + 1;	/* publish */
-	sh->findings++;
 }
 
 static void child_run(struct cpu_isa *isa, const struct cpu_fuzz_opts *o,
@@ -371,6 +405,14 @@ static void child_run(struct cpu_isa *isa, const struct cpu_fuzz_opts *o,
 	 * be orphaned and keep executing candidates. */
 	prctl(PR_SET_PDEATHSIG, SIGKILL);
 #endif
+	if (o->cpu >= 0) {
+#ifdef __linux__
+		cpu_set_t set;
+		CPU_ZERO(&set);
+		CPU_SET(o->cpu, &set);
+		(void)sched_setaffinity(0, sizeof(set), &set);
+#endif
+	}
 	h = cpu_harness_new(isa);
 	if (!h)
 		_exit(3);
@@ -410,33 +452,21 @@ static void child_run(struct cpu_isa *isa, const struct cpu_fuzz_opts *o,
 			((isa->is_reserved && isa->is_reserved(isa, r.bytes,
 							       isa->variable_length ? r.exec_len : r.len)) ?
 			 CPU_RES_RESERVED : CPU_RES_DEFINED);
-		/* Confirm suspicious executions in fresh trampoline invocations. A
-		 * single observation is too weak: branches, feature traps, and stale
-		 * state can otherwise masquerade as undocumented instructions. */
+		/* The parent performs the two confirmations in fresh, pinned child
+		 * processes. This executor only produces the initial observation. */
 		r.confirmations = 1;
-		if (r.reservation != CPU_RES_DEFINED &&
-		    r.outcome != CPU_OUT_SIGILL) {
-			int pass;
-			for (pass = 0; pass < 2; pass++) {
-				struct cpu_result c;
-				cpu_harness_exec(h, buf, len, &c);
-				if (c.outcome != r.outcome || c.exec_len != r.exec_len ||
-				    c.reached_sentinel != r.reached_sentinel ||
-				    c.si_code != r.si_code)
-					break;
-				r.confirmations++;
-			}
-			if (r.confirmations < 3)
-				snprintf(r.note, sizeof(r.note), "unstable-confirmation=%d",
-					 r.confirmations);
-		}
+#ifdef __linux__
+		r.cpu = sched_getcpu();
+#else
+		r.cpu = -1;
+#endif
 		feedback = r.exec_len;
 		sh->last_feedback = feedback;
 		if (r.outcome <= CPU_OUT_OTHER)
 			sh->counts[r.outcome]++;
 		sh->heartbeat++;
 
-		if (is_finding(isa, &r))
+		if (is_candidate(isa, &r))
 			ring_push(sh, &r);
 	}
 
@@ -444,6 +474,56 @@ static void child_run(struct cpu_isa *isa, const struct cpu_fuzz_opts *o,
 	/* No cpu_harness_free(): _exit reclaims, and skipping munmap keeps the
 	 * seccomp-allowed syscall set minimal. */
 	_exit(0);
+}
+
+static int same_observation(const struct cpu_result *a, const struct cpu_result *b)
+{
+	return a->outcome == b->outcome && a->exec_len == b->exec_len &&
+		a->reached_sentinel == b->reached_sentinel && a->si_code == b->si_code &&
+		a->signo == b->signo;
+}
+
+/* Execute one confirmation in a new process. Shared memory avoids permitting
+ * write(2) under the candidate's seccomp policy. */
+static int confirm_fresh(struct cpu_isa *isa, const struct cpu_fuzz_opts *o,
+			 const struct cpu_result *want, struct cpu_result *got)
+{
+	struct cpu_result *shared;
+	pid_t pid;
+	int status;
+
+	shared = mmap(NULL, sizeof(*shared), PROT_READ | PROT_WRITE,
+		MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+	if (shared == MAP_FAILED)
+		return -1;
+	memset(shared, 0, sizeof(*shared));
+	pid = fork();
+	if (pid == 0) {
+		struct cpu_harness *h;
+#ifdef __linux__
+		if (want->cpu >= 0) { cpu_set_t set; CPU_ZERO(&set); CPU_SET(want->cpu, &set);
+			(void)sched_setaffinity(0, sizeof(set), &set); }
+#endif
+		h = cpu_harness_new(isa);
+		if (!h) _exit(3);
+		(void)cpu_harness_seccomp_lockdown();
+		cpu_harness_exec(h, want->bytes, want->len, shared);
+#ifdef __linux__
+		shared->cpu = sched_getcpu();
+#else
+		shared->cpu = -1;
+#endif
+		_exit(0);
+	}
+	if (pid < 0 || waitpid(pid, &status, 0) != pid || !WIFEXITED(status) ||
+	    WEXITSTATUS(status) != 0) {
+		munmap(shared, sizeof(*shared));
+		return -1;
+	}
+	*got = *shared;
+	munmap(shared, sizeof(*shared));
+	(void)o;
+	return 0;
 }
 
 /* Record the candidate that killed a child as a finding. */
@@ -502,8 +582,8 @@ static int reap_bounded(pid_t pid, int *status)
  * writing each to the finding file and streaming it. The child never touches
  * the file or socket, which is what lets it run under seccomp.
  */
-static void drain_ring(struct cpu_shared *sh, int fd,
-		       const struct cpu_fuzz_opts *o)
+static void drain_ring(struct cpu_isa *isa, struct cpu_shared *sh, int fd,
+			       const struct cpu_fuzz_opts *o)
 {
 	while (sh->ring_tail < sh->ring_head) {
 		struct cpu_shared_finding *e =
@@ -520,13 +600,33 @@ static void drain_ring(struct cpu_shared *sh, int fd,
 		r.fault_pc = e->fault_pc;
 		r.fault_addr = e->fault_addr;
 		r.reached_sentinel = e->reached_sentinel;
-		r.reservation = e->reservation;
-		r.confirmations = e->confirmations;
-		memcpy(r.note, e->note, sizeof(r.note));
-		finding_write(fd, &r);
-		if (o->sink && o->sink->emit)
-			o->sink->emit(o->sink->ctx, r.bytes, r.len, "finding");
-		sh->ring_tail = sh->ring_tail + 1;
+			r.reservation = e->reservation;
+			r.confirmations = e->confirmations;
+			r.state_hash = e->state_hash;
+			r.cpu = e->cpu;
+			memcpy(r.note, e->note, sizeof(r.note));
+			/* An initial observation earns a finding only after two independent,
+			 * fresh-process confirmations on the same logical CPU. */
+			{
+				struct cpu_result c;
+				int pass;
+				for (pass = 0; pass < 2; pass++) {
+					if (confirm_fresh(isa, o, &r, &c) != 0 ||
+					    c.cpu != r.cpu || !same_observation(&r, &c))
+						break;
+					r.confirmations++;
+				}
+				if (r.confirmations == 3 && is_finding(isa, &r)) {
+					finding_write(fd, &r);
+					sh->findings++;
+					if (o->sink && o->sink->emit)
+						o->sink->emit(o->sink->ctx, r.bytes, r.len, "finding");
+				} else {
+					snprintf(r.note, sizeof(r.note), "unstable-clean-confirmation=%d",
+						 r.confirmations);
+				}
+			}
+			sh->ring_tail = sh->ring_tail + 1;
 	}
 }
 
@@ -569,7 +669,7 @@ static int supervise(struct cpu_isa *isa, const struct cpu_fuzz_opts *o,
 			pid_t w = waitpid(pid, &status, WNOHANG);
 			time_t now;
 
-			drain_ring(sh, fd, o);		/* persist published findings */
+			drain_ring(isa, sh, fd, o);		/* persist published findings */
 
 			if (w == pid)
 				break;			/* child exited */
@@ -619,7 +719,7 @@ static int supervise(struct cpu_isa *isa, const struct cpu_fuzz_opts *o,
 			}
 		}
 
-		drain_ring(sh, fd, o);	/* findings published just before exit */
+		drain_ring(isa, sh, fd, o);	/* findings published just before exit */
 
 		if (g_interrupted)
 			break;
@@ -769,6 +869,19 @@ int cpu_fuzz_run(struct cpu_isa *isa, const struct cpu_fuzz_opts *o)
 
 	if (o->replay_path)
 		return replay(isa, o->replay_path);
+	if (o->all_cpus) {
+		long n = sysconf(_SC_NPROCESSORS_ONLN);
+		long cpu;
+		int rc_all = 0;
+		if (n < 1) n = 1;
+		for (cpu = 0; cpu < n; cpu++) {
+			struct cpu_fuzz_opts one = *o;
+			one.all_cpus = 0;
+			one.cpu = (int)cpu;
+			rc_all |= cpu_fuzz_run(isa, &one);
+		}
+		return rc_all;
+	}
 
 	if (o->iterations <= 0) {
 		fprintf(stderr, "cpu fuzz: --iterations must be > 0\n");
@@ -784,7 +897,7 @@ int cpu_fuzz_run(struct cpu_isa *isa, const struct cpu_fuzz_opts *o)
 	}
 	memset(sh, 0, sizeof(*sh));
 
-	fd = finding_open_header(isa, o->mode, o->out_dir, path, sizeof(path));
+	fd = finding_open_header(isa, o, o->out_dir, path, sizeof(path));
 	if (fd < 0) {
 		fprintf(stderr, "cpu fuzz: cannot create finding file in %s\n",
 			o->out_dir);

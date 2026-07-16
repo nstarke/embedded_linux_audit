@@ -24,6 +24,12 @@
  */
 static int mips_is_reserved(struct cpu_isa *isa, const uint8_t *insn, int len)
 {
+	static const struct cpu_decode_rule policy[] = {
+		{ 0xFC000000u, 0x48000000u, CPU_RES_VENDOR }, /* COP2 */
+		{ 0xFC000000u, 0x4C000000u, CPU_RES_FEATURE_GATED }, /* COP1X */
+		{ 0xFC000000u, 0x70000000u, CPU_RES_VENDOR }, /* SPECIAL2 */
+		{ 0xFC000000u, 0x78000000u, CPU_RES_RESERVED },
+	};
 	uint32_t v, opc;
 
 	if (len < 4)
@@ -31,7 +37,8 @@ static int mips_is_reserved(struct cpu_isa *isa, const uint8_t *insn, int len)
 	v = cpu_fixed_get_u32(insn, isa->big_endian);
 	opc = (v >> 26) & 0x3F;
 
-	if (opc == 0x12 || opc == 0x13 || opc == 0x1C || opc == 0x1E)
+	if (cpu_decode_rules_u32(v, policy, sizeof(policy) / sizeof(policy[0]))
+	    != CPU_RES_DEFINED)
 		return 1;
 
 	/* SPECIAL (opcode 0) with a reserved function field (0x01 MOVCI and the
@@ -53,9 +60,18 @@ static enum cpu_reservation mips_classify(struct cpu_isa *isa,
 	if (len < 4)
 		return CPU_RES_DEFINED;
 	v = cpu_fixed_get_u32(insn, isa->big_endian);
-	if (((v >> 26) & 0x3F) == 0x12 || ((v >> 26) & 0x3F) == 0x1C)
-		return CPU_RES_VENDOR;
-	return mips_is_reserved(isa, insn, len) ? CPU_RES_RESERVED : CPU_RES_DEFINED;
+	{
+		static const struct cpu_decode_rule policy[] = {
+			{ 0xFC000000u, 0x48000000u, CPU_RES_VENDOR },
+			{ 0xFC000000u, 0x4C000000u, CPU_RES_FEATURE_GATED },
+			{ 0xFC000000u, 0x70000000u, CPU_RES_VENDOR },
+			{ 0xFC000000u, 0x78000000u, CPU_RES_RESERVED },
+		};
+		enum cpu_reservation r = cpu_decode_rules_u32(v, policy,
+			sizeof(policy) / sizeof(policy[0]));
+		return r != CPU_RES_DEFINED ? r :
+			(mips_is_reserved(isa, insn, len) ? CPU_RES_RESERVED : CPU_RES_DEFINED);
+	}
 }
 
 struct cpu_isa *cpu_isa_mips(const char *name)

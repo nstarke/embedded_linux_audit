@@ -158,6 +158,17 @@ struct cpu_isa *cpu_isa_arm32(const char *name)
 		isa.is_reserved = thumb_is_reserved;
 		isa.classify = thumb_classify;
 		isa.fault_pc = cpu_fixed_fault_pc;
+		isa.state_hash = cpu_fixed_state_hash;
+		/* movs rN,#0 for the low Thumb register bank; retain SP.  Higher
+		 * registers are left to the ABI because Thumb-1 cannot clear them in
+		 * a compact, universally available encoding. */
+		{
+			int r;
+			for (r = 0; r < 8; r++)
+				cpu_fixed_put_u16(isa.prologue + r * 2,
+						 0x2000u | ((uint16_t)r << 8), 0);
+			isa.prologue_len = 16;
+		}
 		cpu_fixed_put_u16(isa.epilogue, BKPT_T16, 0);
 		isa.epilogue_len = 2;
 		return &isa;

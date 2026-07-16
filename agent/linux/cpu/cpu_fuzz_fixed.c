@@ -44,11 +44,87 @@ uintptr_t cpu_fixed_fault_pc(void *ctx)
 #endif
 }
 
+uint64_t cpu_fixed_state_hash(void *ctx)
+{
+	ucontext_t *u = (ucontext_t *)ctx;
+	uint64_t h = 1469598103934665603ULL;
+	const uint8_t *p = NULL;
+	size_t n = 0;
+
+/* Hash the machine context as supplied by the kernel.  This deliberately
+ * includes PC/status/registers and gives every ISA the same reproducible,
+ * low-cost semantic observation without assuming a particular register file. */
+#if defined(__aarch64__)
+	p = (const uint8_t *)&u->uc_mcontext; n = sizeof(u->uc_mcontext);
+#elif defined(__arm__)
+	p = (const uint8_t *)&u->uc_mcontext; n = sizeof(u->uc_mcontext);
+#elif defined(__mips__) || defined(__powerpc__) || defined(__powerpc64__) || defined(__riscv)
+	p = (const uint8_t *)&u->uc_mcontext; n = sizeof(u->uc_mcontext);
+#else
+	(void)u;
+#endif
+	while (n--) {
+		h ^= *p++;
+		h *= 1099511628211ULL;
+	}
+	return h;
+}
+
+static void fixed_zero_prologue(struct cpu_isa *isa)
+{
+	int r, off = 0;
+	uint32_t w;
+
+	/* Do not clobber the stack pointer; the C call/longjmp machinery relies on
+	 * it.  Every other GPR is made deterministic before the candidate. */
+	if (strstr(isa->name, "aarch64")) {
+		for (r = 0; r <= 30; r++) {
+			w = 0xAA1F03E0u | (uint32_t)r; /* mov xR, xzr */
+			cpu_fixed_put_u32(isa->prologue + off, w, isa->big_endian); off += 4;
+		}
+	} else if (strstr(isa->name, "arm32") && !isa->thumb) {
+		for (r = 0; r <= 14; r++) {
+			if (r == 13) continue;
+			w = 0xE3A00000u | ((uint32_t)r << 12); /* mov rR,#0 */
+			cpu_fixed_put_u32(isa->prologue + off, w, isa->big_endian); off += 4;
+		}
+	} else if (strstr(isa->name, "mips")) {
+		for (r = 1; r <= 31; r++) {
+			if (r == 29) continue;
+			w = 0x24000000u | ((uint32_t)r << 16); /* addiu rR,zero,0 */
+			cpu_fixed_put_u32(isa->prologue + off, w, isa->big_endian); off += 4;
+		}
+	} else if (strstr(isa->name, "powerpc")) {
+		for (r = 0; r <= 31; r++) {
+			if (r == 1) continue;
+			w = 0x38000000u | ((uint32_t)r << 21); /* li rR,0 */
+			cpu_fixed_put_u32(isa->prologue + off, w, isa->big_endian); off += 4;
+		}
+	} else if (strstr(isa->name, "riscv")) {
+		for (r = 1; r <= 31; r++) {
+			if (r == 2) continue;
+			w = 0x00000013u | ((uint32_t)r << 7); /* addi xR,x0,0 */
+			cpu_fixed_put_u32(isa->prologue + off, w, 0); off += 4;
+		}
+	}
+	isa->prologue_len = off;
+}
+
 enum cpu_reservation cpu_fixed_classify_reserved(struct cpu_isa *isa,
 						 const uint8_t *insn, int len)
 {
 	return (isa->is_reserved && isa->is_reserved(isa, insn, len)) ?
 		CPU_RES_RESERVED : CPU_RES_DEFINED;
+}
+
+enum cpu_reservation cpu_decode_rules_u32(uint32_t word,
+					 const struct cpu_decode_rule *rules, size_t nr)
+{
+	size_t i;
+	for (i = 0; i < nr; i++)
+		if ((word & rules[i].mask) == rules[i].value)
+			return rules[i].reservation;
+	return CPU_RES_DEFINED;
 }
 
 void cpu_fixed_put_u32(uint8_t *out, uint32_t v, int big_endian)
@@ -163,8 +239,10 @@ void cpu_fixed_fill(struct cpu_isa *isa, const char *name, int big_endian,
 	isa->is_reserved = is_reserved;
 	isa->classify = cpu_fixed_classify_reserved;
 	isa->fault_pc = cpu_fixed_fault_pc;
+	isa->state_hash = cpu_fixed_state_hash;
 	cpu_fixed_put_u32(isa->epilogue, trap_word, big_endian);
 	isa->epilogue_len = 4;
+	fixed_zero_prologue(isa);
 }
 
 /* ---- name routing ------------------------------------------------------- */

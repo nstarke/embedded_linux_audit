@@ -20,8 +20,9 @@
 
 /* x86's architectural maximum instruction length is 15; round up for the
  * prologue/epilogue stubs the harness prepends/appends. */
-#define CPU_INSN_MAX     16
-#define CPU_STUB_MAX     64
+#define CPU_INSN_MAX     32 /* accommodates RISC-V's currently-defined long forms */
+#define CPU_STUB_MAX     256
+#define CPU_FUZZ_POLICY_VERSION "2026.07"
 
 enum cpu_mode {
 	CPU_MODE_TUNNEL = 0,	/* length-guided increment (x86 default)        */
@@ -79,6 +80,8 @@ struct cpu_result {
 	int      reached_sentinel;	/* fixed-width candidate reached its epilogue */
 	enum cpu_reservation reservation;
 	int      confirmations;
+	uint64_t state_hash;	/* architectural state observed at the outcome boundary */
+	int      cpu;		/* logical CPU that produced this observation, or -1 */
 	char     note[96];
 };
 
@@ -122,6 +125,9 @@ struct cpu_isa {
 	/* Extract the faulting program counter from a ucontext_t* (x86 length
 	 * measurement). NULL when the ISA classifies by signal number alone. */
 	uintptr_t (*fault_pc)(void *ucontext);
+	/* Hash architecturally visible state from the signal context.  It is a
+	 * compact semantic fingerprint, not a cryptographic digest. */
+	uint64_t (*state_hash)(void *ucontext);
 
 	void *priv;
 };
@@ -191,6 +197,8 @@ struct cpu_fuzz_opts {
 	int   max_len;		/* x86 candidate cap; 0 = ISA default            */
 	int   probe_every;	/* progress/heartbeat cadence                    */
 	uint64_t seed;
+	int   cpu;               /* -1 = current CPU; otherwise pin executor */
+	int   all_cpus;          /* run the same corpus once per online CPU */
 	const char *out_dir;
 	const char *replay_path;	/* if set: replay instead of search      */
 	const struct cpu_fuzz_payload_sink *sink;

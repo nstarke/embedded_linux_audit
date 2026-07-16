@@ -387,6 +387,22 @@ LIBPCAP_DIR   := third_party/libpcap
 LIBPCAP_BUILD := $(LIBPCAP_DIR)/build-$(CC_TAG)
 LIBPCAP_LIB   := $(LIBPCAP_BUILD)/libpcap.a
 LIBPCAP_CFLAGS := -I$(LIBPCAP_DIR) -I$(LIBPCAP_BUILD)
+LIBPCAP_CMAKE_ARGS := $(CMAKE_CC_ARGS)
+ifneq ($(findstring zig cc,$(CC)),)
+# strlcpy/strlcat only entered glibc in 2.38, and its headers only declare them
+# at >= 2.38. But zig's stub libc exports both symbols at EVERY requested glibc
+# version, so libpcap's check_function_exists() probes — which link a call
+# against their own fake prototype and never include <string.h> — always
+# succeed. HAVE_STRLCPY then makes portability.h `#define pcapint_strlcpy
+# strlcpy`, and the real compile fails with an implicit-declaration error that
+# clang treats as fatal under C99+.
+#
+# Seed both results false so libpcap builds its bundled missing/strlcpy.c and
+# missing/strlcat.c instead. Pinning the target to glibc >= 2.38 would also
+# silence it but would raise the agent's minimum glibc, which is the wrong
+# trade for old embedded targets.
+LIBPCAP_CMAKE_ARGS += -DHAVE_STRLCPY=0 -DHAVE_STRLCAT=0
+endif
 TPM2_TSS_DIR := third_party/tpm2-tss
 TPM2_TSS_BUILD := $(TPM2_TSS_DIR)/build-$(CC_TAG)
 TPM2_TSS_BUILD_STAMP := $(TPM2_TSS_BUILD)/.ela-build-stamp
@@ -1185,7 +1201,7 @@ $(LIBSSH_LIB): $(OPENSSL_SSL_LIB) $(ZLIB_LIB)
 
 $(LIBPCAP_LIB):
 	rm -rf $(LIBPCAP_BUILD)
-	cmake -S $(LIBPCAP_DIR) -B $(LIBPCAP_BUILD) $(CMAKE_CC_ARGS) -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DENABLE_REMOTE=OFF -DBUILD_WITH_LIBNL=OFF -DDISABLE_BLUETOOTH=ON -DDISABLE_DBUS=ON -DDISABLE_RDMA=ON -DDISABLE_DAG=ON -DDISABLE_SNF=ON
+	cmake -S $(LIBPCAP_DIR) -B $(LIBPCAP_BUILD) $(LIBPCAP_CMAKE_ARGS) -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DENABLE_REMOTE=OFF -DBUILD_WITH_LIBNL=OFF -DDISABLE_BLUETOOTH=ON -DDISABLE_DBUS=ON -DDISABLE_RDMA=ON -DDISABLE_DAG=ON -DDISABLE_SNF=ON
 	cmake --build $(LIBPCAP_BUILD) --parallel $(JOBS) --target pcap_static
 
 $(TPM2_TSS_BUILD_STAMP): $(OPENSSL_SSL_LIB)

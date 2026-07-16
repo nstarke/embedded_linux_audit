@@ -68,6 +68,21 @@ static void test_byte_helpers(void)
 	ELA_ASSERT_INT_EQ(0xBE00, cpu_fixed_get_u16(b, 1));
 }
 
+static void test_decode_policy_rules(void)
+{
+	static const struct cpu_decode_rule rules[] = {
+		{ 0xFC000000u, 0x48000000u, CPU_RES_VENDOR },
+		{ 0xFC000000u, 0x4C000000u, CPU_RES_FEATURE_GATED },
+	};
+
+	ELA_ASSERT_INT_EQ(CPU_RES_VENDOR,
+		cpu_decode_rules_u32(0x48001234u, rules, 2));
+	ELA_ASSERT_INT_EQ(CPU_RES_FEATURE_GATED,
+		cpu_decode_rules_u32(0x4C000000u, rules, 2));
+	ELA_ASSERT_INT_EQ(CPU_RES_DEFINED,
+		cpu_decode_rules_u32(0x00000000u, rules, 2));
+}
+
 /* Exercise a module's next() across all search modes and verify the byte
  * length it returns is one it declares. */
 static void exercise_next(struct cpu_isa *isa)
@@ -110,7 +125,8 @@ static void test_x86_module(void)
 	ELA_ASSERT_STR_EQ("x86_64", isa->name);
 	/* curated undocumented/removed opcodes flagged; a NOP is not */
 	ELA_ASSERT_TRUE(isa->is_reserved(isa, salc, 1));
-	ELA_ASSERT_TRUE(isa->is_reserved(isa, icebp, 1));
+	/* INT1/ICEBP is architecturally recognized; do not label it hidden. */
+	ELA_ASSERT_FALSE(isa->is_reserved(isa, icebp, 1));
 	ELA_ASSERT_FALSE(isa->is_reserved(isa, nop, 1));
 	exercise_next(isa);
 
@@ -127,6 +143,7 @@ static void test_aarch64_module(void)
 	ELA_ASSERT_TRUE(isa != NULL);
 	ELA_ASSERT_INT_EQ(4, isa->min_len);
 	ELA_ASSERT_INT_EQ(4, isa->epilogue_len);
+	ELA_ASSERT_TRUE(isa->prologue_len > 0);
 	ELA_ASSERT_TRUE(isa->is_reserved(isa, udf, 4));
 	ELA_ASSERT_FALSE(isa->is_reserved(isa, nop, 4));
 	exercise_next(isa);
@@ -162,11 +179,12 @@ static void test_mips_ppc_riscv_modules(void)
 	struct cpu_isa *mips = cpu_isa_fixed("mips");
 	struct cpu_isa *ppc = cpu_isa_fixed("powerpc");
 	struct cpu_isa *rv = cpu_isa_fixed("riscv64");
-	uint8_t enc[4], c[4];
+	uint8_t enc[4], c[CPU_INSN_MAX];
 
 	/* MIPS: COP2 (opcode 0x12) is vendor space */
 	cpu_fixed_put_u32(enc, 0x48000000u, mips->big_endian);
 	ELA_ASSERT_TRUE(mips->is_reserved(mips, enc, 4));
+	ELA_ASSERT_TRUE(mips->prologue_len > 0);
 
 	/* PowerPC is big-endian; opcode 4 is vendor SIMD */
 	ELA_ASSERT_TRUE(ppc->big_endian == 1);
@@ -177,6 +195,11 @@ static void test_mips_ppc_riscv_modules(void)
 	ELA_ASSERT_INT_EQ(2, rv->min_len);	/* compressed instructions */
 	c[0] = 0x0B; c[1] = 0; c[2] = 0; c[3] = 0;	/* custom-0 major opcode */
 	ELA_ASSERT_TRUE(rv->is_reserved(rv, c, 4));
+	{
+		struct cpu_search s = { .mode = CPU_MODE_SWEEP, .seed = 0x0000001fu };
+		int n = rv->next(rv, &s, 0, 0, c, sizeof(c));
+		ELA_ASSERT_INT_EQ(6, n); /* 48-bit RISC-V parcel prefix */
+	}
 
 	exercise_next(mips);
 	exercise_next(ppc);
@@ -242,6 +265,7 @@ int run_cpu_fuzz_tests(void)
 		{ "rng/deterministic", test_rng_deterministic },
 		{ "outcome/names", test_outcome_names },
 		{ "byte/helpers", test_byte_helpers },
+		{ "decode/policy", test_decode_policy_rules },
 		{ "module/x86", test_x86_module },
 		{ "module/aarch64", test_aarch64_module },
 		{ "module/arm32+thumb", test_arm32_and_thumb_modules },

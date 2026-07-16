@@ -20,8 +20,20 @@ uint32_t cpu_fixed_get_u32(const uint8_t *in, int big_endian);
 void     cpu_fixed_put_u16(uint8_t *out, uint16_t v, int big_endian);
 uint16_t cpu_fixed_get_u16(const uint8_t *in, int big_endian);
 uintptr_t cpu_fixed_fault_pc(void *ucontext);
+uint64_t cpu_fixed_state_hash(void *ucontext);
 enum cpu_reservation cpu_fixed_classify_reserved(struct cpu_isa *,
 						 const uint8_t *, int);
+
+/* Versioned, declarative decode policy. Per-ISA modules use these compact
+ * tables for unambiguous mask/value regions and retain predicates only where
+ * operand fields affect validity. */
+struct cpu_decode_rule {
+	uint32_t mask;
+	uint32_t value;
+	enum cpu_reservation reservation;
+};
+enum cpu_reservation cpu_decode_rules_u32(uint32_t word,
+					 const struct cpu_decode_rule *rules, size_t nr);
 
 /* Generic 4-byte sweep/brute/random candidate generator (the default next). */
 int cpu_fixed_next4(struct cpu_isa *isa, const struct cpu_search *s,

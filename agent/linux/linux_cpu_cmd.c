@@ -82,6 +82,8 @@ static void fuzz_usage(void)
 		"                     (ISA taken from the file header; must match host)\n"
 		"  --show FILE      decode a finding offline (no execution)\n"
 		"  --thumb          ARM32 host: fuzz the Thumb (T32) set instead of A32\n"
+		"  --cpu N          pin execution and confirmations to logical CPU N\n"
+		"  --all-cpus       run the corpus separately on every online logical CPU\n"
 		"  --daemon         force background detach (also automatic when non-TTY);\n"
 		"                     logs to <out>/cpu-fuzz-daemon.log\n"
 		"  --insecure       skip TLS verify when streaming to --output-http\n"
@@ -94,7 +96,7 @@ static int cpu_fuzz_cmd_main(int argc, char **argv)
 	enum {
 		OPT_MODE = 1, OPT_ITERATIONS, OPT_LENGTH, OPT_PROBE_EVERY,
 		OPT_SEED, OPT_OUT, OPT_REPLAY, OPT_SHOW, OPT_INSECURE,
-		OPT_SELFTEST, OPT_THUMB, OPT_DAEMON,
+		OPT_SELFTEST, OPT_THUMB, OPT_DAEMON, OPT_CPU, OPT_ALL_CPUS,
 	};
 	static const struct option long_opts[] = {
 		{ "mode",        required_argument, NULL, OPT_MODE },
@@ -109,6 +111,8 @@ static int cpu_fuzz_cmd_main(int argc, char **argv)
 		{ "selftest",    no_argument,       NULL, OPT_SELFTEST },
 		{ "thumb",       no_argument,       NULL, OPT_THUMB },
 		{ "daemon",      no_argument,       NULL, OPT_DAEMON },
+		{ "cpu",         required_argument, NULL, OPT_CPU },
+		{ "all-cpus",    no_argument,       NULL, OPT_ALL_CPUS },
 		{ "help",        no_argument,       NULL, 'h' },
 		{ 0, 0, 0, 0 }
 	};
@@ -118,6 +122,7 @@ static int cpu_fuzz_cmd_main(int argc, char **argv)
 		.probe_every = 4096,
 		.seed = 1,
 		.out_dir = "crashes",
+		.cpu = -1,
 	};
 	const char *show_path = NULL;
 	const char *isa_name = host_isa_name();
@@ -145,6 +150,8 @@ static int cpu_fuzz_cmd_main(int argc, char **argv)
 		case OPT_INSECURE:   insecure = 1; break;
 		case OPT_THUMB:      thumb = 1; break;
 		case OPT_DAEMON:     daemon_mode = 1; break;
+		case OPT_CPU:        o.cpu = atoi(optarg); break;
+		case OPT_ALL_CPUS:   o.all_cpus = 1; break;
 		case OPT_SELFTEST:   return cpu_fuzz_selftest_run();
 		case 'h':            fuzz_usage(); return 0;
 		default:             fuzz_usage(); return 2;
@@ -159,6 +166,10 @@ static int cpu_fuzz_cmd_main(int argc, char **argv)
 		o.probe_every = 1;
 	if (o.max_len < 0 || o.max_len > 15) {
 		fprintf(stderr, "cpu fuzz: --length must be 1..15\n");
+		return 2;
+	}
+	if (o.cpu < -1 || (o.cpu >= 0 && o.all_cpus)) {
+		fprintf(stderr, "cpu fuzz: use either --cpu N or --all-cpus\n");
 		return 2;
 	}
 	if (thumb) {

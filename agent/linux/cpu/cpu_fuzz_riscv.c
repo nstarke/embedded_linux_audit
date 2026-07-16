@@ -52,6 +52,25 @@ static int riscv_next(struct cpu_isa *isa, const struct cpu_search *s,
 		cpu_fixed_put_u16(out, (uint16_t)enc, 0);
 		return 2;
 	}
+	if ((enc & 0x1F) == 0x1F) {
+		int len;
+		int i;
+		/* RISC-V's parcel prefixes encode 48-, 64-, or 80+ bit forms.  Keep
+		 * the entire offered form mapped so the sentinel never becomes part of
+		 * the candidate instruction. */
+		if ((enc & 0x3F) == 0x1F)
+			len = 6;
+		else if ((enc & 0x7F) == 0x3F)
+			len = 8;
+		else
+			len = 10 + 2 * (int)((enc >> 12) & 0x7);
+		if (len > cap)
+			return 0;
+		cpu_fixed_put_u32(out, enc, 0);
+		for (i = 4; i < len; i++)
+			out[i] = (uint8_t)(cpu_rng_next() >> ((i & 7) * 8));
+		return len;
+	}
 	if (cap < 4)
 		return 0;
 	cpu_fixed_put_u32(out, enc, 0);
@@ -78,9 +97,12 @@ static int riscv_is_reserved(struct cpu_isa *isa, const uint8_t *insn, int len)
 		return 0;
 	}
 	if (len >= 4) {
-		uint32_t opc = cpu_fixed_get_u32(insn, 0) & 0x7F;
-
-		return opc == 0x0B || opc == 0x2B || opc == 0x5B || opc == 0x7B;
+		static const struct cpu_decode_rule policy[] = {
+			{ 0x7Fu, 0x0Bu, CPU_RES_VENDOR }, { 0x7Fu, 0x2Bu, CPU_RES_VENDOR },
+			{ 0x7Fu, 0x5Bu, CPU_RES_VENDOR }, { 0x7Fu, 0x7Bu, CPU_RES_VENDOR },
+		};
+		return cpu_decode_rules_u32(cpu_fixed_get_u32(insn, 0), policy,
+			sizeof(policy) / sizeof(policy[0])) != CPU_RES_DEFINED;
 	}
 	return 0;
 }
@@ -89,9 +111,13 @@ static enum cpu_reservation riscv_classify(struct cpu_isa *isa,
 						 const uint8_t *insn, int len)
 {
 	if (len >= 4) {
-		uint32_t op = cpu_fixed_get_u32(insn, 0) & 0x7F;
-		if (op == 0x0B || op == 0x2B || op == 0x5B || op == 0x7B)
-			return CPU_RES_VENDOR;
+		static const struct cpu_decode_rule policy[] = {
+			{ 0x7Fu, 0x0Bu, CPU_RES_VENDOR }, { 0x7Fu, 0x2Bu, CPU_RES_VENDOR },
+			{ 0x7Fu, 0x5Bu, CPU_RES_VENDOR }, { 0x7Fu, 0x7Bu, CPU_RES_VENDOR },
+		};
+		enum cpu_reservation r = cpu_decode_rules_u32(cpu_fixed_get_u32(insn, 0),
+			policy, sizeof(policy) / sizeof(policy[0]));
+		if (r != CPU_RES_DEFINED) return r;
 	}
 	return riscv_is_reserved(isa, insn, len) ? CPU_RES_RESERVED : CPU_RES_DEFINED;
 }
@@ -105,6 +131,7 @@ struct cpu_isa *cpu_isa_riscv(const char *name)
 		       riscv_is_reserved, riscv_next);
 	isa.classify = riscv_classify;
 	isa.min_len = 2;	/* compressed instructions are 2 bytes */
+	isa.max_len = 24;	/* 16, 32, 48, 64, and encoded 80+ parcel forms */
 	isa.align = 2;
 	return &isa;
 }

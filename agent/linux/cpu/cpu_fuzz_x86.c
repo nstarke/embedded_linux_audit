@@ -87,6 +87,20 @@ static uintptr_t x86_fault_pc(void *uc)
 	return 0;
 #endif
 }
+
+static uint64_t x86_state_hash(void *uc)
+{
+	uint64_t h = 1469598103934665603ULL;
+#if defined(__x86_64__) || defined(__i386__)
+	ucontext_t *u = uc;
+	const uint8_t *p = (const uint8_t *)&u->uc_mcontext;
+	size_t n = sizeof(u->uc_mcontext);
+	while (n--) { h ^= *p++; h *= 1099511628211ULL; }
+#else
+	(void)uc;
+#endif
+	return h;
+}
 /* LCOV_EXCL_STOP */
 
 /* ---- candidate generation ----------------------------------------------- */
@@ -137,6 +151,12 @@ static int x86_next(struct cpu_isa *isa, const struct cpu_search *s,
 		memset(out, 0x90, (size_t)n);
 		memcpy(out, corpus[index % (sizeof(corpus) / sizeof(corpus[0]))],
 		       (size_t)(n < 3 ? n : 3));
+		/* Cover the decoder boundary, not merely eight literal examples.  ModRM,
+		 * trailing bytes, and prefix combinations are varied deterministically. */
+		if (n > 1) out[1] ^= (uint8_t)((index >> 3) & 0x07);
+		if (n > 2) out[2] ^= (uint8_t)((index >> 6) & 0xFF);
+		if (n > 3) out[3] = (uint8_t)(index >> 14);
+		if (n > 4) out[4] = (uint8_t)(index >> 22);
 		return n;
 	}
 
@@ -176,7 +196,8 @@ static int x86_next(struct cpu_isa *isa, const struct cpu_search *s,
 
 /* Skip legacy prefixes and REX, return the effective opcode and whether it was
  * a two-byte (0F) opcode. Minimal, single-byte-opcode aware. */
-static int x86_primary_opcode(const uint8_t *b, int len, int *is0f, int *modrm_reg)
+static int x86_primary_opcode(struct cpu_isa *isa, const uint8_t *b, int len,
+			    int *is0f, int *modrm_reg)
 {
 	int i = 0;
 
@@ -192,7 +213,7 @@ static int x86_primary_opcode(const uint8_t *b, int len, int *is0f, int *modrm_r
 			continue;
 		}
 		/* REX (x86_64) */
-		if ((c & 0xF0) == 0x40) {
+		if (strstr(isa->name, "64") && (c & 0xF0) == 0x40) {
 			i++;
 			continue;
 		}
@@ -220,16 +241,15 @@ static int x86_is_reserved(struct cpu_isa *isa, const uint8_t *insn, int len)
 	int is0f, reg, op;
 
 	(void)isa;
-	op = x86_primary_opcode(insn, len, &is0f, &reg);
+	op = x86_primary_opcode(isa, insn, len, &is0f, &reg);
 	if (op < 0)
 		return 0;
 
 	if (!is0f) {
 		switch (op) {
 		case 0xD6:	/* SALC   -- undocumented, still present on many */
-		case 0xF1:	/* ICEBP/INT1 -- undocumented                    */
 		case 0x82:	/* alias of 0x80 -- invalid in 64-bit mode       */
-			return 1;
+			return strstr(isa->name, "64") != NULL;
 		default:
 			return 0;
 		}
@@ -277,6 +297,7 @@ struct cpu_isa *cpu_isa_x86(const char *name)
 	isa.is_reserved = x86_is_reserved;
 	isa.classify = x86_classify;
 	isa.fault_pc = x86_fault_pc;
+	isa.state_hash = x86_state_hash;
 	isa.priv = &st;
 	return &isa;
 }

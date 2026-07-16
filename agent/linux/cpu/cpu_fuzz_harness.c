@@ -63,6 +63,7 @@ static volatile int          g_signo;
 static volatile int          g_si_code;
 static volatile uintptr_t    g_si_addr;
 static volatile uintptr_t    g_fault_pc;
+static volatile uint64_t     g_state_hash;
 static uintptr_t             g_guard_lo, g_guard_hi;
 static uintptr_t             g_expected_trap_pc;
 static struct cpu_isa       *g_isa;
@@ -115,6 +116,11 @@ static void on_signal(int sig, siginfo_t *si, void *uc)
 	g_si_code  = si ? si->si_code : 0;
 	g_si_addr  = (uintptr_t)(si ? si->si_addr : NULL);
 	g_fault_pc = (g_isa && g_isa->fault_pc) ? g_isa->fault_pc(uc) : 0;
+	/* Context is captured at the architecturally-visible outcome boundary. */
+	/* g_state_hash is intentionally computed in the handler: it describes the
+	 * candidate's effects before longjmp restores the executor's state. */
+	/* NOLINTNEXTLINE: signal-safe callback is a pure context walk. */
+	g_state_hash = (g_isa && g_isa->state_hash) ? g_isa->state_hash(uc) : 0;
 	g_active   = 0;
 	siglongjmp(g_jb, 1);
 }
@@ -157,6 +163,7 @@ static void classify(struct cpu_isa *isa, uintptr_t start, int len,
 	res->si_code = g_si_code;
 	res->fault_pc = g_fault_pc;
 	res->fault_addr = g_si_addr;
+	res->state_hash = g_state_hash;
 	if (!isa->variable_length && g_signo != SIGTRAP &&
 	    g_fault_pc && g_fault_pc != start) {
 		/* The candidate escaped into filler/stale control flow and then
@@ -241,7 +248,7 @@ static void run_placed(struct cpu_harness *h, struct cpu_isa *isa,
 		memcpy(cstart, bytes, (size_t)clen);
 	} else {
 		entry  = h->arena;
-		cstart = h->arena;
+		cstart = h->arena + isa->prologue_len;
 		/* Make every possible fall-through/branch destination a trap rather
 		 * than stale executable data from a previous candidate. */
 		if (isa->epilogue_len > 0) {
@@ -251,11 +258,13 @@ static void run_placed(struct cpu_harness *h, struct cpu_isa *isa,
 				memcpy(entry + off, isa->epilogue,
 				       (size_t)isa->epilogue_len);
 		}
-		memcpy(entry, bytes, (size_t)clen);
+		if (isa->prologue_len)
+			memcpy(entry, isa->prologue, (size_t)isa->prologue_len);
+		memcpy(cstart, bytes, (size_t)clen);
 		if (isa->epilogue_len)
-			memcpy(entry + clen, isa->epilogue,
+			memcpy(cstart + clen, isa->epilogue,
 			       (size_t)isa->epilogue_len);
-		g_expected_trap_pc = (uintptr_t)entry + (uintptr_t)clen;
+		g_expected_trap_pc = (uintptr_t)cstart + (uintptr_t)clen;
 	}
 	cpu_flush_icache(entry, h->guard);
 
@@ -266,6 +275,7 @@ static void run_placed(struct cpu_harness *h, struct cpu_isa *isa,
 	g_si_code  = 0;
 	g_si_addr  = 0;
 	g_fault_pc = 0;
+	g_state_hash = 0;
 
 	if (sigsetjmp(g_jb, 1) == 0) {
 		/* Per-execution watchdog: a candidate that hangs (a blocking or
@@ -302,6 +312,7 @@ static void run_placed(struct cpu_harness *h, struct cpu_isa *isa,
 		setitimer(ITIMER_REAL, &off, NULL);
 	}
 	res->signo = g_signo;
+	res->state_hash = g_state_hash;
 	classify(isa, (uintptr_t)cstart, clen, res);
 }
 
@@ -434,13 +445,58 @@ int cpu_harness_seccomp_lockdown(void)
 		__NR_exit,
 #endif
 	};
-	struct sock_filter prog_body[8 + 2 * (int)(sizeof(allowed) /
-						   sizeof(allowed[0]))];
+	struct sock_filter prog_body[12 + 2 * (int)(sizeof(allowed) /
+							   sizeof(allowed[0]))];
 	struct sock_fprog prog;
 	int n = 0;
 	size_t i;
 
-	/* Load the syscall number into the BPF accumulator. */
+	/* Reject a compat/foreign syscall ABI before examining its number.  Without
+	 * this, an x86 int 0x80-style entry can reinterpret an allowed native number. */
+	prog_body[n++] = (struct sock_filter)BPF_STMT(
+		BPF_LD | BPF_W | BPF_ABS,
+		(uint32_t)offsetof(struct seccomp_data, arch));
+#if defined(__x86_64__) && defined(AUDIT_ARCH_X86_64)
+	prog_body[n++] = (struct sock_filter)BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K,
+		AUDIT_ARCH_X86_64, 1, 0);
+#elif defined(__i386__) && defined(AUDIT_ARCH_I386)
+	prog_body[n++] = (struct sock_filter)BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K,
+		AUDIT_ARCH_I386, 1, 0);
+#elif defined(__aarch64__) && defined(AUDIT_ARCH_AARCH64)
+	prog_body[n++] = (struct sock_filter)BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K,
+		AUDIT_ARCH_AARCH64, 1, 0);
+#elif defined(__arm__) && defined(AUDIT_ARCH_ARM)
+	prog_body[n++] = (struct sock_filter)BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K,
+		AUDIT_ARCH_ARM, 1, 0);
+#elif defined(__riscv) && __riscv_xlen == 64 && defined(AUDIT_ARCH_RISCV64)
+	prog_body[n++] = (struct sock_filter)BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K,
+		AUDIT_ARCH_RISCV64, 1, 0);
+#elif defined(__riscv) && defined(AUDIT_ARCH_RISCV32)
+	prog_body[n++] = (struct sock_filter)BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K,
+		AUDIT_ARCH_RISCV32, 1, 0);
+#elif defined(__powerpc64__) && defined(__LITTLE_ENDIAN__) && defined(AUDIT_ARCH_PPC64LE)
+	prog_body[n++] = (struct sock_filter)BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K,
+		AUDIT_ARCH_PPC64LE, 1, 0);
+#elif defined(__powerpc64__) && defined(AUDIT_ARCH_PPC64)
+	prog_body[n++] = (struct sock_filter)BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K,
+		AUDIT_ARCH_PPC64, 1, 0);
+#elif defined(__powerpc__) && defined(AUDIT_ARCH_PPC)
+	prog_body[n++] = (struct sock_filter)BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K,
+		AUDIT_ARCH_PPC, 1, 0);
+#elif defined(__mips__) && defined(__MIPSEL__) && defined(AUDIT_ARCH_MIPSEL)
+	prog_body[n++] = (struct sock_filter)BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K,
+		AUDIT_ARCH_MIPSEL, 1, 0);
+#elif defined(__mips__) && defined(AUDIT_ARCH_MIPS)
+	prog_body[n++] = (struct sock_filter)BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K,
+		AUDIT_ARCH_MIPS, 1, 0);
+#else
+	/* No known audit architecture: do not install an incomplete filter. */
+	return -1;
+#endif
+	prog_body[n++] = (struct sock_filter)BPF_STMT(BPF_RET | BPF_K,
+		SECCOMP_RET_TRAP);
+
+	/* Load the native syscall number into the BPF accumulator. */
 	prog_body[n++] = (struct sock_filter)BPF_STMT(
 		BPF_LD | BPF_W | BPF_ABS,
 		(uint32_t)offsetof(struct seccomp_data, nr));
