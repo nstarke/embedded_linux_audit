@@ -37,28 +37,30 @@ function fsRootFromArtifactPath(dataDir, artifactPath) {
   return path.join(dataDir, ...segs.slice(0, fsIdx + 1));
 }
 
-// Count the program subdirectories Haruspex created under the output root as a
-// proxy for "binaries actually decompiled". Each loaded program gets its own
-// `<programName>/` directory; we count those that contain at least one .c file.
+// Count the program directories Haruspex created under the output root as a
+// proxy for "binaries actually decompiled". Each loaded program gets a directory
+// mirroring its path within the fs tree, so recurse and count every directory
+// that holds at least one .c file.
 async function countAnalyzed(outputRoot, fs = fsp) {
-  let entries;
-  try {
-    entries = await fs.readdir(outputRoot, { withFileTypes: true });
-  } catch {
-    return 0;
-  }
-  let analyzed = 0;
-  for (const entry of entries) {
-    if (!entry.isDirectory()) {
-      continue;
+  let count = 0;
+  async function walk(dir) {
+    let entries;
+    try {
+      entries = await fs.readdir(dir, { withFileTypes: true });
+    } catch {
+      return;
     }
-    const sub = path.join(outputRoot, entry.name);
-    const inner = await fs.readdir(sub).catch(() => []);
-    if (inner.some((n) => n.endsWith('.c'))) {
-      analyzed += 1;
+    if (entries.some((e) => e.isFile() && e.name.endsWith('.c'))) {
+      count += 1;
+    }
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        await walk(path.join(dir, entry.name));
+      }
     }
   }
-  return analyzed;
+  await walk(outputRoot);
+  return count;
 }
 
 /**

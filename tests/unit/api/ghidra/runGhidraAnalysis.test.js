@@ -47,6 +47,19 @@ describe('countAnalyzed', () => {
 
     expect(await countAnalyzed(root)).toBe(2);
   });
+
+  test('counts program dirs nested at any depth (structured output tree)', async () => {
+    // Output now mirrors the fs layout, so program dirs are nested under their
+    // path (e.g. lib/modules/.../foo.ko/) rather than sitting at the top level.
+    const a = path.join(root, 'lib', 'modules', '4.4', 'cdc-acm.ko');
+    const b = path.join(root, 'usr', 'sbin', 'swarm.cgi');
+    await fsp.mkdir(a, { recursive: true });
+    await fsp.writeFile(path.join(a, 'probe@0x100.c'), 'int probe(){}');
+    await fsp.mkdir(b, { recursive: true });
+    await fsp.writeFile(path.join(b, 'main@0x1.c'), 'int main(){}');
+    // Intermediate dirs (lib, usr, ...) hold no .c files and must not be counted.
+    expect(await countAnalyzed(root)).toBe(2);
+  });
 });
 
 describe('runGhidraAnalysis orchestration', () => {

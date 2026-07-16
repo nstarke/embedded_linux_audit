@@ -27,10 +27,10 @@ function analyzeHeadlessBin(ghidraHome) {
  * skipping everything it cannot load — so binary discovery is Ghidra's job, not
  * ours.
  *
- * `outputBase` is passed as the post-script's first argument, so Haruspex
- * writes to `<outputBase>/<programName>/<func@addr>.c` — one subdirectory per
- * binary under the `ghidra/` output root, kept out of the `fs/` tree that holds
- * the uploaded binaries themselves.
+ * `outputBase` and `importTarget` are passed as the post-script's args, so
+ * Haruspex writes to `<outputBase>/<path-within-fs>/<func@addr>.c` — mirroring
+ * each binary's location in the imported filesystem tree, kept out of the `fs/`
+ * tree that holds the uploaded binaries themselves.
  *
  * @param {object} opts
  * @param {string}   opts.importTarget   Absolute path to import (the fs root).
@@ -75,7 +75,9 @@ function runAnalyzeHeadless(opts = {}) {
   }
   argv.push(
     '-scriptPath', scriptDir,
-    '-postScript', POST_SCRIPT, outputBase,
+    // Haruspex args: <outputBase> <importRoot>. The import root lets it place
+    // each binary's output at its path within the fs tree, not a flat basename.
+    '-postScript', POST_SCRIPT, outputBase, importTarget,
     '-analysisTimeoutPerFile', String(analysisTimeoutSec),
     // Fresh throwaway project; -deleteProject reclaims it when the run ends.
     '-deleteProject',
