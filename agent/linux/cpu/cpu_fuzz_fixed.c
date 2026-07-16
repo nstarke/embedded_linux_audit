@@ -17,6 +17,14 @@
 #include <string.h>
 #include <ucontext.h>
 
+/*
+ * Index of NIP (the PC) within a PowerPC general-register set, from the
+ * kernel's asm/ptrace.h (r0-r31, then nip).  No libc header exposes PT_NIP, and
+ * including asm/ptrace.h alongside sys/ucontext.h conflicts on PowerPC, so the
+ * one constant we need is spelled out here.
+ */
+#define ELA_PPC_PT_NIP 32
+
 /* Linux names the PC differently on each fixed-width target.  Keeping this
  * here means the common trampoline can verify that the sentinel, rather than
  * an instruction-generated trap, ended execution. */
@@ -30,8 +38,27 @@ uintptr_t cpu_fixed_fault_pc(void *ctx)
 	return (uintptr_t)u->uc_mcontext.arm_pc;
 #elif defined(__mips__)
 	return (uintptr_t)u->uc_mcontext.pc;
-#elif defined(__powerpc__) || defined(__powerpc64__)
-	return u->uc_mcontext.regs ? (uintptr_t)u->uc_mcontext.regs->nip : 0;
+#elif defined(__powerpc64__)
+	/*
+	 * Read NIP out of the general-register array rather than via
+	 * uc_mcontext.regs: glibc only forward-declares `struct pt_regs` in
+	 * sys/ucontext.h, so dereferencing that pointer does not compile (musl
+	 * defines the struct, which is why only the glibc targets failed).
+	 * gp_regs is present and identically laid out on both libcs.
+	 */
+	return (uintptr_t)u->uc_mcontext.gp_regs[ELA_PPC_PT_NIP];
+#elif defined(__powerpc__)
+# if defined(__GLIBC__)
+	/*
+	 * 32-bit glibc does not store the context inline: uc_mcontext is a
+	 * `union uc_regs_ptr` of pointers into uc_reg_space, so the register
+	 * array is one dereference further out than on every other target.
+	 */
+	return u->uc_mcontext.uc_regs
+		? (uintptr_t)u->uc_mcontext.uc_regs->gregs[ELA_PPC_PT_NIP] : 0;
+# else
+	return (uintptr_t)u->uc_mcontext.gregs[ELA_PPC_PT_NIP];
+# endif
 #elif defined(__riscv)
 # ifdef REG_PC
 	return (uintptr_t)u->uc_mcontext.__gregs[REG_PC];
@@ -58,6 +85,13 @@ uint64_t cpu_fixed_state_hash(void *ctx)
 	p = (const uint8_t *)&u->uc_mcontext; n = sizeof(u->uc_mcontext);
 #elif defined(__arm__)
 	p = (const uint8_t *)&u->uc_mcontext; n = sizeof(u->uc_mcontext);
+#elif defined(__powerpc__) && !defined(__powerpc64__) && defined(__GLIBC__)
+	/* 32-bit glibc's uc_mcontext is a union of POINTERS into uc_reg_space,
+	 * not the context itself; hashing it directly would hash an address
+	 * (near-constant across candidates) instead of the register state, so
+	 * every observation would look identical.  Hash what it points at. */
+	p = (const uint8_t *)u->uc_mcontext.uc_regs;
+	n = u->uc_mcontext.uc_regs ? sizeof(*u->uc_mcontext.uc_regs) : 0;
 #elif defined(__mips__) || defined(__powerpc__) || defined(__powerpc64__) || defined(__riscv)
 	p = (const uint8_t *)&u->uc_mcontext; n = sizeof(u->uc_mcontext);
 #else
