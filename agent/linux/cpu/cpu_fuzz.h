@@ -28,6 +28,7 @@ enum cpu_mode {
 	CPU_MODE_BRUTE,		/* dense increment of the encoding number        */
 	CPU_MODE_RANDOM,	/* random encodings                              */
 	CPU_MODE_SWEEP,		/* fixed-width: stride the 32/16-bit space       */
+	CPU_MODE_TARGETED,	/* reserved-field and extension boundary corpus  */
 };
 
 /* Outcome of executing one candidate. Ordering matters only for stats. */
@@ -42,6 +43,17 @@ enum cpu_outcome {
 	CPU_OUT_HANG,		/* watchdog fired (branch-to-self / stall)       */
 	CPU_OUT_SYSCALL,	/* candidate attempted a syscall (seccomp trap)  */
 	CPU_OUT_OTHER,		/* some other signal                             */
+};
+
+enum cpu_reservation {
+	CPU_RES_DEFINED = 0,
+	CPU_RES_RESERVED,
+	CPU_RES_UNDEFINED,
+	CPU_RES_IMPLEMENTATION,
+	CPU_RES_VENDOR,
+	CPU_RES_FEATURE_GATED,
+	CPU_RES_PRIVILEGED,
+	CPU_RES_UNKNOWN,
 };
 
 const char *cpu_outcome_name(enum cpu_outcome o);
@@ -61,6 +73,12 @@ struct cpu_result {
 	int      exec_len;	/* measured executed length (x86); else == len   */
 	enum cpu_outcome outcome;
 	int      signo;		/* raw signal number when signal-classified      */
+	int      si_code;		/* architecture/kernel-specific signal reason  */
+	uintptr_t fault_pc;	/* PC reported by the signal context             */
+	uintptr_t fault_addr;	/* fault address, when supplied                   */
+	int      reached_sentinel;	/* fixed-width candidate reached its epilogue */
+	enum cpu_reservation reservation;
+	int      confirmations;
 	char     note[96];
 };
 
@@ -97,6 +115,9 @@ struct cpu_isa {
 	 * whose *execution* (no SIGILL) is a finding? Fixed-width discovery
 	 * signal; x86 returns 0 (it uses length/validity anomalies instead). */
 	int  (*is_reserved)(struct cpu_isa *isa, const uint8_t *insn, int len);
+	/* Optional precise category used by the finding classifier. */
+	enum cpu_reservation (*classify)(struct cpu_isa *isa,
+					 const uint8_t *insn, int len);
 
 	/* Extract the faulting program counter from a ucontext_t* (x86 length
 	 * measurement). NULL when the ISA classifies by signal number alone. */

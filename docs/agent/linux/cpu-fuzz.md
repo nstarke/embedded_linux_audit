@@ -51,9 +51,12 @@ space — exactly where hidden instructions live:
 | RISC-V | 32-bit **custom-0/1/2/3** opcodes (`0x0B/0x2B/0x5B/0x7B`) + reserved **16-bit compressed** encodings |
 
 Ordinary outcomes (a normal instruction executing, a plain `SIGILL` in reserved
-space) are counted in the run summary but not saved. A human triages the saved
-findings with their own disassembler — ELA ships no disassembler because it is a
-self-contained static binary.
+space) are counted in the run summary but not saved. Suspicious candidates are
+re-executed twice and saved only when outcome, length, signal reason, and
+sentinel reachability are stable. Finding lines include signal code, fault PC,
+sentinel status, confirmation count, and reservation category. A human triages
+the saved findings with their own disassembler — ELA ships no disassembler
+because it is a self-contained static binary.
 
 ## Listing (`cpu list`)
 
@@ -65,7 +68,7 @@ embedded_linux_audit linux cpu list
 HOST ISA       WIDTH      MODE       FUZZER
 x86_64         1-15 (var) tunnel     supported
 
-Fuzz it with: linux cpu fuzz [--mode tunnel|brute|random]
+Fuzz it with: linux cpu fuzz [--mode tunnel|brute|random|targeted]
 ```
 
 ## Fuzzing (`cpu fuzz`)
@@ -104,7 +107,7 @@ Executing attacker-controlled code is dangerous; four layers contain it:
 
 | Option | Meaning |
 |---|---|
-| `--mode NAME` | `tunnel` \| `brute` \| `random` (x86) or `sweep` (fixed-width); default is ISA-appropriate |
+| `--mode NAME` | `tunnel` \| `brute` \| `random` \| `sweep` \| `targeted`; default is ISA-appropriate |
 | `--iterations N` | candidates to run (default 1,000,000) |
 | `--length N` | x86 max candidate byte length, 1–15 (default 15) |
 | `--probe-every N` | progress / remote-stream heartbeat cadence (default 4096) |

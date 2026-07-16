@@ -46,6 +46,18 @@ static int arm64_is_reserved(struct cpu_isa *isa, const uint8_t *insn, int len)
 	return 0;
 }
 
+static enum cpu_reservation arm64_classify(struct cpu_isa *isa,
+						 const uint8_t *insn, int len)
+{
+	uint32_t v;
+	if (len < 4)
+		return CPU_RES_DEFINED;
+	v = cpu_fixed_get_u32(insn, isa->big_endian);
+	if ((v & 0xFFFFF01Fu) == 0xD503201Fu && ((v >> 5) & 0x7F) > 0x27)
+		return CPU_RES_IMPLEMENTATION;
+	return arm64_is_reserved(isa, insn, len) ? CPU_RES_RESERVED : CPU_RES_DEFINED;
+}
+
 struct cpu_isa *cpu_isa_arm64(const char *name)
 {
 	static struct cpu_isa isa;
@@ -53,5 +65,6 @@ struct cpu_isa *cpu_isa_arm64(const char *name)
 
 	cpu_fixed_fill(&isa, be ? "aarch64-be" : "aarch64-le", be,
 		       BRK_AARCH64, arm64_is_reserved, NULL);
+	isa.classify = arm64_classify;
 	return &isa;
 }

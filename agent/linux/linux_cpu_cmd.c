@@ -59,6 +59,7 @@ static int parse_mode(const char *s, enum cpu_mode *out)
 	if (!strcmp(s, "brute"))  { *out = CPU_MODE_BRUTE;  return 0; }
 	if (!strcmp(s, "random")) { *out = CPU_MODE_RANDOM; return 0; }
 	if (!strcmp(s, "sweep"))  { *out = CPU_MODE_SWEEP;  return 0; }
+	if (!strcmp(s, "targeted")) { *out = CPU_MODE_TARGETED; return 0; }
 	return -1;
 }
 
@@ -70,7 +71,7 @@ static void fuzz_usage(void)
 		"  on the host CPU (ISA = %s). AUTHORIZED USE ONLY -- executes\n"
 		"  generated machine code; can wedge a core or panic the host.\n"
 		"\n"
-		"  --mode NAME      tunnel|brute|random (x86) or sweep (fixed-width);\n"
+		"  --mode NAME      tunnel|brute|random|targeted or sweep;\n"
 		"                     default is ISA-appropriate\n"
 		"  --iterations N   candidates to run (default 1000000)\n"
 		"  --length N       x86 max candidate byte length, 1..15 (default 15)\n"

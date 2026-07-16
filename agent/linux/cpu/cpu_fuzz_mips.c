@@ -46,6 +46,18 @@ static int mips_is_reserved(struct cpu_isa *isa, const uint8_t *insn, int len)
 	return 0;
 }
 
+static enum cpu_reservation mips_classify(struct cpu_isa *isa,
+						 const uint8_t *insn, int len)
+{
+	uint32_t v;
+	if (len < 4)
+		return CPU_RES_DEFINED;
+	v = cpu_fixed_get_u32(insn, isa->big_endian);
+	if (((v >> 26) & 0x3F) == 0x12 || ((v >> 26) & 0x3F) == 0x1C)
+		return CPU_RES_VENDOR;
+	return mips_is_reserved(isa, insn, len) ? CPU_RES_RESERVED : CPU_RES_DEFINED;
+}
+
 struct cpu_isa *cpu_isa_mips(const char *name)
 {
 	static struct cpu_isa isa;
@@ -54,5 +66,6 @@ struct cpu_isa *cpu_isa_mips(const char *name)
 
 	cpu_fixed_fill(&isa, is64 ? "mips64" : "mips", !le, BREAK_MIPS,
 		       mips_is_reserved, NULL);
+	isa.classify = mips_classify;
 	return &isa;
 }

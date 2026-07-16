@@ -19,6 +19,9 @@ void     cpu_fixed_put_u32(uint8_t *out, uint32_t v, int big_endian);
 uint32_t cpu_fixed_get_u32(const uint8_t *in, int big_endian);
 void     cpu_fixed_put_u16(uint8_t *out, uint16_t v, int big_endian);
 uint16_t cpu_fixed_get_u16(const uint8_t *in, int big_endian);
+uintptr_t cpu_fixed_fault_pc(void *ucontext);
+enum cpu_reservation cpu_fixed_classify_reserved(struct cpu_isa *,
+						 const uint8_t *, int);
 
 /* Generic 4-byte sweep/brute/random candidate generator (the default next). */
 int cpu_fixed_next4(struct cpu_isa *isa, const struct cpu_search *s,

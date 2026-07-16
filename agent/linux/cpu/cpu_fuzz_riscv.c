@@ -35,6 +35,11 @@ static int riscv_next(struct cpu_isa *isa, const struct cpu_search *s,
 	case CPU_MODE_BRUTE:
 		enc = (uint32_t)index;
 		break;
+	case CPU_MODE_TARGETED: {
+		static const uint32_t op[] = { 0x0B, 0x2B, 0x5B, 0x7B };
+		enc = ((uint32_t)(index / 4) << 7) | op[index % 4];
+		break;
+	}
 	case CPU_MODE_SWEEP:
 	default:
 		enc = (uint32_t)(s->seed + index * stride);
@@ -80,6 +85,17 @@ static int riscv_is_reserved(struct cpu_isa *isa, const uint8_t *insn, int len)
 	return 0;
 }
 
+static enum cpu_reservation riscv_classify(struct cpu_isa *isa,
+						 const uint8_t *insn, int len)
+{
+	if (len >= 4) {
+		uint32_t op = cpu_fixed_get_u32(insn, 0) & 0x7F;
+		if (op == 0x0B || op == 0x2B || op == 0x5B || op == 0x7B)
+			return CPU_RES_VENDOR;
+	}
+	return riscv_is_reserved(isa, insn, len) ? CPU_RES_RESERVED : CPU_RES_DEFINED;
+}
+
 struct cpu_isa *cpu_isa_riscv(const char *name)
 {
 	static struct cpu_isa isa;
@@ -87,6 +103,7 @@ struct cpu_isa *cpu_isa_riscv(const char *name)
 
 	cpu_fixed_fill(&isa, is64 ? "riscv64" : "riscv32", 0, EBREAK_RISCV,
 		       riscv_is_reserved, riscv_next);
+	isa.classify = riscv_classify;
 	isa.min_len = 2;	/* compressed instructions are 2 bytes */
 	isa.align = 2;
 	return &isa;

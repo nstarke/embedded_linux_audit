@@ -127,6 +127,18 @@ static int x86_next(struct cpu_isa *isa, const struct cpu_search *s,
 		}
 		return n;
 	}
+	if (s->mode == CPU_MODE_TARGETED) {
+		static const uint8_t corpus[][3] = {
+			{ 0xD6, 0x90, 0x90 }, { 0xF1, 0x90, 0x90 },
+			{ 0x82, 0xC0, 0x00 }, { 0x0F, 0x04, 0x90 },
+			{ 0x0F, 0x0A, 0x90 }, { 0x0F, 0x24, 0xC0 },
+			{ 0x0F, 0x26, 0xC0 }, { 0x0F, 0x39, 0x90 },
+		};
+		memset(out, 0x90, (size_t)n);
+		memcpy(out, corpus[index % (sizeof(corpus) / sizeof(corpus[0]))],
+		       (size_t)(n < 3 ? n : 3));
+		return n;
+	}
 
 	/* CPU_MODE_TUNNEL (default): steer by the previous candidate's length. */
 	if (!st->started || index == 0) {
@@ -239,6 +251,12 @@ static int x86_is_reserved(struct cpu_isa *isa, const uint8_t *insn, int len)
 	}
 }
 
+static enum cpu_reservation x86_classify(struct cpu_isa *isa,
+					 const uint8_t *insn, int len)
+{
+	return x86_is_reserved(isa, insn, len) ? CPU_RES_UNKNOWN : CPU_RES_DEFINED;
+}
+
 struct cpu_isa *cpu_isa_x86(const char *name)
 {
 	static struct x86_state st;
@@ -257,6 +275,7 @@ struct cpu_isa *cpu_isa_x86(const char *name)
 	isa.epilogue_len = 0;	/* TF single-steps; no trap epilogue needed */
 	isa.next = x86_next;
 	isa.is_reserved = x86_is_reserved;
+	isa.classify = x86_classify;
 	isa.fault_pc = x86_fault_pc;
 	isa.priv = &st;
 	return &isa;

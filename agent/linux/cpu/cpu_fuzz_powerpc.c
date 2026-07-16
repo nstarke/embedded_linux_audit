@@ -31,6 +31,18 @@ static int ppc_is_reserved(struct cpu_isa *isa, const uint8_t *insn, int len)
 	return opc == 1 || opc == 2 || opc == 4 || opc == 5 || opc == 6;
 }
 
+static enum cpu_reservation ppc_classify(struct cpu_isa *isa,
+					 const uint8_t *insn, int len)
+{
+	uint32_t v;
+	if (len < 4)
+		return CPU_RES_DEFINED;
+	v = cpu_fixed_get_u32(insn, isa->big_endian);
+	if (((v >> 26) & 0x3F) == 4)
+		return CPU_RES_VENDOR;
+	return ppc_is_reserved(isa, insn, len) ? CPU_RES_RESERVED : CPU_RES_DEFINED;
+}
+
 struct cpu_isa *cpu_isa_powerpc(const char *name)
 {
 	static struct cpu_isa isa;
@@ -40,5 +52,6 @@ struct cpu_isa *cpu_isa_powerpc(const char *name)
 	cpu_fixed_fill(&isa,
 		       is64 ? (le ? "powerpc64le" : "powerpc64") : "powerpc",
 		       !le, TRAP_PPC, ppc_is_reserved, NULL);
+	isa.classify = ppc_classify;
 	return &isa;
 }

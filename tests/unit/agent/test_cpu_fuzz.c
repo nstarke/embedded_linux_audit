@@ -74,6 +74,7 @@ static void exercise_next(struct cpu_isa *isa)
 {
 	static const enum cpu_mode modes[] = {
 		CPU_MODE_SWEEP, CPU_MODE_BRUTE, CPU_MODE_RANDOM, CPU_MODE_TUNNEL,
+		CPU_MODE_TARGETED,
 	};
 	size_t m;
 

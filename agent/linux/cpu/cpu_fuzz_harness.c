@@ -60,9 +60,11 @@ struct cpu_harness {
 static sigjmp_buf            g_jb;
 static volatile sig_atomic_t g_active;
 static volatile int          g_signo;
+static volatile int          g_si_code;
 static volatile uintptr_t    g_si_addr;
 static volatile uintptr_t    g_fault_pc;
 static uintptr_t             g_guard_lo, g_guard_hi;
+static uintptr_t             g_expected_trap_pc;
 static struct cpu_isa       *g_isa;
 
 /* LCOV_EXCL_START -- runs machine code; only exercised on real hardware */
@@ -110,6 +112,7 @@ static void on_signal(int sig, siginfo_t *si, void *uc)
 		return;
 	}
 	g_signo    = sig;
+	g_si_code  = si ? si->si_code : 0;
 	g_si_addr  = (uintptr_t)(si ? si->si_addr : NULL);
 	g_fault_pc = (g_isa && g_isa->fault_pc) ? g_isa->fault_pc(uc) : 0;
 	g_active   = 0;
@@ -150,11 +153,30 @@ static int install_handlers(void)
 static void classify(struct cpu_isa *isa, uintptr_t start, int len,
 		     struct cpu_result *res)
 {
+	res->signo = g_signo;
+	res->si_code = g_si_code;
+	res->fault_pc = g_fault_pc;
+	res->fault_addr = g_si_addr;
+	if (!isa->variable_length && g_signo != SIGTRAP &&
+	    g_fault_pc && g_fault_pc != start) {
+		/* The candidate escaped into filler/stale control flow and then
+		 * faulted. It is not evidence about the candidate encoding. */
+		res->outcome = CPU_OUT_OTHER;
+		return;
+	}
 	switch (g_signo) {
 	case SIGTRAP:
 		/* x86: TF trap after the candidate executed; fixed: the epilogue
 		 * trap after the candidate executed. Either way it ran. */
+		/* A fixed-width candidate is only considered cleanly executed when
+		 * control reached the exact epilogue we installed.  This rejects a
+		 * breakpoint/trap in the candidate and branches into filler bytes. */
+		if (!isa->variable_length && g_fault_pc != g_expected_trap_pc) {
+			res->outcome = CPU_OUT_OTHER;
+			break;
+		}
 		res->outcome = CPU_OUT_EXECUTED;
+		res->reached_sentinel = isa->variable_length ? 1 : 1;
 		if (isa->variable_length && g_fault_pc >= start)
 			res->exec_len = (int)(g_fault_pc - start);
 		break;
@@ -220,10 +242,20 @@ static void run_placed(struct cpu_harness *h, struct cpu_isa *isa,
 	} else {
 		entry  = h->arena;
 		cstart = h->arena;
+		/* Make every possible fall-through/branch destination a trap rather
+		 * than stale executable data from a previous candidate. */
+		if (isa->epilogue_len > 0) {
+			int off;
+			for (off = 0; off + isa->epilogue_len <= (int)h->page;
+			     off += isa->epilogue_len)
+				memcpy(entry + off, isa->epilogue,
+				       (size_t)isa->epilogue_len);
+		}
 		memcpy(entry, bytes, (size_t)clen);
 		if (isa->epilogue_len)
 			memcpy(entry + clen, isa->epilogue,
 			       (size_t)isa->epilogue_len);
+		g_expected_trap_pc = (uintptr_t)entry + (uintptr_t)clen;
 	}
 	cpu_flush_icache(entry, h->guard);
 
@@ -231,6 +263,7 @@ static void run_placed(struct cpu_harness *h, struct cpu_isa *isa,
 	g_guard_lo = (uintptr_t)h->guard;
 	g_guard_hi = (uintptr_t)h->guard + h->page;
 	g_signo    = 0;
+	g_si_code  = 0;
 	g_si_addr  = 0;
 	g_fault_pc = 0;
 

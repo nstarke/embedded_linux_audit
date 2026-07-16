@@ -45,6 +45,22 @@ static int a32_is_reserved(struct cpu_isa *isa, const uint8_t *insn, int len)
 	return 0;
 }
 
+static enum cpu_reservation a32_classify(struct cpu_isa *isa,
+					 const uint8_t *insn, int len)
+{
+	uint32_t v, op, cp;
+	if (len < 4)
+		return CPU_RES_DEFINED;
+	v = cpu_fixed_get_u32(insn, isa->big_endian);
+	if ((v & 0x0FF000F0u) == 0x07F000F0u)
+		return CPU_RES_UNDEFINED;
+	op = (v >> 24) & 0xF;
+	cp = (v >> 8) & 0xF;
+	if ((op == 0xE || op == 0xC || op == 0xD) && cp <= 7)
+		return CPU_RES_VENDOR;
+	return CPU_RES_DEFINED;
+}
+
 /* ---- T32 (Thumb) -------------------------------------------------------- */
 
 static int thumb_next(struct cpu_isa *isa, const struct cpu_search *s,
@@ -63,6 +79,10 @@ static int thumb_next(struct cpu_isa *isa, const struct cpu_search *s,
 		break;
 	case CPU_MODE_BRUTE:
 		enc = (uint32_t)index;
+		break;
+	case CPU_MODE_TARGETED:
+		enc = (index & 1) ? 0xDE00u : 0xE800u;
+		enc |= (uint32_t)(index / 2) & 0x00FFu;
 		break;
 	case CPU_MODE_SWEEP:
 	default:
@@ -112,6 +132,14 @@ static int thumb_is_reserved(struct cpu_isa *isa, const uint8_t *insn, int len)
 	return 0;
 }
 
+static enum cpu_reservation thumb_classify(struct cpu_isa *isa,
+						 const uint8_t *insn, int len)
+{
+	if (len >= 2 && (cpu_fixed_get_u16(insn, 0) & 0xFF00) == 0xDE00)
+		return CPU_RES_UNDEFINED;
+	return thumb_is_reserved(isa, insn, len) ? CPU_RES_VENDOR : CPU_RES_DEFINED;
+}
+
 struct cpu_isa *cpu_isa_arm32(const char *name)
 {
 	static struct cpu_isa isa;
@@ -128,6 +156,8 @@ struct cpu_isa *cpu_isa_arm32(const char *name)
 		isa.thumb = 1;
 		isa.next = thumb_next;
 		isa.is_reserved = thumb_is_reserved;
+		isa.classify = thumb_classify;
+		isa.fault_pc = cpu_fixed_fault_pc;
 		cpu_fixed_put_u16(isa.epilogue, BKPT_T16, 0);
 		isa.epilogue_len = 2;
 		return &isa;
@@ -135,5 +165,6 @@ struct cpu_isa *cpu_isa_arm32(const char *name)
 
 	cpu_fixed_fill(&isa, be ? "arm32-be" : "arm32", be, BKPT_A32,
 		       a32_is_reserved, NULL);
+	isa.classify = a32_classify;
 	return &isa;
 }

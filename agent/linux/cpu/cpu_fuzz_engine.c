@@ -26,6 +26,7 @@
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
+#include <sys/utsname.h>
 #include <time.h>
 #include <unistd.h>
 #ifdef __linux__
@@ -101,6 +102,7 @@ static const char *mode_name(enum cpu_mode m)
 	case CPU_MODE_BRUTE:  return "brute";
 	case CPU_MODE_RANDOM: return "random";
 	case CPU_MODE_SWEEP:  return "sweep";
+	case CPU_MODE_TARGETED: return "targeted";
 	default:              return "?";
 	}
 }
@@ -118,6 +120,54 @@ static int hex_bytes(const uint8_t *b, int len, char *out, size_t outsz)
 	}
 	out[o] = '\0';
 	return (int)o;
+}
+
+static void cpu_feature_snapshot(char *out, size_t outsz)
+{
+	struct utsname u;
+	FILE *f;
+	char line[512];
+	const char *arch = "unknown";
+
+#if defined(__x86_64__)
+	arch = "x86_64";
+#elif defined(__i386__)
+	arch = "x86";
+#elif defined(__aarch64__)
+	arch = "aarch64";
+#elif defined(__arm__)
+	arch = "arm32";
+#elif defined(__mips__)
+	arch = "mips";
+#elif defined(__powerpc64__)
+	arch = "powerpc64";
+#elif defined(__powerpc__)
+	arch = "powerpc";
+#elif defined(__riscv)
+	arch = "riscv";
+#endif
+	if (uname(&u) != 0)
+		memset(&u, 0, sizeof(u));
+	snprintf(out, outsz, "arch=%s kernel=%s machine=%s", arch,
+		 u.release, u.machine);
+	f = fopen("/proc/cpuinfo", "r");
+	if (!f)
+		return;
+	while (fgets(line, sizeof(line), f)) {
+		if (!strncmp(line, "Features", 8) || !strncmp(line, "flags", 5) ||
+		    !strncmp(line, "model name", 10) || !strncmp(line, "isa", 3)) {
+			char *p = strchr(line, ':');
+			if (p) {
+				for (p++; *p == ' ' || *p == '\t'; p++)
+					;
+				p[strcspn(p, "\r\n")] = '\0';
+				snprintf(out + strlen(out), outsz - strlen(out),
+					 " %.*s", 320, p);
+			}
+			break;
+		}
+	}
+	fclose(f);
 }
 
 /* Parse the leading whitespace-delimited hex token of a finding line (the rest
@@ -155,6 +205,8 @@ static int parse_hex(const char *s, uint8_t *out, int cap)
 /* Is this executed candidate worth saving as a finding? */
 static int is_finding(struct cpu_isa *isa, const struct cpu_result *r)
 {
+	if (r->confirmations > 0 && r->confirmations < 2)
+		return 0;
 	if (!isa->is_reserved)
 		return 0;
 	if (isa->variable_length) {
@@ -198,9 +250,20 @@ static int finding_open_header(struct cpu_isa *isa, enum cpu_mode mode,
 		return -1;
 	n = snprintf(hdr, sizeof(hdr), "# target=%s mode=%s\n", tag,
 		     mode_name(mode));
-	if (n > 0 && write(fd, hdr, (size_t)n) != n) {
+	if (n < 0 || (size_t)n >= sizeof(hdr) ||
+	    write(fd, hdr, (size_t)n) != n) {
 		close(fd);
 		return -1;
+	}
+	{
+		char features[512];
+		cpu_feature_snapshot(features, sizeof(features));
+		n = snprintf(hdr, sizeof(hdr), "# host_features=%s\n", features);
+		if (n < 0 || (size_t)n >= sizeof(hdr) ||
+		    write(fd, hdr, (size_t)n) != n) {
+			close(fd);
+			return -1;
+		}
 	}
 	return fd;
 }
@@ -214,8 +277,12 @@ static void finding_write(int fd, const struct cpu_result *r)
 	if (fd < 0)
 		return;
 	hex_bytes(r->bytes, r->len, hex, sizeof(hex));
-	n = snprintf(line, sizeof(line), "%s %s exec_len=%d%s%s\n",
+	n = snprintf(line, sizeof(line),
+		     "%s %s exec_len=%d signo=%d si_code=%d pc=0x%llx "
+		     "sentinel=%d confirms=%d class=%d%s%s\n",
 		     hex, cpu_outcome_name(r->outcome), r->exec_len,
+		     r->signo, r->si_code, (unsigned long long)r->fault_pc,
+		     r->reached_sentinel, r->confirmations, r->reservation,
 		     r->note[0] ? " note=" : "", r->note[0] ? r->note : "");
 	if (n > 0)
 		(void)!write(fd, line, (size_t)n);
@@ -234,6 +301,12 @@ struct cpu_shared_finding {
 	int      exec_len;
 	int      outcome;
 	int      signo;
+	int      si_code;
+	uintptr_t fault_pc;
+	uintptr_t fault_addr;
+	int      reached_sentinel;
+	int      reservation;
+	int      confirmations;
 	char     note[96];
 };
 
@@ -272,6 +345,12 @@ static void ring_push(struct cpu_shared *sh, const struct cpu_result *r)
 	e->exec_len = r->exec_len;
 	e->outcome = r->outcome;
 	e->signo = r->signo;
+	e->si_code = r->si_code;
+	e->fault_pc = r->fault_pc;
+	e->fault_addr = r->fault_addr;
+	e->reached_sentinel = r->reached_sentinel;
+	e->reservation = r->reservation;
+	e->confirmations = r->confirmations;
 	memcpy(e->note, r->note, sizeof(e->note));
 	sh->ring_head = head + 1;	/* publish */
 	sh->findings++;
@@ -325,6 +404,32 @@ static void child_run(struct cpu_isa *isa, const struct cpu_fuzz_opts *o,
 		memcpy((void *)sh->cur_bytes, buf, (size_t)len);
 
 		cpu_harness_exec(h, buf, len, &r);
+		r.reservation = isa->classify ?
+			isa->classify(isa, r.bytes,
+				      isa->variable_length ? r.exec_len : r.len) :
+			((isa->is_reserved && isa->is_reserved(isa, r.bytes,
+							       isa->variable_length ? r.exec_len : r.len)) ?
+			 CPU_RES_RESERVED : CPU_RES_DEFINED);
+		/* Confirm suspicious executions in fresh trampoline invocations. A
+		 * single observation is too weak: branches, feature traps, and stale
+		 * state can otherwise masquerade as undocumented instructions. */
+		r.confirmations = 1;
+		if (r.reservation != CPU_RES_DEFINED &&
+		    r.outcome != CPU_OUT_SIGILL) {
+			int pass;
+			for (pass = 0; pass < 2; pass++) {
+				struct cpu_result c;
+				cpu_harness_exec(h, buf, len, &c);
+				if (c.outcome != r.outcome || c.exec_len != r.exec_len ||
+				    c.reached_sentinel != r.reached_sentinel ||
+				    c.si_code != r.si_code)
+					break;
+				r.confirmations++;
+			}
+			if (r.confirmations < 3)
+				snprintf(r.note, sizeof(r.note), "unstable-confirmation=%d",
+					 r.confirmations);
+		}
 		feedback = r.exec_len;
 		sh->last_feedback = feedback;
 		if (r.outcome <= CPU_OUT_OTHER)
@@ -411,6 +516,12 @@ static void drain_ring(struct cpu_shared *sh, int fd,
 		r.exec_len = e->exec_len;
 		r.outcome = e->outcome;
 		r.signo = e->signo;
+		r.si_code = e->si_code;
+		r.fault_pc = e->fault_pc;
+		r.fault_addr = e->fault_addr;
+		r.reached_sentinel = e->reached_sentinel;
+		r.reservation = e->reservation;
+		r.confirmations = e->confirmations;
 		memcpy(r.note, e->note, sizeof(r.note));
 		finding_write(fd, &r);
 		if (o->sink && o->sink->emit)
