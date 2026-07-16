@@ -49,8 +49,9 @@ describe('agent server utils', () => {
       expect(isValidMacAddress('00:1A:2b:3C:4d:5E')).toBe(true);
     });
 
-    test('rejects a MAC address with hyphens', () => {
-      expect(isValidMacAddress('aa-bb-cc-dd-ee-ff')).toBe(false);
+    test('accepts a hyphen-separated MAC address (the agent uses this form on WS URLs)', () => {
+      expect(isValidMacAddress('aa-bb-cc-dd-ee-ff')).toBe(true);
+      expect(isValidMacAddress('20-4C-03-32-75-5C')).toBe(true);
     });
 
     test('rejects a MAC address that is too short', () => {

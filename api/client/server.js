@@ -8,6 +8,7 @@ const { getClientServiceConfig } = require('../lib/config');
 const { initializeDatabase, runMigrations, closeDatabase } = require('../lib/db');
 const { loadApiKeyHashes } = require('../lib/db/deviceRegistry');
 const { closeCommandQueue } = require('../lib/queue');
+const { closeSnapshotClient } = require('../lib/sessionSnapshot');
 const { createApp } = require('./app');
 
 async function main() {
@@ -40,6 +41,7 @@ async function main() {
   process.on('SIGINT', () => {
     server.close(async () => {
       await closeCommandQueue().catch(() => {});
+      await closeSnapshotClient().catch(() => {});
       await closeDatabase().catch(() => {});
       process.exit(0);
     });

@@ -186,15 +186,21 @@ function getCommandQueueEvents() {
   return commandQueueEvents;
 }
 
-// BullMQ Worker options for the terminal command worker. Concurrency defaults
-// to 1: `runExec` detects completion by watching a session's shared output
-// stream, so two commands running against the SAME device would corrupt each
-// other. Serialising globally is the safe default; raise only with per-device
-// isolation. Env-overridable.
+// BullMQ Worker options for the terminal command worker.
+//
+// `runExec` detects completion by watching a session's shared output stream, so
+// two commands against the SAME device would corrupt each other. That used to
+// force global concurrency 1 — but then one slow exec (e.g. a full-rootfs
+// `remote-copy`) blocked every other device's commands AND the sessions
+// listing, timing operators out. The worker now enforces per-device isolation
+// itself (commandWorker.withDeviceLock: device-touching commands serialize per
+// MAC, control-plane commands never block), so it is safe to run concurrently.
+// Different devices proceed in parallel; a device's own commands still queue.
+// Env-overridable.
 function getCommandWorkerOptions() {
   return {
     connection: getConnection(),
-    concurrency: intFromEnv('ELA_TERMINAL_CONCURRENCY', 1),
+    concurrency: intFromEnv('ELA_TERMINAL_CONCURRENCY', 8),
   };
 }
 

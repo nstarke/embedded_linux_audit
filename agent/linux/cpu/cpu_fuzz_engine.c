@@ -422,12 +422,20 @@ static void drain_ring(struct cpu_shared *sh, int fd,
 static int supervise(struct cpu_isa *isa, const struct cpu_fuzz_opts *o,
 		     struct cpu_shared *sh, int fd)
 {
-	struct sigaction sa;
+	struct sigaction sa, old_sa;
 	time_t last_report = 0;
+
+	/* Clear any interrupt latched by a PRIOR run: the interactive REPL runs
+	 * each command in-process, so this static persists across invocations.
+	 * Without the reset, a single Ctrl-C (or a wedged-core abort) would leave
+	 * g_interrupted set and make every later run a no-op (0 candidates). */
+	g_interrupted = 0;
 
 	memset(&sa, 0, sizeof(sa));
 	sa.sa_handler = on_sigint;
-	sigaction(SIGINT, &sa, NULL);
+	/* Save the caller's SIGINT disposition and restore it on exit so the fuzz
+	 * handler does not leak into the REPL after the run. */
+	sigaction(SIGINT, &sa, &old_sa);
 
 	while (sh->start < (uint64_t)o->iterations && !g_interrupted) {
 		pid_t pid = fork();
@@ -519,6 +527,7 @@ static int supervise(struct cpu_isa *isa, const struct cpu_fuzz_opts *o,
 		}
 	}
 	fputc('\n', stderr);
+	sigaction(SIGINT, &old_sa, NULL);
 	return 0;
 }
 

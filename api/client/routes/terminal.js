@@ -31,6 +31,12 @@ function defaultSendCommand(payload, opts) {
   return require('../../lib/queue').sendTerminalCommand(payload, opts);
 }
 
+// Read the terminal API's out-of-band session snapshot (published to Redis),
+// returning the session array or null when there is no fresh snapshot to serve.
+function defaultReadSessionSnapshot() {
+  return require('../../lib/sessionSnapshot').readFreshSessionSnapshot();
+}
+
 /**
  * Register the operator terminal-control routes on the client API. Every route
  * is scoped to the authenticated user (the client app enforces `req.authUser`
@@ -53,6 +59,7 @@ function registerTerminalRoutes(app, deps = {}) {
     sendCommand = defaultSendCommand,
     listUserDeviceMacs = (username) => deviceRegistry().listUserDeviceMacs(username),
     recordCommandLog = (row) => deviceRegistry().recordCommandLog(row),
+    readSessionSnapshot = defaultReadSessionSnapshot,
   } = deps;
 
   const parseBody = express.json({ limit: MAX_BODY_BYTES, type: () => true });
@@ -115,6 +122,12 @@ function registerTerminalRoutes(app, deps = {}) {
   }
 
   // GET /terminal/sessions — only the caller's associated devices.
+  //
+  // Listing sessions touches no device, so it must never queue behind a
+  // long-running exec on the serialized command worker (head-of-line blocking,
+  // which timed operators out). We first try the snapshot the terminal API
+  // publishes out-of-band; only if no fresh snapshot is available do we fall
+  // back to the command queue (terminal API old/down, or a Redis miss).
   app.get('/terminal/sessions', async (req, res) => {
     let allowed;
     try {
@@ -124,19 +137,31 @@ function registerTerminalRoutes(app, deps = {}) {
       return;
     }
 
-    let result;
+    let sessions = null;
     try {
-      result = await sendCommand({ type: 'sessions' }, { waitMs: DEFAULT_WAIT_MS });
+      sessions = await readSessionSnapshot();
     } catch {
-      res.status(504).json({ error: 'terminal command timed out or terminal API unavailable' });
-      return;
+      // Snapshot unavailable/unreadable — fall through to the queue path.
+      sessions = null;
     }
-    if (result.status !== 200) {
-      res.status(result.status).json(result.body);
-      return;
+
+    if (sessions === null) {
+      let result;
+      try {
+        result = await sendCommand({ type: 'sessions' }, { waitMs: DEFAULT_WAIT_MS });
+      } catch {
+        res.status(504).json({ error: 'terminal command timed out or terminal API unavailable' });
+        return;
+      }
+      if (result.status !== 200) {
+        res.status(result.status).json(result.body);
+        return;
+      }
+      sessions = result.body.sessions || [];
     }
-    const sessions = (result.body.sessions || []).filter((s) => allowed.has(macKey(s.mac)));
-    res.status(200).json({ sessions });
+
+    const filtered = sessions.filter((s) => allowed.has(macKey(s.mac)));
+    res.status(200).json({ sessions: filtered });
   });
 
   // POST /terminal/sessions/:mac — set the device's alias and/or group.

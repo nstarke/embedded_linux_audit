@@ -132,9 +132,9 @@ describe('build queue', () => {
     restore();
   });
 
-  test('getCommandWorkerOptions defaults concurrency to 1 and honours the env override', () => {
+  test('getCommandWorkerOptions defaults concurrency to 8 and honours the env override', () => {
     let { mod, restore } = loadQueue();
-    expect(mod.getCommandWorkerOptions()).toEqual({ connection: { host: 'redis', port: 6379 }, concurrency: 1 });
+    expect(mod.getCommandWorkerOptions()).toEqual({ connection: { host: 'redis', port: 6379 }, concurrency: 8 });
     restore();
 
     ({ mod, restore } = loadQueue({ ELA_TERMINAL_CONCURRENCY: '4' }));

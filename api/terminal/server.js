@@ -8,7 +8,8 @@ const { Worker } = require('bullmq');
 const auth = require('../auth');
 const { getTerminalServiceConfig } = require('../lib/config');
 const { COMMAND_QUEUE_NAME, getCommandWorkerOptions } = require('../lib/queue');
-const { processCommand } = require('./commandWorker');
+const { processCommand, buildSessionList } = require('./commandWorker');
+const { publishSessionSnapshot, closeSnapshotClient } = require('../lib/sessionSnapshot');
 const { initializeDatabase, runMigrations, closeDatabase } = require('../lib/db');
 const {
   recordTerminalConnection,
@@ -63,6 +64,29 @@ const sessionRegistry = createSessionRegistry({ heartbeatIntervalMs: HEARTBEAT_I
 // main() (so requiring this module in tests does not open a Redis connection).
 let commandWorker = null;
 
+// How often to republish the session snapshot (also refreshes its Redis TTL so
+// the key stays alive while this process is healthy). Event-driven publishes on
+// connect/disconnect keep it immediate; this interval refreshes heartbeat/alias
+// changes and keeps the key from expiring during quiet periods.
+const SNAPSHOT_REFRESH_MS = 5000;
+let snapshotTimer = null;
+// The publisher opens a Redis connection, so it is only armed in main(). Until
+// then (e.g. when this module is required in unit tests) publishSessions() is a
+// no-op and never touches Redis.
+let snapshotEnabled = false;
+
+// Publish the current in-memory session list so the client API can list
+// sessions without going through the serialized command queue. Best-effort:
+// a Redis failure is logged, never thrown.
+function publishSessions() {
+  if (!snapshotEnabled) {
+    return Promise.resolve();
+  }
+  return publishSessionSnapshot(buildSessionList(sessionRegistry)).catch((err) => {
+    process.stderr.write(`Warning: failed to publish session snapshot: ${err.message}\n`);
+  });
+}
+
 const blockedCidrs = [];
 
 async function addBlock(cidr) {
@@ -76,6 +100,12 @@ async function addBlock(cidr) {
 
 async function cleanup() {
   const closeOps = [];
+  if (snapshotTimer) {
+    clearInterval(snapshotTimer);
+    snapshotTimer = null;
+  }
+  snapshotEnabled = false;
+  closeOps.push(closeSnapshotClient().catch(() => {}));
   for (const [mac, entry] of sessionRegistry.entries()) {
     if (entry.connectionId) {
       closeOps.push(closeTerminalConnection(entry.connectionId).catch(() => {}));
@@ -207,6 +237,7 @@ wss.on('connection', async (ws, req) => {
   if (tui.state === TUI_STATE.SESSION_LIST) {
     tui.render();
   }
+  void publishSessions();
 
   ws.on('message', (data) => {
     const rawText = data.toString();
@@ -276,12 +307,14 @@ wss.on('connection', async (ws, req) => {
       } else if (tui.state === TUI_STATE.SESSION_LIST) {
         tui.render();
       }
+      void publishSessions();
     }
   });
 
   ws.on('error', () => {
     if (sessionRegistry.getSession(mac) === entry) {
       sessionRegistry.removeSession(mac);
+      void publishSessions();
     }
   });
 });
@@ -808,6 +841,16 @@ async function main() {
   commandWorker.on('error', (err) => {
     process.stderr.write(`terminal command worker error: ${err && err.message}\n`);
   });
+
+  // Publish the session list out-of-band so the client API can list sessions
+  // without going through the (serialized) command worker. Arm the publisher,
+  // seed the snapshot immediately, then refresh on an interval.
+  snapshotEnabled = true;
+  void publishSessions();
+  snapshotTimer = setInterval(() => { void publishSessions(); }, SNAPSHOT_REFRESH_MS);
+  if (typeof snapshotTimer.unref === 'function') {
+    snapshotTimer.unref();
+  }
 
   httpServer.listen(PORT, HOST, () => {
     setupInput();

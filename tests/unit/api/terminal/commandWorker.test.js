@@ -1,6 +1,6 @@
 'use strict';
 
-const { processCommand } = require('../../../../api/terminal/commandWorker');
+const { processCommand, buildSessionList } = require('../../../../api/terminal/commandWorker');
 
 function registry(entries = []) {
   const map = new Map(entries);
@@ -188,5 +188,85 @@ describe('processCommand', () => {
       expect(hit).toEqual({ status: 200, body: { ok: true } });
       expect(entry.spawns.has(7)).toBe(false);
     });
+  });
+
+  describe('per-device serialization', () => {
+    // A controllable async op: returns a promise plus its resolver so a test can
+    // hold a command "in flight" and observe what runs while it is pending.
+    function deferred() {
+      let resolve;
+      const promise = new Promise((r) => { resolve = r; });
+      return { promise, resolve };
+    }
+    // Fully drain the microtask queue (the per-device lock chains via .then).
+    const tick = () => new Promise((r) => setImmediate(r));
+
+    test('two exec commands on the SAME mac do not overlap', async () => {
+      const sessionRegistry = registry([['aa:bb', { ws: {} }]]);
+      const first = deferred();
+      const second = deferred();
+      let started = 0;
+      const runExecImpl = jest.fn(() => {
+        const which = started === 0 ? first : second;
+        started += 1;
+        return which.promise.then(() => ({ output: 'x', durationMs: 1 }));
+      });
+
+      const p1 = run({ type: 'exec', mac: 'aa:bb', command: 'a' }, { sessionRegistry, runExecImpl });
+      const p2 = run({ type: 'exec', mac: 'aa:bb', command: 'b' }, { sessionRegistry, runExecImpl });
+      await tick();
+
+      // The second command must NOT have started while the first is in flight.
+      expect(runExecImpl).toHaveBeenCalledTimes(1);
+      first.resolve();
+      await p1;
+      await tick();
+      expect(runExecImpl).toHaveBeenCalledTimes(2);
+      second.resolve();
+      await p2;
+    });
+
+    test('exec commands on DIFFERENT macs run concurrently', async () => {
+      const sessionRegistry = registry([['aa:bb', { ws: {} }], ['cc:dd', { ws: {} }]]);
+      const gate = deferred();
+      const runExecImpl = jest.fn(() => gate.promise.then(() => ({ output: 'x', durationMs: 1 })));
+
+      const p1 = run({ type: 'exec', mac: 'aa:bb', command: 'a' }, { sessionRegistry, runExecImpl });
+      const p2 = run({ type: 'exec', mac: 'cc:dd', command: 'b' }, { sessionRegistry, runExecImpl });
+      await tick();
+
+      // Both devices' commands are in flight at once — no cross-device blocking.
+      expect(runExecImpl).toHaveBeenCalledTimes(2);
+      gate.resolve();
+      await Promise.all([p1, p2]);
+    });
+
+    test('a sessions listing is never blocked by an in-flight exec', async () => {
+      const sessionRegistry = registry([['aa:bb', { ws: {}, alias: 'router' }]]);
+      const gate = deferred();
+      const runExecImpl = jest.fn(() => gate.promise.then(() => ({ output: 'x', durationMs: 1 })));
+
+      const execP = run({ type: 'exec', mac: 'aa:bb', command: 'slow' }, { sessionRegistry, runExecImpl });
+      const sessionsRes = await run({ type: 'sessions' }, { sessionRegistry });
+
+      // sessions resolves immediately even though the exec is still pending.
+      expect(sessionsRes.status).toBe(200);
+      expect(sessionsRes.body.sessions[0].alias).toBe('router');
+      gate.resolve();
+      await execP;
+    });
+  });
+});
+
+describe('buildSessionList', () => {
+  test('projects the operator-visible fields, defaulting missing ones to null', () => {
+    const sessionRegistry = registry([
+      ['aa:bb', { alias: 'router', group: 'g', remoteAddress: '10.0.0.1', connectedAt: 't0', lastHeartbeat: 't1' }],
+      ['cc:dd', {}],
+    ]);
+    expect(buildSessionList(sessionRegistry)).toEqual([
+      { mac: 'aa:bb', alias: 'router', group: 'g', remoteAddress: '10.0.0.1', connectedAt: 't0', lastHeartbeat: 't1' },
+      { mac: 'cc:dd', alias: null, group: null, remoteAddress: null, connectedAt: null, lastHeartbeat: null },
+    ]);
   });
 });

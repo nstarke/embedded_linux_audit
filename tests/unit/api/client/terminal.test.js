@@ -51,6 +51,9 @@ function setup(overrides = {}) {
     // By default the caller is associated with MAC (its stored form).
     listUserDeviceMacs: jest.fn().mockResolvedValue([MAC]),
     recordCommandLog: jest.fn().mockResolvedValue(undefined),
+    // By default no snapshot is available, so GET /terminal/sessions falls back
+    // to the command queue (the pre-snapshot behaviour many tests assert on).
+    readSessionSnapshot: jest.fn().mockResolvedValue(null),
     ...overrides,
   };
   registerTerminalRoutes(app, deps);
@@ -83,6 +86,35 @@ describe('client terminal routes', () => {
       const res = createRes();
       await invoke(app.find('get', '/terminal/sessions'), { authUser: 'alice' }, res);
       expect(res.statusCode).toBe(504);
+    });
+
+    test('serves from the snapshot without touching the command queue', async () => {
+      const { app, deps } = setup({
+        listUserDeviceMacs: jest.fn().mockResolvedValue([MAC]),
+        readSessionSnapshot: jest.fn().mockResolvedValue([{ mac: MAC }, { mac: '11:22:33:44:55:66' }]),
+      });
+      const res = createRes();
+      await invoke(app.find('get', '/terminal/sessions'), { authUser: 'alice' }, res);
+
+      // The snapshot answered, so the serialized command worker is never used —
+      // this is what makes the listing immune to a long-running exec.
+      expect(deps.sendCommand).not.toHaveBeenCalled();
+      expect(res.statusCode).toBe(200);
+      expect(res.body).toEqual({ sessions: [{ mac: MAC }] });
+    });
+
+    test('falls back to the queue when the snapshot read fails', async () => {
+      const { app, deps } = setup({
+        listUserDeviceMacs: jest.fn().mockResolvedValue([MAC]),
+        readSessionSnapshot: jest.fn().mockRejectedValue(new Error('redis down')),
+        sendCommand: jest.fn().mockResolvedValue({ status: 200, body: { sessions: [{ mac: MAC }] } }),
+      });
+      const res = createRes();
+      await invoke(app.find('get', '/terminal/sessions'), { authUser: 'alice' }, res);
+
+      expect(deps.sendCommand).toHaveBeenCalledWith({ type: 'sessions' }, expect.any(Object));
+      expect(res.statusCode).toBe(200);
+      expect(res.body).toEqual({ sessions: [{ mac: MAC }] });
     });
   });
 

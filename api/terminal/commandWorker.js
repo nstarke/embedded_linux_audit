@@ -16,6 +16,40 @@ const { runSpawn } = require('./spawnCommand');
 
 const NO_SESSION = { status: 404, body: { error: 'no active session for mac' } };
 
+// Per-device serialization.
+//
+// `runExec`/`runSpawn` detect a command's completion by watching the target
+// session's shared output stream (entry.outputListeners). Two commands run
+// against the SAME device at once would each consume the other's output and its
+// completion prompt — so device-touching commands (exec/spawn/killSpawn) must
+// run one-at-a-time per MAC. They are independent ACROSS devices, and the
+// control-plane commands (sessions/listSpawns/setMeta) touch no output stream
+// at all. So instead of a single global worker (concurrency 1 — where one slow
+// exec blocked every device, and even the sessions listing), we run the worker
+// concurrently and gate only the device-touching commands behind a per-MAC
+// lock. Different devices proceed in parallel; a device's own commands queue
+// behind each other.
+const deviceChains = new Map();
+
+function withDeviceLock(mac, fn) {
+  const key = String(mac);
+  const prev = deviceChains.get(key) || Promise.resolve();
+  // Run fn after prev settles, regardless of whether prev resolved or rejected.
+  const run = prev.then(fn, fn);
+  // The chain tail swallows outcomes so a rejection never leaks as an unhandled
+  // rejection and never poisons the next waiter (which runs on settle anyway).
+  const tail = run.then(() => {}, () => {});
+  deviceChains.set(key, tail);
+  tail.finally(() => {
+    // Drop the map entry once this device is idle again, so the map does not
+    // grow without bound as devices come and go.
+    if (deviceChains.get(key) === tail) {
+      deviceChains.delete(key);
+    }
+  });
+  return run;
+}
+
 function spawnsFor(entry) {
   if (!entry.spawns) {
     entry.spawns = new Map();
@@ -36,8 +70,11 @@ function serializeSpawn(record) {
   return out;
 }
 
-function listSessions(sessionRegistry) {
-  const sessions = sessionRegistry.entries().map(([mac, entry]) => ({
+// The live session descriptors, in the exact shape returned to operators. Used
+// both by the queue's `sessions` command and by the out-of-band snapshot the
+// terminal API publishes for the client API to read directly (sessionSnapshot).
+function buildSessionList(sessionRegistry) {
+  return sessionRegistry.entries().map(([mac, entry]) => ({
     mac,
     alias: entry.alias || null,
     group: entry.group || null,
@@ -45,7 +82,10 @@ function listSessions(sessionRegistry) {
     connectedAt: entry.connectedAt || null,
     lastHeartbeat: entry.lastHeartbeat || null,
   }));
-  return { status: 200, body: { sessions } };
+}
+
+function listSessions(sessionRegistry) {
+  return { status: 200, body: { sessions: buildSessionList(sessionRegistry) } };
 }
 
 // mode 'linux' (default) wraps the command as a Linux shell command
@@ -178,21 +218,24 @@ async function processCommand({
 }) {
   const data = (job && job.data) || {};
   switch (data.type) {
+    // Control-plane: touches no device output stream, so it runs concurrently
+    // and is never gated behind an in-flight exec.
     case 'sessions':
       return listSessions(sessionRegistry);
-    case 'exec':
-      return execOnSession(sessionRegistry, runExecImpl, data);
-    case 'spawn':
-      return spawnOnSession(sessionRegistry, runSpawnImpl, runExecImpl, now, data);
     case 'listSpawns':
       return listSpawns(sessionRegistry, data);
-    case 'killSpawn':
-      return killSpawn(sessionRegistry, runExecImpl, data);
     case 'setMeta':
       return setMeta(sessionRegistry, setDeviceAliasImpl, setDeviceGroupImpl, data);
+    // Device-touching: serialized per MAC (see withDeviceLock).
+    case 'exec':
+      return withDeviceLock(data.mac, () => execOnSession(sessionRegistry, runExecImpl, data));
+    case 'spawn':
+      return withDeviceLock(data.mac, () => spawnOnSession(sessionRegistry, runSpawnImpl, runExecImpl, now, data));
+    case 'killSpawn':
+      return withDeviceLock(data.mac, () => killSpawn(sessionRegistry, runExecImpl, data));
     default:
       return { status: 400, body: { error: `unknown command type: ${String(data.type)}` } };
   }
 }
 
-module.exports = { processCommand, serializeSpawn };
+module.exports = { processCommand, serializeSpawn, buildSessionList };

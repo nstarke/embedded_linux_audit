@@ -28,8 +28,13 @@ function findProjectRoot(startDir) {
   return path.resolve(startDir, '..', '..');
 }
 
+// Accept either separator (aa:bb:.. or aa-bb-..), any case. The agent formats
+// its HTTP-upload MACs with colons but its WebSocket-stream MACs with dashes
+// (ela_ws_format_mac_bytes), so a colon-only check silently rejected every
+// remote-capture WS connection (pcap + wlan/eth/bt/cpu fuzz) at the 1008 close.
+// Mirrors the terminal API's MAC_ADDRESS_RE, which already accepts both.
 function isValidMacAddress(value) {
-  return /^([0-9a-f]{2}:){5}[0-9a-f]{2}$/i.test(String(value || ''));
+  return /^([0-9a-f]{2}[:-]){5}[0-9a-f]{2}$/i.test(String(value || ''));
 }
 
 function normalizeContentType(contentTypeHeader = '') {

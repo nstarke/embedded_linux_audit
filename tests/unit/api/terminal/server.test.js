@@ -170,10 +170,18 @@ function loadTerminalServer(options = {}) {
   const Worker = jest.fn(() => commandWorkerInstance);
   jest.doMock('bullmq', () => ({ Worker }), { virtual: true });
   const processCommand = jest.fn();
-  jest.doMock('../../../../api/terminal/commandWorker', () => ({ processCommand }));
+  const buildSessionList = jest.fn(() => []);
+  jest.doMock('../../../../api/terminal/commandWorker', () => ({ processCommand, buildSessionList }));
   jest.doMock('../../../../api/lib/queue', () => ({
     COMMAND_QUEUE_NAME: 'ela-terminal-commands',
     getCommandWorkerOptions: jest.fn(() => ({ connection: {}, concurrency: 1 })),
+  }));
+  // Mock the snapshot publisher so main() does not open a Redis connection.
+  const publishSessionSnapshot = jest.fn().mockResolvedValue(undefined);
+  const closeSnapshotClient = jest.fn().mockResolvedValue(undefined);
+  jest.doMock('../../../../api/lib/sessionSnapshot', () => ({
+    publishSessionSnapshot,
+    closeSnapshotClient,
   }));
   jest.doMock('../../../../api/auth', () => auth);
   jest.doMock('../../../../api/lib/config', () => ({
@@ -238,6 +246,9 @@ function loadTerminalServer(options = {}) {
     Worker,
     commandWorkerInstance,
     processCommand,
+    buildSessionList,
+    publishSessionSnapshot,
+    closeSnapshotClient,
     wssClose: server.wss.close,
     auth,
     initializeDatabase,
