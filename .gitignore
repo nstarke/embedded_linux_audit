@@ -16,13 +16,13 @@ logs
 .build-release-static
 .cache
 package-lock.json
-.claude
+.claude/*
+!.claude/skills/
 ela-aliases.json
 *.gcno
 *.gcda
 *.gcov
 .gdb_history
-.claude
 *.o
 ref
 crashes/
