@@ -16,6 +16,17 @@ describe('fsRootFromArtifactPath', () => {
     expect(fsRootFromArtifactPath(dataDir, '/data/agent/20:4c:03:32:75:5c/fs/usr/bin/foo'))
       .toBe('/data/agent/20:4c:03:32:75:5c/fs');
   });
+  test('recovers the fs root when an extra grouping dir sits above the mac dir', () => {
+    // Some agents nest an extra grouping dir (an instance/session id) above the
+    // MAC dir, so `fs` is one level deeper. Its value is host-specific and must
+    // not be assumed: the root is the path up to and including the `fs` wrapper,
+    // not <data>/<firstSegment>/fs (which would be a non-existent directory).
+    expect(fsRootFromArtifactPath(dataDir, '/data/agent/<group-id>/20:4c:03:32:75:5c/fs/sys/devices/soc.0/uevent'))
+      .toBe('/data/agent/<group-id>/20:4c:03:32:75:5c/fs');
+  });
+  test('returns null when the artifact path has no fs wrapper segment', () => {
+    expect(fsRootFromArtifactPath(dataDir, '/data/agent/20:4c:03:32:75:5c/module-buildinfo/x.log')).toBeNull();
+  });
   test('rejects a path outside dataDir', () => {
     expect(fsRootFromArtifactPath(dataDir, '/etc/passwd')).toBeNull();
   });

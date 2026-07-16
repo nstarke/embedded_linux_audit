@@ -15,20 +15,26 @@ const DEFAULT_DATA_DIR = process.env.ELA_AGENT_DATA_DIR || '/data/agent';
 // worker's 6h BullMQ lock.
 const DEFAULT_COPY_TIMEOUT_MS = Number.parseInt(process.env.ELA_GHIDRA_COPY_TIMEOUT_MS || String(60 * 60 * 1000), 10);
 
-// Given a `file` upload's stored artifact path (…/<data>/<macDir>/fs/<abs>),
-// recover the <data>/<macDir>/fs root. The macDir is the first path segment
-// under dataDir; deriving it from a real artifact avoids reconstructing the
-// agent's egress-NIC MAC formatting.
+// Given a `file` upload's stored artifact path (…/<data>/…/fs/<abs>), recover
+// the …/fs root. The upload handler stores each remote-copied file under
+// `<dataDir>/<…>/fs/<device-abs-path>`, but the number of leading directory
+// segments before `fs` is NOT fixed: some agents nest an extra grouping dir
+// (e.g. an instance/session id) above the MAC dir, so the real path is
+// `<dataDir>/<group>/<mac>/fs/<abs>`, not just `<dataDir>/<mac>/fs/<abs>`.
+// Locate the wrapper `fs` segment and return the path up to and including it,
+// rather than assuming `fs` sits at a fixed depth (that assumption pointed
+// Ghidra at a non-existent directory and failed the analysis).
 function fsRootFromArtifactPath(dataDir, artifactPath) {
   const rel = path.relative(dataDir, artifactPath);
   if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) {
     return null;
   }
-  const macDir = rel.split(path.sep)[0];
-  if (!macDir) {
+  const segs = rel.split(path.sep);
+  const fsIdx = segs.indexOf('fs');
+  if (fsIdx < 0) {
     return null;
   }
-  return path.join(dataDir, macDir, 'fs');
+  return path.join(dataDir, ...segs.slice(0, fsIdx + 1));
 }
 
 // Count the program subdirectories Haruspex created under the output root as a
