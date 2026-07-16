@@ -61,7 +61,13 @@ clean_repo_build_artifacts() {
     rm -rf "$REPO_ROOT"/third_party/curl/build*
     rm -rf "$REPO_ROOT"/third_party/libssh/build*
     rm -rf "$REPO_ROOT"/third_party/tpm2-tss/build*
-    rm -rf "$REPO_ROOT"/third_party/wolfssl/build*
+    # Remove per-compiler build-<CC_TAG> output dirs but preserve build-aux/,
+    # wolfSSL's autotools AC_CONFIG_AUX_DIR (ltmain.sh, config.guess, install-sh,
+    # missing, compile). Keeping it — like the retained configure/aclocal.m4 —
+    # lets rebuilds reuse the generated configure and skip the fragile autogen
+    # (autoreconf) step, which needs a complete autoconf/automake/libtool stack.
+    find "$REPO_ROOT"/third_party/wolfssl -mindepth 1 -maxdepth 1 \
+        -name 'build-*' ! -name 'build-aux' -exec rm -rf {} + 2>/dev/null || true
     chmod -fR u+w "$REPO_ROOT"/third_party/openssl/build* 2>/dev/null || true
     rm -rf "$REPO_ROOT"/third_party/openssl/build*
     rm -f "$REPO_ROOT"/third_party/ncurses/.ela-build-*

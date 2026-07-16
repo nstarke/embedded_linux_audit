@@ -185,12 +185,13 @@ endif
 endif
 endif
 
-# Some bundled wolfSSL configure scripts in our pinned submodule revision reject
-# libtool-style --enable-static/--disable-shared toggles even though we only
-# consume the static archive. The build still produces src/.libs/libwolfssl.a
-# without those options, so keep the configure invocation to the universally
-# accepted feature toggles only.
-WOLFSSL_LIBRARY_CONFIGURE_FLAGS :=
+# We consume only the static archive (curl links $(WOLFSSL_INSTALL)/lib/libwolfssl.a).
+# The pinned wolfSSL revision uses LT_INIT([disable-static]), so a default configure
+# builds the shared library ONLY and never emits src/.libs/libwolfssl.a — the curl
+# link (and the $(WOLFSSL_LIB) target) then fails. Pass --enable-static explicitly to
+# produce the archive. (The pinned configure accepts this toggle; unknown autoconf
+# --enable-* flags are ignored with a warning rather than failing, so this is safe.)
+WOLFSSL_LIBRARY_CONFIGURE_FLAGS := --enable-static
 
 ELA_ENABLE_TPM2 ?= 1
 TPM2_TSS_CONFIGURE_HOST_ARG :=
@@ -1111,11 +1112,25 @@ check-autoconf:
 	}
 
 check-autoreconf:
-	@command -v autoreconf >/dev/null 2>&1 || { \
-		echo "error: autoreconf is required to regenerate third_party/wolfssl configure scripts when sources are newer than generated files."; \
-		echo "hint: install automake/libtool-bin/autoconf on Debian-based systems (or the equivalent libtool package on your distro) and rerun make."; \
+	@for tool in autoconf autoreconf aclocal automake libtoolize; do \
+		command -v $$tool >/dev/null 2>&1 || { \
+			echo "error: '$$tool' is required to regenerate third_party autotools configure scripts (wolfSSL/tpm2-tss)."; \
+			echo "       A partial autotools stack produces cryptic failures such as"; \
+			echo "       'configure.ac: error: possibly undefined macro: AM_MAINTAINER_MODE'."; \
+			echo "hint: install the complete autotools stack, then rerun make:"; \
+			echo "        Debian/Ubuntu: apt-get install autoconf automake libtool-bin"; \
+			echo "        Fedora/RHEL:   dnf install autoconf automake libtool"; \
+			echo "        Alpine:        apk add autoconf automake libtool"; \
+			exit 1; \
+		}; \
+	done
+	@dir=$$(aclocal --print-ac-dir 2>/dev/null); \
+	if [ -z "$$dir" ] || [ ! -d "$$dir" ]; then \
+		echo "error: 'aclocal' cannot locate its automake macro directory ('$$dir'); the automake install is broken or incomplete."; \
+		echo "       This is what triggers 'possibly undefined macro: AM_MAINTAINER_MODE' during wolfSSL autogen."; \
+		echo "hint: reinstall automake (Debian/Ubuntu: apt-get install --reinstall automake) and rerun make."; \
 		exit 1; \
-	}
+	fi
 
 all: $(TARGET)
 
@@ -1235,12 +1250,12 @@ $(OPENSSL_LIB): $(OPENSSL_SSL_LIB)
 $(WOLFSSL_LIB): check-autoconf
 	mkdir -p $(WOLFSSL_BUILD)
 	if [ ! -x "$(WOLFSSL_DIR)/configure" ] \
-		|| [ ! -f "$(WOLFSSL_DIR)/ltmain.sh" ] \
-		|| [ ! -f "$(WOLFSSL_DIR)/config.guess" ] \
-		|| [ ! -f "$(WOLFSSL_DIR)/config.sub" ] \
-		|| [ ! -f "$(WOLFSSL_DIR)/missing" ] \
-		|| [ ! -f "$(WOLFSSL_DIR)/install-sh" ] \
-		|| [ ! -f "$(WOLFSSL_DIR)/compile" ] \
+		|| [ ! -f "$(WOLFSSL_DIR)/build-aux/ltmain.sh" ] \
+		|| [ ! -f "$(WOLFSSL_DIR)/build-aux/config.guess" ] \
+		|| [ ! -f "$(WOLFSSL_DIR)/build-aux/config.sub" ] \
+		|| [ ! -f "$(WOLFSSL_DIR)/build-aux/missing" ] \
+		|| [ ! -f "$(WOLFSSL_DIR)/build-aux/install-sh" ] \
+		|| [ ! -f "$(WOLFSSL_DIR)/build-aux/compile" ] \
 		|| [ "$(WOLFSSL_DIR)/configure.ac" -nt "$(WOLFSSL_DIR)/configure" ] \
 		|| [ "$(WOLFSSL_DIR)/aclocal.m4" -nt "$(WOLFSSL_DIR)/configure" ] \
 		|| grep -qE '^[[:space:]]*(LT_PREREQ|LT_INIT)\(' "$(WOLFSSL_DIR)/configure"; then \
@@ -1509,7 +1524,7 @@ clean:
 	rm -rf $(LIBSSH_DIR)/build*
 	rm -rf $(LIBPCAP_DIR)/build*
 	rm -rf $(TPM2_TSS_DIR)/build*
-	rm -rf $(WOLFSSL_DIR)/build*
+	-find $(WOLFSSL_DIR) -mindepth 1 -maxdepth 1 -name 'build-*' ! -name 'build-aux' -exec rm -rf {} + 2>/dev/null || true
 	-cd $(OPENSSL_DIR) && $(MAKE) distclean >/dev/null 2>&1 || true
 	-chmod -fR u+w "$(OPENSSL_BUILD)" 2>/dev/null || true
 	rm -rf $(OPENSSL_BUILD)
