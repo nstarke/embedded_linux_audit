@@ -41,7 +41,7 @@ static void fuzz_usage(const char *prog)
 		"  --usb-id V:P     usb-generic only: target USB device by hex VID:PID\n"
 		"                   (e.g. 0bda:8179; product '*' or omitted = any)\n"
 		"  --iface NAME     wext-generic only: network interface to fuzz (e.g. wlan0)\n"
-		"  --daemon         detach and run in the background (for API spawn);\n"
+		"  --daemon         force background detach (also automatic when non-TTY);\n"
 		"                     logs to <out>/wlan-fuzz-daemon.log\n"
 		"  --insecure       wext-generic only: skip TLS verification when streaming\n"
 		"                   payloads to the agent API (--output-http) for remote\n"
@@ -270,7 +270,15 @@ static int wlan_fuzz_cmd_main(int argc, char **argv)
 				      wlan_target_uses_kmod(tname);
 		int rc;
 
-		if (daemon_mode && ela_fuzz_daemonize("wlan-fuzz", o.out_dir) == 1)
+		/* Detach when asked (--daemon) OR whenever stdout is not a TTY,
+		 * i.e. we were spawned via the client-API terminal relay (a pipe).
+		 * A foreground fuzz there monopolizes the session's single REPL
+		 * child and its progress output wedges the relay once the pipe
+		 * fills; detaching sends progress to <out>/wlan-fuzz-daemon.log and
+		 * lets the fuzz stream crashes over its own WS, so the API spawn
+		 * returns at once and the fuzz actually runs. */
+		if ((daemon_mode || !isatty(STDOUT_FILENO)) &&
+		    ela_fuzz_daemonize("wlan-fuzz", o.out_dir) == 1)
 			return 0;	/* parent detached; child runs the fuzz */
 
 		if (wlan_fuzz_stream_open(&stream, tname, "wlan-fuzz",
