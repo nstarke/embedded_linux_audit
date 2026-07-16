@@ -152,7 +152,7 @@ static void fuzz_usage(void)
 		"  --out DIR        crash output dir (default crashes)\n"
 		"  --replay FILE    reproduce a saved crash on hardware\n"
 		"  --show FILE      decode a crash file for triage (offline, no hardware)\n"
-		"  --daemon         detach and run in the background (for API spawn);\n"
+		"  --daemon         force background detach (also automatic when non-TTY);\n"
 		"                   logs to <out>/eth-fuzz-daemon.log\n"
 		"  --insecure       skip TLS verification when streaming payloads to the\n"
 		"                   agent API (--output-http) for remote crash capture\n"
@@ -286,7 +286,12 @@ static int eth_fuzz_cmd_main(int argc, char **argv)
 		struct wlan_fuzz_stream stream;
 		int rc;
 
-		if (daemon_mode && ela_fuzz_daemonize("eth-fuzz", o.out_dir) == 1)
+		/* Detach on --daemon OR whenever stdout is not a TTY (spawned via
+		 * the client-API relay pipe): a foreground fuzz would wedge the
+		 * session's REPL relay once its output pipe fills. See the wlan
+		 * fuzz command for the full rationale. */
+		if ((daemon_mode || !isatty(STDOUT_FILENO)) &&
+		    ela_fuzz_daemonize("eth-fuzz", o.out_dir) == 1)
 			return 0;	/* parent detached; child runs the fuzz */
 
 		if (wlan_fuzz_stream_open(&stream, tname, "eth-fuzz", 1, insecure) == 0)

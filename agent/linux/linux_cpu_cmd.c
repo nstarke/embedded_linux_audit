@@ -27,6 +27,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 /*
  * The host ISA name for the module dispatcher: ARCH_ISA carries the family, and
@@ -80,7 +81,7 @@ static void fuzz_usage(void)
 		"                     (ISA taken from the file header; must match host)\n"
 		"  --show FILE      decode a finding offline (no execution)\n"
 		"  --thumb          ARM32 host: fuzz the Thumb (T32) set instead of A32\n"
-		"  --daemon         detach and run in the background (for API spawn);\n"
+		"  --daemon         force background detach (also automatic when non-TTY);\n"
 		"                     logs to <out>/cpu-fuzz-daemon.log\n"
 		"  --insecure       skip TLS verify when streaming to --output-http\n"
 		"  --selftest       run offline engine self-tests (no execution)\n",
@@ -222,7 +223,12 @@ static int cpu_fuzz_cmd_main(int argc, char **argv)
 		char tag[48];
 		int rc;
 
-		if (daemon_mode && ela_fuzz_daemonize("cpu-fuzz", o.out_dir) == 1)
+		/* Detach on --daemon OR whenever stdout is not a TTY (spawned via
+		 * the client-API relay pipe): a foreground fuzz would wedge the
+		 * session's REPL relay once its output pipe fills. See the wlan
+		 * fuzz command for the full rationale. */
+		if ((daemon_mode || !isatty(STDOUT_FILENO)) &&
+		    ela_fuzz_daemonize("cpu-fuzz", o.out_dir) == 1)
 			return 0;	/* parent detached; child runs the fuzz */
 
 		snprintf(tag, sizeof(tag), "cpu-%s", isa->name);
