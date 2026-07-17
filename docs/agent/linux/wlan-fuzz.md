@@ -354,7 +354,9 @@ VDEV_INSTALL_KEY 0000...ff000000 #key_len=cnt:255
 ```
 
 Because the format is greppable and hand-editable, you can trim or tweak a
-case and re-run it. The default output directory `crashes/` is git-ignored.
+case and re-run it. The default output directory is `/tmp/ela-crashes/`; pass
+`--out DIR` to write somewhere else (a relative `--out crashes/`, as the
+examples above use, lands under the current working directory).
 
 ### Exit status
 

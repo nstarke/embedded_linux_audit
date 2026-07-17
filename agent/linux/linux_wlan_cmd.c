@@ -50,7 +50,7 @@ static void fuzz_usage(const char *prog)
 		"  --iterations N   cases to run (default 100000)\n"
 		"  --probe-every N  liveness probe interval (default 8)\n"
 		"  --seed N         rng seed (default 1234)\n"
-		"  --out DIR        crash output dir (default crashes)\n"
+		"  --out DIR        crash output dir (default /tmp/ela-crashes)\n"
 		"  --fw PATH        firmware image (target-specific)\n"
 		"  --replay FILE    reproduce a saved crash on hardware (target read\n"
 		"                   from the file's '# target=' header if not given)\n"
@@ -121,7 +121,7 @@ static int wlan_fuzz_cmd_main(int argc, char **argv)
 		.iterations = 100000,
 		.probe_every = 8,
 		.seed = 1234,
-		.out_dir = "crashes",
+		.out_dir = ELA_FUZZ_DEFAULT_OUT_DIR,
 		.replay_path = NULL,
 	};
 	const char *tname = NULL;

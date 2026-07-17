@@ -168,7 +168,7 @@ linux cpu fuzz [options]
   --length N                         x86: max candidate byte length (default 15)
   --seed N                           rng seed (random/tunnel jitter)
   --probe-every N                    liveness/heartbeat interval
-  --out DIR                          finding output dir (default crashes)
+  --out DIR                          finding output dir (default /tmp/ela-crashes)
   --replay FILE                      re-execute a saved finding on this CPU
   --show FILE                        decode a finding offline (no execution)
   --insecure                         skip TLS verify when streaming (--output-http)

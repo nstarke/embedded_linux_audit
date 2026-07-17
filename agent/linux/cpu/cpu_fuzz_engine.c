@@ -287,10 +287,22 @@ static int finding_open_header(struct cpu_isa *isa, const struct cpu_fuzz_opts *
 	}
 	{
 		char features[512];
+		/*
+		 * Sized for the whole line, not reused from hdr[]:
+		 * cpu_feature_snapshot fills a 512-byte buffer (it appends up to
+		 * 320 chars of /proc/cpuinfo), so formatting it into hdr[128]
+		 * tripped the truncation guard and failed the run outright on any
+		 * host with a long feature list -- e.g. an ARM "Features:" line
+		 * needs 180 bytes. x86 hosts happened to survive only because
+		 * /proc/cpuinfo lists a short "model name" before "flags" and the
+		 * scan stops at the first match.
+		 */
+		char fhdr[sizeof(features) + 64];
+
 		cpu_feature_snapshot(features, sizeof(features));
-		n = snprintf(hdr, sizeof(hdr), "# host_features=%s\n", features);
-		if (n < 0 || (size_t)n >= sizeof(hdr) ||
-		    write(fd, hdr, (size_t)n) != n) {
+		n = snprintf(fhdr, sizeof(fhdr), "# host_features=%s\n", features);
+		if (n < 0 || (size_t)n >= sizeof(fhdr) ||
+		    write(fd, fhdr, (size_t)n) != n) {
 			close(fd);
 			return -1;
 		}
@@ -864,7 +876,7 @@ int cpu_fuzz_show(struct cpu_isa *isa, const char *path)
 int cpu_fuzz_run(struct cpu_isa *isa, const struct cpu_fuzz_opts *o)
 {
 	struct cpu_shared *sh;
-	char path[512];
+	char path[512] = "";	/* reported on failure, so never read uninitialised */
 	int fd, rc;
 
 	if (o->replay_path)
@@ -899,8 +911,13 @@ int cpu_fuzz_run(struct cpu_isa *isa, const struct cpu_fuzz_opts *o)
 
 	fd = finding_open_header(isa, o, o->out_dir, path, sizeof(path));
 	if (fd < 0) {
-		fprintf(stderr, "cpu fuzz: cannot create finding file in %s\n",
-			o->out_dir);
+		/* Name the file we actually tried, not just the directory: this
+		 * fires for header-write failures too, and "cannot create finding
+		 * file in crashes" sent triage after a directory that was fine. */
+		fprintf(stderr,
+			"cpu fuzz: cannot write finding file %s: %s\n"
+			"  (use --out <dir> to pick a writable location)\n",
+			path[0] ? path : o->out_dir, strerror(errno));
 		munmap(sh, sizeof(*sh));
 		return 1;
 	}

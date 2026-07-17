@@ -77,7 +77,7 @@ static void fuzz_usage(void)
 		"  --length N       x86 max candidate byte length, 1..15 (default 15)\n"
 		"  --probe-every N  progress/stream heartbeat cadence (default 4096)\n"
 		"  --seed N         rng seed / sweep base (default 1)\n"
-		"  --out DIR        finding output dir (default crashes)\n"
+		"  --out DIR        finding output dir (default /tmp/ela-crashes)\n"
 		"  --replay FILE    re-execute a saved/returned finding on this CPU\n"
 		"                     (ISA taken from the file header; must match host)\n"
 		"  --show FILE      decode a finding offline (no execution)\n"
@@ -121,7 +121,7 @@ static int cpu_fuzz_cmd_main(int argc, char **argv)
 		.max_len = 0,
 		.probe_every = 4096,
 		.seed = 1,
-		.out_dir = "crashes",
+		.out_dir = ELA_FUZZ_DEFAULT_OUT_DIR,
 		.cpu = -1,
 	};
 	const char *show_path = NULL;

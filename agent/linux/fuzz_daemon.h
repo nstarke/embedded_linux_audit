@@ -14,6 +14,22 @@
 #define ELA_FUZZ_DAEMON_H
 
 /*
+ * Default output directory for every fuzz command's crash/finding files (and
+ * the --daemon log written beside them).
+ *
+ * Absolute, not a relative "crashes", because a fuzz is normally started over
+ * the agent API and inherits whatever the session's working directory happens
+ * to be -- "/" for a --remote session (which litters /crashes at the filesystem
+ * root), something else entirely for a local run. /tmp is writable on the
+ * embedded targets this runs on, and is already where the agent keeps its other
+ * runtime state (/tmp/.ela.conf, /tmp/ela.key, the daemonize log fallback).
+ *
+ * Callers may still override with --out; an explicit --out is never
+ * second-guessed.
+ */
+#define ELA_FUZZ_DEFAULT_OUT_DIR "/tmp/ela-crashes"
+
+/*
  * Detach the current fuzz run into the background. Forks; the parent prints the
  * daemon PID (so an API-spawned `... fuzz --daemon` returns at once) and the
  * child setsid()s and redirects stdio to <out_dir>/<label>-daemon.log.

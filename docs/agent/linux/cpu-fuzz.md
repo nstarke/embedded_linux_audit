@@ -129,7 +129,9 @@ Executing attacker-controlled code is dangerous; four layers contain it:
 
 ## Finding artifacts, replay, and remote capture
 
-A run writes a finding file to `--out` (default `crashes/`):
+A run writes a finding file to `--out` (default `/tmp/ela-crashes/`). The
+default is absolute because a fuzz started over the agent API inherits the
+session's working directory, which is `/` for a `--remote` session:
 
 ```text
 # target=cpu-x86_64 mode=tunnel policy=2026.07 cpu=3
