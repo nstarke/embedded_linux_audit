@@ -354,7 +354,7 @@ the agent uploaded for that user:
 
 ```bash
 curl -H "Authorization: Bearer <client-key>" http://localhost/client/uploads
-curl -H "Authorization: Bearer <client-key>" http://localhost/client/uploads/dmesg
+curl -H "Authorization: Bearer <client-key>" 'http://localhost/client/uploads?type=dmesg'
 ```
 
 The client API only returns artifacts uploaded by the same user's agent.

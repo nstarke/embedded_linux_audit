@@ -38,27 +38,8 @@ const openapiSpec = {
     '/uploads': {
       get: {
         tags: ['uploads'],
-        summary: 'List upload types and counts',
-        operationId: 'listUploadTypes',
-        parameters: [{ $ref: '#/components/parameters/MacFilter' }],
-        responses: {
-          200: {
-            description: 'Upload types available to the authenticated user',
-            content: {
-              'application/json': {
-                schema: { $ref: '#/components/schemas/UploadTypesResponse' },
-              },
-            },
-          },
-          400: { $ref: '#/components/responses/BadRequest' },
-          401: { $ref: '#/components/responses/Unauthorized' },
-        },
-      },
-    },
-    '/uploads/{type}': {
-      get: {
-        tags: ['uploads'],
-        summary: 'List artifacts of a given upload type',
+        summary: 'List artifacts of a given upload type, or the upload types themselves',
+        description: 'With `type`, returns that type\'s artifact metadata. Without it, returns the upload types available to the authenticated user and their counts.',
         operationId: 'listUploads',
         parameters: [
           { $ref: '#/components/parameters/UploadType' },
@@ -80,26 +61,29 @@ const openapiSpec = {
         ],
         responses: {
           200: {
-            description: 'Artifact metadata (newest first)',
+            description: 'Artifact metadata (newest first) when `type` is given, otherwise the available upload types',
             content: {
               'application/json': {
-                schema: { $ref: '#/components/schemas/UploadListResponse' },
+                schema: {
+                  oneOf: [
+                    { $ref: '#/components/schemas/UploadListResponse' },
+                    { $ref: '#/components/schemas/UploadTypesResponse' },
+                  ],
+                },
               },
             },
           },
           400: { $ref: '#/components/responses/BadRequest' },
           401: { $ref: '#/components/responses/Unauthorized' },
-          404: { $ref: '#/components/responses/NotFound' },
         },
       },
     },
-    '/uploads/{type}/{id}': {
+    '/uploads/{id}': {
       get: {
         tags: ['uploads'],
         summary: 'Fetch a single artifact (metadata + parsed payload)',
         operationId: 'getUpload',
         parameters: [
-          { $ref: '#/components/parameters/UploadType' },
           { $ref: '#/components/parameters/UploadId' },
         ],
         responses: {
@@ -116,13 +100,12 @@ const openapiSpec = {
         },
       },
     },
-    '/uploads/{type}/{id}/raw': {
+    '/uploads/{id}/raw': {
       get: {
         tags: ['uploads'],
         summary: 'Download the original artifact bytes',
         operationId: 'getUploadRaw',
         parameters: [
-          { $ref: '#/components/parameters/UploadType' },
           { $ref: '#/components/parameters/UploadId' },
         ],
         responses: {
@@ -540,9 +523,9 @@ const openapiSpec = {
     parameters: {
       UploadType: {
         name: 'type',
-        in: 'path',
-        required: true,
-        description: 'Upload type.',
+        in: 'query',
+        required: false,
+        description: 'Upload type. When omitted, the response lists the available types and their counts instead of individual artifacts.',
         schema: { type: 'string', enum: UPLOAD_TYPES },
       },
       UploadId: {
@@ -550,7 +533,7 @@ const openapiSpec = {
         in: 'path',
         required: true,
         description: 'Numeric upload id.',
-        schema: { type: 'string', pattern: '^[0-9]+$' },
+        schema: { type: 'integer', minimum: 0 },
       },
       Mac: {
         name: 'mac',
@@ -582,14 +565,14 @@ const openapiSpec = {
         in: 'path',
         required: true,
         description: 'Numeric module-build request id.',
-        schema: { type: 'string', pattern: '^[0-9]+$' },
+        schema: { type: 'integer', minimum: 0 },
       },
       GhidraAnalysisId: {
         name: 'id',
         in: 'path',
         required: true,
         description: 'Numeric ghidra-analysis job id.',
-        schema: { type: 'string', pattern: '^[0-9]+$' },
+        schema: { type: 'integer', minimum: 0 },
       },
     },
     responses: {
@@ -699,7 +682,7 @@ const openapiSpec = {
       UploadMetadata: {
         type: 'object',
         properties: {
-          id: { type: 'string', example: '42' },
+          id: { type: 'integer', example: 42 },
           uploadType: { type: 'string', example: 'dmesg' },
           contentType: { type: 'string', example: 'text/plain' },
           macAddress: { type: 'string', nullable: true, example: 'aa:bb:cc:dd:ee:ff' },

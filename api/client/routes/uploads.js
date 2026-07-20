@@ -47,25 +47,24 @@ module.exports = function registerUploadsRoutes(app, deps = {}) {
     ...deps.queries,
   };
 
+  // Without `?type=` this lists the upload types (with counts) visible to the
+  // caller; with `?type=` it lists that type's uploads.
   app.get('/uploads', async (req, res) => {
     const { valid, mac } = parseMacFilter(req.query.mac);
     if (!valid) {
       res.status(400).json({ error: 'invalid mac address' });
       return;
     }
-    const types = await queries.listUploadTypesForUser(req.authUser, { mac });
-    res.json({ uploadTypes: types });
-  });
 
-  app.get('/uploads/:type', async (req, res) => {
-    const { type } = req.params;
-    if (!isValidUploadType(type)) {
-      res.status(404).json({ error: 'unknown upload type' });
+    if (req.query.type === undefined) {
+      const types = await queries.listUploadTypesForUser(req.authUser, { mac });
+      res.json({ uploadTypes: types });
       return;
     }
-    const { valid, mac } = parseMacFilter(req.query.mac);
-    if (!valid) {
-      res.status(400).json({ error: 'invalid mac address' });
+
+    const type = String(req.query.type);
+    if (!isValidUploadType(type)) {
+      res.status(400).json({ error: 'unknown upload type' });
       return;
     }
     const limit = Math.min(parseNonNegativeInt(req.query.limit, 100), 1000);
@@ -78,13 +77,13 @@ module.exports = function registerUploadsRoutes(app, deps = {}) {
     res.json(body);
   });
 
-  app.get('/uploads/:type/:id', async (req, res) => {
-    const { type, id } = req.params;
-    if (!isValidUploadType(type) || !isValidId(id)) {
+  app.get('/uploads/:id', async (req, res) => {
+    const { id } = req.params;
+    if (!isValidId(id)) {
       res.status(404).json({ error: 'not found' });
       return;
     }
-    const upload = await queries.getUploadForUser(type, id, req.authUser);
+    const upload = await queries.getUploadForUser(id, req.authUser);
     if (!upload) {
       res.status(404).json({ error: 'not found' });
       return;
@@ -92,13 +91,13 @@ module.exports = function registerUploadsRoutes(app, deps = {}) {
     res.json(upload);
   });
 
-  app.get('/uploads/:type/:id/raw', async (req, res) => {
-    const { type, id } = req.params;
-    if (!isValidUploadType(type) || !isValidId(id)) {
+  app.get('/uploads/:id/raw', async (req, res) => {
+    const { id } = req.params;
+    if (!isValidId(id)) {
       res.status(404).json({ error: 'not found' });
       return;
     }
-    const upload = await queries.getUploadForUser(type, id, req.authUser, { includeBinary: true });
+    const upload = await queries.getUploadForUser(id, req.authUser, { includeBinary: true });
     if (!upload) {
       res.status(404).json({ error: 'not found' });
       return;

@@ -78,9 +78,9 @@ All routes are mounted at the service root (behind nginx they are reached under
 | Method & path | Description |
 | --- | --- |
 | `GET /uploads` | List the upload types the user has, with counts: `{ "uploadTypes": [{ "uploadType": "dmesg", "count": 3 }] }`. |
-| `GET /uploads/:type` | List artifact metadata for `:type` (newest first). Supports `?limit` (max 1000, default 100) and `?offset`. Returns `{ uploadType, limit, offset, uploads: [...] }`. Payload bodies are excluded. |
-| `GET /uploads/:type/:id` | A single artifact record including parsed `payloadText` / `payloadJson`. `404` if it does not exist or is not owned by the user. |
-| `GET /uploads/:type/:id/raw` | The original artifact bytes: `application/octet-stream` payloads are returned as raw bytes; text/JSON payloads are returned with their stored content type. |
+| `GET /uploads?type=:type` | List artifact metadata for `:type` (newest first). Supports `?limit` (max 1000, default 100) and `?offset`. Returns `{ uploadType, limit, offset, uploads: [...] }`. Payload bodies are excluded. `400` for an unknown type. |
+| `GET /uploads/:id` | A single artifact record including parsed `payloadText` / `payloadJson`. `404` if it does not exist or is not owned by the user. |
+| `GET /uploads/:id/raw` | The original artifact bytes: `application/octet-stream` payloads are returned as raw bytes; text/JSON payloads are returned with their stored content type. |
 
 `:type` must be one of the known upload types (`api/lib/uploadTypes.js`); unknown
 types return `404`. `:id` must be numeric.
@@ -141,9 +141,9 @@ KEY=<client-key>
 BASE=http://localhost/client
 
 curl -H "Authorization: Bearer $KEY" "$BASE/uploads"
-curl -H "Authorization: Bearer $KEY" "$BASE/uploads/dmesg?limit=20"
-curl -H "Authorization: Bearer $KEY" "$BASE/uploads/dmesg/42"
-curl -H "Authorization: Bearer $KEY" "$BASE/uploads/dmesg/42/raw"
+curl -H "Authorization: Bearer $KEY" "$BASE/uploads?type=dmesg&limit=20"
+curl -H "Authorization: Bearer $KEY" "$BASE/uploads/42"
+curl -H "Authorization: Bearer $KEY" "$BASE/uploads/42/raw"
 
 # terminal control (only for devices you are associated with)
 curl -H "Authorization: Bearer $KEY" "$BASE/terminal/sessions"

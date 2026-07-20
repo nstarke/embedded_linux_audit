@@ -75,7 +75,7 @@ ambiguous ties. Then exfiltrate to the server so it appears in uploads:
 {"command":"linux remote-copy /tmp/spi.bin <ELA_API_URL>"}        # ela/exec
 ```
 
-Fetch it back with `GET /uploads/<type>/<id>/raw` and analyze offline
+Fetch it back with `GET /uploads/<id>/raw` and analyze offline
 (binwalk, strings, unsquashfs as appropriate for local tooling). Dumps left
 in `/tmp` on the device should be deleted afterwards (`linux/exec`:
 `rm /tmp/<dump>`) — note this cleanup in the report.

@@ -40,7 +40,7 @@ describe('clientUploads', () => {
 
     await expect(lib.listUploadTypesForUser('alice')).resolves.toEqual([]);
     await expect(lib.listUploadsForUser('dmesg', 'alice')).resolves.toEqual([]);
-    await expect(lib.getUploadForUser('dmesg', '1', 'alice')).resolves.toBeNull();
+    await expect(lib.getUploadForUser('1', 'alice')).resolves.toBeNull();
     // Devices were never queried for uploads.
     expect(models.Upload.findAll).not.toHaveBeenCalled();
     expect(models.Upload.findOne).not.toHaveBeenCalled();
@@ -102,7 +102,7 @@ describe('clientUploads', () => {
 
     expect(Upload.findAll.mock.calls[0][0].where).toEqual({ deviceId: [3, 5], uploadType: 'dmesg' });
     expect(rows).toEqual([
-      expect.objectContaining({ id: '12', macAddress: 'aa:bb:cc:dd:ee:ff', payloadBytes: 11 }),
+      expect.objectContaining({ id: 12, macAddress: 'aa:bb:cc:dd:ee:ff', payloadBytes: 11 }),
     ]);
   });
 
@@ -144,8 +144,8 @@ describe('clientUploads', () => {
     const Upload = { findOne: jest.fn().mockResolvedValue(null) };
     const models = modelsWithDevices({ Upload, Device: {} });
     const lib = loadClientUploads({ models });
-    await expect(lib.getUploadForUser('dmesg', '12', 'alice')).resolves.toBeNull();
-    expect(Upload.findOne.mock.calls[0][0].where).toEqual({ id: '12', deviceId: [3, 5], uploadType: 'dmesg' });
+    await expect(lib.getUploadForUser('12', 'alice')).resolves.toBeNull();
+    expect(Upload.findOne.mock.calls[0][0].where).toEqual({ id: '12', deviceId: [3, 5] });
   });
 
   test('getUploadForUser includes payloadBinary only when requested', async () => {
@@ -170,11 +170,11 @@ describe('clientUploads', () => {
     const models = modelsWithDevices({ Upload, Device: {} });
     const lib = loadClientUploads({ models });
 
-    const withoutBinary = await lib.getUploadForUser('file', '12', 'alice');
+    const withoutBinary = await lib.getUploadForUser('12', 'alice');
     expect(withoutBinary).not.toHaveProperty('payloadBinary');
     expect(Upload.findOne.mock.calls[0][0].attributes).not.toContain('payloadBinary');
 
-    const withBinary = await lib.getUploadForUser('file', '12', 'alice', { includeBinary: true });
+    const withBinary = await lib.getUploadForUser('12', 'alice', { includeBinary: true });
     expect(withBinary.payloadBinary).toEqual(Buffer.from([9, 9, 9]));
     expect(Upload.findOne.mock.calls[1][0].attributes).toContain('payloadBinary');
   });

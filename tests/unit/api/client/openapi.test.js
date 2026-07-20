@@ -31,9 +31,8 @@ describe('client OpenAPI spec', () => {
       '/terminal/{mac}/spawn',
       '/terminal/{mac}/spawn/{pid}',
       '/uploads',
-      '/uploads/{type}',
-      '/uploads/{type}/{id}',
-      '/uploads/{type}/{id}/raw',
+      '/uploads/{id}',
+      '/uploads/{id}/raw',
     ]);
     // Every operation on every path requires auth (401 documented).
     for (const path of Object.values(openapiSpec.paths)) {
