@@ -39,6 +39,35 @@
 #include <linux/audit.h>
 #include <linux/filter.h>
 #include <linux/seccomp.h>
+
+/* The AUDIT_ARCH_* constant naming this build's native syscall ABI. Selected
+ * here rather than inline in the filter so the "no known architecture" bail-out
+ * can happen before any filter word is emitted. Left undefined on an
+ * unrecognised target: cpu_harness_seccomp_lockdown() then refuses to install a
+ * partial filter. */
+#if defined(__x86_64__) && defined(AUDIT_ARCH_X86_64)
+#define ELA_SECCOMP_AUDIT_ARCH AUDIT_ARCH_X86_64
+#elif defined(__i386__) && defined(AUDIT_ARCH_I386)
+#define ELA_SECCOMP_AUDIT_ARCH AUDIT_ARCH_I386
+#elif defined(__aarch64__) && defined(AUDIT_ARCH_AARCH64)
+#define ELA_SECCOMP_AUDIT_ARCH AUDIT_ARCH_AARCH64
+#elif defined(__arm__) && defined(AUDIT_ARCH_ARM)
+#define ELA_SECCOMP_AUDIT_ARCH AUDIT_ARCH_ARM
+#elif defined(__riscv) && __riscv_xlen == 64 && defined(AUDIT_ARCH_RISCV64)
+#define ELA_SECCOMP_AUDIT_ARCH AUDIT_ARCH_RISCV64
+#elif defined(__riscv) && defined(AUDIT_ARCH_RISCV32)
+#define ELA_SECCOMP_AUDIT_ARCH AUDIT_ARCH_RISCV32
+#elif defined(__powerpc64__) && defined(__LITTLE_ENDIAN__) && defined(AUDIT_ARCH_PPC64LE)
+#define ELA_SECCOMP_AUDIT_ARCH AUDIT_ARCH_PPC64LE
+#elif defined(__powerpc64__) && defined(AUDIT_ARCH_PPC64)
+#define ELA_SECCOMP_AUDIT_ARCH AUDIT_ARCH_PPC64
+#elif defined(__powerpc__) && defined(AUDIT_ARCH_PPC)
+#define ELA_SECCOMP_AUDIT_ARCH AUDIT_ARCH_PPC
+#elif defined(__mips__) && defined(__MIPSEL__) && defined(AUDIT_ARCH_MIPSEL)
+#define ELA_SECCOMP_AUDIT_ARCH AUDIT_ARCH_MIPSEL
+#elif defined(__mips__) && defined(AUDIT_ARCH_MIPS)
+#define ELA_SECCOMP_AUDIT_ARCH AUDIT_ARCH_MIPS
+#endif
 #endif
 
 #ifndef MAP_ANONYMOUS
@@ -183,7 +212,9 @@ static void classify(struct cpu_isa *isa, uintptr_t start, int len,
 			break;
 		}
 		res->outcome = CPU_OUT_EXECUTED;
-		res->reached_sentinel = isa->variable_length ? 1 : 1;
+		/* Variable-length: the TF trap means the candidate ran. Fixed-width:
+		 * the check above already proved control reached our epilogue. */
+		res->reached_sentinel = 1;
 		if (isa->variable_length && g_fault_pc >= start)
 			res->exec_len = (int)(g_fault_pc - start);
 		break;
@@ -410,7 +441,7 @@ void cpu_harness_free(struct cpu_harness *h)
 
 int cpu_harness_seccomp_lockdown(void)
 {
-#ifdef __linux__
+#if defined(__linux__) && defined(ELA_SECCOMP_AUDIT_ARCH)
 	/*
 	 * Allow only the syscalls the executor's own loop makes; everything else
 	 * -- i.e. any syscall a candidate instruction issues -- is RET_TRAP'd to
@@ -456,43 +487,8 @@ int cpu_harness_seccomp_lockdown(void)
 	prog_body[n++] = (struct sock_filter)BPF_STMT(
 		BPF_LD | BPF_W | BPF_ABS,
 		(uint32_t)offsetof(struct seccomp_data, arch));
-#if defined(__x86_64__) && defined(AUDIT_ARCH_X86_64)
 	prog_body[n++] = (struct sock_filter)BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K,
-		AUDIT_ARCH_X86_64, 1, 0);
-#elif defined(__i386__) && defined(AUDIT_ARCH_I386)
-	prog_body[n++] = (struct sock_filter)BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K,
-		AUDIT_ARCH_I386, 1, 0);
-#elif defined(__aarch64__) && defined(AUDIT_ARCH_AARCH64)
-	prog_body[n++] = (struct sock_filter)BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K,
-		AUDIT_ARCH_AARCH64, 1, 0);
-#elif defined(__arm__) && defined(AUDIT_ARCH_ARM)
-	prog_body[n++] = (struct sock_filter)BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K,
-		AUDIT_ARCH_ARM, 1, 0);
-#elif defined(__riscv) && __riscv_xlen == 64 && defined(AUDIT_ARCH_RISCV64)
-	prog_body[n++] = (struct sock_filter)BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K,
-		AUDIT_ARCH_RISCV64, 1, 0);
-#elif defined(__riscv) && defined(AUDIT_ARCH_RISCV32)
-	prog_body[n++] = (struct sock_filter)BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K,
-		AUDIT_ARCH_RISCV32, 1, 0);
-#elif defined(__powerpc64__) && defined(__LITTLE_ENDIAN__) && defined(AUDIT_ARCH_PPC64LE)
-	prog_body[n++] = (struct sock_filter)BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K,
-		AUDIT_ARCH_PPC64LE, 1, 0);
-#elif defined(__powerpc64__) && defined(AUDIT_ARCH_PPC64)
-	prog_body[n++] = (struct sock_filter)BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K,
-		AUDIT_ARCH_PPC64, 1, 0);
-#elif defined(__powerpc__) && defined(AUDIT_ARCH_PPC)
-	prog_body[n++] = (struct sock_filter)BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K,
-		AUDIT_ARCH_PPC, 1, 0);
-#elif defined(__mips__) && defined(__MIPSEL__) && defined(AUDIT_ARCH_MIPSEL)
-	prog_body[n++] = (struct sock_filter)BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K,
-		AUDIT_ARCH_MIPSEL, 1, 0);
-#elif defined(__mips__) && defined(AUDIT_ARCH_MIPS)
-	prog_body[n++] = (struct sock_filter)BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K,
-		AUDIT_ARCH_MIPS, 1, 0);
-#else
-	/* No known audit architecture: do not install an incomplete filter. */
-	return -1;
-#endif
+		ELA_SECCOMP_AUDIT_ARCH, 1, 0);
 	prog_body[n++] = (struct sock_filter)BPF_STMT(BPF_RET | BPF_K,
 		SECCOMP_RET_TRAP);
 
@@ -519,6 +515,9 @@ int cpu_harness_seccomp_lockdown(void)
 		return -1;
 	return 0;
 #else
+	/* Not Linux, or no known audit architecture: rather than install a partial
+	 * filter that would let a candidate's syscalls through, install none and
+	 * report failure so the caller can refuse to run. */
 	return -1;
 #endif
 }

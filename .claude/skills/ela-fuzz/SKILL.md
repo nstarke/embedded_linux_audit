@@ -78,14 +78,14 @@ Poll on an interval (do not hammer):
 - `GET /terminal/sessions` — is the device still alive? A dropped session
   during fuzzing is itself a result (possible kernel panic) — record the
   timestamp and last artifacts.
-- `GET /uploads/<class>-fuzz?limit=5` and `GET /uploads/coredump?limit=5` —
+- `GET /uploads?type=<class>-fuzz&limit=5` and `GET /uploads?type=coredump&limit=5` —
   new crash records.
 - Once the shell is free, `ela/exec` `linux dmesg` to capture oops traces.
 
 ## 5. Wrap up
 
 Kill leftover tracked spawns (`DELETE /terminal/:mac/spawn/:pid`). Fetch each
-crash artifact (`GET /uploads/<type>/<id>` and `/raw` for cores). Report:
+crash artifact (`GET /uploads/<id>` and `/raw` for cores). Report:
 targets fuzzed, iterations/duration, crashes and anomalies with artifact ids,
 device health at end, and reproduction commands. Recommend `/ela-deep-dive`
 (gdbserver + Ghidra) for any crash worth root-causing.

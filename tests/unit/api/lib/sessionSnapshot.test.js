@@ -23,6 +23,10 @@ function loadSnapshot() {
   };
   const Redis = jest.fn(() => client);
   jest.doMock('ioredis', () => Redis, { virtual: true });
+  // sessionSnapshot pulls getConnection() from ./queue, whose top-level require
+  // of bullmq is likewise unresolvable from the test root. getConnection only
+  // reads env vars, so an empty stand-in is enough to get the module loaded.
+  jest.doMock('bullmq', () => ({ Queue: jest.fn(), QueueEvents: jest.fn() }), { virtual: true });
   const mod = require('../../../../api/lib/sessionSnapshot');
   return { mod, store, getLastSet: () => lastSet };
 }

@@ -62,7 +62,9 @@ async function resolveUserDeviceIds(username, { mac = null } = {}) {
 
 function metadataFromUpload(upload) {
   return {
-    id: String(upload.id),
+    // Sequelize hands BIGINT back as a string; the client API contract is a
+    // JSON number. Exact up to 2^53-1, far beyond any realistic artifact count.
+    id: Number(upload.id),
     uploadType: upload.uploadType,
     contentType: upload.contentType,
     macAddress: upload.Device ? upload.Device.macAddress : null,
@@ -111,7 +113,9 @@ async function listUploadsForUser(uploadType, username, { limit = 100, offset = 
   return rows.map(metadataFromUpload);
 }
 
-async function getUploadForUser(uploadType, id, username, { includeBinary = false } = {}) {
+// Upload ids are globally unique, so a record is addressable by id alone; the
+// device-association filter is what scopes visibility.
+async function getUploadForUser(id, username, { includeBinary = false } = {}) {
   const deviceIds = await resolveUserDeviceIds(username);
   if (deviceIds.length === 0) {
     return null;
@@ -122,7 +126,7 @@ async function getUploadForUser(uploadType, id, username, { includeBinary = fals
     attributes.push('payloadBinary');
   }
   const upload = await Upload.findOne({
-    where: { id, deviceId: deviceIds, uploadType },
+    where: { id, deviceId: deviceIds },
     attributes,
     include: [{ model: Device, attributes: ['macAddress'] }],
   });

@@ -15,12 +15,12 @@ never touches the device. Safe to run any time. Uses the standard preflight
 # inventory
 curl -s -H "Authorization: Bearer $ELA_CLIENT_KEY" "$ELA_CLIENT_URL/uploads"
 # metadata list for one type (newest first; ?limit up to 1000, ?offset)
-curl -s -H "Authorization: Bearer $ELA_CLIENT_KEY" "$ELA_CLIENT_URL/uploads/linux-audit?limit=50"
+curl -s -H "Authorization: Bearer $ELA_CLIENT_KEY" "$ELA_CLIENT_URL/uploads?type=linux-audit&limit=50"
 # full record with parsed payloadText/payloadJson
-curl -s -H "Authorization: Bearer $ELA_CLIENT_KEY" "$ELA_CLIENT_URL/uploads/linux-audit/42"
+curl -s -H "Authorization: Bearer $ELA_CLIENT_KEY" "$ELA_CLIENT_URL/uploads/42"
 # original bytes (for binaries: orom, uboot-image, coredump, pcap, physmem)
 curl -s -H "Authorization: Bearer $ELA_CLIENT_KEY" -o /tmp/artifact.bin \
-  "$ELA_CLIENT_URL/uploads/orom/7/raw"
+  "$ELA_CLIENT_URL/uploads/7/raw"
 ```
 
 Filter by device using the `macAddress` metadata field. When multiple records

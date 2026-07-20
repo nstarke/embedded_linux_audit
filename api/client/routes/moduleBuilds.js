@@ -28,7 +28,8 @@ function defaultSendCommand(payload, opts) {
 
 function serializeRequest(row) {
   return {
-    id: row.id,
+    // BIGINT PK: the pg driver yields a string, but the API contract is a number.
+    id: Number(row.id),
     status: row.status,
     kernelRelease: row.kernelRelease,
     isa: row.isa,
@@ -315,9 +316,10 @@ module.exports = function registerModuleBuildRoutes(app, deps = {}) {
     // Store modules under the colon-MAC dir so they share one directory with
     // the agent-api's uploads for the device (which land under the colon-MAC
     // the agent reports), rather than a separate dash-MAC dir.
-    const outDir = path.join(dataDir, storedMac.replace(/-/g, ':'), 'modules', String(request.id));
+    const requestId = Number(request.id);
+    const outDir = path.join(dataDir, storedMac.replace(/-/g, ':'), 'modules', String(requestId));
     await getQueue().add('module-build', {
-      requestId: request.id,
+      requestId,
       outDir,
       kernelRelease: buildInfo.kernelRelease,
       isa: buildInfo.isa,

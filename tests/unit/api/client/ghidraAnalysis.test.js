@@ -58,9 +58,10 @@ function fakeZipChild(bytes, code = 0) {
 const MAC = 'aa:bb:cc:dd:ee:ff';
 
 function baseDeps(overrides = {}) {
-  const createdRow = { id: 7, status: 'queued', filesFound: 0, filesAnalyzed: 0 };
+  // BIGINT PKs arrive from the pg driver as strings; serializers must emit numbers.
+  const createdRow = { id: '7', status: 'queued', filesFound: 0, filesAnalyzed: 0 };
   const succeededRow = {
-    id: 7, status: 'succeeded', filesFound: 2, filesAnalyzed: 2,
+    id: '7', status: 'succeeded', filesFound: 2, filesAnalyzed: 2,
     outputRoot: `/data/agent/${MAC}/ghidra`,
   };
   const queue = { add: jest.fn().mockResolvedValue({ id: 'job-1' }) };

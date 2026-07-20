@@ -50,7 +50,8 @@ function defaultGetQueue() {
 
 function serializeJob(row) {
   return {
-    id: row.id,
+    // BIGINT PK: the pg driver yields a string, but the API contract is a number.
+    id: Number(row.id),
     status: row.status,
     filesFound: row.filesFound,
     filesAnalyzed: row.filesAnalyzed,
@@ -166,7 +167,7 @@ module.exports = function registerGhidraAnalysisRoutes(app, deps = {}) {
     // the terminal command queue itself, so the payload only needs the job
     // identity and the device MAC.
     await getQueue().add('ghidra-analysis', {
-      jobId: job.id,
+      jobId: Number(job.id),
       deviceId: device.id,
       mac: storedMac,
     }, {

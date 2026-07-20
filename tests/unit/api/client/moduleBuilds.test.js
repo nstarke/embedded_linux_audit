@@ -35,8 +35,9 @@ const BUILD_INFO = {
 };
 
 function baseDeps(overrides = {}) {
+  // BIGINT PKs arrive from the pg driver as strings; serializers must emit numbers.
   const createdRow = {
-    id: 7,
+    id: '7',
     status: 'queued',
     kernelRelease: BUILD_INFO.kernelRelease,
     isa: BUILD_INFO.isa,
