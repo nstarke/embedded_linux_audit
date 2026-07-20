@@ -37,6 +37,7 @@ describe('db models', () => {
 
     expect(Object.keys(result).sort()).toEqual([
       'ApiKey',
+      'AppSetting',
       'ArchReport',
       'BlockedRemote',
       'CommandLog',

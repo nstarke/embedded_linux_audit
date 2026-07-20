@@ -72,8 +72,8 @@ User Channel and re-probes — a hard controller crash may need a replug.
 Because HCI fuzzing can panic the host, `hci-generic` streams each command to the
 agent API for **remote crash capture**, exactly like the WLAN/ethernet host-kernel
 targets: with `--output-http` set, each command is streamed (to the `/bt-fuzz/`
-endpoint) before it is sent, so a host panic leaves the last one saved as a
-replayable crash file. Add `--insecure` for a self-signed endpoint. See the WLAN
+endpoint) before it is sent, so a host panic leaves the last N (default 10)
+saved as one replayable crash file. Add `--insecure` for a self-signed endpoint. See the WLAN
 doc's [remote crash capture](wlan-fuzz.md#remote-crash-capture-survives-a-host-panic).
 
 ## Options

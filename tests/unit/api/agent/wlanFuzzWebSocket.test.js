@@ -72,6 +72,12 @@ describe('agent wlan-fuzz websocket receiver', () => {
       .toBe('# target=wext-generic cases=1\nX 00\n');
   });
 
+  test('buildCrashFile writes a whole ring, oldest first, with a matching count', () => {
+    const { buildCrashFile } = loadWlanFuzzWebSocket();
+    expect(buildCrashFile('ath10k', ['A 01 #one', 'B 02 #two', 'C 03 #three']))
+      .toBe('# target=ath10k cases=3\nA 01 #one\nB 02 #two\nC 03 #three\n');
+  });
+
   test('runs in noServer mode and exposes a per-segment pathRe', () => {
     const { createWlanFuzzWebSocketServer, WebSocketServer } = loadWlanFuzzWebSocket();
     const wlan = createWlanFuzzWebSocketServer({ dataDir: '/tmp/noop', persistUpload: jest.fn() });
@@ -88,7 +94,7 @@ describe('agent wlan-fuzz websocket receiver', () => {
     expect(eth.pathRe.test('/wlan-fuzz/aa:bb:cc:dd:ee:ff')).toBe(false);
   });
 
-  test('ungraceful close saves the LAST held payload as a triage crash file', async () => {
+  test('ungraceful close saves the held ring as a triage crash file', async () => {
     const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ela-wlanfuzz-ws-'));
     const persistUpload = jest.fn().mockResolvedValue({});
     const ws = connect(dataDir, persistUpload);
@@ -109,9 +115,78 @@ describe('agent wlan-fuzz websocket receiver', () => {
       localArtifactPath: expect.stringMatching(/crash_.*\.txt$/),
     }));
     const artifactPath = persistUpload.mock.calls[0][0].localArtifactPath;
-    // only the latest case is kept, and it's a replayable crash file
+    // both cases are kept, oldest first, as one replayable crash file: under the
+    // default ring of 10 nothing is evicted
     expect(fs.readFileSync(artifactPath, 'utf8'))
-      .toBe('# target=wext-generic cases=1\nSIWENCODE deadbeef #second\n');
+      .toBe('# target=wext-generic cases=2\nSIWESSID 4142 #first\nSIWENCODE deadbeef #second\n');
+
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  test('the ring defaults to the last 10 cases, evicting the oldest', async () => {
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ela-wlanfuzz-ws-'));
+    const persistUpload = jest.fn().mockResolvedValue({});
+    const ws = connect(dataDir, persistUpload);
+
+    ws.handlers.get('message')(Buffer.from('T wext-generic'));
+    for (let i = 0; i < 14; i += 1) {
+      ws.handlers.get('message')(Buffer.from(`C SIWESSID 4142 #case${i}`));
+    }
+    ws.handlers.get('close')();
+
+    for (let i = 0; i < 20 && persistUpload.mock.calls.length === 0; i += 1) {
+      await flush();
+    }
+    const text = fs.readFileSync(persistUpload.mock.calls[0][0].localArtifactPath, 'utf8');
+    const lines = text.trim().split('\n');
+    expect(lines[0]).toBe('# target=wext-generic cases=10');
+    // cases 0-3 evicted; the newest case is last, where replay expects it
+    expect(lines[1]).toBe('SIWESSID 4142 #case4');
+    expect(lines[10]).toBe('SIWESSID 4142 #case13');
+
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  test('resolveRingSize sizes the ring, and is re-read per connection', async () => {
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ela-wlanfuzz-ws-'));
+    const persistUpload = jest.fn().mockResolvedValue({});
+    const resolveRingSize = jest.fn().mockResolvedValue(3);
+    const ws = connect(dataDir, persistUpload, { resolveRingSize });
+
+    ws.handlers.get('message')(Buffer.from('T wext-generic'));
+    for (let i = 0; i < 5; i += 1) {
+      ws.handlers.get('message')(Buffer.from(`C SIWESSID 4142 #case${i}`));
+    }
+    ws.handlers.get('close')();
+
+    for (let i = 0; i < 20 && persistUpload.mock.calls.length === 0; i += 1) {
+      await flush();
+    }
+    expect(resolveRingSize).toHaveBeenCalledTimes(1);
+    expect(fs.readFileSync(persistUpload.mock.calls[0][0].localArtifactPath, 'utf8')).toBe(
+      '# target=wext-generic cases=3\n'
+      + 'SIWESSID 4142 #case2\nSIWESSID 4142 #case3\nSIWESSID 4142 #case4\n',
+    );
+
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  test('a failing ring-size lookup still captures the crash at the default size', async () => {
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ela-wlanfuzz-ws-'));
+    const persistUpload = jest.fn().mockResolvedValue({});
+    const resolveRingSize = jest.fn().mockRejectedValue(new Error('db down'));
+    const ws = connect(dataDir, persistUpload, { resolveRingSize });
+
+    ws.handlers.get('message')(Buffer.from('T wext-generic'));
+    ws.handlers.get('message')(Buffer.from('C SIWESSID 4142 #only'));
+    ws.handlers.get('close')();
+
+    for (let i = 0; i < 20 && persistUpload.mock.calls.length === 0; i += 1) {
+      await flush();
+    }
+    // the settings store being down must not cost us the panic capture
+    expect(fs.readFileSync(persistUpload.mock.calls[0][0].localArtifactPath, 'utf8'))
+      .toBe('# target=wext-generic cases=1\nSIWESSID 4142 #only\n');
 
     fs.rmSync(dataDir, { recursive: true, force: true });
   });
