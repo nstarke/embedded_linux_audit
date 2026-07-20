@@ -9,6 +9,7 @@ const registerTerminalRoutes = require('./routes/terminal');
 const registerGdbRoutes = require('./routes/gdb');
 const registerModuleBuildRoutes = require('./routes/moduleBuilds');
 const registerGhidraAnalysisRoutes = require('./routes/ghidraAnalysis');
+const registerSettingsRoutes = require('./routes/settings');
 const { openapiSpec } = require('./openapi');
 
 /**
@@ -71,6 +72,9 @@ function createApp(deps = {}) {
   // decompile every ELF with Ghidra in the background ghidra-analysis worker;
   // create/list/poll the resulting jobs. ACL'd to the caller's devices.
   registerGhidraAnalysisRoutes(app, deps.ghidraAnalysis || {});
+  // Deployment-wide settings (no device scope): currently the fuzz case-ring
+  // size the agent API holds per streaming connection for panic capture.
+  registerSettingsRoutes(app, deps.settings || {});
 
   // Translate JSON body-parser failures on the terminal POST routes into the
   // same error shapes the routes use.

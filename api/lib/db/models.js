@@ -810,6 +810,29 @@ function defineModels(sequelize) {
     createdAt: 'created_at',
   });
 
+  // Global operator-tunable settings (deployment-wide, not per device/user).
+  const AppSetting = sequelize.define('AppSetting', {
+    id: {
+      type: DataTypes.BIGINT,
+      autoIncrement: true,
+      primaryKey: true,
+    },
+    key: {
+      type: DataTypes.STRING(128),
+      allowNull: false,
+      unique: true,
+    },
+    value: {
+      type: DataTypes.TEXT,
+      allowNull: false,
+    },
+  }, {
+    tableName: 'app_settings',
+    underscored: true,
+    createdAt: 'created_at',
+    updatedAt: 'updated_at',
+  });
+
   const User = sequelize.define('User', {
     id: {
       type: DataTypes.BIGINT,
@@ -936,6 +959,7 @@ function defineModels(sequelize) {
     GhidraAnalysisJob,
     GrepMatch,
     BlockedRemote,
+    AppSetting,
     User,
     ApiKey,
     UserDevice,

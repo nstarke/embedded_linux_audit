@@ -81,7 +81,7 @@ are not treated as death.
 Because it can panic the host, `ethtool-generic` supports the same **remote
 crash capture** as `wext-generic`: with `--output-http` set, each payload is
 streamed to the agent API (`/eth-fuzz/` endpoint) before execution, and a host
-panic leaves the last one saved as a replayable crash file. Add `--insecure` for
+panic leaves the last N (default 10) saved as one replayable crash file. Add `--insecure` for
 a self-signed endpoint. See the WLAN doc's [remote crash
 capture](wlan-fuzz.md#remote-crash-capture-survives-a-host-panic) section — the
 mechanism is identical.

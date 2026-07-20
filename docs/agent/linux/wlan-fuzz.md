@@ -292,9 +292,29 @@ There are two ways a crash reaches the API:
    (`ath10k`/`ath11k`/`ath12k`/`mt76`/`brcmfmac` &mdash; the inject runs in
    kernel context), matching the ethernet firmware and Bluetooth targets. (The
    usbfs targets drive the device from userspace, so they get crash upload only.)
-   The API holds only the latest streamed payload; if the host panics and the
-   agent dies before triage can run, the socket drops without the "done" marker
-   and the API writes that last payload out as a `_panic` crash file.
+   The API holds the last **N** streamed payloads in an in-memory ring (N
+   defaults to 10); if the host panics and the agent dies before triage can run,
+   the socket drops without the "done" marker and the API writes the whole ring
+   out as a single `_panic` crash file, oldest case first. Keeping several
+   matters because the payload that panicked is often not the last one streamed:
+   a bug can fire a few cases after the one that corrupted state, and the ring
+   preserves that run-up.
+
+   N is a deployment-wide setting on the client API, and a change applies to the
+   next fuzz connection (runs already streaming keep the size they started with):
+
+   ```
+   curl -H "Authorization: Bearer $ELA_CLIENT_TOKEN" \
+     http://localhost:7000/settings/fuzz-ring-size
+   # {"ringSize":10,"default":10,"max":1000}
+
+   curl -X PUT -H "Authorization: Bearer $ELA_CLIENT_TOKEN" \
+     -H 'Content-Type: application/json' -d '{"ringSize":50}' \
+     http://localhost:7000/settings/fuzz-ring-size
+   ```
+
+   A case line is capped at ~2 KB, so the 1000-case maximum costs ~2 MB of API
+   memory per live fuzz connection.
 
 Either way the artifact lands under the device's data directory
 (`<data>/<mac>/wlan-fuzz/crash_*.txt`) and in the `uploads` table, exactly like a

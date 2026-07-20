@@ -22,6 +22,7 @@ describe('client OpenAPI spec', () => {
       '/module-builds',
       '/module-builds/{id}',
       '/module-builds/{id}/deliver',
+      '/settings/fuzz-ring-size',
       '/terminal/sessions',
       '/terminal/sessions/{mac}',
       '/terminal/{mac}/ela/exec',
@@ -36,7 +37,7 @@ describe('client OpenAPI spec', () => {
     ]);
     // Every operation on every path requires auth (401 documented).
     for (const path of Object.values(openapiSpec.paths)) {
-      const ops = ['get', 'post', 'delete'].map((m) => path[m]).filter(Boolean);
+      const ops = ['get', 'post', 'put', 'delete'].map((m) => path[m]).filter(Boolean);
       expect(ops.length).toBeGreaterThan(0);
       for (const op of ops) {
         expect(op.responses['401']).toBeDefined();

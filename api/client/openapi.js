@@ -33,6 +33,7 @@ const openapiSpec = {
     { name: 'gdb', description: 'Active gdbserver debug sessions on associated devices' },
     { name: 'modules', description: 'Cross-compiled kernel-module builds for associated devices' },
     { name: 'ghidra', description: 'Ghidra decompilation of a device filesystem' },
+    { name: 'settings', description: 'Deployment-wide operator settings' },
   ],
   paths: {
     '/uploads': {
@@ -511,6 +512,39 @@ const openapiSpec = {
         },
       },
     },
+    '/settings/fuzz-ring-size': {
+      get: {
+        tags: ['settings'],
+        summary: 'Read the fuzz case-ring size',
+        description: 'How many streamed fuzz cases the agent API retains in memory per fuzz connection. If the host panics mid-fuzz the whole ring is saved as one replayable crash file, so the case that killed the host is preserved along with the run-up to it.',
+        operationId: 'getFuzzRingSize',
+        responses: {
+          200: {
+            description: 'The current ring size, plus the default and the maximum',
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/FuzzRingSizeResponse' } } },
+          },
+          401: { $ref: '#/components/responses/Unauthorized' },
+        },
+      },
+      put: {
+        tags: ['settings'],
+        summary: 'Set the fuzz case-ring size',
+        description: 'Applies to fuzz connections opened after the change; runs already streaming keep the size they opened with. Deployment-wide, not per device.',
+        operationId: 'setFuzzRingSize',
+        requestBody: {
+          required: true,
+          content: { 'application/json': { schema: { $ref: '#/components/schemas/FuzzRingSizeRequest' } } },
+        },
+        responses: {
+          200: {
+            description: 'The stored ring size',
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/FuzzRingSizeResponse' } } },
+          },
+          400: { $ref: '#/components/responses/BadRequest' },
+          401: { $ref: '#/components/responses/Unauthorized' },
+        },
+      },
+    },
   },
   components: {
     securitySchemes: {
@@ -660,6 +694,25 @@ const openapiSpec = {
         type: 'object',
         properties: { error: { type: 'string' } },
         required: ['error'],
+      },
+      FuzzRingSizeRequest: {
+        type: 'object',
+        properties: {
+          ringSize: {
+            type: 'integer', minimum: 1, maximum: 1000, example: 25,
+            description: 'Number of streamed fuzz cases to retain per connection.',
+          },
+        },
+        required: ['ringSize'],
+      },
+      FuzzRingSizeResponse: {
+        type: 'object',
+        properties: {
+          ringSize: { type: 'integer', example: 25 },
+          default: { type: 'integer', example: 10 },
+          max: { type: 'integer', example: 1000 },
+        },
+        required: ['ringSize', 'default', 'max'],
       },
       UploadTypeCount: {
         type: 'object',

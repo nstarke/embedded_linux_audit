@@ -13,6 +13,7 @@ const { getAgentServiceConfig } = require('../lib/config');
 const { initializeDatabase, runMigrations, closeDatabase } = require('../lib/db');
 const { persistUpload } = require('../lib/db/persistUpload');
 const { loadApiKeyHashes } = require('../lib/db/deviceRegistry');
+const { getFuzzRingSize } = require('../lib/db/appSettings');
 const { VALID_UPLOAD_TYPES } = require('../lib/uploadTypes');
 const { createApp } = require('./app');
 const { createPcapWebSocketServer } = require('./pcapWebSocket');
@@ -229,20 +230,22 @@ async function main() {
   // 404 in verifyClient beats the matching endpoint's async auth, so every WS
   // path 404s. The dispatcher matches pathRe, authenticates once, then hands the
   // socket to the one endpoint that owns the path.
+  // Read per connection, not once here, so an operator's PUT /settings/fuzz-ring-size
+  // on the client API takes effect on the next fuzz run without a restart.
+  const fuzzOpts = {
+    dataDir, persistUpload, verbose: args.verbose, resolveRingSize: getFuzzRingSize,
+  };
   const wsEndpoints = [
     createPcapWebSocketServer({ dataDir, persistUpload, verbose: args.verbose }),
-    createWlanFuzzWebSocketServer({ dataDir, persistUpload, verbose: args.verbose }),
+    createWlanFuzzWebSocketServer({ ...fuzzOpts }),
     createWlanFuzzWebSocketServer({
-      dataDir, persistUpload, verbose: args.verbose,
-      pathSegment: 'eth-fuzz', uploadType: 'eth-fuzz',
+      ...fuzzOpts, pathSegment: 'eth-fuzz', uploadType: 'eth-fuzz',
     }),
     createWlanFuzzWebSocketServer({
-      dataDir, persistUpload, verbose: args.verbose,
-      pathSegment: 'bt-fuzz', uploadType: 'bt-fuzz',
+      ...fuzzOpts, pathSegment: 'bt-fuzz', uploadType: 'bt-fuzz',
     }),
     createWlanFuzzWebSocketServer({
-      dataDir, persistUpload, verbose: args.verbose,
-      pathSegment: 'cpu-fuzz', uploadType: 'cpu-fuzz',
+      ...fuzzOpts, pathSegment: 'cpu-fuzz', uploadType: 'cpu-fuzz',
     }),
   ];
 

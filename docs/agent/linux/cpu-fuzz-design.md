@@ -178,7 +178,8 @@ linux cpu fuzz [options]
 Findings and streaming reuse the existing conventions: a `# target=cpu-<isa>`
 header, one line per candidate, `--output-http` opens the same
 WebSocket dead-man's-switch stream (endpoint `cpu-fuzz`) so a candidate that
-hangs/panics the core still leaves its bytes captured remotely.
+hangs/panics the core still leaves its bytes -- and those of the N-1 candidates
+before it (N defaults to 10) -- captured remotely.
 
 ## Delivery plan
 
