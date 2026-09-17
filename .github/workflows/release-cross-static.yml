@@ -20,7 +20,7 @@ jobs:
       sha: ${{ steps.commit.outputs.sha }}
       run-id: ${{ steps.reuse.outputs.result }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.sha }}
           fetch-depth: 1
@@ -57,19 +57,19 @@ jobs:
           (needs.resolve.outputs.run-id != '' || needs.build.result == 'success') }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ needs.resolve.outputs.sha }}
           fetch-depth: 1
       - name: Download release binaries
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           github-token: ${{ github.token }}
           run-id: ${{ needs.resolve.outputs.run-id || github.run_id }}
           pattern: ela-*
           path: tested-artifacts
       - name: Download successful test manifest
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           github-token: ${{ github.token }}
           run-id: ${{ needs.resolve.outputs.run-id || github.run_id }}
@@ -85,12 +85,12 @@ jobs:
         run: |
           mkdir -p release-metadata
           printf '%s\n' "$RELEASE_TAG" > release-metadata/tag.txt
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: publish-release-assets
           path: release-assets
           if-no-files-found: error
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: publish-release-metadata
           path: release-metadata/tag.txt

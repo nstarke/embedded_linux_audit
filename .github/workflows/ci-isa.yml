@@ -23,7 +23,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ inputs.ref || github.sha }}
           fetch-depth: 1
@@ -40,13 +40,13 @@ jobs:
           ELA_DEPENDENCY_CACHE_HIT: ${{ steps.setup.outputs.cache-hit }}
         run: bash tools/ci/build-isa.sh "$ISA" "$ZIG_TARGETS"
       - name: Upload release binary
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ela-${{ inputs.isa }}
           path: api/data/release_binaries/${{ inputs.isa }}/ela-*
           if-no-files-found: error
       - name: Upload unit-test binary
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ela-unit-${{ inputs.isa }}
           path: dist/${{ inputs.isa }}/agent_unit_tests-*
@@ -58,7 +58,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ inputs.ref || github.sha }}
           fetch-depth: 1
@@ -87,12 +87,12 @@ jobs:
           sudo install -m 0755 /tmp/qemu-armeb-static /usr/bin/qemu-armeb-static
           qemu-armeb-static --version | head -1
       - name: Download locally built release binaries
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: ela-${{ inputs.isa }}
           path: downloaded-release-binaries
       - name: Download locally built unit test binary
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: ela-unit-${{ inputs.isa }}
           path: downloaded-unit-tests
@@ -137,7 +137,7 @@ jobs:
           exit "$test_rc"
       - name: Upload qemu ISA log
         if: ${{ always() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: qemu-log-${{ inputs.isa }}
           path: qemu-logs/${{ inputs.isa }}.log
@@ -149,12 +149,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ inputs.ref || github.sha }}
           fetch-depth: 1
       - name: Download locally built release binaries
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: ela-x86_64
           path: downloaded-release-binaries
@@ -182,12 +182,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ inputs.ref || github.sha }}
           fetch-depth: 1
       - name: Download locally built release binaries
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: ela-x86_64
           path: downloaded-release-binaries
