@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: MIT - Copyright (c) 2026 Nicholas Starke
 'use strict';
 
+// CI installs the root test dependencies without the API's Sequelize package.
+jest.mock('sequelize', () => ({
+  Op: { ne: Symbol('ne') },
+}), { virtual: true });
+
 // Exercise each public read path so moving its ACL cannot accidentally turn a
 // missing user or an unrelated device into an unrestricted job/upload query.
 describe.each([
