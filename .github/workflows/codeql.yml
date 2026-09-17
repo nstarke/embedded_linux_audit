@@ -16,15 +16,25 @@ permissions:
   actions: read
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
+  changes:
+    uses: ./.github/workflows/ci-changes.yml
+
   analyze-c:
+    needs: changes
+    if: ${{ needs.changes.outputs.agent == 'true' }}
     name: Analyze (c-cpp)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          submodules: recursive
+
+      - name: Initialize required dependency sources
+        run: bash tools/ci/checkout-submodules.sh native
 
       - name: Install build dependencies
         run: |
@@ -50,6 +60,8 @@ jobs:
           category: c-cpp
 
   analyze-javascript:
+    needs: changes
+    if: ${{ needs.changes.outputs.javascript == 'true' }}
     name: Analyze (javascript)
     runs-on: ubuntu-latest
     steps:

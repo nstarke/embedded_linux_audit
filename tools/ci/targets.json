@@ -1,0 +1,62 @@
+[
+  {
+    "isa": "arm32-le",
+    "zig_targets": "arm-linux-musleabi"
+  },
+  {
+    "isa": "arm32-be",
+    "zig_targets": "armeb-linux-musleabi,armeb-linux-gnueabi"
+  },
+  {
+    "isa": "aarch64-le",
+    "zig_targets": "aarch64-linux-musl"
+  },
+  {
+    "isa": "aarch64-be",
+    "zig_targets": "aarch64_be-linux-musl"
+  },
+  {
+    "isa": "mips-le",
+    "zig_targets": "mipsel-linux-musleabi,mipsel-linux-musleabihf"
+  },
+  {
+    "isa": "mips-be",
+    "zig_targets": "mips-linux-musleabi,mips-linux-musleabihf"
+  },
+  {
+    "isa": "mips64-le",
+    "zig_targets": "mips64el-linux-muslabi64,mips64el-linux-gnuabi64"
+  },
+  {
+    "isa": "mips64-be",
+    "zig_targets": "mips64-linux-muslabi64,mips64-linux-gnuabi64"
+  },
+  {
+    "isa": "powerpc-le",
+    "zig_targets": "powerpc64le-linux-musl,powerpc64le-linux-gnu"
+  },
+  {
+    "isa": "powerpc64-be",
+    "zig_targets": "powerpc64-linux-musl"
+  },
+  {
+    "isa": "powerpc-be",
+    "zig_targets": "powerpc-linux-musleabi,powerpc-linux-musleabihf,powerpc-linux-gnueabi,powerpc-linux-gnueabihf"
+  },
+  {
+    "isa": "x86",
+    "zig_targets": "x86-linux-musl"
+  },
+  {
+    "isa": "x86_64",
+    "zig_targets": "x86_64-linux-musl"
+  },
+  {
+    "isa": "riscv32",
+    "zig_targets": "riscv32-linux-musl,riscv32-linux-gnu"
+  },
+  {
+    "isa": "riscv64",
+    "zig_targets": "riscv64-linux-musl,riscv64-linux-gnu"
+  }
+]

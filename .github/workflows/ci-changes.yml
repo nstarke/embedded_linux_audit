@@ -1,0 +1,52 @@
+name: Select CI checks
+
+'on':
+  workflow_call:
+    inputs:
+      ref:
+        type: string
+        default: ''
+        description: Exact source commit to test
+      force-full:
+        type: boolean
+        default: false
+        description: Run all checks, including for a release fallback
+    outputs:
+      agent:
+        value: ${{ jobs.changes.outputs.agent }}
+      javascript:
+        value: ${{ jobs.changes.outputs.javascript }}
+      kmod:
+        value: ${{ jobs.changes.outputs.kmod }}
+      sha:
+        value: ${{ jobs.changes.outputs.sha }}
+      matrix:
+        value: ${{ jobs.changes.outputs.matrix }}
+
+permissions:
+  contents: read
+
+jobs:
+
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      agent: ${{ steps.select.outputs.agent }}
+      javascript: ${{ steps.select.outputs.javascript }}
+      kmod: ${{ steps.select.outputs.kmod }}
+      sha: ${{ steps.select.outputs.sha }}
+      matrix: ${{ steps.select.outputs.matrix }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          fetch-depth: 1
+      - id: select
+        name: Select checks from the complete change set
+        env:
+          FORCE_FULL: ${{ inputs.force-full }}
+        run: |
+          python3 tools/ci/changes.py
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          python3 -c 'import json; print("matrix=" + json.dumps({"include": json.load(open("tools/ci/targets.json"))}))' >> "$GITHUB_OUTPUT"

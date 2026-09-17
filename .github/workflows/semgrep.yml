@@ -12,8 +12,17 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
+  changes:
+    uses: ./.github/workflows/ci-changes.yml
+
   semgrep:
+    needs: changes
+    if: ${{ needs.changes.outputs.javascript == 'true' }}
     name: Semgrep (JavaScript)
     runs-on: ubuntu-latest
     container:
