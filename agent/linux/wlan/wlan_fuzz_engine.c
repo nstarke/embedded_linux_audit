@@ -215,8 +215,11 @@ static void roll_history(struct fuzz_ctx *fc)
 			(size_t)(fc->nhistory - excess) * sizeof(fc->history[0]));
 		fc->nhistory -= excess;
 	}
-	if (fc->nwindow > cap)
-		fc->nwindow = cap;	/* degenerate probe_every > cap */
+	/* fc->window physically holds only WINDOW_MAX entries; cap bounds the
+	 * (larger) history buffer and must not be used to clamp a read out of
+	 * window, or a degenerate cap > WINDOW_MAX overruns fc->window here. */
+	if (fc->nwindow > WINDOW_MAX)
+		fc->nwindow = WINDOW_MAX;
 	memcpy(fc->history + fc->nhistory, fc->window,
 	       (size_t)fc->nwindow * sizeof(fc->history[0]));
 	fc->nhistory += fc->nwindow;
