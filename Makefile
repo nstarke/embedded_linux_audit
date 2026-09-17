@@ -426,7 +426,16 @@ WOLFSSL_DIR     := third_party/wolfssl
 WOLFSSL_BUILD   := $(WOLFSSL_DIR)/build-$(CC_TAG)
 WOLFSSL_INSTALL := $(WOLFSSL_BUILD)/install
 WOLFSSL_LIB     := $(WOLFSSL_BUILD)/src/.libs/libwolfssl.a
-WOLFSSL_CFLAGS  := -I$(WOLFSSL_DIR) -I$(WOLFSSL_BUILD)
+# Compile agent sources against the INSTALLED headers only, never the source or
+# build tree. wolfSSL's autogen.sh creates an empty placeholder
+# $(WOLFSSL_DIR)/wolfssl/options.h when one is absent, and with -I$(WOLFSSL_DIR)
+# first that placeholder shadowed the real configure-generated options.h in
+# $(WOLFSSL_BUILD). Agent code then saw *no* wolfSSL configuration while
+# libwolfssl.a had been built with --enable-opensslextra --enable-sni: HAVE_SNI
+# went undefined, so ws_client.c silently stopped sending SNI, and whether the
+# headers matched the library came down to whether autogen had run this build.
+# $(WOLFSSL_INSTALL)/include is what curl is already pointed at.
+WOLFSSL_CFLAGS  := -I$(WOLFSSL_INSTALL)/include
 OPENSSL_DIR   := third_party/openssl
 OPENSSL_BUILD := $(OPENSSL_DIR)/build-$(CC_TAG)
 OPENSSL_INSTALL := $(OPENSSL_BUILD)/install
@@ -794,10 +803,12 @@ CFLAGS += $(LIBPCAP_CFLAGS)
 ifeq ($(ELA_ENABLE_WOLFSSL),1)
 CFLAGS += $(WOLFSSL_CFLAGS)
 CFLAGS += -DELA_HAS_WOLFSSL=1
-# Suppress -Wmacro-redefined: wolfSSL's OpenSSL-compat layer and the real OpenSSL
-# headers both define SSL_VERIFY_PEER, SSL_ERROR_NONE, etc., which is expected
-# when both are present in the same binary (wolfSSL for TLS, OpenSSL for libssh).
-CFLAGS += -Wno-macro-redefined
+# NOTE: -Wno-macro-redefined used to be needed here because wolfSSL's
+# OpenSSL-compat layer and the real OpenSSL headers both define SSL_VERIFY_PEER,
+# SSL_ERROR_NONE, etc. Since the wolfSSL backend moved to its own translation
+# unit (agent/net/http_client_wolfssl.c) no source sees both header trees, so the
+# suppression is gone and a reappearing redefinition warning is a real signal
+# that the two have been mixed again.
 # Suppress "No configuration for wolfSSL detected" and "harden options" warnings
 # that fire when wolfSSL headers are included outside of the wolfSSL build tree.
 CFLAGS += -DWOLFSSL_CUSTOM_CONFIG -DWC_NO_HARDEN
@@ -870,6 +881,7 @@ SRC := \
 	agent/net/tcp_util.c \
 	agent/net/tcp_runtime_util.c \
 	agent/net/http_client.c \
+	agent/net/http_client_wolfssl.c \
 	agent/net/http_client_parse_util.c \
 	agent/net/http_client_body_util.c \
 	agent/net/http_client_protocol_util.c \
