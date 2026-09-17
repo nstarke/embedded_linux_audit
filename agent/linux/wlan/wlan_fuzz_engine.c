@@ -215,8 +215,11 @@ static void roll_history(struct fuzz_ctx *fc)
 			(size_t)(fc->nhistory - excess) * sizeof(fc->history[0]));
 		fc->nhistory -= excess;
 	}
-	if (fc->nwindow > cap)
-		fc->nwindow = cap;	/* degenerate probe_every > cap */
+	/* fc->window physically holds only WINDOW_MAX entries; cap bounds the
+	 * (larger) history buffer and must not be used to clamp a read out of
+	 * window, or a degenerate cap > WINDOW_MAX overruns fc->window here. */
+	if (fc->nwindow > WINDOW_MAX)
+		fc->nwindow = WINDOW_MAX;
 	memcpy(fc->history + fc->nhistory, fc->window,
 	       (size_t)fc->nwindow * sizeof(fc->history[0]));
 	fc->nhistory += fc->nwindow;
@@ -282,6 +285,14 @@ int wlan_fuzz_run(struct target *t, const struct fuzz_opts *o)
 	fc->o = *o;
 	if (probe_every > WINDOW_MAX)
 		probe_every = WINDOW_MAX;
+	if (probe_every < 1)
+		probe_every = 1;
+	/* roll_history() derives its window cap from fc->o.probe_every, so it
+	 * must be clamped the same way as the local copy above -- otherwise a
+	 * caller that skips the CLI's own "--probe-every must be >= 1" check
+	 * can drive cap negative and turn fc->nwindow negative, which becomes
+	 * a huge size_t in the memcpy below and corrupts memory. */
+	fc->o.probe_every = probe_every;
 
 	mkdir(o->out_dir, 0755);
 	rng_seed(o->seed);
