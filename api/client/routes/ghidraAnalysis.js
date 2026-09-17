@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT - Copyright (c) 2026 Nicholas Starke
 'use strict';
 
+const { macKey } = require('../../lib/macAddress');
+
 const path = require('path');
 const fsp = require('fs/promises');
 const { spawn } = require('child_process');
@@ -60,10 +62,6 @@ function serializeJob(row) {
     createdAt: row.created_at || row.createdAt,
     updatedAt: row.updated_at || row.updatedAt,
   };
-}
-
-function macKey(mac) {
-  return String(mac || '').toLowerCase().replace(/[^0-9a-f]/g, '');
 }
 
 // Validate a client-supplied `?binary=` value as a safe relative sub-path with

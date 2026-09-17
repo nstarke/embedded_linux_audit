@@ -2,7 +2,9 @@
 
 #include "command_io_util.h"
 
+#include <stdbool.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 const char *ela_execute_command_content_type(const char *output_format)
@@ -59,4 +61,50 @@ int ela_parse_download_file_args(int argc,
 	*url_out = url;
 	*output_path_out = output_path;
 	return 0;
+}
+
+void ela_command_emit_v(FILE *stream, const char *fmt, va_list ap, void (*mirror)(const char *data, size_t len))
+{
+	va_list aq;
+	va_list ar;
+	char stack[1024];
+	char *dyn = NULL;
+	int needed;
+	bool mirror_to_remote;
+
+	mirror_to_remote = (stream == stdout && mirror != NULL);
+
+	va_copy(aq, ap);
+	va_copy(ar, ap);
+	vfprintf(stream, fmt, ap);
+	fflush(stream);
+
+	needed = vsnprintf(stack, sizeof(stack), fmt, aq);
+	va_end(aq);
+
+	if (needed < 0) {
+		va_end(ar);
+		return;
+	}
+
+	if ((size_t)needed < sizeof(stack)) {
+		if (mirror_to_remote) {
+			mirror(stack, (size_t)needed);
+		}
+		va_end(ar);
+		return;
+	}
+
+	dyn = malloc((size_t)needed + 1);
+	if (!dyn) {
+		va_end(ar);
+		return;
+	}
+
+	vsnprintf(dyn, (size_t)needed + 1, fmt, ar);
+	va_end(ar);
+	if (mirror_to_remote) {
+		mirror(dyn, (size_t)needed);
+	}
+	free(dyn);
 }

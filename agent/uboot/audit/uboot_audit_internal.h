@@ -3,14 +3,10 @@
 #ifndef ELA_UBOOT_AUDIT_INTERNAL_H
 #define ELA_UBOOT_AUDIT_INTERNAL_H
 
+#include "uboot/uboot_output_format.h"
+
 #include <stdbool.h>
 #include <stdint.h>
-
-enum uboot_output_format {
-	FW_OUTPUT_TXT = 0,
-	FW_OUTPUT_CSV,
-	FW_OUTPUT_JSON,
-};
 
 struct embedded_linux_audit_rule;
 

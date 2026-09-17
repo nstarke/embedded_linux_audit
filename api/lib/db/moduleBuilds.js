@@ -4,7 +4,7 @@
 const crypto = require('crypto');
 const { Op } = require('sequelize');
 const { getModels } = require('./index');
-const { normalizeMac } = require('./deviceRegistry');
+const { resolveUserId, resolveUserDeviceIds } = require('./deviceRegistry');
 
 // A .ko grants ring-0 on the target, so download tokens are always single-use
 // (consuming one clears its hash). Time-based expiry is opt-in: set
@@ -30,15 +30,6 @@ function hashToken(token) {
  * the client API (user-scoped, same device-association ACL as clientUploads);
  * status transitions run in the builder worker.
  */
-
-async function resolveUserId(username) {
-  if (!username) {
-    return null;
-  }
-  const { User } = getModels();
-  const user = await User.findOne({ where: { username } });
-  return user ? user.id : null;
-}
 
 // The latest module-buildinfo facts for a device, or null when the device has
 // never uploaded buildinfo. Reads the normalized kernel_build_infos row joined
@@ -140,27 +131,6 @@ async function markBuildFailed(requestId, errorMessage) {
     status: 'failed',
     errorMessage: String(errorMessage || 'unknown error').slice(0, 4000),
   }, { where: { id: requestId } });
-}
-
-// Device ids associated with `username`, optionally narrowed to one MAC.
-// Same non-enumerating semantics as clientUploads.resolveUserDeviceIds.
-async function resolveUserDeviceIds(username, { mac = null } = {}) {
-  const userId = await resolveUserId(username);
-  if (userId === null) {
-    return [];
-  }
-  const { UserDevice, Device } = getModels();
-  const query = { where: { userId }, attributes: ['deviceId'] };
-  if (mac) {
-    query.include = [{
-      model: Device,
-      attributes: [],
-      where: { macAddress: normalizeMac(mac) },
-      required: true,
-    }];
-  }
-  const links = await UserDevice.findAll(query);
-  return links.map((l) => l.deviceId);
 }
 
 // List build requests visible to `username` (their associated devices only),

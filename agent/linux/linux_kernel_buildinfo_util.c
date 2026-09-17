@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later - Copyright (c) 2026 Nicholas Starke
 
 #include "linux_kernel_buildinfo_util.h"
+#include "util/str_util.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -101,58 +102,6 @@ int ela_kernel_buildinfo_tool_candidate(const char *path_env, const char *name,
 	return (n >= 0 && (size_t)n < out_len) ? 0 : -1;
 }
 
-static int append_json_escaped(char *out, size_t out_len, size_t *pos, const char *value)
-{
-	size_t i;
-
-	if (!out || !out_len || !pos || !value)
-		return -1;
-
-	for (i = 0; value[i]; i++) {
-		unsigned char c = (unsigned char)value[i];
-		const char *esc = NULL;
-		char hex[7];
-		size_t need;
-
-		if (c == '"')
-			esc = "\\\"";
-		else if (c == '\\')
-			esc = "\\\\";
-		else if (c == '\n')
-			esc = "\\n";
-		else if (c == '\r')
-			esc = "\\r";
-		else if (c == '\t')
-			esc = "\\t";
-
-		if (esc) {
-			need = strlen(esc);
-			if (*pos + need >= out_len)
-				return -1;
-			memcpy(out + *pos, esc, need);
-			*pos += need;
-			continue;
-		}
-
-		if (c < 0x20) {
-			snprintf(hex, sizeof(hex), "\\u%04x", c);
-			need = strlen(hex);
-			if (*pos + need >= out_len)
-				return -1;
-			memcpy(out + *pos, hex, need);
-			*pos += need;
-			continue;
-		}
-
-		if (*pos + 1U >= out_len)
-			return -1;
-		out[*pos] = (char)c;
-		(*pos)++;
-	}
-	out[*pos] = '\0';
-	return 0;
-}
-
 /* Append `"key":"value"` (or `"key":null` for an empty value) plus a leading
  * comma when `pos` is past the opening brace. */
 static int append_json_field(char *out, size_t out_len, size_t *pos,
@@ -177,7 +126,7 @@ static int append_json_field(char *out, size_t out_len, size_t *pos,
 	if (*pos + 1U >= out_len)
 		return -1;
 	out[(*pos)++] = '"';
-	if (append_json_escaped(out, out_len, pos, value) != 0)
+	if (ela_json_append_escaped(out, out_len, pos, value) != 0)
 		return -1;
 	if (*pos + 1U >= out_len)
 		return -1;

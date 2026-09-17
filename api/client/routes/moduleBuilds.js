@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT - Copyright (c) 2026 Nicholas Starke
 'use strict';
 
+const { macKey } = require('../../lib/macAddress');
+
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
@@ -204,10 +206,6 @@ module.exports = function registerModuleBuildRoutes(app, deps = {}) {
         return false;
       }
     });
-
-  function macKey(mac) {
-    return String(mac || '').toLowerCase().replace(/[^0-9a-f]/g, '');
-  }
 
   /*
    * Create a build request from the device's latest module-buildinfo upload.

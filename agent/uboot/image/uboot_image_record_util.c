@@ -4,30 +4,12 @@
 
 #include "../../util/str_util.h"
 
-#include <csv.h>
+#include "../../util/record_formatter.h"
 #include <json-c/json.h>
 #include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-static int append_csv_field(char **out, size_t *len, size_t *cap, const char *value)
-{
-	const char *in = value ? value : "";
-	size_t in_len = strlen(in);
-	size_t buf_len = (in_len * 2U) + 3U;
-	char *buf = malloc(buf_len);
-	size_t written;
-	int rc;
-
-	if (!buf)
-		return -1;
-
-	written = csv_write(buf, buf_len, in, in_len);
-	rc = append_bytes(out, len, cap, buf, written);
-	free(buf);
-	return rc;
-}
 
 int ela_uboot_image_format_record(enum uboot_output_format fmt,
 				  bool *csv_header_emitted,
@@ -58,15 +40,14 @@ int ela_uboot_image_format_record(enum uboot_output_format fmt,
 				goto fail;
 			*csv_header_emitted = true;
 		}
-		if (append_csv_field(&buf, &len, &cap, record ? record : "") != 0 ||
+		if (ela_append_csv_field(&buf, &len, &cap, record ? record : "") != 0 ||
 		    append_text(&buf, &len, &cap, ",") != 0 ||
-		    append_csv_field(&buf, &len, &cap, dev ? dev : "") != 0 ||
+		    ela_append_csv_field(&buf, &len, &cap, dev ? dev : "") != 0 ||
+		    append_text(&buf, &len, &cap, ",") != 0 || ela_append_csv_field(&buf, &len, &cap, off_s) != 0 ||
 		    append_text(&buf, &len, &cap, ",") != 0 ||
-		    append_csv_field(&buf, &len, &cap, off_s) != 0 ||
+		    ela_append_csv_field(&buf, &len, &cap, type ? type : "") != 0 ||
 		    append_text(&buf, &len, &cap, ",") != 0 ||
-		    append_csv_field(&buf, &len, &cap, type ? type : "") != 0 ||
-		    append_text(&buf, &len, &cap, ",") != 0 ||
-		    append_csv_field(&buf, &len, &cap, value ? value : "") != 0 ||
+		    ela_append_csv_field(&buf, &len, &cap, value ? value : "") != 0 ||
 		    append_text(&buf, &len, &cap, "\n") != 0)
 			goto fail;
 		*out = buf;

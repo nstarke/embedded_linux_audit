@@ -165,3 +165,18 @@ int ela_format_efi_var_record(struct output_buffer *out,
 
 	return -1;
 }
+
+int ela_append_csv_field(char **out, size_t *len, size_t *cap, const char *value)
+{
+	struct output_buffer buffer;
+	int rc;
+
+	if (!out || !len || !cap)
+		return -1;
+	buffer = (struct output_buffer){ .data = *out, .len = *len, .cap = *cap };
+	rc = csv_write_to_buf(&buffer, value);
+	*out = buffer.data;
+	*len = buffer.len;
+	*cap = buffer.cap;
+	return rc;
+}

@@ -8,7 +8,6 @@
 #include <getopt.h>
 #include <json-c/json.h>
 #include <limits.h>
-#include <stdarg.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -168,34 +167,6 @@ static void discover(struct persist_ctx *c)
 		inspect_text(c, "/etc/network/if-up.d/local", "ELA-PERSIST-007", "Vendor startup mechanism");
 	}
 }
-static int appendf(struct output_buffer *o, const char *fmt, ...)
-{
-	va_list ap, cp;
-	char b[1024], *p;
-	int n, r;
-	va_start(ap, fmt);
-	va_copy(cp, ap);
-	n = vsnprintf(b, sizeof(b), fmt, ap);
-	va_end(ap);
-	if (n < 0) {
-		va_end(cp);
-		return -1;
-	}
-	if ((size_t)n < sizeof(b)) {
-		va_end(cp);
-		return output_buffer_append_len(o, b, (size_t)n);
-	}
-	p = malloc((size_t)n + 1);
-	if (!p) {
-		va_end(cp);
-		return -1;
-	}
-	vsnprintf(p, (size_t)n + 1, fmt, cp);
-	va_end(cp);
-	r = output_buffer_append_len(o, p, (size_t)n);
-	free(p);
-	return r;
-}
 static int emit(struct output_buffer *o, enum persist_format f, const struct persist_finding *x)
 {
 	if (f == PF_JSON) {
@@ -217,10 +188,10 @@ static int emit(struct output_buffer *o, enum persist_format f, const struct per
 		return 0;
 	}
 	if (f == PF_CSV)
-		return appendf(o, "finding,\"%s\",\"%s\",%s,%s,\"%s\",\"%s\"\n", x->rule, x->title, x->status,
-			       x->severity, x->evidence, x->remediation);
-	return appendf(o, "[%s] %s (%s) %s\n  Evidence: %s\n  Remediation: %s\n", x->status, x->rule, x->severity,
-		       x->title, x->evidence, x->remediation);
+		return output_buffer_printf(o, "finding,\"%s\",\"%s\",%s,%s,\"%s\",\"%s\"\n", x->rule, x->title,
+					    x->status, x->severity, x->evidence, x->remediation);
+	return output_buffer_printf(o, "[%s] %s (%s) %s\n  Evidence: %s\n  Remediation: %s\n", x->status, x->rule,
+				    x->severity, x->title, x->evidence, x->remediation);
 }
 int linux_persistence_audit_main(int argc, char **argv)
 {
@@ -259,14 +230,15 @@ int linux_persistence_audit_main(int argc, char **argv)
 	for (i = 0; i < c.len; i++)
 		emit(&o, f, &c.items[i]);
 	if (f == PF_JSON)
-		appendf(&o,
+		output_buffer_printf(
+			&o,
 			"{\"record\":\"linux_audit_summary\",\"profile\":\"persistence\",\"findings\":%zu,\"unknown\":%"
 			"zu}\n",
 			c.len, c.unknown);
 	else if (f == PF_CSV)
-		appendf(&o, "summary,,,,findings=%zu;unknown=%zu,,\n", c.len, c.unknown);
+		output_buffer_printf(&o, "summary,,,,findings=%zu;unknown=%zu,,\n", c.len, c.unknown);
 	else
-		appendf(&o, "Summary (persistence): findings=%zu unknown=%zu\n", c.len, c.unknown);
+		output_buffer_printf(&o, "Summary (persistence): findings=%zu unknown=%zu\n", c.len, c.unknown);
 	fwrite(o.data, 1, o.len, stdout);
 	free(o.data);
 	free(c.items);

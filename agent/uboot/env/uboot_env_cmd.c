@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later - Copyright (c) 2026 Nicholas Starke
 
 #include "embedded_linux_audit_cmd.h"
+#include "util/command_io_util.h"
+#include "util/str_util.h"
 #include "uboot/env/uboot_env_internal.h"
 #include "uboot/env/uboot_env_format_util.h"
 #include "uboot/env/uboot_env_record_util.h"
@@ -238,29 +240,9 @@ static int add_or_merge_candidate(struct env_candidate **cands, size_t *count,
 
 static void append_output_http_buffer(const char *buf, size_t len)
 {
-	char *tmp;
-	size_t need;
-	size_t new_cap;
-
 	if (!g_output_http_uri || !buf || !len)
 		return;
-
-	need = g_output_http_len + len + 1;
-	if (need > g_output_http_cap) {
-		new_cap = g_output_http_cap ? g_output_http_cap : 1024;
-		while (new_cap < need)
-			new_cap *= 2;
-
-		tmp = realloc(g_output_http_buf, new_cap);
-		if (!tmp)
-			return;
-		g_output_http_buf = tmp;
-		g_output_http_cap = new_cap;
-	}
-
-	memcpy(g_output_http_buf + g_output_http_len, buf, len);
-	g_output_http_len += len;
-	g_output_http_buf[g_output_http_len] = '\0';
+	append_bytes(&g_output_http_buf, &g_output_http_len, &g_output_http_cap, buf, len);
 }
 
 static int flush_output_http_buffer(void)
@@ -315,52 +297,15 @@ static void send_to_output_socket(const char *buf, size_t len)
 	}
 }
 
+static void mirror_output(const char *data, size_t len)
+{
+	send_to_output_socket(data, len);
+	append_output_http_buffer(data, len);
+}
+
 static void emit_v(FILE *stream, const char *fmt, va_list ap)
 {
-	va_list aq;
-	va_list ar;
-	char stack[1024];
-	char *dyn = NULL;
-	int needed;
-	bool mirror_to_remote;
-
-	mirror_to_remote = (stream == stdout);
-
-	va_copy(aq, ap);
-	va_copy(ar, ap);
-	vfprintf(stream, fmt, ap);
-	fflush(stream);
-
-	needed = vsnprintf(stack, sizeof(stack), fmt, aq);
-	va_end(aq);
-
-	if (needed < 0) {
-		va_end(ar);
-		return;
-	}
-
-	if ((size_t)needed < sizeof(stack)) {
-		if (mirror_to_remote) {
-			send_to_output_socket(stack, (size_t)needed);
-			append_output_http_buffer(stack, (size_t)needed);
-		}
-		va_end(ar);
-		return;
-	}
-
-	dyn = malloc((size_t)needed + 1);
-	if (!dyn) {
-		va_end(ar);
-		return;
-	}
-
-	vsnprintf(dyn, (size_t)needed + 1, fmt, ar);
-	va_end(ar);
-	if (mirror_to_remote) {
-		send_to_output_socket(dyn, (size_t)needed);
-		append_output_http_buffer(dyn, (size_t)needed);
-	}
-	free(dyn);
+	ela_command_emit_v(stream, fmt, ap, mirror_output);
 }
 
 static void out_printf(const char *fmt, ...)
@@ -1204,6 +1149,44 @@ out:
 	if (free_parse_argv)
 		free(parse_argv);
 	return ret;
+}
+
+int uboot_env_ensure_config(void)
+{
+	const char *output_tcp = getenv("ELA_OUTPUT_TCP");
+	const char *output_http = getenv("ELA_OUTPUT_HTTP");
+	const char *output_https = getenv("ELA_OUTPUT_HTTPS");
+	const char *output_insecure = getenv("ELA_OUTPUT_INSECURE");
+	/* 2 fixed + 2 tcp + 2 http + 2 https + 1 insecure + 1 NULL = 10 */
+	char *argv[10];
+	int argc = 0;
+	const int argv_max = (int)(sizeof(argv) / sizeof(argv[0])) - 1;
+
+	argv[argc++] = "env";
+	argv[argc++] = "--output-config";
+	if (output_tcp && *output_tcp) {
+		argv[argc++] = "--output-tcp";
+		argv[argc++] = (char *)output_tcp;
+	}
+	if (output_http && *output_http && argc + 2 <= argv_max) {
+		argv[argc++] = "--output-http";
+		argv[argc++] = (char *)output_http;
+	}
+	if (output_https && *output_https && argc + 2 <= argv_max) {
+		argv[argc++] = "--output-http";
+		argv[argc++] = (char *)output_https;
+	}
+	if (output_insecure && !strcmp(output_insecure, "1") &&
+	    argc + 1 < (int)ARRAY_SIZE(argv))
+		argv[argc++] = "--insecure";
+	argv[argc] = NULL;
+
+	if (access("uboot_env.config", F_OK) == 0)
+		return 0;
+	if (access("fw_env.config", F_OK) == 0)
+		return 0;
+
+	return uboot_env_scan_main(argc, argv);
 }
 
 int uboot_env_scan_main(int argc, char **argv)

@@ -239,40 +239,57 @@ static void test_is_ws_url_https_returns_false(void)
  * Suite registration
  * ====================================================================== */
 
+static void test_stream_url_endpoint_and_buffer_boundary(void)
+{
+	char out[128];
+	const char *expected = "wss://host:5000/cpu-fuzz/aa-bb";
+
+	ELA_ASSERT_INT_EQ(
+		0, ela_ws_build_stream_url("https://host:5000/upload?x#y", "cpu-fuzz", "aa-bb", out, sizeof(out)));
+	ELA_ASSERT_STR_EQ(expected, out);
+	ELA_ASSERT_INT_EQ(0,
+			  ela_ws_build_stream_url("https://host:5000", "cpu-fuzz", "aa-bb", out, strlen(expected) + 1));
+	ELA_ASSERT_STR_EQ(expected, out);
+	ELA_ASSERT_INT_EQ(-1, ela_ws_build_stream_url("https://host:5000", "cpu-fuzz", "aa-bb", out, strlen(expected)));
+	ELA_ASSERT_INT_EQ(-1, ela_ws_build_stream_url("http://host", NULL, "aa-bb", out, sizeof(out)));
+	ELA_ASSERT_INT_EQ(-1, ela_ws_build_stream_url("http://host", "", "aa-bb", out, sizeof(out)));
+}
+
 int run_ws_url_util_tests(void)
 {
 	static const struct ela_test_case cases[] = {
+		{ "stream_url/endpoint-and-boundary", test_stream_url_endpoint_and_buffer_boundary },
 		/* ela_ws_base64_encode */
-		{ "base64/three_bytes_foo",          test_base64_three_bytes_foo },
-		{ "base64/one_byte_double_padding",  test_base64_one_byte_has_double_padding },
+		{ "base64/three_bytes_foo", test_base64_three_bytes_foo },
+		{ "base64/one_byte_double_padding", test_base64_one_byte_has_double_padding },
 		{ "base64/two_bytes_single_padding", test_base64_two_bytes_has_single_padding },
-		{ "base64/empty_no_crash",           test_base64_empty_no_crash },
+		{ "base64/empty_no_crash", test_base64_empty_no_crash },
 		/* ela_ws_parse_url */
-		{ "parse_url/null_url",              test_parse_url_null_url_returns_minus1 },
-		{ "parse_url/null_host",             test_parse_url_null_host_returns_minus1 },
-		{ "parse_url/unknown_scheme",        test_parse_url_unknown_scheme_returns_minus1 },
-		{ "parse_url/wss_defaults",          test_parse_url_wss_defaults },
-		{ "parse_url/ws_default_port_80",    test_parse_url_ws_default_port_80 },
-		{ "parse_url/explicit_port",         test_parse_url_explicit_port },
-		{ "parse_url/no_path_is_slash",      test_parse_url_no_path_defaults_to_slash },
+		{ "parse_url/null_url", test_parse_url_null_url_returns_minus1 },
+		{ "parse_url/null_host", test_parse_url_null_host_returns_minus1 },
+		{ "parse_url/unknown_scheme", test_parse_url_unknown_scheme_returns_minus1 },
+		{ "parse_url/wss_defaults", test_parse_url_wss_defaults },
+		{ "parse_url/ws_default_port_80", test_parse_url_ws_default_port_80 },
+		{ "parse_url/explicit_port", test_parse_url_explicit_port },
+		{ "parse_url/no_path_is_slash", test_parse_url_no_path_defaults_to_slash },
 		/* ela_ws_build_terminal_url */
-		{ "terminal_url/null_base",          test_terminal_url_null_base_returns_minus1 },
-		{ "terminal_url/null_mac",           test_terminal_url_null_mac_returns_minus1 },
-		{ "terminal_url/trailing_slash",     test_terminal_url_trailing_slash_stripped },
-		{ "terminal_url/no_trailing_slash",  test_terminal_url_no_trailing_slash },
+		{ "terminal_url/null_base", test_terminal_url_null_base_returns_minus1 },
+		{ "terminal_url/null_mac", test_terminal_url_null_mac_returns_minus1 },
+		{ "terminal_url/trailing_slash", test_terminal_url_trailing_slash_stripped },
+		{ "terminal_url/no_trailing_slash", test_terminal_url_no_trailing_slash },
 		/* ela_ws_build_handshake_request */
-		{ "handshake/null_out",              test_handshake_null_out_returns_minus1 },
-		{ "handshake/null_host",             test_handshake_null_host_returns_minus1 },
-		{ "handshake/default_port",          test_handshake_default_port_no_port_in_host_header },
-		{ "handshake/non_default_port",      test_handshake_non_default_port_in_host_header },
-		{ "handshake/no_auth",               test_handshake_no_auth_omits_authorization_header },
+		{ "handshake/null_out", test_handshake_null_out_returns_minus1 },
+		{ "handshake/null_host", test_handshake_null_host_returns_minus1 },
+		{ "handshake/default_port", test_handshake_default_port_no_port_in_host_header },
+		{ "handshake/non_default_port", test_handshake_non_default_port_in_host_header },
+		{ "handshake/no_auth", test_handshake_no_auth_omits_authorization_header },
 		/* ela_is_ws_url */
-		{ "is_ws_url/null",                  test_is_ws_url_null_returns_false },
-		{ "is_ws_url/empty",                 test_is_ws_url_empty_returns_false },
-		{ "is_ws_url/ws_scheme",             test_is_ws_url_ws_scheme_returns_true },
-		{ "is_ws_url/wss_scheme",            test_is_ws_url_wss_scheme_returns_true },
-		{ "is_ws_url/http_scheme",           test_is_ws_url_http_returns_false },
-		{ "is_ws_url/https_scheme",          test_is_ws_url_https_returns_false },
+		{ "is_ws_url/null", test_is_ws_url_null_returns_false },
+		{ "is_ws_url/empty", test_is_ws_url_empty_returns_false },
+		{ "is_ws_url/ws_scheme", test_is_ws_url_ws_scheme_returns_true },
+		{ "is_ws_url/wss_scheme", test_is_ws_url_wss_scheme_returns_true },
+		{ "is_ws_url/http_scheme", test_is_ws_url_http_returns_false },
+		{ "is_ws_url/https_scheme", test_is_ws_url_https_returns_false },
 	};
 
 	return ela_run_test_suite("ws_url_util", cases, sizeof(cases) / sizeof(cases[0]));

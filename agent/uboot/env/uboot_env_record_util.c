@@ -6,7 +6,7 @@
 
 #include "../../util/str_util.h"
 
-#include <csv.h>
+#include "../../util/record_formatter.h"
 #include <json-c/json.h>
 #include <inttypes.h>
 #include <stdio.h>
@@ -30,24 +30,6 @@ size_t ela_uboot_env_data_offset(bool crc_ok_std, bool crc_ok_redund)
 	if (crc_ok_redund)
 		return 5U;
 	return 4U;
-}
-
-static int append_csv_field(char **out, size_t *len, size_t *cap, const char *value)
-{
-	const char *in = value ? value : "";
-	size_t in_len = strlen(in);
-	size_t buf_len = (in_len * 2U) + 3U;
-	char *buf = malloc(buf_len);
-	size_t written;
-	int rc;
-
-	if (!buf)
-		return -1;
-
-	written = csv_write(buf, buf_len, in, in_len);
-	rc = append_bytes(out, len, cap, buf, written);
-	free(buf);
-	return rc;
 }
 
 static int append_env_csv_header_if_needed(bool *csv_header_emitted,
@@ -93,25 +75,19 @@ int ela_uboot_env_format_candidate_record(int fmt,
 		snprintf(sec_s, sizeof(sec_s), "0x%jx", (uintmax_t)sector_count);
 
 		if (append_env_csv_header_if_needed(csv_header_emitted, &buf, &len, &cap) != 0 ||
-		    append_csv_field(&buf, &len, &cap, "env_candidate") != 0 ||
+		    ela_append_csv_field(&buf, &len, &cap, "env_candidate") != 0 ||
+		    append_text(&buf, &len, &cap, ",") != 0 || ela_append_csv_field(&buf, &len, &cap, dev) != 0 ||
+		    append_text(&buf, &len, &cap, ",") != 0 || ela_append_csv_field(&buf, &len, &cap, off_s) != 0 ||
 		    append_text(&buf, &len, &cap, ",") != 0 ||
-		    append_csv_field(&buf, &len, &cap, dev) != 0 ||
+		    ela_append_csv_field(&buf, &len, &cap, crc_endian ? crc_endian : "") != 0 ||
 		    append_text(&buf, &len, &cap, ",") != 0 ||
-		    append_csv_field(&buf, &len, &cap, off_s) != 0 ||
+		    ela_append_csv_field(&buf, &len, &cap, mode ? mode : "") != 0 ||
 		    append_text(&buf, &len, &cap, ",") != 0 ||
-		    append_csv_field(&buf, &len, &cap, crc_endian ? crc_endian : "") != 0 ||
-		    append_text(&buf, &len, &cap, ",") != 0 ||
-		    append_csv_field(&buf, &len, &cap, mode ? mode : "") != 0 ||
-		    append_text(&buf, &len, &cap, ",") != 0 ||
-		    append_csv_field(&buf, &len, &cap, has_known_vars ? "true" : "false") != 0 ||
-		    append_text(&buf, &len, &cap, ",") != 0 ||
-		    append_csv_field(&buf, &len, &cap, cfg_s) != 0 ||
-		    append_text(&buf, &len, &cap, ",") != 0 ||
-		    append_csv_field(&buf, &len, &cap, env_s) != 0 ||
-		    append_text(&buf, &len, &cap, ",") != 0 ||
-		    append_csv_field(&buf, &len, &cap, erase_s) != 0 ||
-		    append_text(&buf, &len, &cap, ",") != 0 ||
-		    append_csv_field(&buf, &len, &cap, sec_s) != 0 ||
+		    ela_append_csv_field(&buf, &len, &cap, has_known_vars ? "true" : "false") != 0 ||
+		    append_text(&buf, &len, &cap, ",") != 0 || ela_append_csv_field(&buf, &len, &cap, cfg_s) != 0 ||
+		    append_text(&buf, &len, &cap, ",") != 0 || ela_append_csv_field(&buf, &len, &cap, env_s) != 0 ||
+		    append_text(&buf, &len, &cap, ",") != 0 || ela_append_csv_field(&buf, &len, &cap, erase_s) != 0 ||
+		    append_text(&buf, &len, &cap, ",") != 0 || ela_append_csv_field(&buf, &len, &cap, sec_s) != 0 ||
 		    append_text(&buf, &len, &cap, "\n") != 0) {
 			free(buf);
 			return -1;
@@ -209,16 +185,13 @@ int ela_uboot_env_format_redundant_pair_record(int fmt,
 
 	if (fmt == ELA_UBOOT_ENV_OUTPUT_CSV) {
 		if (append_env_csv_header_if_needed(csv_header_emitted, &buf, &len, &cap) != 0 ||
-		    append_csv_field(&buf, &len, &cap, "redundant_pair") != 0 ||
+		    ela_append_csv_field(&buf, &len, &cap, "redundant_pair") != 0 ||
 		    append_text(&buf, &len, &cap, ",") != 0 ||
-		    append_csv_field(&buf, &len, &cap, dev ? dev : "") != 0 ||
-		    append_text(&buf, &len, &cap, ",") != 0 ||
-		    append_csv_field(&buf, &len, &cap, a_s) != 0 ||
+		    ela_append_csv_field(&buf, &len, &cap, dev ? dev : "") != 0 ||
+		    append_text(&buf, &len, &cap, ",") != 0 || ela_append_csv_field(&buf, &len, &cap, a_s) != 0 ||
 		    append_text(&buf, &len, &cap, ",,,,") != 0 ||
-		    append_csv_field(&buf, &len, &cap, "false") != 0 ||
-		    append_text(&buf, &len, &cap, ",") != 0 ||
-		    append_csv_field(&buf, &len, &cap, b_s) != 0 ||
-		    append_text(&buf, &len, &cap, ",,,\n") != 0) {
+		    ela_append_csv_field(&buf, &len, &cap, "false") != 0 || append_text(&buf, &len, &cap, ",") != 0 ||
+		    ela_append_csv_field(&buf, &len, &cap, b_s) != 0 || append_text(&buf, &len, &cap, ",,,\n") != 0) {
 			free(buf);
 			return -1;
 		}
@@ -284,15 +257,11 @@ int ela_uboot_env_format_verbose_record(int fmt,
 	if (fmt == ELA_UBOOT_ENV_OUTPUT_CSV) {
 		snprintf(off_s, sizeof(off_s), "0x%jx", (uintmax_t)off);
 		if (append_env_csv_header_if_needed(csv_header_emitted, &buf, &len, &cap) != 0 ||
-		    append_csv_field(&buf, &len, &cap, "verbose") != 0 ||
-		    append_text(&buf, &len, &cap, ",") != 0 ||
-		    append_csv_field(&buf, &len, &cap, dev ? dev : "") != 0 ||
-		    append_text(&buf, &len, &cap, ",") != 0 ||
-		    append_csv_field(&buf, &len, &cap, off_s) != 0 ||
-		    append_text(&buf, &len, &cap, ",,") != 0 ||
-		    append_csv_field(&buf, &len, &cap, msg) != 0 ||
-		    append_text(&buf, &len, &cap, ",") != 0 ||
-		    append_csv_field(&buf, &len, &cap, "false") != 0 ||
+		    ela_append_csv_field(&buf, &len, &cap, "verbose") != 0 || append_text(&buf, &len, &cap, ",") != 0 ||
+		    ela_append_csv_field(&buf, &len, &cap, dev ? dev : "") != 0 ||
+		    append_text(&buf, &len, &cap, ",") != 0 || ela_append_csv_field(&buf, &len, &cap, off_s) != 0 ||
+		    append_text(&buf, &len, &cap, ",,") != 0 || ela_append_csv_field(&buf, &len, &cap, msg) != 0 ||
+		    append_text(&buf, &len, &cap, ",") != 0 || ela_append_csv_field(&buf, &len, &cap, "false") != 0 ||
 		    append_text(&buf, &len, &cap, ",,,,\n") != 0) {
 			free(buf);
 			return -1;

@@ -3,6 +3,7 @@
 #include "embedded_linux_audit_cmd.h"
 #include "../arch/arch_target.h"
 #include "linux_kernel_buildinfo_util.h"
+#include "util/str_util.h"
 #include "linux_kernel_module_util.h"
 #include "util/command_io_util.h"
 
@@ -79,58 +80,6 @@ static void usage(const char *prog)
 		prog, prog, prog, prog, prog);
 }
 
-static int append_json_string(char *out, size_t out_len, size_t *pos, const char *value)
-{
-	size_t i;
-
-	if (!out || !out_len || !pos || !value)
-		return -1;
-
-	for (i = 0; value[i]; i++) {
-		unsigned char c = (unsigned char)value[i];
-		const char *esc = NULL;
-		char hex[7];
-		size_t need;
-
-		if (c == '"')
-			esc = "\\\"";
-		else if (c == '\\')
-			esc = "\\\\";
-		else if (c == '\n')
-			esc = "\\n";
-		else if (c == '\r')
-			esc = "\\r";
-		else if (c == '\t')
-			esc = "\\t";
-
-		if (esc) {
-			need = strlen(esc);
-			if (*pos + need >= out_len)
-				return -1;
-			memcpy(out + *pos, esc, need);
-			*pos += need;
-			continue;
-		}
-
-		if (c < 0x20) {
-			snprintf(hex, sizeof(hex), "\\u%04x", c);
-			need = strlen(hex);
-			if (*pos + need >= out_len)
-				return -1;
-			memcpy(out + *pos, hex, need);
-			*pos += need;
-			continue;
-		}
-
-		if (*pos + 1U >= out_len)
-			return -1;
-		out[*pos] = (char)c;
-		(*pos)++;
-	}
-	out[*pos] = '\0';
-	return 0;
-}
-
 static int format_vermagic_payload(const char *format, const char *path,
 				   const char *vermagic, char *out, size_t out_len)
 {
@@ -145,13 +94,13 @@ static int format_vermagic_payload(const char *format, const char *path,
 		if (n < 0 || (size_t)n >= out_len)
 			return -1;
 		pos = (size_t)n;
-		if (append_json_string(out, out_len, &pos, path) != 0)
+		if (ela_json_append_escaped(out, out_len, &pos, path) != 0)
 			return -1;
 		n = snprintf(out + pos, out_len - pos, "\",\"vermagic\":\"");
 		if (n < 0 || (size_t)n >= out_len - pos)
 			return -1;
 		pos += (size_t)n;
-		if (append_json_string(out, out_len, &pos, vermagic) != 0)
+		if (ela_json_append_escaped(out, out_len, &pos, vermagic) != 0)
 			return -1;
 		n = snprintf(out + pos, out_len - pos, "\"}\n");
 		return (n >= 0 && (size_t)n < out_len - pos) ? 0 : -1;

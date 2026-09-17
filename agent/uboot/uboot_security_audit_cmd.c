@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later - Copyright (c) 2026 Nicholas Starke
 
 #include "embedded_linux_audit_cmd.h"
+#include "util/command_io_util.h"
 #include "uboot/uboot_security_audit_util.h"
 #include "uboot/audit/uboot_audit_internal.h"
 
@@ -84,58 +85,17 @@ static void append_output_http_buffer(const char *buf, size_t len)
 					&g_output_http_cap, buf, len);
 }
 
+static void mirror_output(const char *data, size_t len)
+{
+	send_to_output_socket(data, len);
+	append_output_http_buffer(data, len);
+	if (g_http_verbose && g_output_http_uri && g_output_http_len > 0 && buffer_has_newline(data, len))
+		(void)flush_output_http_buffer();
+}
+
 static void emit_v(FILE *stream, const char *fmt, va_list ap)
 {
-	va_list aq;
-	va_list ar;
-	char stack[1024];
-	char *dyn = NULL;
-	int needed;
-	bool mirror_to_remote;
-
-	mirror_to_remote = (stream == stdout);
-
-	va_copy(aq, ap);
-	va_copy(ar, ap);
-	vfprintf(stream, fmt, ap);
-	fflush(stream);
-
-	needed = vsnprintf(stack, sizeof(stack), fmt, aq);
-	va_end(aq);
-
-	if (needed < 0) {
-		va_end(ar);
-		return;
-	}
-
-	if ((size_t)needed < sizeof(stack)) {
-		va_end(ar);
-		if (mirror_to_remote) {
-			send_to_output_socket(stack, (size_t)needed);
-			append_output_http_buffer(stack, (size_t)needed);
-		}
-		if (mirror_to_remote && g_http_verbose && g_output_http_uri && g_output_http_len > 0 &&
-		    buffer_has_newline(stack, (size_t)needed))
-			(void)flush_output_http_buffer();
-		return;
-	}
-
-	dyn = malloc((size_t)needed + 1);
-	if (!dyn) {
-		va_end(ar);
-		return;
-	}
-
-	vsnprintf(dyn, (size_t)needed + 1, fmt, ar);
-	va_end(ar);
-	if (mirror_to_remote) {
-		send_to_output_socket(dyn, (size_t)needed);
-		append_output_http_buffer(dyn, (size_t)needed);
-	}
-	if (mirror_to_remote && g_http_verbose && g_output_http_uri && g_output_http_len > 0 &&
-	    buffer_has_newline(dyn, (size_t)needed))
-		(void)flush_output_http_buffer();
-	free(dyn);
+	ela_command_emit_v(stream, fmt, ap, mirror_output);
 }
 
 static void out_printf(const char *fmt, ...)

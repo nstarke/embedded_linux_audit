@@ -10,7 +10,6 @@
 #include <getopt.h>
 #include <json-c/json.h>
 #include <limits.h>
-#include <stdarg.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -329,35 +328,6 @@ static void scan_trusted_trees(struct fs_context *ctx)
 	}
 }
 
-static int append_printf(struct output_buffer *out, const char *fmt, ...)
-{
-	va_list ap, copy;
-	char stack[1024], *heap;
-	int needed, rc;
-	va_start(ap, fmt);
-	va_copy(copy, ap);
-	needed = vsnprintf(stack, sizeof(stack), fmt, ap);
-	va_end(ap);
-	if (needed < 0) {
-		va_end(copy);
-		return -1;
-	}
-	if ((size_t)needed < sizeof(stack)) {
-		va_end(copy);
-		return output_buffer_append_len(out, stack, (size_t)needed);
-	}
-	heap = malloc((size_t)needed + 1);
-	if (!heap) {
-		va_end(copy);
-		return -1;
-	}
-	vsnprintf(heap, (size_t)needed + 1, fmt, copy);
-	va_end(copy);
-	rc = output_buffer_append_len(out, heap, (size_t)needed);
-	free(heap);
-	return rc;
-}
-
 static int append_finding_output(struct output_buffer *out, enum audit_output_format format,
 				 const struct fs_finding *finding)
 {
@@ -395,9 +365,9 @@ static int append_finding_output(struct output_buffer *out, enum audit_output_fo
 		json_object_put(obj);
 		return 0;
 	}
-	return append_printf(out, "[%s] %s (%s) %s\n  Evidence: %s\n  Remediation: %s\n",
-			     ela_linux_audit_status_name(finding->status), finding->rule, finding->severity,
-			     finding->title, finding->evidence, finding->remediation);
+	return output_buffer_printf(out, "[%s] %s (%s) %s\n  Evidence: %s\n  Remediation: %s\n",
+				    ela_linux_audit_status_name(finding->status), finding->rule, finding->severity,
+				    finding->title, finding->evidence, finding->remediation);
 }
 
 int linux_filesystem_audit_main(int argc, char **argv)
@@ -450,14 +420,14 @@ int linux_filesystem_audit_main(int argc, char **argv)
 			goto done;
 		}
 	if (format == AUDIT_OUTPUT_JSON)
-		append_printf(&out,
-			      "{\"record\":\"linux_audit_summary\",\"profile\":\"filesystem\",\"findings\":%zu,"
-			      "\"unknown\":%zu}\n",
-			      ctx.len, ctx.unknown);
+		output_buffer_printf(&out,
+				     "{\"record\":\"linux_audit_summary\",\"profile\":\"filesystem\",\"findings\":%zu,"
+				     "\"unknown\":%zu}\n",
+				     ctx.len, ctx.unknown);
 	else if (format == AUDIT_OUTPUT_CSV)
-		append_printf(&out, "summary,,,,findings=%zu;unknown=%zu,,\n", ctx.len, ctx.unknown);
+		output_buffer_printf(&out, "summary,,,,findings=%zu;unknown=%zu,,\n", ctx.len, ctx.unknown);
 	else
-		append_printf(&out, "Summary (filesystem): findings=%zu unknown=%zu\n", ctx.len, ctx.unknown);
+		output_buffer_printf(&out, "Summary (filesystem): findings=%zu unknown=%zu\n", ctx.len, ctx.unknown);
 	if (out.len && fwrite(out.data, 1, out.len, stdout) != out.len) {
 		rc = 1;
 		goto done;

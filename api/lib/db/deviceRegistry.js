@@ -1,5 +1,6 @@
 'use strict';
 
+const { macKey } = require('../macAddress');
 const { getModels, getSequelize } = require('./index');
 
 // Canonicalize a MAC to lowercase dash-separated form (`20-4c-03-32-75-5c`).
@@ -12,7 +13,7 @@ const { getModels, getSequelize } = require('./index');
 // associations already use it, so uploads converge onto the associated device.
 function normalizeMac(macAddress) {
   if (macAddress == null) return macAddress;
-  const hex = String(macAddress).toLowerCase().replace(/[^0-9a-f]/g, '');
+  const hex = macKey(macAddress);
   if (hex.length !== 12) return String(macAddress).toLowerCase();
   return hex.match(/.{2}/g).join('-');
 }
@@ -350,7 +351,44 @@ async function createApiKey(username, keyHash, label = null, scope = 'agent') {
   });
 }
 
+async function resolveUserId(username) {
+  if (!username) {
+    return null;
+  }
+  const { User } = getModels();
+  const user = await User.findOne({ where: { username } });
+  return user ? user.id : null;
+}
+
+// Device ids associated with the user (via the terminal phone-home). Returns []
+// when there is no such user or the user has not associated any devices.
+//
+// An optional `mac` narrows the result to the single associated device with
+// that MAC (canonicalized, so any separator style matches). The filter stays
+// within the user's own devices, so a MAC the user is not associated with (or
+// an unknown one) yields [] — no cross-user leakage and no enumeration.
+async function resolveUserDeviceIds(username, { mac = null } = {}) {
+  const userId = await resolveUserId(username);
+  if (userId === null) {
+    return [];
+  }
+  const { UserDevice, Device } = getModels();
+  const query = { where: { userId }, attributes: ['deviceId'] };
+  if (mac) {
+    query.include = [{
+      model: Device,
+      attributes: [],
+      where: { macAddress: normalizeMac(mac) },
+      required: true,
+    }];
+  }
+  const links = await UserDevice.findAll(query);
+  return links.map((l) => l.deviceId);
+}
+
 module.exports = {
+  resolveUserId,
+  resolveUserDeviceIds,
   normalizeMac,
   ensureDevice,
   getDeviceAlias,

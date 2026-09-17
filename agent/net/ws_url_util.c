@@ -173,3 +173,30 @@ int ela_is_ws_url(const char *url)
 	return strncmp(url, "ws://", 5) == 0 ||
 	       strncmp(url, "wss://", 6) == 0;
 }
+
+int ela_ws_build_stream_url(const char *http_uri, const char *endpoint, const char *mac, char *out, size_t out_sz)
+{
+	const char *scheme, *authority, *authority_end;
+	size_t authority_len;
+	int n;
+
+	if (!http_uri || !*http_uri || !endpoint || !*endpoint || !mac || !*mac || !out || out_sz == 0)
+		return -1;
+	if (!strncmp(http_uri, "http://", 7)) {
+		scheme = "ws://";
+		authority = http_uri + 7;
+	} else if (!strncmp(http_uri, "https://", 8)) {
+		scheme = "wss://";
+		authority = http_uri + 8;
+	} else {
+		return -1;
+	}
+	authority_end = authority;
+	while (*authority_end && *authority_end != '/' && *authority_end != '?' && *authority_end != '#')
+		authority_end++;
+	authority_len = (size_t)(authority_end - authority);
+	if (!authority_len)
+		return -1;
+	n = snprintf(out, out_sz, "%s%.*s/%s/%s", scheme, (int)authority_len, authority, endpoint, mac);
+	return (n > 0 && (size_t)n < out_sz) ? 0 : -1;
+}

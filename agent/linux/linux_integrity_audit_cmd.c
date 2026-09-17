@@ -7,7 +7,6 @@
 #include <getopt.h>
 #include <json-c/json.h>
 #include <limits.h>
-#include <stdarg.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -143,34 +142,6 @@ static void scan_pcr(struct integ_ctx *c)
 	    "TPM device is present; event-log replay/live PCR comparison requires TPM access",
 	    "Replay the event log with the correct hash banks and compare each PCR against live TPM values.");
 }
-static int out_printf(struct output_buffer *o, const char *fmt, ...)
-{
-	va_list a, b;
-	char s[1024], *p;
-	int n, r;
-	va_start(a, fmt);
-	va_copy(b, a);
-	n = vsnprintf(s, sizeof(s), fmt, a);
-	va_end(a);
-	if (n < 0) {
-		va_end(b);
-		return -1;
-	}
-	if ((size_t)n < sizeof(s)) {
-		va_end(b);
-		return output_buffer_append_len(o, s, (size_t)n);
-	}
-	p = malloc((size_t)n + 1);
-	if (!p) {
-		va_end(b);
-		return -1;
-	}
-	vsnprintf(p, (size_t)n + 1, fmt, b);
-	va_end(b);
-	r = output_buffer_append_len(o, p, (size_t)n);
-	free(p);
-	return r;
-}
 static void emit(struct output_buffer *o, enum integ_format format, const struct integ_finding *f)
 {
 	if (format == IF_JSON) {
@@ -188,11 +159,11 @@ static void emit(struct output_buffer *o, enum integ_format format, const struct
 		output_buffer_append(o, "\n");
 		json_object_put(j);
 	} else if (format == IF_CSV)
-		out_printf(o, "finding,\"%s\",\"%s\",%s,%s,\"%s\",\"%s\"\n", f->rule, f->title, f->status, f->severity,
-			   f->evidence, f->remediation);
+		output_buffer_printf(o, "finding,\"%s\",\"%s\",%s,%s,\"%s\",\"%s\"\n", f->rule, f->title, f->status,
+				     f->severity, f->evidence, f->remediation);
 	else
-		out_printf(o, "[%s] %s (%s) %s\n  Evidence: %s\n  Remediation: %s\n", f->status, f->rule, f->severity,
-			   f->title, f->evidence, f->remediation);
+		output_buffer_printf(o, "[%s] %s (%s) %s\n  Evidence: %s\n  Remediation: %s\n", f->status, f->rule,
+				     f->severity, f->title, f->evidence, f->remediation);
 }
 int linux_integrity_audit_main(int argc, char **argv)
 {
@@ -234,14 +205,15 @@ int linux_integrity_audit_main(int argc, char **argv)
 	for (i = 0; i < c.len; i++)
 		emit(&o, format, &c.items[i]);
 	if (format == IF_JSON)
-		out_printf(&o,
-			   "{\"record\":\"linux_audit_summary\",\"profile\":\"integrity\",\"findings\":%zu,\"unknown\":"
-			   "%zu}\n",
-			   c.len, c.unknown);
+		output_buffer_printf(
+			&o,
+			"{\"record\":\"linux_audit_summary\",\"profile\":\"integrity\",\"findings\":%zu,\"unknown\":"
+			"%zu}\n",
+			c.len, c.unknown);
 	else if (format == IF_CSV)
-		out_printf(&o, "summary,,,,findings=%zu;unknown=%zu,,\n", c.len, c.unknown);
+		output_buffer_printf(&o, "summary,,,,findings=%zu;unknown=%zu,,\n", c.len, c.unknown);
 	else
-		out_printf(&o, "Summary (integrity): findings=%zu unknown=%zu\n", c.len, c.unknown);
+		output_buffer_printf(&o, "Summary (integrity): findings=%zu unknown=%zu\n", c.len, c.unknown);
 	fwrite(o.data, 1, o.len, stdout);
 	for (i = 0; i < c.len; i++) {
 		free(c.items[i].rule);

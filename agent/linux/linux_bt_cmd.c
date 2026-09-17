@@ -12,6 +12,7 @@
  * can wedge or panic the host.
  */
 #include "embedded_linux_audit_cmd.h"
+#include "util/file_io_util.h"
 #include "linux/bt/bt_fuzz.h"
 #include "linux/wlan/wlan_fuzz_stream.h"
 #include "linux/linux_bt_util.h"
@@ -27,26 +28,6 @@
 #include <unistd.h>
 
 /* ---- small sysfs helpers -------------------------------------------------- */
-
-static int read_link_base(const char *path, char *out, size_t outsz)
-{
-	char buf[512];
-	const char *base;
-	size_t len;
-	ssize_t n = readlink(path, buf, sizeof(buf) - 1);
-
-	if (n < 0 || outsz == 0)
-		return -1;
-	buf[n] = '\0';
-	base = strrchr(buf, '/');
-	base = base ? base + 1 : buf;
-	len = strlen(base);
-	if (len >= outsz)
-		len = outsz - 1;
-	memcpy(out, base, len);
-	out[len] = '\0';
-	return 0;
-}
 
 /* LCOV_EXCL_START -- thin sysfs I/O; exercised only in the field */
 static int read_text_line(const char *path, char *out, size_t outsz)
@@ -253,11 +234,11 @@ static int bt_list_main(int argc, char **argv)
 			snprintf(addr, sizeof(addr), "?");
 		snprintf(path, sizeof(path),
 			 "/sys/class/bluetooth/%s/device/subsystem", de->d_name);
-		if (read_link_base(path, bus, sizeof(bus)) != 0)
+		if (ela_readlink_basename(path, bus, sizeof(bus)) != 0)
 			snprintf(bus, sizeof(bus), "?");
 		snprintf(path, sizeof(path),
 			 "/sys/class/bluetooth/%s/device/driver", de->d_name);
-		if (read_link_base(path, drv, sizeof(drv)) != 0)
+		if (ela_readlink_basename(path, drv, sizeof(drv)) != 0)
 			snprintf(drv, sizeof(drv), "?");
 		(void)drv;
 		printf("%-8s %-18s %-8s %-14s %s\n", de->d_name, addr, bus,

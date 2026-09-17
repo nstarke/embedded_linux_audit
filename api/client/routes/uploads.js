@@ -1,5 +1,7 @@
 'use strict';
 
+const { macKey } = require('../../lib/macAddress');
+
 const { isSafeSinglePathSegment } = require('../../agent/routes/shared');
 const { VALID_UPLOAD_TYPES } = require('../../lib/uploadTypes');
 const {
@@ -32,7 +34,7 @@ function parseMacFilter(value) {
   if (value === undefined) {
     return { valid: true, mac: null };
   }
-  const hex = String(value).toLowerCase().replace(/[^0-9a-f]/g, '');
+  const hex = macKey(value);
   if (hex.length !== 12) {
     return { valid: false, mac: null };
   }
