@@ -370,11 +370,10 @@ static int usb_pcap_capture(const char *path, uint32_t busnum)
 	if (!dumper) {
 		fprintf(stderr, "usb pcap: cannot initialize %s: %s\n", path,
 			pcap_geterr(usb_capture_handle));
-		fclose(output);
-		output = NULL;
+		/* pcap_dump_fopen() closes the FILE handle itself even on
+		 * failure, so closing it again here would be a use-after-close. */
 		goto out;
 	}
-	output = NULL;
 	memset(&action, 0, sizeof(action));
 	action.sa_handler = usb_capture_signal;
 	sigemptyset(&action.sa_mask);
@@ -394,8 +393,6 @@ static int usb_pcap_capture(const char *path, uint32_t busnum)
 out:
 	if (dumper)
 		pcap_dump_close(dumper);
-	else if (output)
-		fclose(output);
 	if (output_fd >= 0)
 		close(output_fd);
 	if (usb_capture_handle)
