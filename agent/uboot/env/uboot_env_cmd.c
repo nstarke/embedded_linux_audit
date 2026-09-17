@@ -1164,7 +1164,7 @@ int uboot_env_ensure_config(void)
 
 	argv[argc++] = "env";
 	argv[argc++] = "--output-config";
-	if (output_tcp && *output_tcp && argc + 2 <= argv_max) {
+	if (output_tcp && *output_tcp) {
 		argv[argc++] = "--output-tcp";
 		argv[argc++] = (char *)output_tcp;
 	}
