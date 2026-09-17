@@ -315,6 +315,14 @@ LIBSSH_CMAKE_ARGS += -DHAVE_OPENSSL_FIPS_MODE=0
 endif
 endif
 
+ifneq ($(strip $(CMAKE_C_COMPILER_TARGET)),)
+# Static-library try_compile checks do not resolve symbols, so libssh's
+# check_function_exists falsely detects C23 memset_explicit in Zig's target
+# libc. Use libssh's existing explicit_bzero fallback for these cross builds.
+# Set this after the Zig-specific LIBSSH_CMAKE_ARGS reconstruction above.
+LIBSSH_CMAKE_ARGS += -DHAVE_MEMSET_EXPLICIT=0
+endif
+
 LIBCSV_DIR    := third_party/libcsv
 LIBCSV_SRC    := $(LIBCSV_DIR)/libcsv.c
 LIBCSV_CFLAGS := -I$(LIBCSV_DIR)
@@ -1187,7 +1195,9 @@ $(LIBUBOOTENV_LIB): $(ZLIB_LIB)
 $(LIBEFIVAR_BUILD_STAMP):
 	find $(realpath $(LIBEFIVAR_DIR))/src -maxdepth 1 -name '.*d' -delete 2>/dev/null || true
 	-$(MAKE) -C $(LIBEFIVAR_DIR)/src TOPDIR='$(realpath $(LIBEFIVAR_DIR))' clean >/dev/null 2>&1 || true
-	$(MAKE) -C $(LIBEFIVAR_DIR)/src TOPDIR='$(realpath $(LIBEFIVAR_DIR))' libefivar.a CC='$(CC)' HOSTCC='cc' HOSTCCLD='cc' AR='ar' RANLIB='ranlib' CPPFLAGS='-I$(realpath $(LIBEFIVAR_DIR))/src/include' HOST_CFLAGS='$(LIBEFIVAR_HOST_CFLAGS)' HOST_CPPFLAGS='$(LIBEFIVAR_HOST_CPPFLAGS)' HOST_LDFLAGS='$(LIBEFIVAR_HOST_LDFLAGS)' HOST_CCLDFLAGS='$(LIBEFIVAR_HOST_LDFLAGS)'
+	# Released efivar sources predate newer compiler warnings; keep diagnostics
+	# visible without promoting them to errors in this third-party dependency.
+	$(MAKE) -C $(LIBEFIVAR_DIR)/src TOPDIR='$(realpath $(LIBEFIVAR_DIR))' libefivar.a CC='$(CC)' HOSTCC='cc' HOSTCCLD='cc' AR='ar' RANLIB='ranlib' ERRORS= CPPFLAGS='-I$(realpath $(LIBEFIVAR_DIR))/src/include' HOST_CFLAGS='$(LIBEFIVAR_HOST_CFLAGS)' HOST_CPPFLAGS='$(LIBEFIVAR_HOST_CPPFLAGS)' HOST_LDFLAGS='$(LIBEFIVAR_HOST_LDFLAGS)' HOST_CCLDFLAGS='$(LIBEFIVAR_HOST_LDFLAGS)'
 	test -f $(LIBEFIVAR_LIB)
 	touch $@
 
@@ -1356,7 +1366,8 @@ $(LIBEFIVAR_LINK_LIB): $(LIBEFIVAR_BUILD_STAMP) | $(GENERATED_DIR) check-llvm-ob
 
 $(NCURSES_BUILD_STAMP):
 	cd $(NCURSES_DIR) && $(MAKE) distclean >/dev/null 2>&1 || true
-	cd $(NCURSES_DIR) && ./configure --without-shared --without-cxx --without-cxx-binding --without-ada --without-tests --without-progs --without-manpages --with-normal --with-termlib --disable-home-terminfo CC='$(CC)' CFLAGS='$(CFLAGS)'
+	# ncurses 6.6 defaults to wide-character libraries; we link libncurses/libtinfo.
+	cd $(NCURSES_DIR) && ./configure --disable-widec --without-shared --without-cxx --without-cxx-binding --without-ada --without-tests --without-progs --without-manpages --with-normal --with-termlib --disable-home-terminfo CC='$(CC)' CFLAGS='$(CFLAGS)'
 	$(MAKE) -C $(NCURSES_DIR) -j$(JOBS) libs
 	touch $@
 

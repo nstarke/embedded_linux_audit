@@ -21,10 +21,10 @@
 	url = https://github.com/madler/zlib.git
 [submodule "third_party/readline"]
 	path = third_party/readline
-	url = https://github.com/gnu-mirror-unofficial/readline.git
+	url = https://git.savannah.gnu.org/git/readline.git
 [submodule "third_party/ncurses"]
 	path = third_party/ncurses
-	url = https://github.com/mirror/ncurses.git
+	url = https://github.com/ThomasDickey/ncurses-snapshots.git
 [submodule "third_party/libefivar"]
 	path = third_party/libefivar
 	url = https://github.com/rhboot/efivar.git
@@ -33,7 +33,7 @@
 	url = https://github.com/wolfSSL/wolfssl.git
 [submodule "third_party/libssh"]
 	path = third_party/libssh
-	url = https://github.com/libssh/libssh-mirror.git
+	url = https://git.libssh.org/projects/libssh.git
 [submodule "third_party/tpm2-tss"]
 	path = third_party/tpm2-tss
 	url = https://github.com/tpm2-software/tpm2-tss.git
