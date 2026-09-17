@@ -315,6 +315,14 @@ LIBSSH_CMAKE_ARGS += -DHAVE_OPENSSL_FIPS_MODE=0
 endif
 endif
 
+ifneq ($(strip $(CMAKE_C_COMPILER_TARGET)),)
+# Static-library try_compile checks do not resolve symbols, so libssh's
+# check_function_exists falsely detects C23 memset_explicit in Zig's target
+# libc. Use libssh's existing explicit_bzero fallback for these cross builds.
+# Set this after the Zig-specific LIBSSH_CMAKE_ARGS reconstruction above.
+LIBSSH_CMAKE_ARGS += -DHAVE_MEMSET_EXPLICIT=0
+endif
+
 LIBCSV_DIR    := third_party/libcsv
 LIBCSV_SRC    := $(LIBCSV_DIR)/libcsv.c
 LIBCSV_CFLAGS := -I$(LIBCSV_DIR)
