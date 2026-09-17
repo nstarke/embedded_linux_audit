@@ -1038,7 +1038,7 @@ SRC := \
 	agent/bios/bios_pull_orom_cmd.c \
 	$(LIBCSV_SRC) $(GENERATED_CA_SRC)
 
-.PHONY: all env image static test build-unit-agent-c test-unit-agent-c clean check-autoconf check-autoreconf check-zig check-llvm-objcopy
+.PHONY: all env image static test build-unit-agent-c test-unit-agent-c clean clean-app check-autoconf check-autoreconf check-zig check-llvm-objcopy
 
 check-zig:
 	@if [ "$(NEEDS_ZIG)" != "1" ]; then \
@@ -1286,7 +1286,7 @@ $(TPM2_TSS_BUILD_STAMP): $(OPENSSL_SSL_LIB)
 
 $(OPENSSL_LIB): $(OPENSSL_SSL_LIB)
 
-$(WOLFSSL_LIB): check-autoconf
+$(WOLFSSL_LIB): | check-autoconf
 	mkdir -p $(WOLFSSL_BUILD)
 	if [ ! -x "$(WOLFSSL_DIR)/configure" ] \
 		|| [ ! -f "$(WOLFSSL_DIR)/build-aux/ltmain.sh" ] \
@@ -1550,9 +1550,12 @@ test:
 	$(MAKE) test-unit-agent-c
 	bash tests/agent/shell/test_all.sh
 
-clean:
+# Recompile first-party code without discarding verified dependency outputs.
+clean-app:
 	rm -f $(TARGET)
 	rm -rf $(GENERATED_DIR)
+
+clean: clean-app
 	rm -f $(LIBEFIVAR_DIR)/.ela-build-*
 	rm -f $(NCURSES_DIR)/.ela-build-*
 	rm -f $(READLINE_DIR)/.ela-build-*

@@ -1,0 +1,61 @@
+name: Set up cached cross compiler and dependencies
+description: Restore only exact dependency recipes; first-party binaries are always rebuilt.
+inputs:
+  isa:
+    required: true
+    description: Artifact ISA name
+  zig-targets:
+    required: true
+    description: Ordered compiler target candidates (also part of cache identity)
+outputs:
+  cache-hit:
+    description: Whether an exact dependency cache was restored
+    value: ${{ steps.dependencies.outputs.cache-hit }}
+runs:
+  using: composite
+  steps:
+    - name: Initialize required dependency sources
+      shell: bash
+      run: bash tools/ci/checkout-submodules.sh static
+    - name: Install build tools
+      shell: bash
+      run: |
+        sudo apt-get update -qq
+        sudo apt-get install -y autoconf automake cmake libtool-bin libltdl-dev llvm
+    - name: Cache Zig
+      uses: actions/cache@v4
+      with:
+        path: .cache/tools/zig/0.14.0/x86_64-linux
+        key: zig-${{ runner.os }}-${{ runner.arch }}-0.14.0
+    - name: Install Zig
+      shell: bash
+      run: |
+        make check-zig ZIG_IN_PATH= CC='zig cc -target x86_64-linux-musl'
+        echo "$PWD/.cache/tools/zig/0.14.0/x86_64-linux" >> "$GITHUB_PATH"
+    - name: Identify dependency recipe
+      id: recipe
+      shell: bash
+      env:
+        ZIG_TARGETS: ${{ inputs.zig-targets }}
+      run: python3 tools/ci/cache-key.py >> "$GITHUB_OUTPUT"
+    # No restore-keys: Make's archive targets do not track all configuration
+    # inputs. Never restore an approximation of a different dependency recipe.
+    - name: Cache compiled dependencies
+      id: dependencies
+      uses: actions/cache@v4
+      with:
+        key: cross-deps-v1-${{ runner.os }}-${{ runner.arch }}-${{ inputs.isa }}-${{ steps.recipe.outputs.key }}
+        path: |
+          .cache/ci/target
+          third_party/json-c/build-*
+          third_party/zlib/build-*
+          third_party/libubootenv/build-*
+          third_party/libxml2/build-*
+          third_party/curl/build-*
+          third_party/libssh/build-*
+          third_party/libpcap/build-*
+          third_party/openssl/build-*
+          third_party/tpm2-tss/build-*
+          third_party/wolfssl/build-*
+          !third_party/wolfssl/build-aux
+          !third_party/**/.zig-cache

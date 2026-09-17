@@ -1,148 +1,97 @@
 name: Release Cross Static Builds
 
 on:
-  push:
-    branches:
-      - main
   release:
     types: [published]
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
+  actions: read
 
+# Push builds live in Agent Tests. A release waits for a matching push run and
+# reuses its fully tested artifacts; an absent/failed/expired run triggers CI.
 jobs:
-  build:
-    name: build-${{ matrix.name }}
+  resolve:
+    name: Resolve tested release commit
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: arm32-le
-            zig_targets: arm-linux-musleabi
-          - name: arm32-be
-            zig_targets: armeb-linux-musleabi,armeb-linux-gnueabi
-          - name: aarch64-le
-            zig_targets: aarch64-linux-musl
-          - name: aarch64-be
-            zig_targets: aarch64_be-linux-musl
-          - name: mips-le
-            zig_targets: mipsel-linux-musleabi,mipsel-linux-musleabihf
-          - name: mips-be
-            zig_targets: mips-linux-musleabi,mips-linux-musleabihf
-          - name: mips64-le
-            zig_targets: mips64el-linux-muslabi64,mips64el-linux-gnuabi64
-          - name: mips64-be
-            zig_targets: mips64-linux-muslabi64,mips64-linux-gnuabi64
-          - name: powerpc-le
-            zig_targets: powerpc64le-linux-musl,powerpc64le-linux-gnu
-          - name: powerpc64-be
-            zig_targets: powerpc64-linux-musl
-          - name: powerpc-be
-            zig_targets: powerpc-linux-musleabi,powerpc-linux-musleabihf,powerpc-linux-gnueabi,powerpc-linux-gnueabihf
-          - name: x86
-            zig_targets: x86-linux-musl
-          - name: x86_64
-            zig_targets: x86_64-linux-musl
-          - name: riscv32
-            zig_targets: riscv32-linux-musl,riscv32-linux-gnu
-          - name: riscv64
-            zig_targets: riscv64-linux-musl,riscv64-linux-gnu
-
+    timeout-minutes: 20
+    outputs:
+      sha: ${{ steps.commit.outputs.sha }}
+      run-id: ${{ steps.reuse.outputs.result }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
-          token: ${{ github.token }}
           ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.sha }}
-          fetch-depth: 0
-          submodules: recursive
-
-      - name: Install build tooling for wolfSSL/libssh builds
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y autoconf automake cmake libtool-bin libltdl-dev llvm
-
-      - name: Debug selected targets
-        run: |
-          echo "matrix.name=${{ matrix.name }}"
-          echo "matrix.zig_targets=${{ matrix.zig_targets }}"
-
-      - name: Install Zig
-        run: |
-          set -euo pipefail
-          ZIG_VERSION=0.14.0
-          curl -fsSL -o zig.tar.xz "https://ziglang.org/download/${ZIG_VERSION}/zig-linux-x86_64-${ZIG_VERSION}.tar.xz"
-          tar -xf zig.tar.xz
-          echo "$PWD/zig-linux-x86_64-${ZIG_VERSION}" >> "$GITHUB_PATH"
-          "$PWD/zig-linux-x86_64-${ZIG_VERSION}/zig" version
-
-      - name: Build default static binary
-        run: |
-          set -euo pipefail
-          export CFLAGS=
-          export CPPFLAGS=
-          export CXXFLAGS=
-          export LDFLAGS=
-          test -f agent/embedded_linux_audit.c
-          test -f agent/embedded_linux_audit_cmd.h
-          test -f third_party/libefivar/src/include/efivar/efivar.h
-          test -f third_party/ncurses/configure
-          test -f third_party/readline/readline.h
-          mkdir -p dist/${{ matrix.name }}
-
-          IFS=',' read -ra TARGETS <<< "${{ matrix.zig_targets }}"
-          BUILT=0
-          for T in "${TARGETS[@]}"; do
-            echo "Trying default target: ${T}"
-            if make clean \
-               && make static \
-                    ELA_USE_READLINE=0 \
-                    CMAKE_C_COMPILER="$(command -v zig)" \
-                    CMAKE_C_COMPILER_ARG1=cc \
-                    CMAKE_C_COMPILER_TARGET="${T}" \
-                    CC="zig cc -target ${T}"; then
-              cp embedded_linux_audit "dist/${{ matrix.name }}/ela-${{ matrix.name }}"
-              if [ "${{ matrix.name }}" = "powerpc-le" ]; then
-                cp embedded_linux_audit "dist/${{ matrix.name }}/ela-powerpc64-le"
-              fi
-              echo "Built default successfully with target: ${T}"
-              BUILT=1
-              break
-            fi
-            echo "Default target failed: ${T}"
-          done
-
-          if [ "$BUILT" -ne 1 ]; then
-            echo "All candidate default targets failed for ${{ matrix.name }}"
-            exit 1
-          fi
-
-      - name: Upload matrix artifact
-        uses: actions/upload-artifact@v4
+          fetch-depth: 1
+      - id: commit
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Find an exact, fully tested artifact set
+        id: reuse
+        uses: actions/github-script@v7
+        env:
+          RELEASE_SHA: ${{ steps.commit.outputs.sha }}
         with:
-          name: ela-${{ matrix.name }}
-          path: |
-            dist/${{ matrix.name }}/ela-${{ matrix.name }}
-            dist/${{ matrix.name }}/ela-powerpc64-le
-          if-no-files-found: ignore
+          result-encoding: string
+          script: |
+            const findTestedRun = require('./tools/ci/find-tested-run.cjs');
+            const targets = require('./tools/ci/targets.json');
+            return await findTestedRun({github, context, core,
+              sha: process.env.RELEASE_SHA, isas: targets.map(t => t.isa)});
 
-  release-metadata:
-    name: release-metadata
+  build:
+    name: Build and test missing release artifacts
+    needs: resolve
+    if: needs.resolve.outputs.run-id == ''
+    uses: ./.github/workflows/agent-tests.yml
+    with:
+      ref: ${{ needs.resolve.outputs.sha }}
+      force-full: true
+    secrets: inherit
+
+  stage:
+    name: Prepare verified release assets
+    needs: [resolve, build]
+    if: >-
+      ${{ !cancelled() && needs.resolve.result == 'success' &&
+          (needs.resolve.outputs.run-id != '' || needs.build.result == 'success') }}
     runs-on: ubuntu-latest
-    needs: build
-    if: github.event_name == 'release'
     steps:
-      - name: Write release metadata
-        run: |
-          set -euo pipefail
-          mkdir -p release-metadata
-          printf '%s\n' "${{ github.event.release.tag_name }}" > release-metadata/tag.txt
-
-      - name: Upload release metadata artifact
-        uses: actions/upload-artifact@v4
+      - uses: actions/checkout@v4
         with:
-          name: release-metadata
+          ref: ${{ needs.resolve.outputs.sha }}
+          fetch-depth: 1
+      - name: Download release binaries
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ needs.resolve.outputs.run-id || github.run_id }}
+          pattern: ela-*
+          path: tested-artifacts
+      - name: Download successful test manifest
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ needs.resolve.outputs.run-id || github.run_id }}
+          name: tested-commit
+          path: tested-artifacts/tested-commit
+      - name: Verify commit and complete architecture coverage
+        env:
+          RELEASE_SHA: ${{ needs.resolve.outputs.sha }}
+        run: python3 tools/ci/stage-release.py
+      - name: Write release metadata
+        env:
+          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref_name }}
+        run: |
+          mkdir -p release-metadata
+          printf '%s\n' "$RELEASE_TAG" > release-metadata/tag.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: publish-release-assets
+          path: release-assets
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: publish-release-metadata
           path: release-metadata/tag.txt
+          if-no-files-found: error

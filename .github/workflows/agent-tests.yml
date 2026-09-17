@@ -1,36 +1,55 @@
 name: Agent Tests
 
 'on':
-  workflow_run:
-    workflows:
-      - Release Cross Static Builds
-    types:
-      - completed
+  push:
+    branches:
+      - main
   pull_request:
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      ref:
+        type: string
+        default: ''
+        description: Exact source commit to test
+      force-full:
+        type: boolean
+        default: false
+        description: Run all checks, including for a release fallback
 
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
+
+  changes:
+    uses: ./.github/workflows/ci-changes.yml
+    with:
+      ref: ${{ inputs.ref || github.sha }}
+      force-full: ${{ inputs.force-full || false }}
+
   agent-unit-c:
     name: tests/agent/unit-c
-    if: ${{ github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    needs: changes
+    if: ${{ needs.changes.outputs.agent == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          token: ${{ github.token }}
-          submodules: recursive
-          ref: ${{ github.event_name == 'workflow_run' && (github.event.workflow_run.head_branch || github.event.workflow_run.head_sha) || github.sha }}
-
+          ref: ${{ inputs.ref || github.sha }}
+          fetch-depth: 1
+      - name: Initialize required dependency sources
+        run: bash tools/ci/checkout-submodules.sh unit
       - name: Install C unit test dependencies
         run: |
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y cmake
-
       - name: Run native C unit tests
         run: |
           set -euo pipefail
@@ -38,25 +57,20 @@ jobs:
 
   kmod-build:
     name: kmod/host-headers-build
-    if: ${{ github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    needs: changes
+    if: ${{ needs.changes.outputs.kmod == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          token: ${{ github.token }}
-          ref: ${{ github.event_name == 'workflow_run' && (github.event.workflow_run.head_branch || github.event.workflow_run.head_sha) || github.sha }}
-
-      # Cheap always-on check: compile kmod/ against the runner's kernel
-      # headers so kernel-API breakage in the module surfaces on every push.
-      # (The full pinned-kernel cross-compile path is the gated
-      # tests/builder/test_module_build.sh integration test.)
+          ref: ${{ inputs.ref || github.sha }}
+          fetch-depth: 1
       - name: Install kernel headers
         run: |
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y "linux-headers-$(uname -r)"
-
       - name: Build kernel module against host headers
         run: |
           set -euo pipefail
@@ -66,27 +80,26 @@ jobs:
 
   agent-c-coverage:
     name: coverage/agent-c
-    if: ${{ github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    needs: changes
+    if: ${{ needs.changes.outputs.agent == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          token: ${{ github.token }}
-          submodules: recursive
-          ref: ${{ github.event_name == 'workflow_run' && (github.event.workflow_run.head_branch || github.event.workflow_run.head_sha) || github.sha }}
-
+          ref: ${{ inputs.ref || github.sha }}
+          fetch-depth: 1
+      - name: Initialize required dependency sources
+        run: bash tools/ci/checkout-submodules.sh static
       - name: Install native coverage dependencies
         run: |
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y autoconf automake cmake libtool-bin libltdl-dev llvm lcov
-
       - name: Run native C coverage
         run: |
           set -euo pipefail
           make coverage-agent-c
-
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
         with:
@@ -97,31 +110,27 @@ jobs:
 
   agent-api-jest:
     name: tests/api/agent/jest
-    if: ${{ github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    needs: changes
+    if: ${{ needs.changes.outputs.javascript == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          token: ${{ github.token }}
-          submodules: recursive
-          ref: ${{ github.event_name == 'workflow_run' && (github.event.workflow_run.head_branch || github.event.workflow_run.head_sha) || github.sha }}
-
+          ref: ${{ inputs.ref || github.sha }}
+          fetch-depth: 1
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-
       - name: Install JS test dependencies
         run: |
           set -euo pipefail
           npm install
-
       - name: Run agent API Jest tests
         run: |
           set -euo pipefail
           node_modules/.bin/jest --runInBand --coverage tests/unit/api/agent tests/unit/api/lib tests/unit/api/builder tests/unit/api/client
-
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
         with:
@@ -132,31 +141,27 @@ jobs:
 
   gdb-api-jest:
     name: tests/api/gdb/jest
-    if: ${{ github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    needs: changes
+    if: ${{ needs.changes.outputs.javascript == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          token: ${{ github.token }}
-          submodules: recursive
-          ref: ${{ github.event_name == 'workflow_run' && (github.event.workflow_run.head_branch || github.event.workflow_run.head_sha) || github.sha }}
-
+          ref: ${{ inputs.ref || github.sha }}
+          fetch-depth: 1
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-
       - name: Install JS test dependencies
         run: |
           set -euo pipefail
           npm install
-
       - name: Run GDB API Jest tests
         run: |
           set -euo pipefail
           node_modules/.bin/jest --runInBand --coverage tests/unit/api/gdb
-
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
         with:
@@ -167,31 +172,27 @@ jobs:
 
   terminal-api-jest:
     name: tests/api/terminal/jest
-    if: ${{ github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    needs: changes
+    if: ${{ needs.changes.outputs.javascript == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          token: ${{ github.token }}
-          submodules: recursive
-          ref: ${{ github.event_name == 'workflow_run' && (github.event.workflow_run.head_branch || github.event.workflow_run.head_sha) || github.sha }}
-
+          ref: ${{ inputs.ref || github.sha }}
+          fetch-depth: 1
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-
       - name: Install JS test dependencies
         run: |
           set -euo pipefail
           npm install
-
       - name: Run terminal API Jest tests
         run: |
           set -euo pipefail
           node_modules/.bin/jest --runInBand --coverage tests/unit/api/terminal
-
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
         with:
@@ -200,526 +201,114 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: true
 
-  build-release-binaries:
-    name: build/release-binaries-${{ matrix.isa }}
-    runs-on: ubuntu-latest
+  architectures:
+    name: ${{ matrix.isa }}
+    needs: changes
+    if: ${{ needs.changes.outputs.agent == 'true' }}
     strategy:
       fail-fast: false
-      max-parallel: 16
-      matrix:
-        isa:
-          - arm32-le
-          - arm32-be
-          - aarch64-le
-          - aarch64-be
-          - mips-le
-          - mips-be
-          - mips64-le
-          - mips64-be
-          - powerpc-le
-          - powerpc64-be
-          - powerpc-be
-          - x86
-          - x86_64
-          - riscv32
-          - riscv64
-    steps:
-      - name: Skip local release build when using triggering workflow artifacts
-        if: ${{ github.event_name == 'workflow_run' }}
-        run: |
-          set -euo pipefail
-          echo "Using release binaries from triggering workflow artifacts."
-
-      - name: Checkout
-        if: ${{ github.event_name != 'workflow_run' }}
-        uses: actions/checkout@v4
-        with:
-          token: ${{ github.token }}
-          submodules: recursive
-
-      - name: Install local release build dependencies
-        if: ${{ github.event_name != 'workflow_run' }}
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y autoconf automake cmake libtool-bin libltdl-dev llvm
-
-      - name: Build release binaries for agent tests
-        if: ${{ github.event_name != 'workflow_run' }}
-        run: |
-          set -euo pipefail
-          /bin/sh tests/compile_release_binaries_locally.sh --jobs="$(nproc)" "${{ matrix.isa }}"
-
-      - name: Upload locally built release binaries
-        if: ${{ github.event_name != 'workflow_run' }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: ela-${{ matrix.isa }}
-          path: api/data/release_binaries/${{ matrix.isa }}
-
-  build-unit-test-binaries:
-    name: build/unit-c-${{ matrix.name }}
-    if: ${{ github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      max-parallel: 16
-      matrix:
-        include:
-          - name: arm32-le
-            zig_targets: arm-linux-musleabi
-          - name: arm32-be
-            zig_targets: armeb-linux-musleabi,armeb-linux-gnueabi
-          - name: aarch64-le
-            zig_targets: aarch64-linux-musl
-          - name: aarch64-be
-            zig_targets: aarch64_be-linux-musl
-          - name: mips-le
-            zig_targets: mipsel-linux-musleabi,mipsel-linux-musleabihf
-          - name: mips-be
-            zig_targets: mips-linux-musleabi,mips-linux-musleabihf
-          - name: mips64-le
-            zig_targets: mips64el-linux-muslabi64,mips64el-linux-gnuabi64
-          - name: mips64-be
-            zig_targets: mips64-linux-muslabi64,mips64-linux-gnuabi64
-          - name: powerpc-le
-            zig_targets: powerpc64le-linux-musl,powerpc64le-linux-gnu
-          - name: powerpc64-be
-            zig_targets: powerpc64-linux-musl
-          - name: powerpc-be
-            zig_targets: powerpc-linux-musleabi,powerpc-linux-musleabihf,powerpc-linux-gnueabi,powerpc-linux-gnueabihf
-          - name: x86
-            zig_targets: x86-linux-musl
-          - name: x86_64
-            zig_targets: x86_64-linux-musl
-          - name: riscv32
-            zig_targets: riscv32-linux-musl,riscv32-linux-gnu
-          - name: riscv64
-            zig_targets: riscv64-linux-musl,riscv64-linux-gnu
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          token: ${{ github.token }}
-          submodules: recursive
-          ref: ${{ github.event_name == 'workflow_run' && (github.event.workflow_run.head_branch || github.event.workflow_run.head_sha) || github.sha }}
-
-      - name: Install cross-build tooling for unit tests
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y cmake llvm xz-utils
-
-      - name: Install Zig
-        run: |
-          set -euo pipefail
-          ZIG_VERSION=0.14.0
-          curl -fsSL -o zig.tar.xz "https://ziglang.org/download/${ZIG_VERSION}/zig-linux-x86_64-${ZIG_VERSION}.tar.xz"
-          tar -xf zig.tar.xz
-          echo "$PWD/zig-linux-x86_64-${ZIG_VERSION}" >> "$GITHUB_PATH"
-          "$PWD/zig-linux-x86_64-${ZIG_VERSION}/zig" version
-
-      - name: Build static C unit test binary
-        run: |
-          set -euo pipefail
-          export CFLAGS=
-          export CPPFLAGS=
-          export CXXFLAGS=
-          export LDFLAGS=
-          mkdir -p dist/${{ matrix.name }}
-
-          IFS=',' read -ra TARGETS <<< "${{ matrix.zig_targets }}"
-          BUILT=0
-          for T in "${TARGETS[@]}"; do
-            echo "Trying unit-test target: ${T}"
-            if make clean \
-               && make build-unit-agent-c \
-                    ELA_USE_READLINE=0 \
-                    LDFLAGS=-static \
-                    UNIT_TEST_CC="zig cc -target ${T}" \
-                    UNIT_TEST_CFLAGS="-O2 -Wall -Wextra -std=c11 -D_DEFAULT_SOURCE" \
-                    UNIT_TEST_LDFLAGS=-static \
-                    CMAKE_C_COMPILER="$(command -v zig)" \
-                    CMAKE_C_COMPILER_ARG1=cc \
-                    CMAKE_C_COMPILER_TARGET="${T}" \
-                    CC="zig cc -target ${T}"; then
-              cp generated/agent_unit_tests "dist/${{ matrix.name }}/agent_unit_tests-${{ matrix.name }}"
-              echo "Built unit-test binary successfully with target: ${T}"
-              BUILT=1
-              break
-            fi
-            echo "Unit-test target failed: ${T}"
-          done
-
-          if [ "$BUILT" -ne 1 ]; then
-            echo "All candidate unit-test targets failed for ${{ matrix.name }}"
-            exit 1
-          fi
-
-      - name: Upload unit test binary artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ela-unit-${{ matrix.name }}
-          path: dist/${{ matrix.name }}/agent_unit_tests-${{ matrix.name }}
-
-  shell-tests:
-    name: tests/agent/shell
-    if: ${{ github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
-    needs: build-release-binaries
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          token: ${{ github.token }}
-          submodules: recursive
-          ref: ${{ github.event_name == 'workflow_run' && (github.event.workflow_run.head_branch || github.event.workflow_run.head_sha) || github.sha }}
-
-      - name: Download x86_64 release artifact from triggering workflow
-        if: ${{ github.event_name == 'workflow_run' }}
-        uses: actions/download-artifact@v4
-        with:
-          github-token: ${{ github.token }}
-          run-id: ${{ github.event.workflow_run.id }}
-          pattern: ela-x86_64
-          path: downloaded-release-binaries
-
-      - name: Download locally built release binaries
-        if: ${{ github.event_name != 'workflow_run' }}
-        uses: actions/download-artifact@v4
-        with:
-          name: ela-x86_64
-          path: downloaded-release-binaries
-
-      - name: Stage native agent binary
-        run: |
-          set -euo pipefail
-          binary_path="$(find downloaded-release-binaries -type f \( -name 'ela-x86_64' -o -name 'embedded_linux_audit-x86_64' \) | head -n 1)"
-          if [ -z "$binary_path" ]; then
-            echo "error: unable to locate x86_64 release artifact from triggering workflow" >&2
-            exit 1
-          fi
-
-          install -m 755 "$binary_path" /tmp/embedded_linux_audit
-
-      - name: Run shell tests
-        env:
-          BIN: /tmp/embedded_linux_audit
-        run: |
-          set -euo pipefail
-          bash tests/agent/shell/test_all.sh
-
-  script-tests:
-    name: tests/agent/scripts
-    if: ${{ github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
-    needs: build-release-binaries
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          token: ${{ github.token }}
-          submodules: recursive
-          ref: ${{ github.event_name == 'workflow_run' && (github.event.workflow_run.head_branch || github.event.workflow_run.head_sha) || github.sha }}
-
-      - name: Download x86_64 release artifact from triggering workflow
-        if: ${{ github.event_name == 'workflow_run' }}
-        uses: actions/download-artifact@v4
-        with:
-          github-token: ${{ github.token }}
-          run-id: ${{ github.event.workflow_run.id }}
-          pattern: ela-x86_64
-          path: downloaded-release-binaries
-
-      - name: Download locally built release binaries
-        if: ${{ github.event_name != 'workflow_run' }}
-        uses: actions/download-artifact@v4
-        with:
-          name: ela-x86_64
-          path: downloaded-release-binaries
-
-      - name: Stage native agent binary
-        run: |
-          set -euo pipefail
-          binary_path="$(find downloaded-release-binaries -type f \( -name 'ela-x86_64' -o -name 'embedded_linux_audit-x86_64' \) | head -n 1)"
-          if [ -z "$binary_path" ]; then
-            echo "error: unable to locate x86_64 release artifact from triggering workflow" >&2
-            exit 1
-          fi
-
-          install -m 755 "$binary_path" /tmp/embedded_linux_audit
-
-      - name: Run script coverage files
-        env:
-          BIN: /tmp/embedded_linux_audit
-        run: |
-          set -euo pipefail
-          if [ -f tests/agent/scripts/test_all.sh ]; then
-            bash tests/agent/scripts/test_all.sh
-            exit 0
-          fi
-
-          echo "warning: tests/agent/scripts/test_all.sh is not present at this ref; falling back to legacy inline script coverage loop"
-          rc=0
-          while IFS= read -r script; do
-            echo
-            echo "===== Running ${script#tests/agent/scripts/} ====="
-            if /tmp/embedded_linux_audit --script "$script"; then
-              script_rc=0
-            else
-              script_rc=$?
-            fi
-
-            if [ "$script_rc" -eq 2 ]; then
-              echo "error: script parser/usage failure for $script"
-              rc=1
-            fi
-          done < <(find tests/agent/scripts -type f -name '*.ela' | sort)
-          exit "$rc"
-
-  qemu-tests:
-    name: tests/agent/qemu-${{ matrix.isa }}
-    if: ${{ github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
-    needs:
-      - build-release-binaries
-      - build-unit-test-binaries
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      max-parallel: 8
-      matrix:
-        isa:
-          - arm32-le
-          - arm32-be
-          - aarch64-le
-          - aarch64-be
-          - mips-le
-          - mips-be
-          - mips64-le
-          - mips64-be
-          - powerpc-le
-          - powerpc64-be
-          - powerpc-be
-          - x86
-          - x86_64
-          - riscv32
-          - riscv64
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          token: ${{ github.token }}
-          submodules: recursive
-          ref: ${{ github.event_name == 'workflow_run' && (github.event.workflow_run.head_branch || github.event.workflow_run.head_sha) || github.sha }}
-
-      - name: Install qemu/runtime dependencies
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y \
-            bubblewrap \
-            qemu-user-static \
-            xz-utils
-
-      - name: Pin qemu-armeb 7.2 for arm32-be (avoids qemu 8.2 armeb VDSO crash)
-        if: matrix.isa == 'arm32-be'
-        run: |
-          set -euo pipefail
-          # Ubuntu's qemu-user-static 8.2 has a broken big-endian ARM VDSO:
-          # musl's clock_gettime() (e.g. reached via mkdtemp -> __randname)
-          # jumps into an invalid VDSO page and the statically-linked test
-          # binary segfaults. qemu 7.2 predates the VDSO and uses the syscall
-          # path (10.x fixed it). Pin the 7.2 static build, which is verified
-          # to run both the release and unit-test binaries correctly.
-          url="https://github.com/multiarch/qemu-user-static/releases/download/v7.2.0-1/qemu-armeb-static"
-          sha="dc7eda696889d16134666694f041ce706f7c36798a1140ffa62262f50e05da39"
-          curl -fsSL "$url" -o /tmp/qemu-armeb-static
-          echo "$sha  /tmp/qemu-armeb-static" | sha256sum -c -
-          sudo install -m 0755 /tmp/qemu-armeb-static /usr/bin/qemu-armeb-static
-          qemu-armeb-static --version | head -1
-
-      - name: Download cross-build artifacts from triggering workflow
-        if: ${{ github.event_name == 'workflow_run' }}
-        uses: actions/download-artifact@v4
-        with:
-          github-token: ${{ github.token }}
-          run-id: ${{ github.event.workflow_run.id }}
-          name: ela-${{ matrix.isa }}
-          path: downloaded-release-binaries
-
-      - name: Download locally built release binaries
-        if: ${{ github.event_name != 'workflow_run' }}
-        uses: actions/download-artifact@v4
-        with:
-          name: ela-${{ matrix.isa }}
-          path: downloaded-release-binaries
-
-      - name: Download locally built unit test binary
-        uses: actions/download-artifact@v4
-        with:
-          name: ela-unit-${{ matrix.isa }}
-          path: downloaded-unit-tests
-
-      - name: Stage downloaded release binary for qemu tests
-        run: |
-          set -euo pipefail
-          rm -rf api/data/release_binaries
-          dest_dir="api/data/release_binaries/${{ matrix.isa }}"
-          mkdir -p "$dest_dir"
-
-          find downloaded-release-binaries -type f \( -name 'ela-*' -o -name 'embedded_linux_audit-*' \) | while IFS= read -r binary; do
-            binary_name="$(basename "$binary")"
-            case "$binary_name" in
-              embedded_linux_audit-*)
-                binary_name="ela-${binary_name#embedded_linux_audit-}"
-                ;;
-            esac
-
-            install -m 755 "$binary" "$dest_dir/$binary_name"
-          done
-
-      - name: Stage unit test binary for qemu tests
-        run: |
-          set -euo pipefail
-          unit_bin="$(find downloaded-unit-tests -type f -name 'agent_unit_tests-*' | head -n 1)"
-          if [ -z "$unit_bin" ]; then
-            echo "error: unable to locate unit test artifact for ${{ matrix.isa }}" >&2
-            exit 1
-          fi
-
-          install -m 755 "$unit_bin" "/tmp/agent_unit_tests-${{ matrix.isa }}"
-
-      - name: Run qemu ISA test
-        env:
-          ELA_QEMU_RUN_AS_ROOT: 1
-          ELA_QEMU_REQUIRE_RELEASE_BINARIES: ${{ github.event_name == 'workflow_run' && '1' || '0' }}
-          ELA_QEMU_UNIT_TEST_BIN: /tmp/agent_unit_tests-${{ matrix.isa }}
-        run: |
-          set -euo pipefail
-          mkdir -p qemu-logs
-          log_path="qemu-logs/${{ matrix.isa }}.log"
-          /bin/sh "tests/agent/qemu/${{ matrix.isa }}.sh" 2>&1 | tee "$log_path"
-          test_rc=${PIPESTATUS[0]}
-          exit "$test_rc"
-
-      - name: Upload qemu ISA log
-        if: ${{ always() }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: qemu-log-${{ matrix.isa }}
-          path: qemu-logs/${{ matrix.isa }}.log
+      max-parallel: 15
+      matrix: ${{ fromJSON(needs.changes.outputs.matrix) }}
+    uses: ./.github/workflows/ci-isa.yml
+    with:
+      ref: ${{ needs.changes.outputs.sha }}
+      isa: ${{ matrix.isa }}
+      zig-targets: ${{ matrix.zig_targets }}
 
   qemu-summary:
     name: tests/agent/qemu-summary
-    if: ${{ always() && (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success') }}
-    needs: qemu-tests
+    needs:
+      - changes
+      - architectures
+    if: ${{ always() }}
     runs-on: ubuntu-latest
     steps:
-      - name: Download qemu ISA logs
+      - name: Download QEMU logs
+        if: ${{ needs.changes.outputs.agent == 'true' && needs.architectures.result != 'skipped' }}
         uses: actions/download-artifact@v4
         with:
           pattern: qemu-log-*
           path: qemu-logs
-
-      - name: Write QEMU summary
+      - name: Summarize architecture checks
+        env:
+          SELECTION_RESULT: ${{ needs.changes.result }}
+          AGENT_REQUIRED: ${{ needs.changes.outputs.agent }}
+          RESULT: ${{ needs.architectures.result }}
         run: |
-          set -euo pipefail
-          {
-            echo "## QEMU Test Summary"
-            echo
-            echo "Overall matrix result: \`${{ needs.qemu-tests.result }}\`"
-            echo
-            echo "Per-ISA jobs:"
-            echo "- tests/agent/qemu-arm32-le"
-            echo "- tests/agent/qemu-arm32-be"
-            echo "- tests/agent/qemu-aarch64-le"
-            echo "- tests/agent/qemu-aarch64-be"
-            echo "- tests/agent/qemu-mips-le"
-            echo "- tests/agent/qemu-mips-be"
-            echo "- tests/agent/qemu-mips64-le"
-            echo "- tests/agent/qemu-mips64-be"
-            echo "- tests/agent/qemu-powerpc-le"
-            echo "- tests/agent/qemu-powerpc64-be"
-            echo "- tests/agent/qemu-powerpc-be"
-            echo "- tests/agent/qemu-x86"
-            echo "- tests/agent/qemu-x86_64"
-            echo "- tests/agent/qemu-riscv32"
-            echo "- tests/agent/qemu-riscv64"
-            echo
-            echo "Grouped log excerpts:"
-          } >> "$GITHUB_STEP_SUMMARY"
+          echo "Architecture checks: $RESULT" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$SELECTION_RESULT" != success ]; then exit 1; fi
+          if [ "$AGENT_REQUIRED" = true ] && [ "$RESULT" != success ]; then exit 1; fi
+          if [ -d qemu-logs ]; then
+            find qemu-logs -type f -name '*.log' -print -exec tail -n 4 {} \; >> "$GITHUB_STEP_SUMMARY"
+          fi
 
-          for isa in \
-            arm32-le arm32-be aarch64-le aarch64-be \
-            mips-le mips-be mips64-le mips64-be \
-            powerpc-le powerpc64-be powerpc-be x86 x86_64 riscv32 riscv64
-          do
-            log_path="$(find qemu-logs -type f -name "${isa}.log" | head -n 1)"
-            {
-              echo
-              echo "### ${isa}"
-              if [ -n "$log_path" ] && [ -f "$log_path" ]; then
-                pass_count="$(grep -c '^\[PASS\]' "$log_path" 2>/dev/null || true)"
-                fail_count="$(grep -c '^\[FAIL\]' "$log_path" 2>/dev/null || true)"
-                echo
-                echo "- Pass lines: ${pass_count}"
-                echo "- Fail lines: ${fail_count}"
-                echo
-                echo '```text'
-                sed -n '1,120p' "$log_path"
-                echo '```'
-              else
-                echo
-                echo "_Log artifact missing for ${isa}._"
-              fi
-            } >> "$GITHUB_STEP_SUMMARY"
-          done
-
-          {
-            echo
-            echo "Full per-ISA logs are attached as workflow artifacts named \`qemu-log-<isa>\`."
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Fail summary job when any QEMU matrix job failed
-        if: ${{ needs.qemu-tests.result != 'success' }}
-        run: |
-          echo "One or more QEMU ISA jobs failed." >&2
-          exit 1
-
-  prepare-release-publish-artifacts:
-    name: prepare/release-publish-artifacts
-    if: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.event == 'release' }}
+  required:
+    name: CI / required
     needs:
-      - shell-tests
-      - script-tests
-      - qemu-tests
+      - changes
+      - agent-unit-c
+      - kmod-build
+      - agent-c-coverage
+      - agent-api-jest
+      - gdb-api-jest
+      - terminal-api-jest
+      - architectures
       - qemu-summary
+      - pipeline-tests
+    if: ${{ always() }}
     runs-on: ubuntu-latest
     steps:
-      - name: Download cross-build artifacts from triggering workflow
-        uses: actions/download-artifact@v4
+      - uses: actions/checkout@v4
         with:
-          github-token: ${{ github.token }}
-          run-id: ${{ github.event.workflow_run.id }}
-          pattern: ela-*
-          path: release-assets
+          ref: ${{ inputs.ref || github.sha }}
+          fetch-depth: 1
+      - name: Check all selected jobs
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: python3 tools/ci/check-required.py
 
-      - name: Download release metadata from triggering workflow
-        uses: actions/download-artifact@v4
+  tested-artifacts:
+    name: Record fully tested artifacts
+    needs:
+      - changes
+      - required
+    if: ${{ needs.changes.outputs.agent == 'true' && needs.changes.outputs.javascript == 'true' && needs.changes.outputs.kmod == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
         with:
-          github-token: ${{ github.token }}
-          run-id: ${{ github.event.workflow_run.id }}
-          name: release-metadata
-          path: release-metadata
+          ref: ${{ inputs.ref || github.sha }}
+          fetch-depth: 1
+      - name: Record tested commit
+        env:
+          TESTED_SHA: ${{ needs.changes.outputs.sha }}
+        run: |
+          mkdir -p tested-commit
+          python3 - <<'PYCODE'
+          import json, os
+          from pathlib import Path
+          Path('tested-commit/commit.json').write_text(json.dumps({'schema': 1, 'sha': os.environ['TESTED_SHA']}))
+          PYCODE
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tested-commit
+          path: tested-commit/commit.json
+          if-no-files-found: error
 
-      - name: Upload publishable release assets
-        uses: actions/upload-artifact@v4
+  pipeline-tests:
+    name: tests/ci
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
         with:
-          name: publish-release-assets
-          path: release-assets
-
-      - name: Upload publishable release metadata
-        uses: actions/upload-artifact@v4
+          ref: ${{ inputs.ref || github.sha }}
+          fetch-depth: 1
+      - uses: actions/setup-node@v4
         with:
-          name: publish-release-metadata
-          path: release-metadata/tag.txt
+          node-version: '20'
+      - name: Test CI selection, caching and release guards
+        run: |
+          python3 tests/ci/test_ci.py
+          node --test tests/ci/find-tested-run.test.cjs
+          bash -n tools/ci/build-isa.sh tools/ci/checkout-submodules.sh

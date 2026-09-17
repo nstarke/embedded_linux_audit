@@ -10,8 +10,17 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
+  changes:
+    uses: ./.github/workflows/ci-changes.yml
+
   cppcheck:
+    needs: changes
+    if: ${{ needs.changes.outputs.agent == 'true' }}
     name: cppcheck
     runs-on: ubuntu-latest
     steps:

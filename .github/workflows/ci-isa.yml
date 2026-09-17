@@ -1,0 +1,207 @@
+name: Build and test one ISA
+
+'on':
+  workflow_call:
+    inputs:
+      ref:
+        type: string
+        required: true
+      isa:
+        type: string
+        required: true
+      zig-targets:
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+
+  build:
+    name: build/release-and-unit-${{ inputs.isa }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          fetch-depth: 1
+      - name: Set up cross build
+        id: setup
+        uses: ./.github/actions/setup-cross
+        with:
+          isa: ${{ inputs.isa }}
+          zig-targets: ${{ inputs.zig-targets }}
+      - name: Build release and unit-test binaries
+        env:
+          ISA: ${{ inputs.isa }}
+          ZIG_TARGETS: ${{ inputs.zig-targets }}
+          ELA_DEPENDENCY_CACHE_HIT: ${{ steps.setup.outputs.cache-hit }}
+        run: bash tools/ci/build-isa.sh "$ISA" "$ZIG_TARGETS"
+      - name: Upload release binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: ela-${{ inputs.isa }}
+          path: api/data/release_binaries/${{ inputs.isa }}/ela-*
+          if-no-files-found: error
+      - name: Upload unit-test binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: ela-unit-${{ inputs.isa }}
+          path: dist/${{ inputs.isa }}/agent_unit_tests-*
+          if-no-files-found: error
+
+  qemu:
+    name: tests/agent/qemu-${{ inputs.isa }}
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          fetch-depth: 1
+      - name: Install qemu/runtime dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y \
+            bubblewrap \
+            qemu-user-static \
+            xz-utils
+      - name: Pin qemu-armeb 7.2 for arm32-be (avoids qemu 8.2 armeb VDSO crash)
+        if: inputs.isa == 'arm32-be'
+        run: |
+          set -euo pipefail
+          # Ubuntu's qemu-user-static 8.2 has a broken big-endian ARM VDSO:
+          # musl's clock_gettime() (e.g. reached via mkdtemp -> __randname)
+          # jumps into an invalid VDSO page and the statically-linked test
+          # binary segfaults. qemu 7.2 predates the VDSO and uses the syscall
+          # path (10.x fixed it). Pin the 7.2 static build, which is verified
+          # to run both the release and unit-test binaries correctly.
+          url="https://github.com/multiarch/qemu-user-static/releases/download/v7.2.0-1/qemu-armeb-static"
+          sha="dc7eda696889d16134666694f041ce706f7c36798a1140ffa62262f50e05da39"
+          curl -fsSL "$url" -o /tmp/qemu-armeb-static
+          echo "$sha  /tmp/qemu-armeb-static" | sha256sum -c -
+          sudo install -m 0755 /tmp/qemu-armeb-static /usr/bin/qemu-armeb-static
+          qemu-armeb-static --version | head -1
+      - name: Download locally built release binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: ela-${{ inputs.isa }}
+          path: downloaded-release-binaries
+      - name: Download locally built unit test binary
+        uses: actions/download-artifact@v4
+        with:
+          name: ela-unit-${{ inputs.isa }}
+          path: downloaded-unit-tests
+      - name: Stage downloaded release binary for qemu tests
+        run: |
+          set -euo pipefail
+          rm -rf api/data/release_binaries
+          dest_dir="api/data/release_binaries/${{ inputs.isa }}"
+          mkdir -p "$dest_dir"
+
+          find downloaded-release-binaries -type f \( -name 'ela-*' -o -name 'embedded_linux_audit-*' \) | while IFS= read -r binary; do
+            binary_name="$(basename "$binary")"
+            case "$binary_name" in
+              embedded_linux_audit-*)
+                binary_name="ela-${binary_name#embedded_linux_audit-}"
+                ;;
+            esac
+
+            install -m 755 "$binary" "$dest_dir/$binary_name"
+          done
+      - name: Stage unit test binary for qemu tests
+        run: |
+          set -euo pipefail
+          unit_bin="$(find downloaded-unit-tests -type f -name 'agent_unit_tests-*' | head -n 1)"
+          if [ -z "$unit_bin" ]; then
+            echo "error: unable to locate unit test artifact for ${{ inputs.isa }}" >&2
+            exit 1
+          fi
+
+          install -m 755 "$unit_bin" "/tmp/agent_unit_tests-${{ inputs.isa }}"
+      - name: Run qemu ISA test
+        env:
+          ELA_QEMU_RUN_AS_ROOT: 1
+          ELA_QEMU_REQUIRE_RELEASE_BINARIES: '1'
+          ELA_QEMU_UNIT_TEST_BIN: /tmp/agent_unit_tests-${{ inputs.isa }}
+        run: |
+          set -euo pipefail
+          mkdir -p qemu-logs
+          log_path="qemu-logs/${{ inputs.isa }}.log"
+          /bin/sh "tests/agent/qemu/${{ inputs.isa }}.sh" 2>&1 | tee "$log_path"
+          test_rc=${PIPESTATUS[0]}
+          exit "$test_rc"
+      - name: Upload qemu ISA log
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: qemu-log-${{ inputs.isa }}
+          path: qemu-logs/${{ inputs.isa }}.log
+
+  shell-tests:
+    name: tests/agent/shell
+    needs: build
+    if: ${{ inputs.isa == 'x86_64' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          fetch-depth: 1
+      - name: Download locally built release binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: ela-x86_64
+          path: downloaded-release-binaries
+      - name: Stage native agent binary
+        run: |
+          set -euo pipefail
+          binary_path="$(find downloaded-release-binaries -type f \( -name 'ela-x86_64' -o -name 'embedded_linux_audit-x86_64' \) | head -n 1)"
+          if [ -z "$binary_path" ]; then
+            echo "error: unable to locate x86_64 release artifact from triggering workflow" >&2
+            exit 1
+          fi
+
+          install -m 755 "$binary_path" /tmp/embedded_linux_audit
+      - name: Run shell tests
+        env:
+          BIN: /tmp/embedded_linux_audit
+        run: |
+          set -euo pipefail
+          bash tests/agent/shell/test_all.sh
+
+  script-tests:
+    name: tests/agent/scripts
+    needs: build
+    if: ${{ inputs.isa == 'x86_64' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          fetch-depth: 1
+      - name: Download locally built release binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: ela-x86_64
+          path: downloaded-release-binaries
+      - name: Stage native agent binary
+        run: |
+          set -euo pipefail
+          binary_path="$(find downloaded-release-binaries -type f \( -name 'ela-x86_64' -o -name 'embedded_linux_audit-x86_64' \) | head -n 1)"
+          if [ -z "$binary_path" ]; then
+            echo "error: unable to locate x86_64 release artifact from triggering workflow" >&2
+            exit 1
+          fi
+
+          install -m 755 "$binary_path" /tmp/embedded_linux_audit
+      - name: Run script coverage files
+        env:
+          BIN: /tmp/embedded_linux_audit
+        run: bash tests/agent/scripts/test_all.sh

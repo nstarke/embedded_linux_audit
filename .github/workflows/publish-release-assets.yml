@@ -1,63 +1,68 @@
 name: Publish Release Assets
 
-'on':
+on:
   workflow_run:
-    workflows:
-      - Agent Tests
-    types:
-      - completed
+    workflows: [Release Cross Static Builds]
+    types: [completed]
 
 permissions:
   contents: write
+  actions: read
 
 jobs:
   publish-release-assets:
     name: publish/release-assets
-    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'workflow_run' }}
+    if: >-
+      ${{ github.event.workflow_run.conclusion == 'success' &&
+          github.event.workflow_run.event == 'release' }}
     runs-on: ubuntu-latest
     steps:
-      - name: Download publishable release assets
-        id: download_assets
-        continue-on-error: true
+      - name: Download verified release assets
         uses: actions/download-artifact@v4
         with:
           github-token: ${{ github.token }}
           run-id: ${{ github.event.workflow_run.id }}
           name: publish-release-assets
           path: release-assets
-
-      - name: Download publishable release metadata
-        id: download_metadata
-        continue-on-error: true
+      - name: Download release metadata
         uses: actions/download-artifact@v4
         with:
           github-token: ${{ github.token }}
           run-id: ${{ github.event.workflow_run.id }}
           name: publish-release-metadata
           path: release-metadata
-
       - name: Resolve release tag
         id: release_tag
         run: |
-          set -euo pipefail
-          if [ ! -f release-metadata/tag.txt ]; then
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          tag="$(cat release-metadata/tag.txt)"
-          if [ -z "$tag" ]; then
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          echo "skip=false" >> "$GITHUB_OUTPUT"
+          tag=$(cat release-metadata/tag.txt)
+          test -n "$tag"
+          git check-ref-format "refs/tags/$tag"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
-
       - name: Upload assets to release
-        if: ${{ steps.release_tag.outputs.skip != 'true' }}
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.release_tag.outputs.tag }}
-          files: |
-            release-assets/**/ela-*
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release_tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          shopt -s globstar nullglob
+          files=(release-assets/**/ela-*)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "No release assets found matching release-assets/**/ela-*" >&2
+            exit 1
+          fi
+          for f in "${files[@]}"; do
+            [ -f "$f" ] || continue
+            echo "Uploading $f..."
+            attempt=1
+            max_attempts=5
+            until gh release upload "$TAG" "$f" --clobber --repo "${{ github.repository }}"; do
+              if [ "$attempt" -ge "$max_attempts" ]; then
+                echo "Failed to upload $f after $max_attempts attempts" >&2
+                exit 1
+              fi
+              wait=$((attempt * 5))
+              echo "Upload failed (attempt $attempt/$max_attempts). Retrying in ${wait}s..."
+              sleep "$wait"
+              attempt=$((attempt + 1))
+            done
+          done

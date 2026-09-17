@@ -11,15 +11,25 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
+  changes:
+    uses: ./.github/workflows/ci-changes.yml
+
   coverity:
+    needs: changes
+    if: ${{ needs.changes.outputs.agent == 'true' }}
     name: Coverity Scan (C/C++)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          submodules: recursive
+
+      - name: Initialize required dependency sources
+        run: bash tools/ci/checkout-submodules.sh native
 
       - name: Install build dependencies
         run: |
