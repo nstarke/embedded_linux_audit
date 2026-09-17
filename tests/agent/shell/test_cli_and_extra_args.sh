@@ -148,21 +148,26 @@ if command -v nc >/dev/null 2>&1; then
     remote_port=19873
     nc -l "$remote_port" >/dev/null 2>&1 &
     NC_PID=$!
-    sleep 0.2
 
-    remote_log="$(mktemp /tmp/test_remote_lifecycle.XXXXXX)"
-    "$BIN" --remote "127.0.0.1:$remote_port" >"$remote_log" 2>&1
-    rc=$?
+    if wait_for_tcp_port_listening "$remote_port" 50; then
+        remote_log="$(mktemp /tmp/test_remote_lifecycle.XXXXXX)"
+        "$BIN" --remote "127.0.0.1:$remote_port" >"$remote_log" 2>&1
+        rc=$?
 
-    if [ "$rc" -eq 0 ] && grep -q "Remote session started" "$remote_log"; then
-        echo "[PASS] --remote starts daemon when connection succeeds"
-        PASS_COUNT="$(expr "$PASS_COUNT" + 1)"
+        if [ "$rc" -eq 0 ] && grep -q "Remote session started" "$remote_log"; then
+            echo "[PASS] --remote starts daemon when connection succeeds"
+            PASS_COUNT="$(expr "$PASS_COUNT" + 1)"
+        else
+            echo "[FAIL] --remote starts daemon when connection succeeds (rc=$rc)"
+            print_file_head_scrubbed "$remote_log" 40
+            FAIL_COUNT="$(expr "$FAIL_COUNT" + 1)"
+        fi
+        rm -f "$remote_log"
     else
-        echo "[FAIL] --remote starts daemon when connection succeeds (rc=$rc)"
-        print_file_head_scrubbed "$remote_log" 40
-        FAIL_COUNT="$(expr "$FAIL_COUNT" + 1)"
+        # nc never reached listen(2) -- an environment problem, not an agent
+        # bug, so do not report it as a failure of the code under test.
+        echo "[SKIP] --remote daemon lifecycle test (nc never listened on $remote_port)"
     fi
-    rm -f "$remote_log"
 
     # Close nc; daemon will receive SIGPIPE and exit
     kill "$NC_PID" 2>/dev/null
@@ -180,21 +185,24 @@ if command -v node >/dev/null 2>&1 && [ -f "$TERMINAL_SERVER_JS" ] && \
     ws_log="$(mktemp /tmp/test_ws_server.XXXXXX)"
     ELA_TERMINAL_PORT="$ws_port" node "$TERMINAL_SERVER_JS" >"$ws_log" 2>&1 &
     WS_SERVER_PID=$!
-    sleep 0.3
 
-    remote_ws_log="$(mktemp /tmp/test_remote_ws_lifecycle.XXXXXX)"
-    "$BIN" --remote "ws://127.0.0.1:$ws_port" >"$remote_ws_log" 2>&1
-    rc=$?
+    if wait_for_tcp_port_listening "$ws_port" 80; then
+        remote_ws_log="$(mktemp /tmp/test_remote_ws_lifecycle.XXXXXX)"
+        "$BIN" --remote "ws://127.0.0.1:$ws_port" >"$remote_ws_log" 2>&1
+        rc=$?
 
-    if [ "$rc" -eq 0 ] && grep -q "Remote session started" "$remote_ws_log"; then
-        echo "[PASS] --remote ws:// starts daemon when connection succeeds"
-        PASS_COUNT="$(expr "$PASS_COUNT" + 1)"
+        if [ "$rc" -eq 0 ] && grep -q "Remote session started" "$remote_ws_log"; then
+            echo "[PASS] --remote ws:// starts daemon when connection succeeds"
+            PASS_COUNT="$(expr "$PASS_COUNT" + 1)"
+        else
+            echo "[FAIL] --remote ws:// starts daemon when connection succeeds (rc=$rc)"
+            print_file_head_scrubbed "$remote_ws_log" 40
+            FAIL_COUNT="$(expr "$FAIL_COUNT" + 1)"
+        fi
+        rm -f "$remote_ws_log"
     else
-        echo "[FAIL] --remote ws:// starts daemon when connection succeeds (rc=$rc)"
-        print_file_head_scrubbed "$remote_ws_log" 40
-        FAIL_COUNT="$(expr "$FAIL_COUNT" + 1)"
+        echo "[SKIP] --remote ws:// daemon lifecycle test (server never listened on $ws_port)"
     fi
-    rm -f "$remote_ws_log"
 
     kill "$WS_SERVER_PID" 2>/dev/null
     wait "$WS_SERVER_PID" 2>/dev/null
