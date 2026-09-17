@@ -39,8 +39,30 @@ jobs:
           git check-ref-format "refs/tags/$tag"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
       - name: Upload assets to release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.release_tag.outputs.tag }}
-          files: release-assets/**/ela-*
-          fail_on_unmatched_files: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release_tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          shopt -s globstar nullglob
+          files=(release-assets/**/ela-*)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "No release assets found matching release-assets/**/ela-*" >&2
+            exit 1
+          fi
+          for f in "${files[@]}"; do
+            [ -f "$f" ] || continue
+            echo "Uploading $f..."
+            attempt=1
+            max_attempts=5
+            until gh release upload "$TAG" "$f" --clobber --repo "${{ github.repository }}"; do
+              if [ "$attempt" -ge "$max_attempts" ]; then
+                echo "Failed to upload $f after $max_attempts attempts" >&2
+                exit 1
+              fi
+              wait=$((attempt * 5))
+              echo "Upload failed (attempt $attempt/$max_attempts). Retrying in ${wait}s..."
+              sleep "$wait"
+              attempt=$((attempt + 1))
+            done
+          done
