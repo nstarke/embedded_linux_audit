@@ -1176,7 +1176,8 @@ int uboot_env_ensure_config(void)
 		argv[argc++] = "--output-http";
 		argv[argc++] = (char *)output_https;
 	}
-	if (output_insecure && !strcmp(output_insecure, "1") && argc + 1 <= argv_max)
+	if (output_insecure && !strcmp(output_insecure, "1") &&
+	    argc + 1 < (int)ARRAY_SIZE(argv))
 		argv[argc++] = "--insecure";
 	argv[argc] = NULL;
 
