@@ -1,11 +1,6 @@
 'use strict';
 
-// Reduce a MAC to its 12 lowercase hex digits for separator-insensitive
-// comparison (`AA-BB-..`, `aa:bb:..`, and `aabb..` all compare equal), matching
-// the terminal routes and the device DB layer.
-function macKey(mac) {
-  return String(mac || '').toLowerCase().replace(/[^0-9a-f]/g, '');
-}
+const { macKey } = require('../../lib/macAddress');
 
 const DEFAULT_WAIT_MS = 30000;
 

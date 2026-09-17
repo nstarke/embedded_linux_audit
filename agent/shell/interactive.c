@@ -119,71 +119,48 @@ static void interactive_usage(const char *prog)
 	       prog, prog, prog);
 }
 
-static void print_set_values(void)
-{
-	const char *ela_api_url        = getenv("ELA_API_URL");
-	const char *ela_api_insecure   = getenv("ELA_API_INSECURE");
-	const char *ela_quiet          = getenv("ELA_QUIET");
-	const char *ela_output_format  = getenv("ELA_OUTPUT_FORMAT");
-	const char *ela_output_tcp     = getenv("ELA_OUTPUT_TCP");
-	const char *ela_script         = getenv("ELA_SCRIPT");
-	const char *ela_output_http    = getenv("ELA_OUTPUT_HTTP");
-	const char *ela_output_insecure = getenv("ELA_OUTPUT_INSECURE");
-	const char *ela_api_key        = getenv("ELA_API_KEY");
-	const char *ela_verbose        = getenv("ELA_VERBOSE");
-	const char *ela_debug          = getenv("ELA_DEBUG");
-
-	printf("Supported variables:\n"
-	       "  ELA_API_URL              current=%s\n"
-	       "  ELA_API_INSECURE         current=%s\n"
-	       "  ELA_QUIET                current=%s\n"
-	       "  ELA_OUTPUT_FORMAT        current=%s\n"
-	       "  ELA_OUTPUT_TCP           current=%s\n"
-	       "  ELA_SCRIPT               current=%s\n"
-	       "  ELA_OUTPUT_HTTP          current=%s\n"
-	       "  ELA_OUTPUT_INSECURE      current=%s\n"
-	       "  ELA_API_KEY              current=%s\n"
-	       "  ELA_VERBOSE              current=%s\n"
-	       "  ELA_DEBUG                current=%s\n"
-	       "  ELA_WS_RETRY_ATTEMPTS    current=%s\n",
-	       (ela_api_url && *ela_api_url) ? ela_api_url : "<unset>",
-	       (ela_api_insecure && *ela_api_insecure) ? ela_api_insecure : "<unset>",
-	       (ela_quiet && *ela_quiet) ? ela_quiet : "<unset>",
-	       (ela_output_format && *ela_output_format) ? ela_output_format : "<unset>",
-	       (ela_output_tcp && *ela_output_tcp) ? ela_output_tcp : "<unset>",
-	       (ela_script && *ela_script) ? ela_script : "<unset>",
-	       (ela_output_http && *ela_output_http) ? ela_output_http : "<unset>",
-	       (ela_output_insecure && *ela_output_insecure) ? ela_output_insecure : "<unset>",
-	       (ela_api_key && *ela_api_key) ? "<set>" : "<unset>",
-	       (ela_verbose && *ela_verbose) ? ela_verbose : "<unset>",
-	       (ela_debug && *ela_debug) ? ela_debug : "<unset>",
-	       (getenv("ELA_WS_RETRY_ATTEMPTS") && *getenv("ELA_WS_RETRY_ATTEMPTS"))
-	           ? getenv("ELA_WS_RETRY_ATTEMPTS") : "<unset>");
-}
-
 static int interactive_list_supported_variables(FILE *stream)
 {
-	char buf[2048];
-	const char *ela_api_url        = getenv("ELA_API_URL");
-	const char *ela_api_insecure   = getenv("ELA_API_INSECURE");
-	const char *ela_quiet          = getenv("ELA_QUIET");
-	const char *ela_output_format  = getenv("ELA_OUTPUT_FORMAT");
-	const char *ela_output_tcp     = getenv("ELA_OUTPUT_TCP");
-	const char *ela_script         = getenv("ELA_SCRIPT");
-	const char *ela_output_http    = getenv("ELA_OUTPUT_HTTP");
+	char *buf;
+	size_t buf_size = 2048;
+	size_t i;
+	int rc;
+	const char *ela_api_url = getenv("ELA_API_URL");
+	const char *ela_api_insecure = getenv("ELA_API_INSECURE");
+	const char *ela_quiet = getenv("ELA_QUIET");
+	const char *ela_output_format = getenv("ELA_OUTPUT_FORMAT");
+	const char *ela_output_tcp = getenv("ELA_OUTPUT_TCP");
+	const char *ela_script = getenv("ELA_SCRIPT");
+	const char *ela_output_http = getenv("ELA_OUTPUT_HTTP");
 	const char *ela_output_insecure = getenv("ELA_OUTPUT_INSECURE");
-	const char *ela_api_key        = getenv("ELA_API_KEY");
-	const char *ela_verbose        = getenv("ELA_VERBOSE");
-	const char *ela_debug          = getenv("ELA_DEBUG");
-	const char *ela_ws_retry       = getenv("ELA_WS_RETRY_ATTEMPTS");
+	const char *ela_api_key = getenv("ELA_API_KEY");
+	const char *ela_verbose = getenv("ELA_VERBOSE");
+	const char *ela_debug = getenv("ELA_DEBUG");
+	const char *ela_ws_retry = getenv("ELA_WS_RETRY_ATTEMPTS");
+	const char *values[] = {
+		ela_api_url,	 ela_api_insecure,    ela_quiet,   ela_output_format, ela_output_tcp, ela_script,
+		ela_output_http, ela_output_insecure, ela_verbose, ela_debug,	      ela_ws_retry,
+	};
 
-	if (ela_interactive_format_supported_variables(buf, sizeof(buf),
-						       ela_api_url, ela_api_insecure, ela_quiet,
-						       ela_output_format, ela_output_tcp, ela_script,
-						       ela_output_http, ela_output_insecure, ela_api_key,
-						       ela_verbose, ela_debug, ela_ws_retry) != 0)
+	/* Keep room for labels and defaults plus arbitrarily long environment
+	 * values. The API key is rendered only as <set> or <unset>. */
+	for (i = 0; i < sizeof(values) / sizeof(values[0]); i++)
+		if (values[i])
+			buf_size += strlen(values[i]);
+	buf = malloc(buf_size);
+	if (!buf)
 		return -1;
-	return fputs(buf, stream);
+
+	if (ela_interactive_format_supported_variables(buf, buf_size, ela_api_url, ela_api_insecure, ela_quiet,
+						       ela_output_format, ela_output_tcp, ela_script, ela_output_http,
+						       ela_output_insecure, ela_api_key, ela_verbose, ela_debug,
+						       ela_ws_retry) != 0) {
+		free(buf);
+		return -1;
+	}
+	rc = fputs(buf, stream);
+	free(buf);
+	return rc;
 }
 
 int interactive_set_command(int argc, char **argv)
@@ -192,7 +169,7 @@ int interactive_set_command(int argc, char **argv)
 	char errbuf[256];
 
 	if (argc == 1) {
-		print_set_values();
+		interactive_list_supported_variables(stdout);
 		return 0;
 	}
 

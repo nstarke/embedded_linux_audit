@@ -13,7 +13,6 @@
 
 #include <getopt.h>
 #include <json-c/json.h>
-#include <stdarg.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -40,39 +39,6 @@ static void usage(const char *prog)
 		"  Output honors global --output-format txt, csv, or json.\n"
 		"  Remote HTTP output is uploaded as linux-audit data.\n",
 		prog);
-}
-
-static int append_printf(struct output_buffer *out, const char *fmt, ...)
-{
-	va_list ap;
-	va_list copy;
-	char stack[1024];
-	char *heap;
-	int needed;
-	int rc;
-
-	va_start(ap, fmt);
-	va_copy(copy, ap);
-	needed = vsnprintf(stack, sizeof(stack), fmt, ap);
-	va_end(ap);
-	if (needed < 0) {
-		va_end(copy);
-		return -1;
-	}
-	if ((size_t)needed < sizeof(stack)) {
-		va_end(copy);
-		return output_buffer_append_len(out, stack, (size_t)needed);
-	}
-	heap = malloc((size_t)needed + 1);
-	if (!heap) {
-		va_end(copy);
-		return -1;
-	}
-	vsnprintf(heap, (size_t)needed + 1, fmt, copy);
-	va_end(copy);
-	rc = output_buffer_append_len(out, heap, (size_t)needed);
-	free(heap);
-	return rc;
 }
 
 static enum audit_output_format detect_format(void)
@@ -154,9 +120,9 @@ static int append_finding(struct output_buffer *out, enum audit_output_format fo
 		json_object_object_add(obj, "remediation", json_object_new_string(rule->remediation));
 		return append_json_object(out, obj);
 	}
-	return append_printf(out, "[%s] %s (%s/%s) %s\n  Evidence: %s\n  Remediation: %s\n",
-			     ela_linux_audit_status_name(result->status), rule->id, rule->severity, rule->category,
-			     rule->title, result->evidence, rule->remediation);
+	return output_buffer_printf(out, "[%s] %s (%s/%s) %s\n  Evidence: %s\n  Remediation: %s\n",
+				    ela_linux_audit_status_name(result->status), rule->id, rule->severity,
+				    rule->category, rule->title, result->evidence, rule->remediation);
 }
 
 static int append_listing(struct output_buffer *out, enum audit_output_format format,
@@ -188,8 +154,8 @@ static int append_listing(struct output_buffer *out, enum audit_output_format fo
 		json_object_object_add(obj, "remediation", json_object_new_string(rule->remediation));
 		return append_json_object(out, obj);
 	}
-	return append_printf(out, "%s [%s] %s (profiles: %s)\n  %s\n", rule->id, rule->severity, rule->title,
-			     rule_profiles(rule), rule->description);
+	return output_buffer_printf(out, "%s [%s] %s (profiles: %s)\n  %s\n", rule->id, rule->severity, rule->title,
+				    rule_profiles(rule), rule->description);
 }
 
 static int append_summary(struct output_buffer *out, enum audit_output_format format,
@@ -197,8 +163,9 @@ static int append_summary(struct output_buffer *out, enum audit_output_format fo
 			  size_t not_applicable)
 {
 	if (format == AUDIT_OUTPUT_CSV)
-		return append_printf(out, "summary,,,,,,%s,pass=%zu; fail=%zu; unknown=%zu; not-applicable=%zu,\n",
-				     ela_linux_audit_profile_name(profile), pass, fail, unknown, not_applicable);
+		return output_buffer_printf(out,
+					    "summary,,,,,,%s,pass=%zu; fail=%zu; unknown=%zu; not-applicable=%zu,\n",
+					    ela_linux_audit_profile_name(profile), pass, fail, unknown, not_applicable);
 	if (format == AUDIT_OUTPUT_JSON) {
 		struct json_object *obj = json_object_new_object();
 		if (!obj)
@@ -211,8 +178,8 @@ static int append_summary(struct output_buffer *out, enum audit_output_format fo
 		json_object_object_add(obj, "not_applicable", json_object_new_int64((int64_t)not_applicable));
 		return append_json_object(out, obj);
 	}
-	return append_printf(out, "Summary (%s): pass=%zu fail=%zu unknown=%zu not-applicable=%zu\n",
-			     ela_linux_audit_profile_name(profile), pass, fail, unknown, not_applicable);
+	return output_buffer_printf(out, "Summary (%s): pass=%zu fail=%zu unknown=%zu not-applicable=%zu\n",
+				    ela_linux_audit_profile_name(profile), pass, fail, unknown, not_applicable);
 }
 
 static int emit_remote(const struct output_buffer *out, enum audit_output_format format)

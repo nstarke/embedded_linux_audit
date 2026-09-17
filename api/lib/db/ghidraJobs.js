@@ -2,7 +2,7 @@
 'use strict';
 
 const { getModels } = require('./index');
-const { normalizeMac } = require('./deviceRegistry');
+const { resolveUserId, resolveUserDeviceIds } = require('./deviceRegistry');
 
 /*
  * DB helpers for Ghidra decompilation jobs. Creation and read-back run in the
@@ -12,37 +12,6 @@ const { normalizeMac } = require('./deviceRegistry');
  *
  * Status machine: queued -> copying -> analyzing -> succeeded | failed.
  */
-
-async function resolveUserId(username) {
-  if (!username) {
-    return null;
-  }
-  const { User } = getModels();
-  const user = await User.findOne({ where: { username } });
-  return user ? user.id : null;
-}
-
-// Device ids associated with `username`, optionally narrowed to one MAC. Same
-// non-enumerating semantics as moduleBuilds.resolveUserDeviceIds: an unknown
-// user or an unassociated device both yield [] (indistinguishable from empty).
-async function resolveUserDeviceIds(username, { mac = null } = {}) {
-  const userId = await resolveUserId(username);
-  if (userId === null) {
-    return [];
-  }
-  const { UserDevice, Device } = getModels();
-  const query = { where: { userId }, attributes: ['deviceId'] };
-  if (mac) {
-    query.include = [{
-      model: Device,
-      attributes: [],
-      where: { macAddress: normalizeMac(mac) },
-      required: true,
-    }];
-  }
-  const links = await UserDevice.findAll(query);
-  return links.map((l) => l.deviceId);
-}
 
 async function createGhidraJob({ deviceId, username }) {
   const userId = await resolveUserId(username);

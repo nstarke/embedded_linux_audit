@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT - Copyright (c) 2026 Nicholas Starke
 'use strict';
 
+const { macKey } = require('../../lib/macAddress');
+
 const express = require('express');
 
 // Accept either separator (aa:bb:.. or aa-bb-..), any case. Devices are stored
@@ -8,16 +10,9 @@ const express = require('express');
 // we normalise for comparison and resolve to the actual stored form.
 const MAC_ADDRESS_RE = /^([0-9a-fA-F]{2}[:-]){5}[0-9a-fA-F]{2}$/;
 const MAX_BODY_BYTES = 1024 * 1024;
-
-// Reduce a MAC to its 12 lowercase hex digits for separator-insensitive
-// comparison (`AA-BB-..`, `aa:bb:..`, and `aabb..` all compare equal).
-function macKey(mac) {
-  return String(mac || '').toLowerCase().replace(/[^0-9a-f]/g, '');
-}
 const MAX_EXEC_TIMEOUT_MS = 60000;
 const DEFAULT_EXEC_TIMEOUT_MS = 15000;
-// How long to wait for the terminal worker's reply beyond the command's own
-// timeout, to absorb queue + execution overhead.
+// Allow queue and execution overhead beyond the command's own timeout.
 const WAIT_MARGIN_MS = 10000;
 const DEFAULT_WAIT_MS = 30000;
 

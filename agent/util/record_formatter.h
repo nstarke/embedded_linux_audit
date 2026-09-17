@@ -8,6 +8,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+int ela_append_csv_field(char **out, size_t *len, size_t *cap, const char *value);
 int ela_format_arch_record(struct output_buffer *out,
 			   const char *format,
 			   const char *subcommand,

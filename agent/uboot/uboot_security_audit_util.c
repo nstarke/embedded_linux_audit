@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later - Copyright (c) 2026 Nicholas Starke
 
 #include "uboot_security_audit_util.h"
+#include "util/str_util.h"
+#include "image/uboot_image_scan_util.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -8,33 +10,10 @@
 int ela_uboot_audit_http_buf_append(char **buf, size_t *len, size_t *cap,
 				    const char *data, size_t data_len)
 {
-	size_t need;
-	size_t new_cap;
-	char *tmp;
-
-	if (!buf || !len || !cap || !data || !data_len)
+	if (!data || !data_len)
 		return -1;
-
-	need = *len + data_len + 1;
-	if (need > *cap) {
-		new_cap = *cap ? *cap : 1024;
-		while (new_cap < need)
-			new_cap *= 2;
-		tmp = realloc(*buf, new_cap);
-		if (!tmp)
-			return -1;
-		*buf = tmp;
-		*cap = new_cap;
-	}
-
-	memcpy(*buf + *len, data, data_len);
-	*len += data_len;
-	(*buf)[*len] = '\0';
-	return 0;
+	return append_bytes(buf, len, cap, data, data_len);
 }
-
-#define FIT_MIN_TOTAL_SIZE 0x100U
-#define FIT_MAX_TOTAL_SIZE (64U * 1024U * 1024U)
 
 uint32_t ela_uboot_read_be32(const uint8_t *p)
 {
@@ -75,45 +54,12 @@ bool ela_uboot_audit_rule_may_need_signature_artifacts(const char *rule_filter)
 
 enum uboot_output_format ela_uboot_audit_detect_output_format(const char *fmt)
 {
-	if (!fmt || !*fmt || !strcmp(fmt, "txt"))
-		return FW_OUTPUT_TXT;
-	if (!strcmp(fmt, "csv"))
-		return FW_OUTPUT_CSV;
-	if (!strcmp(fmt, "json"))
-		return FW_OUTPUT_JSON;
-	return FW_OUTPUT_TXT;
+	return ela_uboot_detect_output_format(fmt);
 }
 
 bool ela_uboot_fit_header_looks_valid(const uint8_t *p, uint64_t abs_off, uint64_t dev_size)
 {
-	uint32_t totalsize = ela_uboot_read_be32(p + 4);
-	uint32_t off_dt_struct = ela_uboot_read_be32(p + 8);
-	uint32_t off_dt_strings = ela_uboot_read_be32(p + 12);
-	uint32_t off_mem_rsvmap = ela_uboot_read_be32(p + 16);
-	uint32_t version = ela_uboot_read_be32(p + 20);
-	uint32_t last_comp_version = ela_uboot_read_be32(p + 24);
-	uint32_t size_dt_strings = ela_uboot_read_be32(p + 32);
-	uint32_t size_dt_struct = ela_uboot_read_be32(p + 36);
-
-	if (totalsize < FIT_MIN_TOTAL_SIZE || totalsize > FIT_MAX_TOTAL_SIZE)
-		return false;
-	if (abs_off + totalsize > dev_size)
-		return false;
-	if (off_mem_rsvmap < 40 || off_mem_rsvmap >= totalsize)
-		return false;
-	if (off_dt_struct >= totalsize || off_dt_strings >= totalsize)
-		return false;
-	if (size_dt_struct == 0 || size_dt_strings == 0)
-		return false;
-	if ((uint64_t)off_dt_struct + size_dt_struct > totalsize)
-		return false;
-	if ((uint64_t)off_dt_strings + size_dt_strings > totalsize)
-		return false;
-	if (version < 16 || version > 17)
-		return false;
-	if (last_comp_version > version)
-		return false;
-	return true;
+	return ela_uboot_image_validate_fit_header(p, abs_off, dev_size);
 }
 
 int ela_uboot_extract_public_key_pem(const char *text, size_t len, char **pem_out)

@@ -3,6 +3,8 @@
 #ifndef ELA_UBOOT_IMAGE_INTERNAL_H
 #define ELA_UBOOT_IMAGE_INTERNAL_H
 
+#include "uboot/uboot_output_format.h"
+
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -17,12 +19,6 @@
 #define FIT_MIN_TOTAL_SIZE 0x100U
 #define FIT_MAX_TOTAL_SIZE (64U * 1024U * 1024U)
 #define UIMAGE_MAX_DATA_SIZE (256U * 1024U * 1024U)
-
-enum uboot_output_format {
-	FW_OUTPUT_TXT = 0,
-	FW_OUTPUT_CSV,
-	FW_OUTPUT_JSON,
-};
 
 struct extracted_command {
 	char *name;

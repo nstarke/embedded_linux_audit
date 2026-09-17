@@ -7,7 +7,6 @@
 #include <getopt.h>
 #include <json-c/json.h>
 #include <limits.h>
-#include <stdarg.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -161,34 +160,6 @@ static void dns(struct net_ctx *c)
 	add(c, "ELA-NET-004", "DNS configuration", "medium", "fail", "/etc/resolv.conf contains no nameserver",
 	    "Configure trusted DNS resolvers or an explicit local resolver.");
 }
-static int outfmt(struct output_buffer *o, const char *fmt, ...)
-{
-	va_list a, b;
-	char s[1024], *p;
-	int n, r;
-	va_start(a, fmt);
-	va_copy(b, a);
-	n = vsnprintf(s, sizeof(s), fmt, a);
-	va_end(a);
-	if (n < 0) {
-		va_end(b);
-		return -1;
-	}
-	if ((size_t)n < sizeof(s)) {
-		va_end(b);
-		return output_buffer_append_len(o, s, (size_t)n);
-	}
-	p = malloc((size_t)n + 1);
-	if (!p) {
-		va_end(b);
-		return -1;
-	}
-	vsnprintf(p, (size_t)n + 1, fmt, b);
-	va_end(b);
-	r = output_buffer_append_len(o, p, (size_t)n);
-	free(p);
-	return r;
-}
 static void emit(struct output_buffer *o, enum net_format f, const struct net_finding *x)
 {
 	if (f == NF_JSON) {
@@ -206,11 +177,11 @@ static void emit(struct output_buffer *o, enum net_format f, const struct net_fi
 		output_buffer_append(o, "\n");
 		json_object_put(j);
 	} else if (f == NF_CSV)
-		outfmt(o, "finding,\"%s\",\"%s\",%s,%s,\"%s\",\"%s\"\n", x->rule, x->title, x->status, x->severity,
-		       x->evidence, x->remediation);
+		output_buffer_printf(o, "finding,\"%s\",\"%s\",%s,%s,\"%s\",\"%s\"\n", x->rule, x->title, x->status,
+				     x->severity, x->evidence, x->remediation);
 	else
-		outfmt(o, "[%s] %s (%s) %s\n  Evidence: %s\n  Remediation: %s\n", x->status, x->rule, x->severity,
-		       x->title, x->evidence, x->remediation);
+		output_buffer_printf(o, "[%s] %s (%s) %s\n  Evidence: %s\n  Remediation: %s\n", x->status, x->rule,
+				     x->severity, x->title, x->evidence, x->remediation);
 }
 int linux_network_audit_main(int argc, char **argv)
 {
@@ -251,14 +222,15 @@ int linux_network_audit_main(int argc, char **argv)
 	for (i = 0; i < c.len; i++)
 		emit(&o, f, &c.items[i]);
 	if (f == NF_JSON)
-		outfmt(&o,
-		       "{\"record\":\"linux_audit_summary\",\"profile\":\"network\",\"findings\":%zu,\"unknown\":%zu}"
-		       "\n",
-		       c.len, c.unknown);
+		output_buffer_printf(
+			&o,
+			"{\"record\":\"linux_audit_summary\",\"profile\":\"network\",\"findings\":%zu,\"unknown\":%zu}"
+			"\n",
+			c.len, c.unknown);
 	else if (f == NF_CSV)
-		outfmt(&o, "summary,,,,findings=%zu;unknown=%zu,,\n", c.len, c.unknown);
+		output_buffer_printf(&o, "summary,,,,findings=%zu;unknown=%zu,,\n", c.len, c.unknown);
 	else
-		outfmt(&o, "Summary (network): findings=%zu unknown=%zu\n", c.len, c.unknown);
+		output_buffer_printf(&o, "Summary (network): findings=%zu unknown=%zu\n", c.len, c.unknown);
 	fwrite(o.data, 1, o.len, stdout);
 	for (i = 0; i < c.len; i++) {
 		free(c.items[i].rule);

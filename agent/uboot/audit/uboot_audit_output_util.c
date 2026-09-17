@@ -8,15 +8,7 @@
 
 const char *ela_uboot_audit_http_content_type(enum uboot_output_format fmt)
 {
-	switch (fmt) {
-	case FW_OUTPUT_JSON:
-		return "application/x-ndjson; charset=utf-8";
-	case FW_OUTPUT_CSV:
-		return "text/csv; charset=utf-8";
-	case FW_OUTPUT_TXT:
-	default:
-		return "text/plain; charset=utf-8";
-	}
+	return ela_uboot_http_content_type(fmt);
 }
 
 bool ela_uboot_audit_rule_name_selected(const char *filter,

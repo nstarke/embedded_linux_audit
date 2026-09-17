@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later - Copyright (c) 2026 Nicholas Starke
 
 #include "embedded_linux_audit_cmd.h"
+#include "util/command_io_util.h"
+#include "util/str_util.h"
 #include "uboot/image/uboot_image_cmd.h"
 #include "uboot/image/uboot_image_format_util.h"
 #include "uboot/image/uboot_image_internal.h"
@@ -97,90 +99,17 @@ static const char *image_http_content_type(void)
 	return ela_uboot_image_http_content_type(g_output_format);
 }
 
+static void mirror_output(const char *data, size_t len)
+{
+	if (g_log_sock >= 0)
+		ela_send_all(g_log_sock, (const uint8_t *)data, len);
+	if (g_output_http_uri)
+		append_bytes(&g_output_http_buf, &g_output_http_len, &g_output_http_cap, data, len);
+}
+
 static void emit_v(FILE *stream, const char *fmt, va_list ap)
 {
-	va_list aq;
-	va_list ar;
-	char stack[1024];
-	char *dyn = NULL;
-	int needed;
-	bool mirror_to_remote;
-
-	mirror_to_remote = (stream == stdout);
-
-	va_copy(aq, ap);
-	va_copy(ar, ap);
-	vfprintf(stream, fmt, ap);
-	fflush(stream);
-
-	needed = vsnprintf(stack, sizeof(stack), fmt, aq);
-	va_end(aq);
-
-	if (needed < 0) {
-		va_end(ar);
-		return;
-	}
-
-	if ((size_t)needed < sizeof(stack)) {
-		if (mirror_to_remote && g_log_sock >= 0)
-			ela_send_all(g_log_sock, (const uint8_t *)stack, (size_t)needed);
-		if (mirror_to_remote && g_output_http_uri) {
-			size_t need = g_output_http_len + (size_t)needed + 1;
-			if (need > g_output_http_cap) {
-				size_t new_cap = g_output_http_cap ? g_output_http_cap : 1024;
-				char *tmp;
-				while (new_cap < need)
-					new_cap *= 2;
-				tmp = realloc(g_output_http_buf, new_cap);
-				if (tmp) {
-					g_output_http_buf = tmp;
-					g_output_http_cap = new_cap;
-					memcpy(g_output_http_buf + g_output_http_len, stack, (size_t)needed);
-					g_output_http_len += (size_t)needed;
-					g_output_http_buf[g_output_http_len] = '\0';
-				}
-			} else {
-				memcpy(g_output_http_buf + g_output_http_len, stack, (size_t)needed);
-				g_output_http_len += (size_t)needed;
-				g_output_http_buf[g_output_http_len] = '\0';
-			}
-		}
-		va_end(ar);
-		return;
-	}
-
-	dyn = malloc((size_t)needed + 1);
-	if (!dyn) {
-		va_end(ar);
-		return;
-	}
-
-	vsnprintf(dyn, (size_t)needed + 1, fmt, ar);
-	va_end(ar);
-	if (mirror_to_remote && g_log_sock >= 0)
-		ela_send_all(g_log_sock, (const uint8_t *)dyn, (size_t)needed);
-	if (mirror_to_remote && g_output_http_uri) {
-		size_t need = g_output_http_len + (size_t)needed + 1;
-		if (need > g_output_http_cap) {
-			size_t new_cap = g_output_http_cap ? g_output_http_cap : 1024;
-			char *tmp;
-			while (new_cap < need)
-				new_cap *= 2;
-			tmp = realloc(g_output_http_buf, new_cap);
-			if (tmp) {
-				g_output_http_buf = tmp;
-				g_output_http_cap = new_cap;
-				memcpy(g_output_http_buf + g_output_http_len, dyn, (size_t)needed);
-				g_output_http_len += (size_t)needed;
-				g_output_http_buf[g_output_http_len] = '\0';
-			}
-		} else {
-			memcpy(g_output_http_buf + g_output_http_len, dyn, (size_t)needed);
-			g_output_http_len += (size_t)needed;
-			g_output_http_buf[g_output_http_len] = '\0';
-		}
-	}
-	free(dyn);
+	ela_command_emit_v(stream, fmt, ap, mirror_output);
 }
 
 static void out_printf(const char *fmt, ...)

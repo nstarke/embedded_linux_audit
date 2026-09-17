@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later - Copyright (c) 2026 Nicholas Starke
 
+#include "util/file_io_util.h"
 #include "emmc_util.h"
 #include "../../kmod/ela_ioctl.h"
 
@@ -102,23 +103,6 @@ static int emmc_collect(int fd, bool print,
 	return 0;
 }
 
-static int write_all(int fd, const unsigned char *data, size_t len)
-{
-	size_t offset = 0;
-
-	while (offset < len) {
-		ssize_t written;
-
-		do {
-			written = write(fd, data + offset, len - offset);
-		} while (written < 0 && errno == EINTR);
-		if (written <= 0)
-			return -1;
-		offset += (size_t)written;
-	}
-	return 0;
-}
-
 static int emmc_dump(int kmod_fd, const char *output_path,
 		     bool device_index_set, size_t device_index)
 {
@@ -182,7 +166,7 @@ static int emmc_dump(int kmod_fd, const char *output_path,
 				(unsigned long long)offset, strerror(errno));
 			goto out;
 		}
-		if (write_all(output_fd, buf, chunk) < 0) {
+		if (ela_write_all(output_fd, buf, chunk) < 0) {
 			fprintf(stderr, "Writing dump file %s failed: %s\n",
 				output_path, strerror(errno));
 			goto out;

@@ -17,46 +17,11 @@
  */
 /* LCOV_EXCL_START */
 
-static int ensure_fw_env_config_exists(void)
-{
-	const char *output_tcp = getenv("ELA_OUTPUT_TCP");
-	const char *output_http = getenv("ELA_OUTPUT_HTTP");
-	const char *output_https = getenv("ELA_OUTPUT_HTTPS");
-	const char *output_insecure = getenv("ELA_OUTPUT_INSECURE");
-	char *argv[10]; /* "env", "--output-config", up to 3x flag+value pairs, "--insecure", NULL */
-	int argc = 0;
-
-	argv[argc++] = "env";
-	argv[argc++] = "--output-config";
-	if (output_tcp && *output_tcp) {
-		argv[argc++] = "--output-tcp";
-		argv[argc++] = (char *)output_tcp;
-	}
-	if (output_http && *output_http) {
-		argv[argc++] = "--output-http";
-		argv[argc++] = (char *)output_http;
-	}
-	if (output_https && *output_https) {
-		argv[argc++] = "--output-http";
-		argv[argc++] = (char *)output_https;
-	}
-	if (output_insecure && !strcmp(output_insecure, "1"))
-		argv[argc++] = "--insecure";
-	argv[argc] = NULL;
-
-	if (access("uboot_env.config", F_OK) == 0)
-		return 0;
-	if (access("fw_env.config", F_OK) == 0)
-		return 0;
-
-	return uboot_env_scan_main(argc, argv);
-}
-
 static int run_validate_crc32(const struct embedded_linux_audit_input *input, char *message, size_t message_len)
 {
 	int env_scan_rc;
 
-	env_scan_rc = ensure_fw_env_config_exists();
+	env_scan_rc = uboot_env_ensure_config();
 	if (env_scan_rc != 0) {
 		if (message && message_len)
 			snprintf(message, message_len,

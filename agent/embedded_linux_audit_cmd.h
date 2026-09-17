@@ -102,6 +102,7 @@ void ela_crc32_init(uint32_t table[256]);
 uint32_t ela_crc32_calc(const uint32_t table[256], const uint8_t *buf, size_t len);
 
 int uboot_env_scan_main(int argc, char **argv);
+int uboot_env_ensure_config(void);
 int uboot_env_scan_core_main(int argc, char **argv);
 int uboot_env_read_vars_main(int argc, char **argv);
 int uboot_env_write_vars_main(int argc, char **argv);

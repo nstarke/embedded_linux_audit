@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later - Copyright (c) 2026 Nicholas Starke
 
 int run_str_util_tests(void);
+int run_output_buffer_tests(void);
+int run_file_io_util_tests(void);
 int run_isa_util_tests(void);
 int run_crc32_util_tests(void);
 int run_http_uri_util_tests(void);
@@ -104,6 +106,8 @@ int main(void)
 	int rc = 0;
 
 	rc |= run_str_util_tests();
+	rc |= run_output_buffer_tests();
+	rc |= run_file_io_util_tests();
 	rc |= run_isa_util_tests();
 	rc |= run_crc32_util_tests();
 	rc |= run_http_uri_util_tests();

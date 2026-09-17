@@ -7,26 +7,12 @@
 
 enum uboot_output_format ela_uboot_image_detect_output_format(const char *fmt)
 {
-	if (!fmt || !*fmt || !strcmp(fmt, "txt"))
-		return FW_OUTPUT_TXT;
-	if (!strcmp(fmt, "csv"))
-		return FW_OUTPUT_CSV;
-	if (!strcmp(fmt, "json"))
-		return FW_OUTPUT_JSON;
-	return FW_OUTPUT_TXT;
+	return ela_uboot_detect_output_format(fmt);
 }
 
 const char *ela_uboot_image_http_content_type(enum uboot_output_format fmt)
 {
-	switch (fmt) {
-	case FW_OUTPUT_JSON:
-		return "application/x-ndjson; charset=utf-8";
-	case FW_OUTPUT_CSV:
-		return "text/csv; charset=utf-8";
-	case FW_OUTPUT_TXT:
-	default:
-		return "text/plain; charset=utf-8";
-	}
+	return ela_uboot_http_content_type(fmt);
 }
 
 size_t ela_uboot_image_align_up_4(size_t v)

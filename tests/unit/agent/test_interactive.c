@@ -260,9 +260,45 @@ static void test_loop_show_prompt_via_session_mac(void)
 	clear_set_env();
 }
 
+static void test_set_preserves_long_values_and_redacts_key(void)
+{
+	char *argv[] = { "set" };
+	char value[4097];
+	char output[8192];
+	FILE *capture = tmpfile();
+	int saved_stdout;
+	int rc;
+	size_t length;
+
+	ELA_ASSERT_TRUE(capture != NULL);
+	memset(value, 'x', sizeof(value) - 1);
+	value[sizeof(value) - 1] = '\0';
+	setenv("ELA_SCRIPT", value, 1);
+	setenv("ELA_API_KEY", "test-key-must-be-redacted", 1);
+	fflush(stdout);
+	saved_stdout = dup(STDOUT_FILENO);
+	ELA_ASSERT_TRUE(saved_stdout >= 0);
+	dup2(fileno(capture), STDOUT_FILENO);
+	rc = interactive_set_command(1, argv);
+	fflush(stdout);
+	dup2(saved_stdout, STDOUT_FILENO);
+	close(saved_stdout);
+	unsetenv("ELA_SCRIPT");
+	unsetenv("ELA_API_KEY");
+	rewind(capture);
+	length = fread(output, 1, sizeof(output) - 1, capture);
+	output[length] = '\0';
+	fclose(capture);
+	ELA_ASSERT_INT_EQ(0, rc);
+	ELA_ASSERT_TRUE(strstr(output, value) != NULL);
+	ELA_ASSERT_TRUE(strstr(output, "ELA_API_KEY              current=<set>") != NULL);
+	ELA_ASSERT_TRUE(strstr(output, "test-key-must-be-redacted") == NULL);
+}
+
 int run_interactive_tests(void)
 {
 	static const struct ela_test_case cases[] = {
+		{ "set/long-values-and-redaction", test_set_preserves_long_values_and_redacts_key },
 		{ "set/no_args_prints_values",   test_set_no_args_prints_values },
 		{ "set/wrong_arity",             test_set_wrong_arity_returns_2 },
 		{ "set/valid_assignment",        test_set_valid_assignment },

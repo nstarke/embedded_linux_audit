@@ -1,7 +1,7 @@
 'use strict';
 
 const { getModels, getSequelize } = require('./index');
-const { normalizeMac } = require('./deviceRegistry');
+const { resolveUserDeviceIds } = require('./deviceRegistry');
 
 /*
  * Read-side queries for the client API.  Visibility is scoped by device
@@ -24,41 +24,6 @@ const METADATA_ATTRIBUTES = [
   'payloadSha256',
   'payloadBytes',
 ];
-
-async function resolveUserId(username) {
-  if (!username) {
-    return null;
-  }
-  const { User } = getModels();
-  const user = await User.findOne({ where: { username } });
-  return user ? user.id : null;
-}
-
-// Device ids associated with the user (via the terminal phone-home). Returns []
-// when there is no such user or the user has not associated any devices.
-//
-// An optional `mac` narrows the result to the single associated device with
-// that MAC (canonicalized, so any separator style matches). The filter stays
-// within the user's own devices, so a MAC the user is not associated with (or
-// an unknown one) yields [] — no cross-user leakage and no enumeration.
-async function resolveUserDeviceIds(username, { mac = null } = {}) {
-  const userId = await resolveUserId(username);
-  if (userId === null) {
-    return [];
-  }
-  const { UserDevice, Device } = getModels();
-  const query = { where: { userId }, attributes: ['deviceId'] };
-  if (mac) {
-    query.include = [{
-      model: Device,
-      attributes: [],
-      where: { macAddress: normalizeMac(mac) },
-      required: true,
-    }];
-  }
-  const links = await UserDevice.findAll(query);
-  return links.map((l) => l.deviceId);
-}
 
 function metadataFromUpload(upload) {
   return {

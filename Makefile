@@ -482,6 +482,8 @@ AGENT_UNIT_TEST_SRC := \
 	tests/unit/agent/main.c \
 	tests/unit/agent/test_harness.c \
 	tests/unit/agent/test_str_util.c \
+	tests/unit/agent/test_output_buffer.c \
+	tests/unit/agent/test_file_io_util.c \
 	tests/unit/agent/test_isa_util.c \
 	tests/unit/agent/test_crc32_util.c \
 	tests/unit/agent/test_http_uri_util.c \
@@ -615,6 +617,7 @@ AGENT_UNIT_TEST_DEPS := \
 	agent/usb/usb_util.c \
 	agent/util/http_protocol_util.c \
 	agent/util/command_io_util.c \
+	agent/util/file_io_util.c \
 	agent/util/ssh_parse_util.c \
 	agent/util/tpm2_output_format_util.c \
 	agent/util/tpm2_command_util.c \
@@ -690,6 +693,7 @@ AGENT_UNIT_TEST_DEPS := \
 	agent/uboot/image/uboot_image_list_commands_util.c \
 	agent/uboot/image/uboot_image_find_address_util.c \
 	agent/util/str_util.h \
+	agent/util/output_buffer.h \
 	agent/util/isa_util.h \
 	agent/util/http_uri_util.h \
 	agent/util/command_parse_util.h \
@@ -704,6 +708,7 @@ AGENT_UNIT_TEST_DEPS := \
 	agent/util/orom_util.h \
 	agent/util/http_protocol_util.h \
 	agent/util/command_io_util.h \
+	agent/util/file_io_util.h \
 	agent/util/ssh_parse_util.h \
 	agent/util/tpm2_output_format_util.h \
 	agent/util/tpm2_command_util.h \
@@ -753,6 +758,8 @@ AGENT_UNIT_TEST_DEPS := \
 	agent/uboot/audit/uboot_audit_output_util.h \
 	agent/uboot/uboot_security_audit_util.h \
 	agent/uboot/image/uboot_command_extract_util.h \
+	agent/uboot/uboot_output_format.h \
+	agent/uboot/audit/uboot_audit_internal.h \
 	agent/uboot/image/uboot_image_internal.h \
 	agent/embedded_linux_audit_cmd.h \
 	agent/util/dispatch_util.h \
@@ -843,6 +850,7 @@ SRC := \
 	agent/util/orom_util.c \
 	agent/util/http_protocol_util.c \
 	agent/util/command_io_util.c \
+	agent/util/file_io_util.c \
 	agent/util/ssh_parse_util.c \
 	agent/util/tpm2_output_format_util.c \
 	agent/util/tpm2_command_util.c \
@@ -1361,6 +1369,7 @@ $(READLINE_BUILD_STAMP):
 	touch $@
 
 TARGET_DEPS := $(SRC) $(ZLIB_LIB) $(LIBUBOOTENV_LIB) $(LIBEFIVAR_BUILD_STAMP) $(LIBEFIVAR_LINK_LIB) $(JSONC_LIB) $(LIBXML2_LIB) $(CURL_LIB) $(LIBSSH_LIB) $(LIBPCAP_LIB) $(OPENSSL_SSL_LIB) $(OPENSSL_LIB) $(READLINE_DEPS)
+TARGET_DEPS += agent/util/output_buffer.h agent/uboot/uboot_output_format.h
 TARGET_LIBS := $(LIBUBOOTENV_LIB) $(LIBEFIVAR_LINK_LIB) $(JSONC_LIB) $(LIBXML2_LIB) $(CURL_LIB) $(LIBSSH_LIB) $(LIBPCAP_LIB) $(ZLIB_LIB) -lm
 ifeq ($(ELA_ENABLE_TPM2),1)
 TARGET_DEPS += $(TPM2_TSS_BUILD_STAMP)
@@ -1403,6 +1412,7 @@ $(AGENT_UNIT_TEST_BIN): $(AGENT_UNIT_TEST_SRC) $(AGENT_UNIT_TEST_DEPS) $(TPM2_UN
 			agent/usb/usb_util.c \
 			agent/util/http_protocol_util.c \
 			agent/util/command_io_util.c \
+			agent/util/file_io_util.c \
 			agent/util/ssh_parse_util.c \
 			agent/util/tpm2_output_format_util.c \
 			agent/util/tpm2_command_util.c \

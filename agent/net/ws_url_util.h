@@ -12,6 +12,8 @@ int ela_ws_parse_url(const char *url,
 		     uint16_t *port_out,
 		     char *path, size_t path_sz,
 		     int *is_tls_out);
+/* Replace an HTTP(S) base path with /<endpoint>/<mac> and use WS(S). */
+int ela_ws_build_stream_url(const char *http_uri, const char *endpoint, const char *mac, char *out, size_t out_sz);
 int ela_ws_build_terminal_url(const char *base_url, const char *mac, char *out, size_t out_sz);
 int ela_ws_build_handshake_request(char *out,
 				   size_t out_sz,
