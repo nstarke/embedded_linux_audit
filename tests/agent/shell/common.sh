@@ -114,6 +114,39 @@ wait_for_background_process_exit() {
 
     return 1
 }
+
+# Wait until $1 is an accepting TCP listener, for tests that background a server
+# and then point the agent at it. A fixed `sleep` before connecting is a race:
+# on a loaded runner the listener may not have reached listen(2) yet, connect()
+# gets ECONNREFUSED, and the test fails looking like an agent bug.
+#
+# Readiness is read from /proc/net/tcp{,6} (state 0A == TCP_LISTEN) rather than
+# by connecting, because the listeners under test are single-shot -- `nc -l`
+# exits after one connection, so a probe connection would consume the very
+# connection the test is about to make.
+wait_for_tcp_port_listening() {
+    _port="$1"
+    attempts="${2:-50}"
+    i=0
+
+    if [ ! -r /proc/net/tcp ]; then
+        sleep 1   # no procfs: fall back to a conservative fixed wait
+        return 0
+    fi
+
+    _port_hex="$(printf '%04X' "$_port")"
+    while [ "$i" -lt "$attempts" ]; do
+        if awk -v p=":$_port_hex" \
+               '$2 ~ p"$" && $4 == "0A" { found = 1 } END { exit !found }' \
+               /proc/net/tcp /proc/net/tcp6 2>/dev/null; then
+            return 0
+        fi
+        sleep 0.1
+        i="$(expr "$i" + 1)"
+    done
+
+    return 1
+}
 start_https_capture_server() {
     server_log="$1"
     mode="$2"
