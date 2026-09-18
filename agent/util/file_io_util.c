@@ -16,7 +16,10 @@ int ela_write_all(int fd, const unsigned char *data, size_t len)
 		do {
 			written = write(fd, data + offset, len - offset);
 		} while (written < 0 && errno == EINTR);
-		if (written <= 0)
+		/* write(2) never returns more than it was asked for, but bound
+		 * it anyway so offset can never exceed len and len - offset can
+		 * never underflow (Coverity INTEGER_OVERFLOW on the write() arg). */
+		if (written <= 0 || (size_t)written > len - offset)
 			return -1;
 		offset += (size_t)written;
 	}
